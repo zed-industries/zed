@@ -66,7 +66,7 @@ fn fuzzy_match_in_ranges(
     buffer: &BufferSnapshot,
     context_ranges: &[Range<Anchor>],
 ) -> Option<Range<usize>> {
-    let mut state = StreamingFuzzyMatcher::new(buffer, old_text);
+    let mut state = FuzzyMatcher::new(buffer, old_text);
     let mut best_match = None;
     for range in context_ranges {
         let best_match_score = best_match.as_ref().map(|(score, _)| *score);
@@ -115,17 +115,17 @@ const REPLACEMENT_COST: u32 = 1;
 const INSERTION_COST: u32 = 3;
 const DELETION_COST: u32 = 10;
 
-/// A streaming fuzzy matcher that can process text chunks incrementally
+/// A fuzzy matcher that can process text chunks incrementally
 /// and return the best match found so far at each step.
-struct StreamingFuzzyMatcher<'a> {
+struct FuzzyMatcher<'a> {
     snapshot: &'a BufferSnapshot,
-    query_lines: Vec<String>,
+    query_lines: Vec<&'a str>,
     matrix: SearchMatrix,
 }
 
-impl<'a> StreamingFuzzyMatcher<'a> {
-    fn new(snapshot: &'a BufferSnapshot, old_text: &str) -> Self {
-        let query_lines = old_text.lines().map(String::from).collect();
+impl<'a> FuzzyMatcher<'a> {
+    fn new(snapshot: &'a BufferSnapshot, old_text: &'a str) -> Self {
+        let query_lines = old_text.lines().collect();
         Self {
             snapshot,
             query_lines,
