@@ -96,7 +96,7 @@ impl Vim {
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
         Vim::take_forced_motion(cx);
-        self.exit_temporary_normal(window, cx);
+        self.exit_temporary_normal(None, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             scroll_editor(editor, move_cursor, amount, window, cx)
         });
