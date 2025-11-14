@@ -21,7 +21,7 @@ use gpui::{
     DragMoveEvent, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
     FocusOutEvent, Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels,
     Point, PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle,
-    Window, actions, anchored, deferred, prelude::*, relative,
+    Window, actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
