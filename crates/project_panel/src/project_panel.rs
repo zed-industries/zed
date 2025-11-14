@@ -512,7 +512,7 @@ impl ProjectPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
-                        this.update_visible_entries(None, false, false, window, cx);
+                        this.update_visible_entries(None, None, false, window, cx);
                         cx.notify();
                     }
                     _ => {}
@@ -573,13 +573,13 @@ impl ProjectPanel {
                     }
                     project::Event::WorktreeRemoved(id) => {
                         this.state.expanded_dir_ids.remove(id);
-                        this.update_visible_entries(None, false, false, window, cx);
+                        this.update_visible_entries(None, None, false, window, cx);
                         cx.notify();
                     }
                     project::Event::WorktreeUpdatedEntries(_, _)
                     | project::Event::WorktreeAdded(_)
                     | project::Event::WorktreeOrderChanged => {
-                        this.update_visible_entries(None, false, false, window, cx);
+                        this.update_visible_entries(None, None, false, window, cx);
                         cx.notify();
                     }
                     project::Event::ExpandedAllForEntry(worktree_id, entry_id) => {
@@ -614,7 +614,7 @@ impl ProjectPanel {
                                     this.state.unfolded_dir_ids.insert(child.id);
                                 }
                             }
-                            this.update_visible_entries(None, false, false, window, cx);
+                            this.update_visible_entries(None, None, false, window, cx);
                             cx.notify();
                         }
                     }
@@ -662,7 +662,7 @@ impl ProjectPanel {
                                 None => {
                                     project_panel.state.edit_state = None;
                                     project_panel
-                                        .update_visible_entries(None, false, false, window, cx);
+                                        .update_visible_entries(None, None, false, window, cx);
                                     cx.notify();
                                 }
                             }
@@ -683,13 +683,13 @@ impl ProjectPanel {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
                     if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
-                        this.update_visible_entries(None, false, false, window, cx);
+                        this.update_visible_entries(None, None, false, window, cx);
                     }
                     if project_panel_settings.hide_root != new_settings.hide_root {
-                        this.update_visible_entries(None, false, false, window, cx);
+                        this.update_visible_entries(None, None, false, window, cx);
                     }
                     if project_panel_settings.hide_hidden != new_settings.hide_hidden {
-                        this.update_visible_entries(None, false, false, window, cx);
+                        this.update_visible_entries(None, None, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
@@ -739,7 +739,7 @@ impl ProjectPanel {
                 },
                 update_visible_entries_task: Task::ready(()),
             };
-            this.update_visible_entries(None, false, false, window, cx);
+            this.update_visible_entries(None, None, false, window, cx);
 
             this
         });
@@ -1147,7 +1147,7 @@ impl ProjectPanel {
                         });
 
                         expanded_dir_ids.insert(ix, entry_id);
-                        self.update_visible_entries(None, false, false, window, cx);
+                        self.update_visible_entries(None, None, false, window, cx);
                         cx.notify();
                     }
                 }
@@ -1198,7 +1198,7 @@ impl ProjectPanel {
                     expanded_dir_ids.remove(ix);
                     self.update_visible_entries(
                         Some((worktree_id, entry_id)),
-                        false,
+                        None,
                         false,
                         window,
                         cx,
@@ -1254,7 +1254,7 @@ impl ProjectPanel {
                 };
             });
 
-        self.update_visible_entries(None, false, false, window, cx);
+        self.update_visible_entries(None, None, false, window, cx);
         cx.notify();
     }
 
@@ -1278,7 +1278,7 @@ impl ProjectPanel {
                     }
                 }
             });
-            self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
+            self.update_visible_entries(Some((worktree_id, entry_id)), None, false, window, cx);
             window.focus(&self.focus_handle);
             cx.notify();
         }
@@ -1301,7 +1301,7 @@ impl ProjectPanel {
                     self.expand_all_for_entry(worktree_id, entry_id, cx);
                 }
             }
-            self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
+            self.update_visible_entries(Some((worktree_id, entry_id)), None, false, window, cx);
             window.focus(&self.focus_handle);
             cx.notify();
         }
@@ -1640,7 +1640,7 @@ impl ProjectPanel {
                 Err(e) => {
                     project_panel.update_in( cx, |project_panel, window, cx| {
                         project_panel.marked_entries.clear();
-                        project_panel.update_visible_entries(None, false, false, window, cx);
+                        project_panel.update_visible_entries(None, None, false, window, cx);
                     }).ok();
                     Err(e)?;
                 }
@@ -1653,7 +1653,7 @@ impl ProjectPanel {
                                 project_panel.marked_entries.clear();
                                 project_panel.expand_to_selection(cx);
                             }
-                        project_panel.update_visible_entries(None, false, false, window, cx);
+                        project_panel.update_visible_entries(None, None, false, window, cx);
                         if is_new_entry && !is_dir {
                             let settings = ProjectPanelSettings::get_global(cx);
                             if settings.auto_open.should_open_on_create() {
@@ -1667,7 +1667,7 @@ impl ProjectPanel {
                     if let Some(open_task) = project_panel
                         .update_in(cx, |project_panel, window, cx| {
                             project_panel.marked_entries.clear();
-                            project_panel.update_visible_entries(None, false, false, window, cx);
+                            project_panel.update_visible_entries(None, None, false, window, cx);
 
                             if is_dir {
                                 project_panel.project.update(cx, |_, cx| {
@@ -1705,7 +1705,7 @@ impl ProjectPanel {
         }
 
         let previous_edit_state = self.state.edit_state.take();
-        self.update_visible_entries(None, false, false, window, cx);
+        self.update_visible_entries(None, None, false, window, cx);
         self.marked_entries.clear();
 
         if let Some(previously_focused) =
@@ -1827,7 +1827,16 @@ impl ProjectPanel {
             depth: 0,
             validation_state: ValidationState::None,
         });
-        self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), true, true, window, cx);
+        self.update_visible_entries(
+            Some((worktree_id, NEW_ENTRY_ID)),
+            Some(Box::new(|editor, window, cx| {
+                editor.clear(window, cx);
+                window.focus(&editor.focus_handle(cx));
+            })),
+            true,
+            window,
+            cx,
+        );
         cx.notify();
     }
 
@@ -1888,15 +1897,20 @@ impl ProjectPanel {
                         file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
                     0..selection_end
                 });
-                self.filename_editor.update(cx, |editor, cx| {
-                    editor.set_text(file_name, window, cx);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.select_ranges([selection])
-                    });
-                    window.focus(&editor.focus_handle(cx));
-                });
-                self.update_visible_entries(None, false, true, window, cx);
                 cx.notify();
+                self.update_visible_entries(
+                    None,
+                    Some(Box::new(|editor, window, cx| {
+                        editor.set_text(file_name, window, cx);
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges([selection])
+                        });
+                        window.focus(&editor.focus_handle(cx));
+                    })),
+                    true,
+                    window,
+                    cx,
+                );
             }
         }
     }
@@ -2017,7 +2031,7 @@ impl ProjectPanel {
                     if let Some(next_selection) = next_selection {
                         panel.update_visible_entries(
                             Some((next_selection.worktree_id, next_selection.entry_id)),
-                            false,
+                            None,
                             true,
                             window,
                             cx,
@@ -2144,7 +2158,7 @@ impl ProjectPanel {
                 }
             }
 
-            self.update_visible_entries(None, false, true, window, cx);
+            self.update_visible_entries(None, None, true, window, cx);
             cx.notify();
         }
     }
@@ -2169,7 +2183,7 @@ impl ProjectPanel {
                 }
             }
 
-            self.update_visible_entries(None, false, true, window, cx);
+            self.update_visible_entries(None, None, true, window, cx);
             cx.notify();
         }
     }
@@ -2318,7 +2332,7 @@ impl ProjectPanel {
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
                 Some((selection.worktree_id, selection.entry_id)),
-                false,
+                None,
                 true,
                 window,
                 cx,
@@ -2357,7 +2371,7 @@ impl ProjectPanel {
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
                 Some((selection.worktree_id, selection.entry_id)),
-                false,
+                None,
                 true,
                 window,
                 cx,
@@ -2395,7 +2409,7 @@ impl ProjectPanel {
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
                 Some((selection.worktree_id, selection.entry_id)),
-                false,
+                None,
                 true,
                 window,
                 cx,
@@ -2487,7 +2501,7 @@ impl ProjectPanel {
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
                 Some((selection.worktree_id, selection.entry_id)),
-                false,
+                None,
                 true,
                 window,
                 cx,
@@ -3206,7 +3220,9 @@ impl ProjectPanel {
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
-        focus_filename_editor: bool,
+        filename_editor_callback: Option<
+            Box<dyn FnOnce(&mut Editor, &mut Window, &mut Context<Editor>) + 'static>,
+        >,
         autoscroll: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3455,7 +3471,7 @@ impl ProjectPanel {
                     new_state
                 })
                 .await;
-            this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, move |this, window, cx| {
                 let current_selection = this.state.selection;
                 this.state = new_state;
                 if let Some((worktree_id, entry_id)) = new_selected_entry {
@@ -3479,10 +3495,9 @@ impl ProjectPanel {
                             .sum::<usize>(),
                     )
                 }
-                if focus_filename_editor {
-                    this.filename_editor.update(cx, |editor, cx| {
-                        editor.clear(window, cx);
-                        window.focus(&editor.focus_handle(cx));
+                if let Some(filename_editor_callback) = filename_editor_callback {
+                    this.filename_editor.update(cx, move |editor, cx| {
+                        filename_editor_callback(editor, window, cx)
                     });
                 }
                 if autoscroll {
@@ -4543,7 +4558,7 @@ impl ProjectPanel {
                                         this.expand_entry(worktree_id, entry_id, cx);
                                         this.update_visible_entries(
                                             Some((worktree_id, entry_id)),
-                                            false,
+                                            None,
                                             false,
                                             window,
                                             cx,
@@ -5111,7 +5126,7 @@ impl ProjectPanel {
 
         let worktree_id = worktree.id();
         self.expand_entry(worktree_id, entry_id, cx);
-        self.update_visible_entries(Some((worktree_id, entry_id)), false, true, window, cx);
+        self.update_visible_entries(Some((worktree_id, entry_id)), None, true, window, cx);
         self.marked_entries.clear();
         self.marked_entries.push(SelectedEntry {
             worktree_id,
