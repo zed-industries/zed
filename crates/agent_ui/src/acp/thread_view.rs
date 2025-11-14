@@ -5860,6 +5860,7 @@ impl Render for AcpThreadView {
                 }
             })
             .children(self.render_thread_error(cx))
+            .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
                     !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
