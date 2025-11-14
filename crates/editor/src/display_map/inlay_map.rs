@@ -978,9 +978,6 @@ impl InlaySnapshot {
 
         let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
         cursor.seek(&range.start, Bias::Right);
-        //                :SomeTypeInlay
-        // |---| >|----v-----|< |----------------| |------------v--|
-        // |---| >|----------|< |----------------| |------------v--|
 
         let overshoot = range.start.0 - cursor.start().0.0;
         match cursor.item() {

@@ -1,13 +1,22 @@
-use std::ops::Range;
+use std::{cmp, ops::Range};
 
+use language::Chunk;
 use multi_buffer::{
-    MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, ToOffset as _, ToPoint as _,
+    MultiBufferChunks, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, MultiBufferRows,
+    MultiBufferSnapshot, RowInfo, ToOffset as _, ToPoint as _,
 };
 use rope::{Point, TextSummary};
 use sum_tree::{Dimensions, SumTree};
 use text::Bias;
 use util::RangeExt as _;
 
+use crate::display_map::Highlights;
+
+/// A [`FilterTransform`] represents a (potentially filtered) region in the
+/// [`FilterMap`].
+///
+/// The [`FilterMap`] maintains an invariant that no two consecutive transforms
+/// are the same type (i.e. no two consecutive `Isomorphic`s or `Filter`s).
 #[derive(Debug, Clone)]
 enum FilterTransform {
     Isomorphic {
@@ -791,12 +800,12 @@ fn push_filter(
 }
 
 impl FilterSnapshot {
-    fn to_point(&self, offset: FilterOffset) -> FilterPoint {
+    fn offset_to_point(&self, offset: FilterOffset) -> FilterPoint {
         let (start, _end, item) = self
             .transforms
             .find::<Dimensions<FilterOffset, FilterPoint, usize>, _>((), &offset, Bias::Right);
         match item {
-            Some(FilterTransform::Isomorphic { summary, .. }) => {
+            Some(FilterTransform::Isomorphic { .. }) => {
                 let buffer_start = self.buffer_snapshot.offset_to_point(start.2);
                 let overshoot = offset.0 - start.0.0;
                 let buffer_end = self.buffer_snapshot.offset_to_point(start.2 + overshoot);
@@ -807,70 +816,254 @@ impl FilterSnapshot {
         }
     }
 
+    fn point_to_offset(&self, point: FilterPoint) -> FilterOffset {
+        type D = Dimensions<FilterPoint, FilterOffset, MultiBufferPoint>;
+        let (start, _end, item) = self.transforms.find::<D, _>((), &point, Bias::Right);
+        match item {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let buffer_start = self.buffer_snapshot.point_to_offset(start.2);
+                let overshoot = point.0 - start.0.0;
+                let buffer_end = self.buffer_snapshot.point_to_offset(start.2 + overshoot);
+                FilterOffset(start.1.0 + (buffer_end - buffer_start))
+            }
+            Some(FilterTransform::Filter { .. }) => start.1,
+            None => self.len(),
+        }
+    }
+
     fn max_point(&self) -> FilterPoint {
         FilterPoint(self.transforms.summary().output.lines)
     }
 
-    // fn text_summary_for_range(&self, range: Range<FilterOffset>) -> TextSummary {
-    //     let mut summary = TextSummary::default();
+    fn len(&self) -> FilterOffset {
+        FilterOffset(self.transforms.summary().output.len)
+    }
 
-    //     let mut cursor = self
-    //         .transforms
-    //         .cursor::<Dimensions<FilterOffset, usize>>(());
-    //     cursor.seek(&range.start, Bias::Right);
+    fn text_summary_for_range(&self, range: Range<FilterOffset>) -> TextSummary {
+        let mut summary = TextSummary::default();
 
-    //     let overshoot = range.start.0 - cursor.start().0.0;
-    //     match cursor.item() {
-    //         Some(FilterTransform::Isomorphic { .. }) => {
-    //             let buffer_start = cursor.start().1;
-    //             let suffix_start = buffer_start + overshoot;
-    //             let suffix_end =
-    //                 buffer_start + (cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0);
-    //             summary = self
-    //                 .buffer_snapshot
-    //                 .text_summary_for_range(suffix_start..suffix_end);
-    //             cursor.next();
-    //         }
-    //         Some(FilterTransform::Filter { .. }) | None => {}
-    //     }
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FilterOffset, usize>>(());
+        cursor.seek(&range.start, Bias::Right);
 
-    //     if range.end > cursor.start().0 {
-    //         summary += cursor
-    //             .summary::<_, TransformSummary>(&range.end, Bias::Right)
-    //             .output;
+        let overshoot = range.start.0 - cursor.start().0.0;
+        match cursor.item() {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let buffer_start = cursor.start().1;
+                let suffix_start = buffer_start + overshoot;
+                let suffix_end =
+                    buffer_start + (cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0);
+                summary = self
+                    .buffer_snapshot
+                    .text_summary_for_range(suffix_start..suffix_end);
+                cursor.next();
+            }
+            Some(FilterTransform::Filter { .. }) | None => {}
+        }
 
-    //         let overshoot = range.end.0 - cursor.start().0.0;
-    //         match cursor.item() {
-    //             Some(FilterTransform::Isomorphic { .. }) => {
-    //                 let prefix_start = cursor.start().1;
-    //                 let prefix_end = prefix_start + overshoot;
-    //                 summary += self
-    //                     .buffer_snapshot
-    //                     .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
-    //             }
-    //             Some(FilterTransform::Filter { .. }) | None => {}
-    //         }
-    //     }
-    //
-    //     summary
-    // }
+        if range.end > cursor.start().0 {
+            summary += cursor
+                .summary::<_, TransformSummary>(&range.end, Bias::Right)
+                .output;
 
-    // fn to_point(&self, offset: FilterOffset) -> FilterPoint {
-    //     let (start, _, item) = self
-    //         .transforms
-    //         .find::<Dimensions<FilterOffset, FilterPoint, usize>, _>((), &offset, Bias::Right);
-    //     let overshoot = offset.0 - start.0.0;
-    //     match item {
-    //         Some(FilterTransform::Isomorphic { .. }) => {
-    //             let buffer_offset_start = start.2;
-    //             let buffer_offset_end = buffer_offset_start + overshoot;
-    //             let buffer_start = self.buffer_snapshot.offset_to_point(buffer_offset_start);
-    //             let buffer_end = self.buffer_snapshot.offset_to_point(buffer_offset_end);
-    //             FilterPoint(start.1.0 + (buffer_end - buffer_start))
-    //         }
-    //         Some(FilterTransform::Filter { .. }) | None => self.max_point(),
-    //     }
-    // }
+            let overshoot = range.end.0 - cursor.start().0.0;
+            match cursor.item() {
+                Some(FilterTransform::Isomorphic { .. }) => {
+                    let prefix_start = cursor.start().1;
+                    let prefix_end = prefix_start + overshoot;
+                    summary += self
+                        .buffer_snapshot
+                        .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
+                }
+                Some(FilterTransform::Filter { .. }) | None => {}
+            }
+        }
+
+        summary
+    }
+
+    // todo! check later
+    /// Constrain a [`FilterPoint`] to a valid location in this snapshot.
+    ///
+    /// For example, if the first line in a snapshot had 50 characters, the
+    /// point 0:100 would be clipped to 0:50 . This function trivially "takes
+    /// into account" filtered lines, since the `point` parameter is already a
+    /// [`FilterPoint`], which always refers to non-filtered lines.
+    fn clip_point(&self, point: FilterPoint, bias: Bias) -> FilterPoint {
+        let (start, _end, item) = self
+            .transforms
+            .find::<Dimensions<FilterPoint, MultiBufferPoint>, _>((), &point, Bias::Right);
+        match item {
+            Some(FilterTransform::Isomorphic { .. }) => {
+                let overshoot = point.0 - start.0.0;
+                let clipped_buffer_point =
+                    self.buffer_snapshot.clip_point(start.1 + overshoot, bias);
+                FilterPoint(start.0.0 + (clipped_buffer_point - start.1))
+            }
+            Some(FilterTransform::Filter { .. }) => {
+                debug_assert_eq!(point, start.0);
+                debug_assert!(
+                    false,
+                    "a cursor.find() searching for `FilterPoint`s should never stop on a `FilterTransform::Filter`"
+                );
+                start.0
+            }
+            None => self.max_point(),
+        }
+    }
+
+    fn row_infos(&self, start_row: FilterRow) -> FilterRows<'_> {
+        FilterRows {
+            transform_cursor: self.transforms.cursor(()),
+            buffer_rows: self.buffer_snapshot.row_infos(MultiBufferRow(0)),
+            next_row: start_row,
+            snapshot: self,
+        }
+    }
+
+    pub(crate) fn chunks<'a>(
+        &'a self,
+        range: Range<FilterOffset>,
+        language_aware: bool,
+        highlights: Highlights<'a>,
+    ) -> FilterChunks<'a> {
+        let mut cursor = self.transforms.cursor(());
+        cursor.next();
+        FilterChunks {
+            cursor,
+            snapshot: self,
+            buffer_chunks: ,
+            language_aware,
+            highlights,
+            
+        }
+    }
+}
+
+pub struct FilterRow(pub u32);
+
+impl std::fmt::Debug for FilterRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FilterRow({})", self.0)
+    }
+}
+
+struct FilterRows<'a> {
+    transform_cursor:
+        sum_tree::Cursor<'a, 'static, FilterTransform, Dimensions<FilterPoint, MultiBufferPoint>>,
+    snapshot: &'a FilterSnapshot,
+    buffer_rows: MultiBufferRows<'a>,
+    next_row: FilterRow,
+}
+
+impl<'a> Iterator for FilterRows<'a> {
+    type Item = RowInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let target = FilterPoint(Point::new(self.next_row.0, 0));
+        self.transform_cursor.seek_forward(&target, Bias::Right);
+        let mut buffer_start = self.transform_cursor.start().1;
+        match self.transform_cursor.item()? {
+            FilterTransform::Isomorphic { .. } => {
+                let overshoot = target.0 - self.transform_cursor.start().0.0;
+                buffer_start += overshoot;
+            }
+            FilterTransform::Filter { .. } => {}
+        }
+        self.buffer_rows.seek(MultiBufferRow(buffer_start.row));
+        let info = self.buffer_rows.next()?;
+        self.next_row.0 += 1;
+        Some(info)
+    }
+}
+
+impl FilterRows<'_> {
+    pub fn seek(&mut self, row: FilterRow) {
+        if row.0 < self.next_row.0 {
+            self.transform_cursor = self.snapshot.transforms.cursor(());
+        }
+        self.next_row = row;
+    }
+}
+
+struct FilterChunks<'a> {
+    cursor: sum_tree::Cursor<'a, 'static, FilterTransform, Dimensions<FilterOffset, usize>>,
+    buffer_chunks: MultiBufferChunks<'a>,
+    snapshot: &'a FilterSnapshot,
+    language_aware: bool,
+    highlights: Highlights<'a>,
+}
+
+impl FilterChunks<'_> {
+    /// Ensures that `self.cursor.item()` returns a
+    /// [`FilterTransform::Isomorphic`]. Returns whether `self.cursor` actually
+    /// moved (`None` if the cursor is not currently on an item).
+    ///
+    /// This relies on the fact that the filter map maintains an invariant that
+    /// there are no two consecutive transforms of different kinds.
+    fn ensure_on_isomorphic(&mut self) -> Option<bool> {
+        match self.cursor.item()? {
+            FilterTransform::Filter { .. } => {
+                self.cursor.next();
+                Some(true)
+            }
+            FilterTransform::Isomorphic { .. } => Some(false),
+        }
+    }
+}
+
+impl<'a> Iterator for FilterChunks<'a> {
+    type Item = Chunk<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Note: MultiBufferChunks ensures that no chunk crosses a diff transform boundary,
+        // so we don't have to worry about splitting chunk here.
+        let did_move = self.ensure_on_isomorphic()?;
+        if did_move {
+            let range = self.cursor.start().1..self.cursor.end().1;
+            self.buffer_chunks.seek(range);
+        }
+        let buffer_chunk = loop {
+            if let Some(chunk) = self.buffer_chunks.next() {
+                break chunk;
+            }
+
+            // Exhausted the isomorphic transform, move on to the next one.
+            self.cursor.next();
+            self.ensure_on_isomorphic()?;
+
+            // Note: this `.seek()` call will move the "iterable range" of
+            // `self.buffer_chunks`, so `self.buffer_chunks.next()` may start
+            // returning `Some` again.
+            let range = self.cursor.start().1..self.cursor.end().1;
+            self.buffer_chunks.seek(range);
+        };
+
+        Some(buffer_chunk)
+    }
+}
+
+impl<'a> FilterChunks<'a> {
+    fn seek(&mut self, range: Range<FilterOffset>) {
+        *self = self
+            .snapshot
+            .chunks(range, self.language_aware, self.highlights);
+    }
+
+    fn naive_seek(&mut self, range: Range<FilterOffset>) {
+        *self = self
+            .snapshot
+            .chunks(range, self.language_aware, self.highlights);
+        self.reset();
+        while !range.contains(&self.cursor.start().0) {
+            self.next();
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = self.snapshot.chunks(range, language_aware, highlights)
+    }
 }
 
 #[cfg(test)]
