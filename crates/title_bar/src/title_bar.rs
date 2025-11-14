@@ -653,8 +653,9 @@ impl TitleBar {
                 window
                     .spawn(cx, async move |cx| {
                         client
-                            .sign_in_with_optional_connect(true, cx)
+                            .connect(true, cx)
                             .await
+                            .into_response()
                             .notify_async_err(cx);
                     })
                     .detach();
