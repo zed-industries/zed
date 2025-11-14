@@ -593,17 +593,14 @@ mod tests {
         let mut output = String::new();
         for (buffer, ranges) in results {
             buffer.read_with(cx, |buffer, cx| {
-                let excerpts = ranges
-                    .into_iter()
-                    .map(|range| {
-                        let point_range = range.to_point(buffer);
-                        if point_range.end.column > 0 {
-                            Line(point_range.start.row)..Line(point_range.end.row + 1)
-                        } else {
-                            Line(point_range.start.row)..Line(point_range.end.row)
-                        }
-                    })
-                    .collect();
+                let excerpts = ranges.into_iter().map(|range| {
+                    let point_range = range.to_point(buffer);
+                    if point_range.end.column > 0 {
+                        Line(point_range.start.row)..Line(point_range.end.row + 1)
+                    } else {
+                        Line(point_range.start.row)..Line(point_range.end.row)
+                    }
+                });
 
                 write_codeblock(
                     &buffer.file().unwrap().full_path(cx),
