@@ -12,7 +12,7 @@ use editor::{
     SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
-    multibuffer_context_lines, multibuffer_context_lines,
+    multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
