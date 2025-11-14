@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::{IsTerminal, Write},
     path::PathBuf,
     sync::Arc,
@@ -33,6 +34,28 @@ pub struct EvaluateArguments {
     repetitions: u16,
     #[arg(long)]
     skip_prediction: bool,
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct EditSignature {
+    diff: String,
+}
+
+#[derive(Debug)]
+struct EditBucket {
+    signature: EditSignature,
+    is_correct: bool,
+    execution_indices: Vec<String>,
+    reasoning_samples: Vec<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ExecutionData {
+    execution_id: String,
+    diff: String,
+    is_correct: bool,
+    is_abject_failure: bool,
+    reasoning: String,
 }
 
 pub async fn run_evaluate(
@@ -87,19 +110,28 @@ pub async fn run_evaluate(
     {
         write_aggregated_scores(&mut output_file, &all_results).log_err();
     };
+
+    if args.repetitions > 1 {
+        if let Err(e) = write_bucketed_analysis(&all_results) {
+            eprintln!("Failed to write bucketed analysis: {:?}", e);
+        }
+    }
+
     print_run_data_dir(args.repetitions == 1, std::io::stdout().is_terminal());
 }
 
 fn write_aggregated_scores(
     w: &mut impl std::io::Write,
-    all_results: &Vec<Vec<Result<EvaluationResult, (anyhow::Error, String, Option<u16>)>>>,
+    all_results: &Vec<
+        Vec<Result<(EvaluationResult, ExecutionData), (anyhow::Error, String, Option<u16>)>>,
+    >,
 ) -> Result<()> {
     let mut successful = Vec::new();
     let mut failed_count = 0;
 
     for result in all_results.iter().flatten() {
         match result {
-            Ok(eval_result) => successful.push(eval_result),
+            Ok((eval_result, _execution_data)) => successful.push(eval_result),
             Err((err, name, repetition_ix)) => {
                 if failed_count == 0 {
                     writeln!(w, "## Errors\n")?;
@@ -163,7 +195,7 @@ pub async fn run_evaluate_one(
     predict: bool,
     cache_mode: CacheMode,
     cx: &mut AsyncApp,
-) -> Result<EvaluationResult> {
+) -> Result<(EvaluationResult, ExecutionData)> {
     let predict_result = zeta2_predict(
         example.clone(),
         project,
@@ -203,7 +235,34 @@ pub async fn run_evaluate_one(
         .log_err();
     }
 
-    anyhow::Ok(evaluation_result)
+    let reasoning = std::fs::read_to_string(
+        predict_result
+            .run_example_dir
+            .join("prediction_response.md"),
+    )
+    .unwrap_or_default();
+
+    let execution_id = if let Some(rep_ix) = repetition_ix {
+        format!("{:03}", rep_ix)
+    } else {
+        example.name.clone()
+    };
+
+    let is_abject_failure = predict_result.diff.is_empty();
+
+    let is_correct = evaluation_result.edit_prediction.false_positives == 0
+        && evaluation_result.edit_prediction.false_negatives == 0
+        && evaluation_result.edit_prediction.true_positives > 0;
+
+    let execution_data = ExecutionData {
+        execution_id,
+        diff: predict_result.diff.clone(),
+        is_correct,
+        is_abject_failure,
+        reasoning,
+    };
+
+    anyhow::Ok((evaluation_result, execution_data))
 }
 
 fn write_eval_result(
@@ -506,4 +565,201 @@ pub fn compare_diffs(patch_a: &str, patch_b: &str, use_color: bool) -> String {
         .collect::<Vec<String>>();
 
     annotated.join("\n")
+}
+
+fn write_bucketed_analysis(
+    all_results: &Vec<
+        Vec<Result<(EvaluationResult, ExecutionData), (anyhow::Error, String, Option<u16>)>>,
+    >,
+) -> Result<()> {
+    let mut all_executions = Vec::new();
+    let mut total_executions = 0;
+    let mut abject_failures = Vec::new();
+
+    for result in all_results.iter().flatten() {
+        total_executions += 1;
+        match result {
+            Ok((_eval_result, execution_data)) => {
+                if execution_data.is_abject_failure {
+                    abject_failures.push(execution_data);
+                } else {
+                    all_executions.push(execution_data);
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    let mut buckets: HashMap<EditSignature, EditBucket> = HashMap::new();
+
+    for execution_data in &all_executions {
+        let signature = EditSignature {
+            diff: execution_data.diff.clone(),
+        };
+
+        buckets
+            .entry(signature.clone())
+            .and_modify(|bucket| {
+                bucket
+                    .execution_indices
+                    .push(execution_data.execution_id.clone());
+                bucket
+                    .reasoning_samples
+                    .push(execution_data.reasoning.clone());
+            })
+            .or_insert_with(|| EditBucket {
+                signature: signature.clone(),
+                is_correct: execution_data.is_correct,
+                execution_indices: vec![execution_data.execution_id.clone()],
+                reasoning_samples: vec![execution_data.reasoning.clone()],
+            });
+    }
+
+    let mut sorted_buckets: Vec<_> = buckets.into_iter().map(|(_, bucket)| bucket).collect();
+    sorted_buckets.sort_by(|a, b| match (a.is_correct, b.is_correct) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => b.execution_indices.len().cmp(&a.execution_indices.len()),
+    });
+
+    let output_path = crate::paths::RUN_DIR.join("bucketed_analysis.md");
+    let mut output = std::fs::File::create(&output_path)?;
+
+    writeln!(output, "# Bucketed Edit Analysis\n")?;
+
+    writeln!(output, "## Summary\n")?;
+    writeln!(output, "- **Total executions**: {}", total_executions)?;
+
+    let correct_count: usize = sorted_buckets
+        .iter()
+        .filter(|b| b.is_correct)
+        .map(|b| b.execution_indices.len())
+        .sum();
+
+    let incorrect_count: usize = sorted_buckets
+        .iter()
+        .filter(|b| !b.is_correct)
+        .map(|b| b.execution_indices.len())
+        .sum();
+
+    writeln!(
+        output,
+        "- **Correct predictions**: {} ({:.1}%)",
+        correct_count,
+        (correct_count as f64 / total_executions as f64) * 100.0
+    )?;
+
+    writeln!(
+        output,
+        "- **Incorrect predictions**: {} ({:.1}%)",
+        incorrect_count,
+        (incorrect_count as f64 / total_executions as f64) * 100.0
+    )?;
+
+    writeln!(
+        output,
+        "- **Abject failures**: {} ({:.1}%)",
+        abject_failures.len(),
+        (abject_failures.len() as f64 / total_executions as f64) * 100.0
+    )?;
+
+    let unique_incorrect = sorted_buckets.iter().filter(|b| !b.is_correct).count();
+    writeln!(
+        output,
+        "- **Unique incorrect edit patterns**: {}\n",
+        unique_incorrect
+    )?;
+
+    writeln!(output, "---\n")?;
+
+    for (idx, bucket) in sorted_buckets.iter().filter(|b| b.is_correct).enumerate() {
+        if idx == 0 {
+            writeln!(
+                output,
+                "## Correct Predictions ({} occurrences)\n",
+                bucket.execution_indices.len()
+            )?;
+        }
+
+        writeln!(output, "**Predicted Edit:**\n")?;
+        writeln!(output, "```diff")?;
+        writeln!(output, "{}", bucket.signature.diff)?;
+        writeln!(output, "```\n")?;
+
+        writeln!(
+            output,
+            "**Executions:** {}\n",
+            bucket.execution_indices.join(", ")
+        )?;
+        writeln!(output, "---\n")?;
+    }
+
+    for (idx, bucket) in sorted_buckets.iter().filter(|b| !b.is_correct).enumerate() {
+        writeln!(
+            output,
+            "## Incorrect Prediction #{} ({} occurrences)\n",
+            idx + 1,
+            bucket.execution_indices.len()
+        )?;
+
+        writeln!(output, "**Predicted Edit:**\n")?;
+        writeln!(output, "```diff")?;
+        writeln!(output, "{}", bucket.signature.diff)?;
+        writeln!(output, "```\n")?;
+
+        writeln!(
+            output,
+            "**Executions:** {}\n",
+            bucket.execution_indices.join(", ")
+        )?;
+
+        for (exec_id, reasoning) in bucket
+            .execution_indices
+            .iter()
+            .zip(bucket.reasoning_samples.iter())
+        {
+            writeln!(output, "### Execution {}\n", exec_id)?;
+            writeln!(
+                output,
+                "**File:** `{}/{}/prediction_response.md`\n",
+                crate::paths::RUN_DIR.display(),
+                exec_id
+            )?;
+            writeln!(output, "**Reasoning:**\n")?;
+            writeln!(output, "```")?;
+            writeln!(output, "{}", reasoning)?;
+            writeln!(output, "```\n")?;
+        }
+
+        writeln!(output, "\n---\n")?;
+    }
+
+    if !abject_failures.is_empty() {
+        writeln!(
+            output,
+            "## Abject Failures ({} occurrences)\n",
+            abject_failures.len()
+        )?;
+        writeln!(output, "These executions produced no edit at all.\n")?;
+
+        for execution_data in &abject_failures {
+            writeln!(output, "### Execution {}\n", execution_data.execution_id)?;
+
+            writeln!(
+                output,
+                "**File:** `{}/{}/prediction_response.md`\n",
+                crate::paths::RUN_DIR.display(),
+                execution_data.execution_id
+            )?;
+
+            writeln!(output, "**Reasoning:**\n")?;
+            writeln!(output, "```")?;
+            writeln!(output, "{}", execution_data.reasoning)?;
+            writeln!(output, "```\n")?;
+
+            writeln!(output, "---\n")?;
+        }
+    }
+
+    Ok(())
 }
