@@ -145,6 +145,8 @@ fn search(
             }
         }
 
+        Some(ContextPickerMode::Diagnostics) => Task::ready(Vec::new()),
+
         None => {
             if query.is_empty() {
                 let mut matches = recent_entries
@@ -1338,7 +1340,8 @@ mod tests {
                     format!("four.txt a{slash}"),
                     "Files & Directories".into(),
                     "Symbols".into(),
-                    "Fetch".into()
+                    "Fetch".into(),
+                    "Diagnostics".into()
                 ]
             );
         });

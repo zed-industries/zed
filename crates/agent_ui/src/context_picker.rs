@@ -76,6 +76,7 @@ pub(crate) enum ContextPickerMode {
     Fetch,
     Thread,
     Rules,
+    Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,7 @@ impl TryFrom<&str> for ContextPickerMode {
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             "rule" => Ok(Self::Rules),
+            "diagnostics" => Ok(Self::Diagnostics),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -126,6 +128,7 @@ impl ContextPickerMode {
             Self::Fetch => "fetch",
             Self::Thread => "thread",
             Self::Rules => "rule",
+            Self::Diagnostics => "diagnostics",
         }
     }
 
@@ -136,6 +139,7 @@ impl ContextPickerMode {
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
             Self::Rules => "Rules",
+            Self::Diagnostics => "Diagnostics",
         }
     }
 
@@ -146,6 +150,7 @@ impl ContextPickerMode {
             Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
             Self::Rules => RULES_ICON,
+            Self::Diagnostics => IconName::Warning,
         }
     }
 }
@@ -355,6 +360,7 @@ impl ContextPicker {
                         }));
                     }
                 }
+                ContextPickerMode::Diagnostics => {}
             },
             ContextPickerEntry::Action(action) => match action {
                 ContextPickerAction::AddSelections => {
@@ -626,6 +632,7 @@ pub(crate) fn available_context_picker_entries(
     }
 
     entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+    entries.push(ContextPickerEntry::Mode(ContextPickerMode::Diagnostics));
 
     entries
 }
