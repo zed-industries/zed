@@ -312,10 +312,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    StatusesChanged {
-        // TODO could report which statuses changed here
-        full_scan: bool,
-    },
+    StatusesChanged,
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
@@ -4989,7 +4986,7 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         if !edits.is_empty() {
-            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+            cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
@@ -5343,7 +5340,7 @@ impl Repository {
                     }
 
                     if !changed_path_statuses.is_empty() {
-                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
+                        cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
@@ -5725,7 +5722,7 @@ async fn compute_snapshot(
     }
 
     if statuses_by_path != prev_snapshot.statuses_by_path {
-        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
+        events.push(RepositoryEvent::StatusesChanged)
     }
 
     // Useful when branch is None in detached head state
