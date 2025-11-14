@@ -31,14 +31,3 @@ curl -fsSL --output - "$WILD_URL" \
 
 cat <<EOF
 Wild is installed to ${DEST_DIR}/wild
-
-To make it your default, add or merge these lines into your ~/.cargo/config.toml:
-
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-EOF
