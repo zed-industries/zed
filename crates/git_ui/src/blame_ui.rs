@@ -81,6 +81,12 @@ impl BlameRenderer for GitBlameRenderer {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
                             move |event, window, cx| {
+                                cx.stop_propagation();
+                                // TODO(gpui): Consider clearing any active tooltip when opening
+                                // a context menu. With current GPUI behavior, hit-testing order
+                                // is handled by prepainting tooltips before deferred draws, but a
+                                // proactive dismissal here would avoid residual hover state once
+                                // a public API exists.
                                 deploy_blame_entry_context_menu(
                                     &blame_entry,
                                     details.as_ref(),
