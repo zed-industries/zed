@@ -1,4 +1,8 @@
-use std::{io::Write, path::PathBuf, sync::Arc};
+use std::{
+    io::{IsTerminal, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use clap::Args;
@@ -81,7 +85,7 @@ pub async fn run_evaluate(
     {
         write_aggregated_scores(&mut output_file, &all_results).log_err();
     };
-    print_run_data_dir(args.repetitions == 1);
+    print_run_data_dir(args.repetitions == 1, std::io::stdout().is_terminal());
 }
 
 fn write_aggregated_scores(
@@ -159,7 +163,7 @@ pub async fn run_evaluate_one(
             &predict_result,
             &evaluation_result,
             &mut std::io::stdout(),
-            true,
+            std::io::stdout().is_terminal(),
         )?;
     }
 

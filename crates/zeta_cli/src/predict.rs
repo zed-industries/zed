@@ -13,7 +13,7 @@ use language::{Anchor, Buffer, Point};
 use project::Project;
 use serde::Deserialize;
 use std::fs;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -98,7 +98,7 @@ pub async fn run_zeta2_predict(
     .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
-    print_run_data_dir(true);
+    print_run_data_dir(true, std::io::stdout().is_terminal());
 }
 
 pub async fn zeta2_predict(
