@@ -3,9 +3,8 @@ use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
 use crate::project_diff::{self, Diff, ProjectDiff};
-use crate::remote_modal::RemoteModal;
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-use crate::{branch_picker, picker_prompt, remote_picker, render_remote_button};
+use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -188,9 +187,6 @@ pub fn register(workspace: &mut Workspace) {
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
         CommitModal::toggle(workspace, None, window, cx)
-    });
-    workspace.register_action(|workspace, _: &CreateRemote, window, cx| {
-        RemoteModal::toggle(workspace, window, cx)
     });
 }
 
@@ -4589,10 +4585,7 @@ impl RenderOnce for PanelRepoFooter {
                 })
             })
             .unwrap_or_else(|| " (no branch)".to_owned());
-        let remote = repo.as_ref().and_then(|repo| repo.read(cx).remote.as_ref());
-        let remote_name = remote.map(|remote| remote.name.to_string());
         let show_separator = self.branch.is_some() || self.head_commit.is_some();
-        let show_remote_separator = remote_name.is_some();
 
         let active_repo_name = self.active_repository.clone();
 
@@ -4654,34 +4647,11 @@ impl RenderOnce for PanelRepoFooter {
                 window.dispatch_action(zed_actions::git::Switch.boxed_clone(), cx);
             });
 
-        let cloned_repo = repo.clone();
         let branch_selector = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| Some(branch_picker::popover(cloned_repo.clone(), window, cx)))
+            .menu(move |window, cx| Some(branch_picker::popover(repo.clone(), window, cx)))
             .trigger_with_tooltip(
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Switch),
-            )
-            .anchor(Corner::BottomLeft)
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(-2.0),
-            });
-
-        let remote_selector_button = Button::new(
-            "remote-selector",
-            remote_name.unwrap_or_else(|| " (no branch)".to_string()),
-        )
-        .size(ButtonSize::None)
-        .label_size(LabelSize::Small)
-        .truncate(true)
-        .on_click(|_, window, cx| {
-            window.dispatch_action(zed_actions::git::SelectRemote.boxed_clone(), cx);
-        });
-        let remote_selector = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| Some(remote_picker::popover(repo.clone(), window, cx)))
-            .trigger_with_tooltip(
-                remote_selector_button,
-                Tooltip::for_action_title("Select Remote", &zed_actions::git::SelectRemote),
             )
             .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
@@ -4711,15 +4681,6 @@ impl RenderOnce for PanelRepoFooter {
                     )
                     .child(repo_selector)
                     .when(show_separator, |this| {
-                        this.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().icon_muted.opacity(0.5))
-                                .child("/"),
-                        )
-                    })
-                    .when(show_remote_separator, |this| this.child(remote_selector))
-                    .when(show_remote_separator, |this| {
                         this.child(
                             div()
                                 .text_sm()

@@ -4,9 +4,9 @@ use fuzzy::StringMatchCandidate;
 use collections::HashSet;
 use git::repository::Branch;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, Window, rems,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
@@ -14,7 +14,9 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, ToggleButton, Tooltip, prelude::*,
+};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -214,6 +216,7 @@ pub struct BranchListDelegate {
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
+    display_remotes: bool,
 }
 
 impl BranchListDelegate {
@@ -227,6 +230,7 @@ impl BranchListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
+            display_remotes: false,
         }
     }
 
@@ -261,7 +265,11 @@ impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select branch…".into()
+        if self.display_remotes {
+            "Select remote…".into()
+        } else {
+            "Select branch…".into()
+        }
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
@@ -299,11 +307,18 @@ impl PickerDelegate for BranchListDelegate {
         };
 
         const RECENT_BRANCHES_COUNT: usize = 10;
+        let display_remotes = self.display_remotes;
         cx.spawn_in(window, async move |picker, cx| {
             let mut matches: Vec<BranchEntry> = if query.is_empty() {
                 all_branches
                     .into_iter()
-                    .filter(|branch| !branch.is_remote())
+                    .filter(|branch| {
+                        if display_remotes {
+                            branch.is_remote()
+                        } else {
+                            !branch.is_remote()
+                        }
+                    })
                     .take(RECENT_BRANCHES_COUNT)
                     .map(|branch| BranchEntry {
                         branch,
@@ -312,7 +327,17 @@ impl PickerDelegate for BranchListDelegate {
                     })
                     .collect()
             } else {
-                let candidates = all_branches
+                let branches = all_branches
+                    .iter()
+                    .filter(|branch| {
+                        if display_remotes {
+                            branch.is_remote()
+                        } else {
+                            !branch.is_remote()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let candidates = branches
                     .iter()
                     .enumerate()
                     .map(|(ix, branch)| StringMatchCandidate::new(ix, branch.name()))
@@ -329,7 +354,7 @@ impl PickerDelegate for BranchListDelegate {
                 .await
                 .into_iter()
                 .map(|candidate| BranchEntry {
-                    branch: all_branches[candidate.candidate_id].clone(),
+                    branch: branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,
                     is_new: false,
                 })
@@ -345,7 +370,11 @@ impl PickerDelegate for BranchListDelegate {
                         let query = query.replace(' ', "-");
                         matches.push(BranchEntry {
                             branch: Branch {
-                                ref_name: format!("refs/heads/{query}").into(),
+                                ref_name: if display_remotes {
+                                    format!("refs/heads/{query}").into()
+                                } else {
+                                    format!("refs/remotes/{query}").into()
+                                },
                                 is_head: false,
                                 upstream: None,
                                 most_recent_commit: None,
@@ -562,6 +591,41 @@ impl PickerDelegate for BranchListDelegate {
                         }),
                 )
                 .end_slot::<IconButton>(icon),
+        )
+    }
+
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    h_flex().gap_0p5().child(
+                        ToggleButton::new("filter-remotes", "Filter remotes")
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Default)
+                            .toggle_state(self.display_remotes)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.delegate.display_remotes = !this.delegate.display_remotes;
+                                cx.spawn_in(window, async move |this, cx| {
+                                    this.update_in(cx, |this, window, cx| {
+                                        let last_query = this.delegate.last_query.clone();
+                                        this.delegate.update_matches(last_query, window, cx)
+                                    })?
+                                    .await;
+
+                                    Result::Ok::<_, anyhow::Error>(())
+                                })
+                                .detach_and_log_err(cx);
+                                cx.notify();
+                            })),
+                    ),
+                )
+                .into_any(),
         )
     }
 
