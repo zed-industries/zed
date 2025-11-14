@@ -318,6 +318,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
 
             let buffer = buffer.read(cx);
             let snapshot = buffer.snapshot();
+            let modeline = buffer.modeline();
             for syntax_layer in snapshot.syntax_layers() {
                 let language = syntax_layer.language;
                 if language.config().jsx_tag_auto_close.is_none() {
@@ -325,6 +326,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                 }
                 let language_settings = language::language_settings::language_settings(
                     Some(language.name()),
+                    modeline,
                     snapshot.file(),
                     cx,
                 );

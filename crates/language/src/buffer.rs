@@ -1,6 +1,6 @@
 use crate::{
-    DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
-    TextObject, TreeSitterOptions,
+    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, RunnableCapture,
+    RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -125,6 +125,7 @@ pub struct Buffer {
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
+    modeline: Option<ModelineSettings>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -149,6 +150,7 @@ pub struct BufferSnapshot {
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
+    modeline: Option<ModelineSettings>,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -1003,6 +1005,7 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             change_bits: Default::default(),
+            modeline: None,
             _subscriptions: Vec::new(),
         }
     }
@@ -1011,6 +1014,7 @@ impl Buffer {
         text: Rope,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
+        modeline: Option<ModelineSettings>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
@@ -1032,6 +1036,7 @@ impl Buffer {
                 remote_selections: Default::default(),
                 language,
                 non_text_state_update_count: 0,
+                modeline,
             }
         }
     }
@@ -1055,6 +1060,7 @@ impl Buffer {
             remote_selections: Default::default(),
             language: None,
             non_text_state_update_count: 0,
+            modeline: None,
         }
     }
 
@@ -1082,6 +1088,7 @@ impl Buffer {
             remote_selections: Default::default(),
             language,
             non_text_state_update_count: 0,
+            modeline: None,
         }
     }
 
@@ -1101,6 +1108,7 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+            modeline: self.modeline.clone(),
         }
     }
 
@@ -1309,6 +1317,15 @@ impl Buffer {
             true,
             cx,
         );
+    }
+
+    /// Assign the buffer modeline settings.
+    pub fn set_modeline(&mut self, modeline: Option<ModelineSettings>) {
+        self.modeline = modeline;
+    }
+
+    pub fn modeline(&self) -> Option<&ModelineSettings> {
+        self.modeline.as_ref()
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -2399,8 +2416,13 @@ impl Buffer {
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent =
-                            language_settings(language.map(|l| l.name()), None, cx).auto_indent;
+                        let auto_indent = language_settings(
+                            language.map(|l| l.name()),
+                            self.modeline(),
+                            None,
+                            cx,
+                        )
+                        .auto_indent;
                         previous_setting = Some((language_id, auto_indent));
                         auto_indent
                     }
@@ -2993,6 +3015,7 @@ impl BufferSnapshot {
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
         let settings = language_settings(
             self.language_at(position).map(|l| l.name()),
+            self.modeline(),
             self.file(),
             cx,
         );
@@ -3427,6 +3450,11 @@ impl BufferSnapshot {
             })
     }
 
+    /// Returns the modeline settings for the buffer.
+    pub fn modeline(&self) -> Option<&ModelineSettings> {
+        self.modeline.as_ref()
+    }
+
     /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
@@ -3447,6 +3475,7 @@ impl BufferSnapshot {
     ) -> Cow<'a, LanguageSettings> {
         language_settings(
             self.language_at(position).map(|l| l.name()),
+            self.modeline(),
             self.file.as_ref(),
             cx,
         )
@@ -4809,6 +4838,7 @@ impl Clone for BufferSnapshot {
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+            modeline: self.modeline.clone(),
         }
     }
 }
