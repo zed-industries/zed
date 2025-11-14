@@ -278,6 +278,7 @@ pub struct AcpThreadView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
+    thread_error_markdown: Option<Entity<Markdown>>,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
@@ -415,6 +416,7 @@ impl AcpThreadView {
             list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
+            thread_error_markdown: None,
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -798,6 +800,7 @@ impl AcpThreadView {
 
         if should_retry {
             self.thread_error = None;
+            self.thread_error_markdown = None;
             self.reset(window, cx);
         }
     }
@@ -1327,6 +1330,7 @@ impl AcpThreadView {
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
+        self.thread_error_markdown = None;
         cx.notify();
     }
 
@@ -5344,9 +5348,9 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thread_error(&self, cx: &mut Context<Self>) -> Option<Div> {
+    fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
-            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
             ThreadError::Refusal => self.render_refusal_error(cx),
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
@@ -5431,7 +5435,12 @@ impl AcpThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
+    fn render_any_thread_error(
+        &mut self,
+        error: SharedString,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Callout {
         let can_resume = self
             .thread()
             .map_or(false, |thread| thread.read(cx).can_resume(cx));
@@ -5444,11 +5453,24 @@ impl AcpThreadView {
             supports_burn_mode && thread.completion_mode() == CompletionMode::Normal
         });
 
+        let markdown = if let Some(markdown) = &self.thread_error_markdown {
+            markdown.clone()
+        } else {
+            let markdown = cx.new(|cx| Markdown::new(error.clone(), None, None, cx));
+            self.thread_error_markdown = Some(markdown.clone());
+            markdown
+        };
+
+        let markdown_style = default_markdown_style(false, true, window, cx);
+        let description = self
+            .render_markdown(markdown, markdown_style)
+            .into_any_element();
+
         Callout::new()
             .severity(Severity::Error)
-            .title("Error")
             .icon(IconName::XCircle)
-            .description(error.clone())
+            .title("An Error Happened")
+            .description_slot(description)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
@@ -5467,11 +5489,9 @@ impl AcpThreadView {
                     })
                     .when(can_resume, |this| {
                         this.child(
-                            Button::new("retry", "Retry")
-                                .icon(IconName::RotateCw)
-                                .icon_position(IconPosition::Start)
+                            IconButton::new("retry", IconName::RotateCw)
                                 .icon_size(IconSize::Small)
-                                .label_size(LabelSize::Small)
+                                .tooltip(Tooltip::text("Retry Generation"))
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.resume_chat(cx);
                                 })),
@@ -5613,7 +5633,6 @@ impl AcpThreadView {
 
         IconButton::new("copy", IconName::Copy)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
             .tooltip(Tooltip::text("Copy Error Message"))
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
@@ -5623,7 +5642,6 @@ impl AcpThreadView {
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         IconButton::new("dismiss", IconName::Close)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
             .tooltip(Tooltip::text("Dismiss Error"))
             .on_click(cx.listener({
                 move |this, _, _, cx| {
@@ -5841,7 +5859,7 @@ impl Render for AcpThreadView {
                     None
                 }
             })
-            .children(self.render_thread_error(cx))
+            .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
                     !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
@@ -5974,6 +5992,7 @@ fn default_markdown_style(
         },
         link: TextStyleRefinement {
             background_color: Some(colors.editor_foreground.opacity(0.025)),
+            color: Some(colors.text_accent),
             underline: Some(UnderlineStyle {
                 color: Some(colors.text_accent.opacity(0.5)),
                 thickness: px(1.),

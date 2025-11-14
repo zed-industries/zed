@@ -138,7 +138,7 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         message: String,
     },
-    #[error("permission error with {provider}'s API: {message}")]
+    #[error("Permission error with {provider}'s API: {message}")]
     PermissionError {
         provider: LanguageModelProviderName,
         message: String,
