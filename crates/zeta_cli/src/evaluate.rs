@@ -54,7 +54,6 @@ pub async fn run_evaluate(
 
             let tasks = zetas.into_iter().enumerate().map(|(repetition_ix, zeta)| {
                 let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
-
                 let example = example.clone();
                 let project = project.clone();
 
@@ -208,7 +207,7 @@ fn write_eval_result(
         "## Actual edit prediction:\n\n```diff\n{}\n```\n",
         compare_diffs(&predictions.diff, &example.example.expected_patch)
     )?;
-    writeln!(out, "{}", evaluation_result)?;
+    writeln!(out, "{:#}", evaluation_result)?;
 
     anyhow::Ok(())
 }
@@ -304,6 +303,16 @@ False Negatives : {}",
 
 impl std::fmt::Display for EvaluationResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            self.fmt_table(f)
+        } else {
+            self.fmt_markdown(f)
+        }
+    }
+}
+
+impl EvaluationResult {
+    fn fmt_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             r#"
@@ -315,6 +324,38 @@ impl std::fmt::Display for EvaluationResult {
 "#,
             self.context.to_markdown(),
             self.edit_prediction.to_markdown()
+        )
+    }
+
+    fn fmt_table(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "### Scores\n")?;
+        writeln!(
+            f,
+            "                   TP     FP     FN     Precision   Recall     F1"
+        )?;
+        writeln!(
+            f,
+            "──────────────────────────────────────────────────────────────────"
+        )?;
+        writeln!(
+            f,
+            "Context Retrieval  {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+            self.context.true_positives,
+            self.context.false_positives,
+            self.context.false_negatives,
+            self.context.precision() * 100.0,
+            self.context.recall() * 100.0,
+            self.context.f1_score() * 100.0
+        )?;
+        writeln!(
+            f,
+            "Edit Prediction    {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+            self.edit_prediction.true_positives,
+            self.edit_prediction.false_positives,
+            self.edit_prediction.false_negatives,
+            self.edit_prediction.precision() * 100.0,
+            self.edit_prediction.recall() * 100.0,
+            self.edit_prediction.f1_score() * 100.0
         )
     }
 }
