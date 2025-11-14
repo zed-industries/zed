@@ -5451,7 +5451,7 @@ impl MultiBufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = language::RunnableRange> + '_ {
+    ) -> impl Iterator<Item = (Range<MultiBufferOffset>, language::RunnableRange)> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range, move |buffer, range| {
             Some(
@@ -5464,10 +5464,7 @@ impl MultiBufferSnapshot {
                     .map(|runnable| (runnable.run_range.clone(), runnable)),
             )
         })
-        .map(|(run_range, runnable, _)| language::RunnableRange {
-            run_range: run_range.start.0..run_range.end.0,
-            ..runnable
-        })
+        .map(|(run_range, runnable, _)| (run_range, runnable))
     }
 
     pub fn line_indents(
@@ -5970,28 +5967,6 @@ impl MultiBufferSnapshot {
             return None;
         };
         Some((node, excerpt.map_range_from_buffer(node_range)))
-    }
-
-    pub fn syntax_next_sibling<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<tree_sitter::Node<'_>> {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut excerpt = self.excerpt_containing(range.clone())?;
-        excerpt
-            .buffer()
-            .syntax_next_sibling(excerpt.map_range_to_buffer(range))
-    }
-
-    pub fn syntax_prev_sibling<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<tree_sitter::Node<'_>> {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut excerpt = self.excerpt_containing(range.clone())?;
-        excerpt
-            .buffer()
-            .syntax_prev_sibling(excerpt.map_range_to_buffer(range))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {

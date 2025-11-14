@@ -118,8 +118,7 @@ use language::{
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, Point, Runnable,
-    RunnableRange, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
-    WordsQuery,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -1933,16 +1932,17 @@ impl Editor {
                             if focus_handle.is_focused(window) {
                                 let snapshot = buffer.read(cx).snapshot();
                                 for (range, snippet) in snippet_edits {
-                                    let editor_range =
+                                    let buffer_range =
                                         language::range_from_lsp(*range).to_offset(&snapshot);
-                                    editor
-                                        .insert_snippet(
-                                            &[editor_range],
-                                            snippet.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .ok();
+                                    todo!("transform buffer range to multibuffer range!");
+                                    // editor
+                                    //     .insert_snippet(
+                                    //         &[buffer_range],
+                                    //         snippet.clone(),
+                                    //         window,
+                                    //         cx,
+                                    //     )
+                                    //     .ok();
                                 }
                             }
                         }
@@ -5173,7 +5173,7 @@ impl Editor {
 
                 if let Some(region) = region {
                     let mut range = region.range.to_offset(&buffer);
-                    if selection.start == range.start && range.start >= region.pair.start.len() {
+                    if selection.start == range.start && range.start.0 >= region.pair.start.len() {
                         range.start -= region.pair.start.len();
                         if buffer.contains_str_at(range.start, &region.pair.start)
                             && buffer.contains_str_at(range.end, &region.pair.end)
@@ -7022,7 +7022,10 @@ impl Editor {
                 for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
                     match_ranges.extend(
                         regex
-                            .search(buffer_snapshot, Some(search_range.clone()))
+                            .search(
+                                buffer_snapshot,
+                                Some(search_range.start.0..search_range.end.0),
+                            )
                             .await
                             .into_iter()
                             .filter_map(|match_range| {
@@ -7074,7 +7077,7 @@ impl Editor {
                     if c == '\n' {
                         Some(
                             snapshot.buffer_snapshot().anchor_after(i)
-                                ..snapshot.buffer_snapshot().anchor_before(i + 1),
+                                ..snapshot.buffer_snapshot().anchor_before(i + 1usize),
                         )
                     } else {
                         None
@@ -8605,14 +8608,15 @@ impl Editor {
             .selections
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
             .head();
-        let excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let offset = excerpt.map_offset_to_buffer(offset);
         let buffer_id = excerpt.buffer().remote_id();
 
         let layer = excerpt.buffer().syntax_layer_at(offset)?;
         let mut cursor = layer.node().walk();
 
-        while cursor.goto_first_child_for_byte(offset).is_some() {
-            if cursor.node().end_byte() == offset {
+        while cursor.goto_first_child_for_byte(offset.0).is_some() {
+            if cursor.node().end_byte() == offset.0 {
                 cursor.goto_next_sibling();
             }
         }
@@ -8624,7 +8628,7 @@ impl Editor {
             let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
 
             // Check if this node contains our offset
-            if node_range.start <= offset && node_range.end >= offset {
+            if node_range.start <= offset.0 && node_range.end >= offset.0 {
                 // If it contains offset, check for task
                 if let Some(tasks) = self.tasks.get(&(buffer_id, symbol_start_row)) {
                     let buffer = self.buffer.read(cx).buffer(buffer_id)?;
@@ -15696,8 +15700,18 @@ impl Editor {
             .map(|selection| {
                 let old_range = selection.start..selection.end;
 
-                if let Some(node) = buffer.syntax_next_sibling(old_range) {
-                    let new_range = node.byte_range();
+                let old_range =
+                    old_range.start.to_offset(&buffer)..old_range.end.to_offset(&buffer);
+                let excerpt = buffer.excerpt_containing(old_range.clone());
+
+                if let Some(mut excerpt) = excerpt
+                    && let Some(node) = excerpt
+                        .buffer()
+                        .syntax_next_sibling(excerpt.map_range_to_buffer(old_range))
+                {
+                    let new_range = excerpt.map_range_from_buffer(
+                        BufferOffset(node.byte_range().start)..BufferOffset(node.byte_range().end),
+                    );
                     selected_sibling = true;
                     Selection {
                         id: selection.id,
@@ -15747,9 +15761,18 @@ impl Editor {
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
+                let old_range =
+                    old_range.start.to_offset(&buffer)..old_range.end.to_offset(&buffer);
+                let excerpt = buffer.excerpt_containing(old_range.clone());
 
-                if let Some(node) = buffer.syntax_prev_sibling(old_range) {
-                    let new_range = node.byte_range();
+                if let Some(mut excerpt) = excerpt
+                    && let Some(node) = excerpt
+                        .buffer()
+                        .syntax_prev_sibling(excerpt.map_range_to_buffer(old_range))
+                {
+                    let new_range = excerpt.map_range_from_buffer(
+                        BufferOffset(node.byte_range().start)..BufferOffset(node.byte_range().end),
+                    );
                     selected_sibling = true;
                     Selection {
                         id: selection.id,
@@ -15898,7 +15921,7 @@ impl Editor {
     fn fetch_runnable_ranges(
         snapshot: &DisplaySnapshot,
         range: Range<Anchor>,
-    ) -> Vec<language::RunnableRange> {
+    ) -> Vec<(Range<MultiBufferOffset>, language::RunnableRange)> {
         snapshot.buffer_snapshot().runnable_ranges(range).collect()
     }
 
@@ -15906,12 +15929,12 @@ impl Editor {
         project: Entity<Project>,
         snapshot: DisplaySnapshot,
         prefer_lsp: bool,
-        runnable_ranges: Vec<RunnableRange>,
+        runnable_ranges: Vec<(Range<MultiBufferOffset>, language::RunnableRange)>,
         cx: AsyncWindowContext,
     ) -> Task<Vec<((BufferId, BufferRow), RunnableTasks)>> {
         cx.spawn(async move |cx| {
             let mut runnable_rows = Vec::with_capacity(runnable_ranges.len());
-            for mut runnable in runnable_ranges {
+            for (run_range, mut runnable) in runnable_ranges {
                 let Some(tasks) = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
                     .ok()
@@ -15929,10 +15952,7 @@ impl Editor {
                     continue;
                 }
 
-                let point = runnable
-                    .run_range
-                    .start
-                    .to_point(&snapshot.buffer_snapshot());
+                let point = run_range.start.to_point(&snapshot.buffer_snapshot());
                 let Some(row) = snapshot
                     .buffer_snapshot()
                     .buffer_line_for_row(MultiBufferRow(point.row))
@@ -15947,9 +15967,7 @@ impl Editor {
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
-                        offset: snapshot
-                            .buffer_snapshot()
-                            .anchor_before(runnable.run_range.start),
+                        offset: snapshot.buffer_snapshot().anchor_before(run_range.start),
                         context_range,
                         column: point.column,
                         extra_variables: runnable.extra_captures,
@@ -17491,6 +17509,10 @@ impl Editor {
                                 cx,
                             )
                         });
+                        let cursor_offset_in_rename_range =
+                            MultiBufferOffset(cursor_offset_in_rename_range);
+                        let cursor_offset_in_rename_range_end =
+                            MultiBufferOffset(cursor_offset_in_rename_range_end);
                         let rename_selection_range = match cursor_offset_in_rename_range
                             .cmp(&cursor_offset_in_rename_range_end)
                         {
@@ -17505,7 +17527,7 @@ impl Editor {
                                 cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
                             }
                         };
-                        if rename_selection_range.end > old_name.len() {
+                        if rename_selection_range.end.0 > old_name.len() {
                             editor.select_all(&SelectAll, window, cx);
                         } else {
                             editor.change_selections(Default::default(), window, cx, |s| {
@@ -21620,7 +21642,7 @@ impl Editor {
                     new_selections_by_buffer.insert(
                         buffer,
                         (
-                            vec![jump_to_offset..jump_to_offset],
+                            vec![BufferOffset(jump_to_offset)..BufferOffset(jump_to_offset)],
                             Some(*line_offset_from_top),
                         ),
                     );
@@ -21639,7 +21661,7 @@ impl Editor {
                         .entry(buffer)
                         .or_insert((Vec::new(), Some(*line_offset_from_top)))
                         .0
-                        .push(buffer_offset..buffer_offset)
+                        .push(BufferOffset(buffer_offset)..BufferOffset(buffer_offset))
                 }
             }
             None => {
@@ -21661,7 +21683,7 @@ impl Editor {
                                 &anchor.text_anchor,
                                 &buffer_handle.read(cx).snapshot(),
                             );
-                            let range = offset..offset;
+                            let range = BufferOffset(offset)..BufferOffset(offset);
                             new_selections_by_buffer
                                 .entry(buffer_handle)
                                 .or_insert((Vec::new(), None))
@@ -21676,7 +21698,7 @@ impl Editor {
                                 .entry(buffer_handle)
                                 .or_insert((Vec::new(), None))
                                 .0
-                                .push(range.start.0..range.end.0)
+                                .push(range)
                         }
                     }
                 }
@@ -21749,7 +21771,10 @@ impl Editor {
                             window,
                             cx,
                             |s| {
-                                s.select_ranges(ranges);
+                                s.select_ranges(ranges.into_iter().map(|range| {
+                                    // we checked that the editor is a singleton editor so the offsets are valid
+                                    MultiBufferOffset(range.start.0)..MultiBufferOffset(range.end.0)
+                                }));
                             },
                         );
                         editor.nav_history = nav_history;
