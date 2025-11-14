@@ -99,7 +99,7 @@ static CONTEXT_RETRIEVAL_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
     })
 });
 static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    match env::var("ZED_ZETA2_EP_MODEL").as_deref() {
+    match env::var("ZED_ZETA2_MODEL").as_deref() {
         Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
         Ok(model) => model,
         Err(_) if *USE_OLLAMA => "qwen3-coder:30b",
@@ -1022,7 +1022,7 @@ impl Zeta {
                         // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
                     }
-                    PromptFormat::MinimalPrompt => {
+                    PromptFormat::Minimal => {
                         if output_text.contains("--- a/\n+++ b/\nNo edits") {
                             let edits = vec![];
                             (&active_snapshot, edits)

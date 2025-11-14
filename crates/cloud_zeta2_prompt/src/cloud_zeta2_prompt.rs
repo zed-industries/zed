@@ -186,7 +186,7 @@ pub fn build_prompt(
         ],
         PromptFormat::LabeledSections
         | PromptFormat::NumLinesUniDiff
-        | PromptFormat::MinimalPrompt
+        | PromptFormat::Minimal
         | PromptFormat::OldTextNewText => {
             vec![(request.cursor_point, CURSOR_MARKER)]
         }
@@ -199,13 +199,13 @@ pub fn build_prompt(
         PromptFormat::NumLinesUniDiff => NUMBERED_LINES_INSTRUCTIONS.to_string(),
         PromptFormat::OldTextNewText => XML_TAGS_INSTRUCTIONS.to_string(),
         PromptFormat::OnlySnippets => String::new(),
-        PromptFormat::MinimalPrompt => STUDENT_MODEL_INSTRUCTIONS.to_string(),
+        PromptFormat::Minimal => STUDENT_MODEL_INSTRUCTIONS.to_string(),
     };
 
     if request.events.is_empty() {
         prompt.push_str("(No edit history)\n\n");
     } else {
-        let edit_preamble = if request.prompt_format == PromptFormat::MinimalPrompt {
+        let edit_preamble = if request.prompt_format == PromptFormat::Minimal {
             "The following are the latest edits made by the user, from earlier to later.\n\n"
         } else {
             "Here are the latest edits made by the user, from earlier to later.\n\n"
@@ -215,7 +215,7 @@ pub fn build_prompt(
     }
 
     let excerpts_preamble = match request.prompt_format {
-        PromptFormat::MinimalPrompt => indoc! {"
+        PromptFormat::Minimal => indoc! {"
             # Part of the file under the cursor:
 
             (The cursor marker <|user_cursor|> indicates the current user cursor position.
@@ -254,10 +254,10 @@ pub fn build_prompt(
 
         let include_line_numbers = matches!(
             request.prompt_format,
-            PromptFormat::NumLinesUniDiff | PromptFormat::MinimalPrompt
+            PromptFormat::NumLinesUniDiff | PromptFormat::Minimal
         );
         for related_file in &request.included_files {
-            if request.prompt_format == PromptFormat::MinimalPrompt {
+            if request.prompt_format == PromptFormat::Minimal {
                 write_codeblock_with_filename(
                     &related_file.path,
                     &related_file.excerpts,
@@ -294,7 +294,7 @@ pub fn build_prompt(
         PromptFormat::OldTextNewText => {
             prompt.push_str(OLD_TEXT_NEW_TEXT_REMINDER);
         }
-        PromptFormat::MinimalPrompt => {
+        PromptFormat::Minimal => {
             prompt.push_str(MINIMAL_PROMPT_REMINDER);
         }
         _ => {}
@@ -744,7 +744,7 @@ impl<'a> SyntaxBasedPrompt<'a> {
                     PromptFormat::MarkedExcerpt
                     | PromptFormat::OnlySnippets
                     | PromptFormat::OldTextNewText
-                    | PromptFormat::MinimalPrompt
+                    | PromptFormat::Minimal
                     | PromptFormat::NumLinesUniDiff => {
                         if range.start.0 > 0 && !skipped_last_snippet {
                             output.push_str("…\n");
