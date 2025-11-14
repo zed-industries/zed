@@ -153,7 +153,10 @@ impl GitRepository for FakeGitRepository {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
-                ..Default::default()
+                commit_time: time::OffsetDateTime::now_utc(),
+                author_email: Default::default(),
+                author_name: Default::default(),
+                message: Default::default(),
             })
         }
         .boxed()

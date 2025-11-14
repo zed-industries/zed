@@ -339,10 +339,6 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
-    fn default_remote_url(&self) -> Option<String> {
-        self.remote_url("upstream")
-            .or_else(|| self.remote_url("origin"))
-    }
 
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
@@ -558,6 +554,11 @@ impl RealGitRepository {
             .context("failed to read git work directory")
             .map(Path::to_path_buf)
     }
+
+    fn default_remote_url(&self) -> Option<String> {
+        self.remote_url("upstream")
+            .or_else(|| self.remote_url("origin"))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -670,7 +671,7 @@ impl GitRepository for RealGitRepository {
                 );
                 Ok(CommitDetails {
                     sha: sha.into(),
-                    message: Some(message),
+                    message,
                     commit_time,
                     author_email,
                     author_name,

@@ -1992,11 +1992,8 @@ impl GitStore {
             })?
             .await??;
         Ok(proto::GitCommitDetails {
-            sha: commit.sha.into(),
-            message: commit
-                .message
-                .map(|msg| msg.message.into())
-                .unwrap_or_default(),
+            sha: commit.sha.clone().into(),
+            message: commit.raw_message().to_string(),
             commit_timestamp: commit.commit_time.unix_timestamp(),
             author_email: commit.author_email.into(),
             author_name: commit.author_name.into(),
@@ -3562,12 +3559,12 @@ impl Repository {
 
                     Ok(CommitDetails {
                         sha: resp.sha.clone().into(),
-                        message: Some(ParsedCommitMessage::new(
+                        message: ParsedCommitMessage::new(
                             resp.sha,
-                            resp.message,
+                            resp.message.clone(),
                             remote_url.as_deref(),
                             provider_registry,
-                        )),
+                        ),
                         commit_time: OffsetDateTime::from_unix_timestamp(resp.commit_timestamp)
                             .unwrap_or(OffsetDateTime::now_utc()),
                         author_email: resp.author_email.into(),
@@ -5095,11 +5092,7 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
 fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
     proto::GitCommitDetails {
         sha: commit.sha.to_string(),
-        message: commit
-            .message
-            .as_ref()
-            .map(|msg| msg.message.clone().into())
-            .unwrap_or_default(),
+        message: commit.raw_message().to_string(),
         commit_timestamp: commit.commit_time.unix_timestamp(),
         author_email: commit.author_email.to_string(),
         author_name: commit.author_name.to_string(),
@@ -5109,10 +5102,10 @@ fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
 fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
     CommitDetails {
         sha: proto.sha.clone().into(),
-        message: Some(ParsedCommitMessage {
+        message: ParsedCommitMessage {
             message: proto.message.clone().into(),
             ..Default::default()
-        }),
+        },
         commit_time: OffsetDateTime::from_unix_timestamp(proto.commit_timestamp)
             .unwrap_or(OffsetDateTime::now_utc()),
         author_email: proto.author_email.clone().into(),

@@ -80,7 +80,7 @@ pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, 
     })
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParsedCommitMessage {
     pub message: SharedString,
     pub permalink: Option<url::Url>,
@@ -113,18 +113,15 @@ impl ParsedCommitMessage {
                 }),
             }
         } else {
-            Self::from_message(message)
-        }
-    }
-    pub fn from_message(message: String) -> Self {
-        Self {
-            message: message.into(),
-            ..Default::default()
+          Self {
+              message: message.into(),
+              ..Default::default()
+          }
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct CommitSummary {
     pub sha: SharedString,
     pub subject: SharedString,
@@ -134,50 +131,21 @@ pub struct CommitSummary {
     pub has_parent: bool,
 }
 
-impl PartialEq for CommitSummary {
-    fn eq(&self, other: &Self) -> bool {
-        self.sha == other.sha
-    }
-}
-impl Eq for CommitSummary {}
-impl Hash for CommitSummary {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitDetails {
     pub sha: SharedString,
     pub author_name: SharedString,
     pub author_email: SharedString,
     pub commit_time: OffsetDateTime,
-    pub message: Option<ParsedCommitMessage>,
+    pub message: ParsedCommitMessage,
 }
-
-impl Default for CommitDetails {
-    fn default() -> Self {
-        Self {
-            sha: Default::default(),
-            author_name: Default::default(),
-            author_email: Default::default(),
-            commit_time: OffsetDateTime::now_utc(),
-            message: Default::default(),
-        }
-    }
-}
-
-impl PartialEq for CommitDetails {
-    fn eq(&self, other: &Self) -> bool {
-        self.sha == other.sha
-    }
-}
-
-impl Eq for CommitDetails {}
 
 impl CommitDetails {
     pub fn short_sha(&self) -> SharedString {
         self.sha[..SHORT_SHA_LENGTH].to_string().into()
+    }
+    pub fn raw_message(&self) -> &SharedString {
+      &self.message.message
     }
 }
 

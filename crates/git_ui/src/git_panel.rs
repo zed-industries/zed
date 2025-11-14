@@ -1460,14 +1460,7 @@ impl GitPanel {
                     this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                         let start = buffer.anchor_before(0);
                         let end = buffer.anchor_after(buffer.len());
-                        buffer.edit(
-                            [(
-                                start..end,
-                                message.map(|msg| msg.message).unwrap_or_default(),
-                            )],
-                            None,
-                            cx,
-                        );
+                        buffer.edit([(start..end, message.message)], None, cx);
                     });
                 })
                 .log_err();
@@ -1640,14 +1633,7 @@ impl GitPanel {
                     Ok(None) => {}
                     Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
-                            editor.set_text(
-                                prior_commit
-                                    .message
-                                    .map(|msg| msg.message)
-                                    .unwrap_or_default(),
-                                window,
-                                cx,
-                            )
+                            editor.set_text(prior_commit.raw_message().to_string(), window, cx)
                         });
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
