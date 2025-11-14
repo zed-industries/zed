@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
-use lmstudio::{ResponseChoice, ModelType, Request, get_models};
+use lmstudio::{ModelType, Request, ResponseChoice, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -385,7 +385,11 @@ impl LmStudioLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let request = lmstudio::stream_complete(http_client.as_ref(), &api_url, Request::ChatCompletion(request));
+            let request = lmstudio::stream_complete(
+                http_client.as_ref(),
+                &api_url,
+                Request::ChatCompletion(request),
+            );
             let response = request.await?;
             Ok(response)
         });

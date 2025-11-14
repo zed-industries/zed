@@ -5,7 +5,7 @@ use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
 use std::{path::Path, sync::Arc, time::Duration};
 
-use crate::{ResponseChoice, CompletionRequest, stream_complete};
+use crate::{CompletionRequest, ResponseChoice, stream_complete};
 
 pub const LMSTUDIO_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -21,11 +21,7 @@ pub struct LMStudioCompletionProvider {
 }
 
 impl LMStudioCompletionProvider {
-    pub fn new(
-        http_client: Arc<dyn HttpClient>,
-        api_url: String,
-        model_name: String,
-    ) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, api_url: String, model_name: String) -> Self {
         Self {
             http_client,
             api_url,
@@ -67,12 +63,7 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
         false
     }
 
-    fn is_enabled(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _cursor_position: Anchor,
-        _cx: &App,
-    ) -> bool {
+    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, _cx: &App) -> bool {
         true
     }
 
@@ -142,7 +133,9 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
                 temperature: Some(0.2),
             };
 
-            let mut stream = stream_complete(&*http_client, &api_url, crate::Request::Completion(request)).await?;
+            let mut stream =
+                stream_complete(&*http_client, &api_url, crate::Request::Completion(request))
+                    .await?;
 
             let mut completion_text = String::new();
 

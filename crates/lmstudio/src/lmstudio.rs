@@ -7,7 +7,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, time::Duration, fmt::Debug};
+use std::{convert::TryFrom, fmt::Debug, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 

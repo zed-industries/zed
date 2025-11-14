@@ -205,12 +205,10 @@ fn assign_edit_prediction_provider(
         }
         EditPredictionProvider::LmStudio => {
             let http_client = client.http_client();
-            let model_name = std::env::var("LMSTUDIO_MODEL")
-                .expect("LMSTUDIO_MODEL environment variable must be set");
+            let model_name = std::env::var("ZED_LMSTUDIO_COMPLETION_MODEL").unwrap_or_default();
             let api_url = lmstudio::LMSTUDIO_API_URL.to_string();
-            let provider = cx.new(|_| {
-                LMStudioCompletionProvider::new(http_client, api_url, model_name)
-            });
+            let provider =
+                cx.new(|_| LMStudioCompletionProvider::new(http_client, api_url, model_name));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         EditPredictionProvider::Zed => {

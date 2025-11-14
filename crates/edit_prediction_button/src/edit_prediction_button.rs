@@ -240,10 +240,8 @@ impl Render for EditPredictionButton {
                 div().child(
                     PopoverMenu::new("lmstudio")
                         .menu(move |window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.build_lmstudio_context_menu(window, cx)
-                            })
-                            .ok()
+                            this.update(cx, |this, cx| this.build_lmstudio_context_menu(window, cx))
+                                .ok()
                         })
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
