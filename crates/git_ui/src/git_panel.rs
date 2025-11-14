@@ -409,16 +409,9 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged { full_scan: true }
+                        RepositoryEvent::StatusesChanged
                         | RepositoryEvent::BranchChanged
                         | RepositoryEvent::MergeHeadsChanged,
-                        true,
-                    ) => {
-                        this.schedule_update(window, cx);
-                    }
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::StatusesChanged { full_scan: false },
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
@@ -1224,14 +1217,18 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
+        let repo = active_repository.read(cx);
         let (stage, repo_paths) = match entry {
             GitListEntry::Status(status_entry) => {
                 let repo_paths = vec![status_entry.clone()];
-                let stage = if active_repository
-                    .read(cx)
+                let stage = if repo
                     .pending_ops_for_path(&status_entry.repo_path)
                     .map(|ops| ops.staging() || ops.staged())
-                    .unwrap_or(status_entry.status.staging().has_staged())
+                    .or_else(|| {
+                        repo.status_for_path(&status_entry.repo_path)
+                            .map(|status| status.status.staging().has_staged())
+                    })
+                    .unwrap_or(status_entry.staging.has_staged())
                 {
                     if let Some(op) = self.bulk_staging.clone()
                         && op.anchor == status_entry.repo_path
@@ -1247,13 +1244,12 @@ impl GitPanel {
             }
             GitListEntry::Header(section) => {
                 let goal_staged_state = !self.header_state(section.header).selected();
-                let repository = active_repository.read(cx);
                 let entries = self
                     .entries
                     .iter()
                     .filter_map(|entry| entry.status_entry())
                     .filter(|status_entry| {
-                        section.contains(status_entry, repository)
+                        section.contains(status_entry, repo)
                             && status_entry.staging.as_bool() != Some(goal_staged_state)
                     })
                     .cloned()
@@ -3659,13 +3655,18 @@ impl GitPanel {
         let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;
 
-        let is_staging_or_staged = if let Some(status_entry) = entry.status_entry() {
-            repo.pending_ops_for_path(&repo_path)
-                .map(|ops| ops.staging() || ops.staged())
-                .unwrap_or(status_entry.staging.has_staged())
-        } else {
-            false
-        };
+        let is_staging_or_staged = repo
+            .pending_ops_for_path(&repo_path)
+            .map(|ops| ops.staging() || ops.staged())
+            .or_else(|| {
+                repo.status_for_path(&repo_path)
+                    .and_then(|status| status.status.staging().as_bool())
+            })
+            .or_else(|| {
+                entry
+                    .status_entry()
+                    .and_then(|entry| entry.staging.as_bool())
+            });
 
         let checkbox = Checkbox::new("stage-file", is_staging_or_staged.into())
             .disabled(!self.has_write_access(cx))
