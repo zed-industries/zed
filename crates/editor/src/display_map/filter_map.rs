@@ -10,7 +10,7 @@ use sum_tree::{Dimensions, SumTree};
 use text::Bias;
 use util::RangeExt as _;
 
-use crate::display_map::Highlights;
+use crate::display_map::{Highlights, custom_highlights::CustomHighlightsChunks};
 
 /// A [`FilterTransform`] represents a (potentially filtered) region in the
 /// [`FilterMap`].
@@ -928,16 +928,26 @@ impl FilterSnapshot {
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> FilterChunks<'a> {
-        let mut cursor = self.transforms.cursor(());
+        let mut cursor = self
+            .transforms
+            .cursor::<'_, '_, Dimensions<FilterOffset, usize>>(());
         cursor.next();
-        FilterChunks {
-            cursor,
-            snapshot: self,
-            buffer_chunks: ,
-            language_aware,
-            highlights,
-            
+        if matches!(cursor.item(), Some(FilterTransform::Filter { .. })) {
+            cursor.next();
         }
+        let buffer_chunks = CustomHighlightsChunks::new(
+            cursor.start().1..cursor.end().1,
+            language_aware,
+            highlights.text_highlights,
+            &self.buffer_snapshot,
+        );
+        let mut chunks = FilterChunks {
+            cursor,
+            buffer_chunks,
+            snapshot: self,
+        };
+        chunks.seek(range);
+        chunks
     }
 }
 
@@ -987,12 +997,10 @@ impl FilterRows<'_> {
     }
 }
 
-struct FilterChunks<'a> {
+pub(crate) struct FilterChunks<'a> {
     cursor: sum_tree::Cursor<'a, 'static, FilterTransform, Dimensions<FilterOffset, usize>>,
-    buffer_chunks: MultiBufferChunks<'a>,
+    buffer_chunks: CustomHighlightsChunks<'a>,
     snapshot: &'a FilterSnapshot,
-    language_aware: bool,
-    highlights: Highlights<'a>,
 }
 
 impl FilterChunks<'_> {
@@ -1046,24 +1054,26 @@ impl<'a> Iterator for FilterChunks<'a> {
 
 impl<'a> FilterChunks<'a> {
     fn seek(&mut self, range: Range<FilterOffset>) {
-        *self = self
-            .snapshot
-            .chunks(range, self.language_aware, self.highlights);
+        self.cursor.seek(&range.start, Bias::Right);
+        let overshoot = range.start.0 - self.cursor.start().0.0;
+        let buffer_start = self.cursor.start().1 + overshoot;
+        let buffer_end = self.cursor.end().1;
+        self.buffer_chunks.seek(buffer_start..buffer_end);
     }
 
-    fn naive_seek(&mut self, range: Range<FilterOffset>) {
-        *self = self
-            .snapshot
-            .chunks(range, self.language_aware, self.highlights);
-        self.reset();
-        while !range.contains(&self.cursor.start().0) {
-            self.next();
-        }
-    }
+    // fn naive_seek(&mut self, range: Range<FilterOffset>) {
+    //     *self = self
+    //         .snapshot
+    //         .chunks(range, self.language_aware, self.highlights);
+    //     self.reset();
+    //     while !range.contains(&self.cursor.start().0) {
+    //         self.next();
+    //     }
+    // }
 
-    fn reset(&mut self) {
-        *self = self.snapshot.chunks(range, language_aware, highlights)
-    }
+    // fn reset(&mut self) {
+    //     *self = self.snapshot.chunks(range, language_aware, highlights)
+    // }
 }
 
 #[cfg(test)]
