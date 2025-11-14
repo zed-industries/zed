@@ -1306,7 +1306,28 @@
     //    "hunk_style": "staged_hollow"
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
-    "hunk_style": "staged_hollow"
+    "hunk_style": "staged_hollow",
+    // Settings for diff views (commit and stash).
+    "diff_views": {
+      // Quick action to perform when using the keybind (alt+enter) in commit diff views.
+      // Options: "open_from_cursor", "open_head", "open_finder", "open_parent", "open_modified"
+      "commit_quick_action": "open_from_cursor",
+      // Fallback action when commit quick action fails (excludes open_head and open_from_cursor).
+      // Options: "open_finder", "open_parent", "open_modified"
+      "commit_fallback_action": "open_modified",
+      // Whether files opened from commit diffs should be readonly.
+      "commit_opens_readonly": true,
+      // Quick action to perform when using the keybind (alt+enter) in stash diff views.
+      // Options: "open_from_cursor", "open_head", "open_finder", "open_parent", "open_modified"
+      "stash_quick_action": "open_from_cursor",
+      // Fallback action when stash quick action fails (excludes open_head and open_from_cursor).
+      // Options: "open_finder", "open_parent", "open_modified"
+      "stash_fallback_action": "open_modified",
+      // Whether files opened from stash diffs should be readonly.
+      "stash_opens_readonly": true,
+      // Whether to show controls (readonly button and quick action dropdown) in the toolbar.
+      "show_controls": true
+    }
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

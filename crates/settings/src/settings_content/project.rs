@@ -270,6 +270,97 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::Display,
+    strum::EnumIter,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum DiffViewQuickAction {
+    #[default]
+    /// Open the file from the cursor position
+    OpenFromCursor,
+    /// Open the current version of the file (HEAD)
+    OpenHead,
+    /// Open the file finder
+    OpenFinder,
+    /// Open the parent version (before commit)
+    OpenParent,
+    /// Open the modified version (after commit)
+    OpenModified,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::Display,
+    strum::EnumIter,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum DiffViewFallbackAction {
+    /// Open the file finder
+    OpenFinder,
+    /// Open the parent version (before commit)
+    OpenParent,
+    #[default]
+    /// Open the modified version (after commit)
+    OpenModified,
+}
+
+#[skip_serializing_none]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct DiffViewsSettings {
+    /// Quick action to perform when using the keybind (alt+enter) in commit diff views.
+    ///
+    /// Default: open_from_cursor
+    pub commit_quick_action: Option<DiffViewQuickAction>,
+    /// Fallback action when commit quick action fails (excludes open_head and open_from_cursor).
+    ///
+    /// Default: open_modified
+    pub commit_fallback_action: Option<DiffViewFallbackAction>,
+    /// Whether files opened from commit diffs should be readonly.
+    ///
+    /// Default: true
+    pub commit_opens_readonly: Option<bool>,
+    /// Quick action to perform when using the keybind (alt+enter) in stash diff views.
+    ///
+    /// Default: open_from_cursor
+    pub stash_quick_action: Option<DiffViewQuickAction>,
+    /// Fallback action when stash quick action fails (excludes open_head and open_from_cursor).
+    ///
+    /// Default: open_modified
+    pub stash_fallback_action: Option<DiffViewFallbackAction>,
+    /// Whether files opened from stash diffs should be readonly.
+    ///
+    /// Default: true
+    pub stash_opens_readonly: Option<bool>,
+    /// Whether to show controls (readonly button and quick action dropdown) in the toolbar.
+    ///
+    /// Default: true
+    pub show_controls: Option<bool>,
+}
+
 #[skip_serializing_none]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
@@ -296,6 +387,8 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// Settings for diff views (commit and stash).
+    pub diff_views: Option<DiffViewsSettings>,
 }
 
 #[derive(
