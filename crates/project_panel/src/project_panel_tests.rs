@@ -1201,7 +1201,9 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
         panel.paste(&Default::default(), window, cx);
     });
     cx.executor().run_until_parked();
-
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
@@ -1240,7 +1242,9 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
         panel.paste(&Default::default(), window, cx);
     });
     cx.executor().run_until_parked();
-
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
