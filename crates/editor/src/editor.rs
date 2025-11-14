@@ -1927,22 +1927,23 @@ impl Editor {
                         }
                     }
                     project::Event::SnippetEdit(id, snippet_edits) => {
-                        if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
+                        // todo(lw): Non singletons
+                        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+                            let snapshot = buffer.read(cx).snapshot();
                             let focus_handle = editor.focus_handle(cx);
-                            if focus_handle.is_focused(window) {
-                                let snapshot = buffer.read(cx).snapshot();
+                            if snapshot.remote_id() == *id && focus_handle.is_focused(window) {
                                 for (range, snippet) in snippet_edits {
                                     let buffer_range =
                                         language::range_from_lsp(*range).to_offset(&snapshot);
-                                    todo!("transform buffer range to multibuffer range!");
-                                    // editor
-                                    //     .insert_snippet(
-                                    //         &[buffer_range],
-                                    //         snippet.clone(),
-                                    //         window,
-                                    //         cx,
-                                    //     )
-                                    //     .ok();
+                                    editor
+                                        .insert_snippet(
+                                            &[MultiBufferOffset(buffer_range.start)
+                                                ..MultiBufferOffset(buffer_range.end)],
+                                            snippet.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                        .ok();
                                 }
                             }
                         }

@@ -669,7 +669,7 @@ pub struct MultiBufferExcerpt<'a> {
     diff_transforms:
         sum_tree::Cursor<'a, 'static, DiffTransform, DiffTransforms<MultiBufferOffset>>,
     offset: MultiBufferOffset,
-    // todo unsure about this
+    // todo unsure about this type
     excerpt_offset: MultiBufferOffset,
     buffer_offset: BufferOffset,
 }
@@ -6793,8 +6793,7 @@ impl<'a> MultiBufferExcerpt<'a> {
             log::warn!(
                 "Attempting to map a range from a buffer offset that starts before the current buffer offset"
             );
-            // return buffer_range;
-            todo!()
+            return self.offset..self.offset;
         }
         let overshoot = buffer_range.start - self.buffer_offset;
         let excerpt_offset = self.excerpt_offset + overshoot;
@@ -6804,8 +6803,7 @@ impl<'a> MultiBufferExcerpt<'a> {
             log::warn!(
                 "Attempting to map a range from a buffer offset that starts before the current buffer offset"
             );
-            // return buffer_range;
-            todo!()
+            return self.offset..self.offset;
         }
         let overshoot = excerpt_offset - self.diff_transforms.start().excerpt_dimension.0;
         let start = self.diff_transforms.start().output_dimension.0 + overshoot;

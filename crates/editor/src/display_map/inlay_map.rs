@@ -78,8 +78,8 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     }
 
     fn add_summary(&mut self, other: &Self) {
-        self.input += other.input.clone();
-        self.output += other.output.clone();
+        self.input += other.input;
+        self.output += other.output;
     }
 }
 

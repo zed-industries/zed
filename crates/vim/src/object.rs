@@ -1126,11 +1126,11 @@ fn text_object(
         && !buffer_range.is_empty()
     {
         let buffer_range = BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end);
-        let range = excerpt.map_range_from_buffer(buffer_range.clone());
+        let range = excerpt.map_range_from_buffer(buffer_range);
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
     }
     let around_range = BufferOffset(around_range.start)..BufferOffset(around_range.end);
-    let buffer_range = excerpt.map_range_from_buffer(around_range.clone());
+    let buffer_range = excerpt.map_range_from_buffer(around_range);
     return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
 }
 

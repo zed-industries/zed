@@ -124,7 +124,7 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
+    pub fn all<D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
@@ -204,7 +204,7 @@ impl SelectionsCollection {
         }
     }
 
-    pub fn disjoint_in_range<'a, D>(
+    pub fn disjoint_in_range<D>(
         &self,
         range: Range<Anchor>,
         snapshot: &DisplaySnapshot,
