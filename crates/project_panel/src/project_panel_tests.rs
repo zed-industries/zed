@@ -4174,6 +4174,106 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root_a",
+        json!({
+            "src": {
+                "lib.rs": "",
+                "main.rs": ""
+            },
+            "docs": {
+                "guide.md": ""
+            },
+            "multi": {
+                "alpha.txt": "",
+                "beta.txt": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root_b",
+        json!({
+            "dst": {
+                "existing.md": ""
+            },
+            "target.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root_a".as_ref(), "/root_b".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Case 1: move a file onto a directory in another worktree.
+    select_path(&panel, "root_a/src/main.rs", cx);
+    drag_selection_to(&panel, "root_b/dst", false, cx);
+    assert!(
+        find_project_entry(&panel, "root_b/dst/main.rs", cx).is_some(),
+        "Dragged file should appear under destination worktree"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root_a/src/main.rs", cx),
+        None,
+        "Dragged file should be removed from the source worktree"
+    );
+
+    // Case 2: drop a file onto another worktree file so it lands in the parent directory.
+    select_path(&panel, "root_a/docs/guide.md", cx);
+    drag_selection_to(&panel, "root_b/dst/existing.md", true, cx);
+    assert!(
+        find_project_entry(&panel, "root_b/dst/guide.md", cx).is_some(),
+        "Dropping onto a file should place the entry beside the target file"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root_a/docs/guide.md", cx),
+        None,
+        "Source file should be removed after the move"
+    );
+
+    // Case 3: move an entire directory.
+    select_path(&panel, "root_a/src", cx);
+    drag_selection_to(&panel, "root_b/dst", false, cx);
+    assert!(
+        find_project_entry(&panel, "root_b/dst/src/lib.rs", cx).is_some(),
+        "Dragging a directory should move its nested contents"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root_a/src", cx),
+        None,
+        "Directory should no longer exist in the source worktree"
+    );
+
+    // Case 4: multi-selection drag between worktrees.
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root_a/multi/alpha.txt", cx);
+    select_path_with_mark(&panel, "root_a/multi/beta.txt", cx);
+    drag_selection_to(&panel, "root_b/dst", false, cx);
+    assert!(
+        find_project_entry(&panel, "root_b/dst/alpha.txt", cx).is_some()
+            && find_project_entry(&panel, "root_b/dst/beta.txt", cx).is_some(),
+        "All marked entries should move to the destination worktree"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root_a/multi/alpha.txt", cx),
+        None,
+        "Marked entries should be removed from the origin worktree"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root_a/multi/beta.txt", cx),
+        None,
+        "Marked entries should be removed from the origin worktree"
+    );
+}
+
+#[gpui::test]
 async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
@@ -7494,6 +7594,32 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
         }
         panic!("no worktree for path {:?}", path);
     });
+}
+
+fn drag_selection_to(
+    panel: &Entity<ProjectPanel>,
+    target_path: &str,
+    is_file: bool,
+    cx: &mut VisualTestContext,
+) {
+    let target_entry = find_project_entry(panel, target_path, cx)
+        .unwrap_or_else(|| panic!("no entry for target path {target_path:?}"));
+
+    panel.update_in(cx, |panel, window, cx| {
+        let selection = panel
+            .state
+            .selection
+            .expect("a selection is required before dragging");
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: selection.worktree_id,
+                entry_id: panel.resolve_entry(selection.entry_id),
+            },
+            marked_selections: Arc::from(panel.marked_entries.clone()),
+        };
+        panel.drag_onto(&drag, target_entry, is_file, window, cx);
+    });
+    cx.executor().run_until_parked();
 }
 
 fn find_project_entry(
