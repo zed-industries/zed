@@ -30,9 +30,9 @@ use git::{
     commit::{CommitDetails, CommitSummary, ParsedCommitMessage},
     parse_git_remote_url,
     repository::{
-        Branch, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        Branch, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{

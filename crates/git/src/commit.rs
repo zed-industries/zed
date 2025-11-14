@@ -113,10 +113,10 @@ impl ParsedCommitMessage {
                 }),
             }
         } else {
-          Self {
-              message: message.into(),
-              ..Default::default()
-          }
+            Self {
+                message: message.into(),
+                ..Default::default()
+            }
         }
     }
 }
@@ -145,7 +145,7 @@ impl CommitDetails {
         self.sha[..SHORT_SHA_LENGTH].to_string().into()
     }
     pub fn raw_message(&self) -> &SharedString {
-      &self.message.message
+        &self.message.message
     }
 }
 

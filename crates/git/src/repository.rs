@@ -3,7 +3,7 @@ use crate::commit::{
 };
 use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
-use crate::{Oid, GitHostingProviderRegistry};
+use crate::{GitHostingProviderRegistry, Oid};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;

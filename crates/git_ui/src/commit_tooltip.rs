@@ -182,10 +182,7 @@ impl Render for CommitTooltip {
 
         let message = MarkdownElement::new(self.markdown.clone(), markdown_style).into_any();
 
-        let pull_request = self
-            .commit
-            .message
-            .pull_request.clone();
+        let pull_request = self.commit.message.pull_request.clone();
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);

@@ -8,8 +8,8 @@ use git::{
     commit::CommitDetails,
     repository::{
         AskPassDelegate, Branch, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        GitRepositoryCheckpoint, GitRepositoryCheckpoint, PushOptions, PushOptions, Remote, Remote,
+        RepoPath, RepoPath, ResetMode, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,

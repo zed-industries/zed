@@ -35,9 +35,9 @@ impl std::fmt::Debug for GitRemote {
 }
 
 impl PartialEq for GitRemote {
-  fn eq(&self, other: &Self) -> bool {
-      Arc::ptr_eq(&self.host, &other.host)
-  }
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.host, &other.host)
+    }
 }
 impl Eq for GitRemote {}
 
