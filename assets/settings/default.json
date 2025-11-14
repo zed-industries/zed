@@ -310,6 +310,13 @@
     // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     "delay": 300,
   },
+  // Code lens settings for showing reference counts and other metadata above code elements.
+  "code_lens": {
+    // Whether code lens is enabled.
+    "enabled": true,
+    // The debounce delay in milliseconds before querying code lens from the language server.
+    "debounce": 300
+  },
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`

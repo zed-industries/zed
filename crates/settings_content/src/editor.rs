@@ -221,6 +221,9 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
+
+    /// Code lens settings for showing reference counts and other metadata above code elements.
+    pub code_lens: Option<CodeLensContent>,
 }
 
 #[derive(
@@ -825,6 +828,21 @@ pub struct DragAndDropSelectionContent {
     ///
     /// Default: 300
     pub delay: Option<DelayMs>,
+}
+
+/// Code lens settings
+#[skip_serializing_none]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct CodeLensContent {
+    /// Whether code lens is enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+
+    /// The debounce delay before querying code lens from the language server.
+    ///
+    /// Default: 300
+    pub debounce: Option<DelayMs>,
 }
 
 /// When to show the minimap in the editor.
