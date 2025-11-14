@@ -5,7 +5,7 @@ use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
 use std::{path::Path, sync::Arc, time::Duration};
 
-use crate::{stream_chat_completion, ChatCompletionRequest, ChatMessage, MessageContent};
+use crate::{stream_completion, CompletionRequest};
 
 pub const LMSTUDIO_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -121,7 +121,7 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
                 prefix, suffix
             );
 
-            println!("prompt: {prompt}");
+            println!("Prompt: {}", prompt);
 
             let stop_vec = vec![
                 "<|endoftext|>".to_string(),
@@ -135,53 +135,35 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
                 "<|im_end|>".to_string(),
             ];
 
-            let request = ChatCompletionRequest {
+            let request = CompletionRequest {
                 model: model_name.clone(),
-                messages: vec![
-                    ChatMessage::System {
-                        content: MessageContent::Plain("You are an advanced code completion assistant.".to_string()),
-                    },
-                    ChatMessage::User {
-                        content: MessageContent::Plain(prompt),
-                    }
-                ],
+                prompt,
                 stream: true,
                 max_tokens: Some(350),
                 stop: Some(stop_vec),
                 temperature: Some(0.2),
-                tools: Vec::new(),
-                tool_choice: None,
             };
 
-            let mut stream = stream_chat_completion(&*http_client, &api_url, request).await?;
+            let mut stream = stream_completion(&*http_client, &api_url, request).await?;
 
-            let mut completion = String::new();
+            let mut completion_text = String::new();
 
             while let Some(event) = futures::StreamExt::next(&mut stream).await {
-                println!("choice: {event:?}");
                 for choice in event?.choices {
-                    let Some(content) = choice.delta.content else { continue };
-                    completion.push_str(&content);
-
-                    // let processed = post_process_completion(
-                    //     &completion,
-                    //     &buffer_text,
-                    //     cursor_offset,
-                    // );
+                    completion_text.push_str(&choice.text);
 
                     this.update(cx, |this, cx| {
-                        this.completion_text = Some(completion.clone());
+                        this.completion_text = Some(completion_text.clone());
                         this.completion_position = Some(cursor_position);
                         this.buffer_id = Some(buffer_handle.entity_id());
-                        this.file_extension =
-                            buffer_handle.read(cx).file().and_then(|file| {
-                                Some(
-                                    Path::new(file.file_name(cx))
-                                        .extension()?
-                                        .to_str()?
-                                        .to_string(),
-                                )
-                            });
+                        this.file_extension = buffer_handle.read(cx).file().and_then(|file| {
+                            Some(
+                                Path::new(file.file_name(cx))
+                                    .extension()?
+                                    .to_str()?
+                                    .to_string(),
+                            )
+                        });
                         cx.notify();
                     })?;
                 }
@@ -247,36 +229,6 @@ impl EditPredictionProvider for LMStudioCompletionProvider {
         } else {
             None
         }
-    }
-}
-
-fn post_process_completion(raw_completion: &str, buffer_text: &str, cursor_offset: usize) -> String {
-    println!("raw_completion: {raw_completion}");
-    let mut processed = raw_completion
-        .trim()
-        .to_string()
-        .replace("\\n", "\n")
-        .replace("\\t", "\t");
-
-    // Strip markdown code fences
-    if let Some(stripped) = processed.strip_prefix("```") {
-        if let Some(newline_pos) = stripped.find('\n') {
-            processed = stripped[newline_pos + 1..].to_string();
-        } else {
-            processed = stripped.to_string();
-        }
-
-        processed = processed.strip_suffix("```").unwrap_or(&processed).to_string();
-    }
-
-    // Strip the unedited buffer text assuming the change is right after the cursor
-    processed = processed[..cursor_offset].to_string();
-
-    // Try to find where the new content starts by matching the prefix
-    if let Some(new_content_start) = processed.find(&buffer_text[cursor_offset..]) {
-        processed[..new_content_start].to_string()
-    } else {
-        processed
     }
 }
 

@@ -374,7 +374,7 @@ impl LmStudioLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
+        Result<futures::stream::BoxStream<'static, Result<lmstudio::ChatResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
         let Ok(api_url) = cx.update(|cx| {
@@ -486,7 +486,7 @@ impl LmStudioEventMapper {
 
     pub fn map_stream(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ResponseStreamEvent>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ChatResponseStreamEvent>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
@@ -499,7 +499,7 @@ impl LmStudioEventMapper {
 
     pub fn map_event(
         &mut self,
-        event: lmstudio::ResponseStreamEvent,
+        event: lmstudio::ChatResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.into_iter().next() else {
             return vec![Err(LanguageModelCompletionError::from(anyhow!(
