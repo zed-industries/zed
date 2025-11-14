@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 pub use settings::AlternateScroll;
 
 use settings::{
-    RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition, TerminalLineHeight,
-    VenvSettings, WorkingDirectory, merge_from::MergeFrom,
+    PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition,
+    TerminalLineHeight, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
@@ -47,6 +47,8 @@ pub struct TerminalSettings {
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
+    pub path_hyperlink_regexes: Vec<String>,
+    pub path_hyperlink_timeout_ms: u64,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -116,6 +118,16 @@ impl settings::Settings for TerminalSettings {
                 show: user_content.scrollbar.unwrap().show,
             },
             minimum_contrast: user_content.minimum_contrast.unwrap(),
+            path_hyperlink_regexes: project_content
+                .path_hyperlink_regexes
+                .unwrap()
+                .into_iter()
+                .map(|regex| match regex {
+                    PathHyperlinkRegex::SingleLine(regex) => regex,
+                    PathHyperlinkRegex::MultiLine(regex) => regex.join("\n"),
+                })
+                .collect(),
+            path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
         }
     }
 }
