@@ -17,16 +17,6 @@ pub fn display_id_for_window_center<T: 'static>(
         .flatten()
 }
 
-/// Compute centered window bounds on the display containing the given window handle.
-pub fn centered_bounds_for_window_display<T: 'static>(
-    handle: &WindowHandle<T>,
-    size: Size<Pixels>,
-    cx: &mut App,
-) -> WindowBounds {
-    let display_id = display_id_for_window_center(handle, cx);
-    WindowBounds::Windowed(Bounds::centered(display_id, size, cx))
-}
-
 /// Compute centered window bounds on a given display id (or primary if None).
 pub fn centered_bounds_for_display_id(
     display_id: Option<DisplayId>,
@@ -50,9 +40,4 @@ pub fn active_display_id(cx: &mut App) -> Option<DisplayId> {
             .ok()
             .flatten()
     })
-}
-
-/// Compute centered window bounds on the display of the currently active window (if any).
-pub fn centered_bounds_for_active_display(size: Size<Pixels>, cx: &mut App) -> WindowBounds {
-    WindowBounds::Windowed(Bounds::centered(active_display_id(cx), size, cx))
 }
