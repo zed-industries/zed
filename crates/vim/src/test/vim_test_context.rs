@@ -59,6 +59,7 @@ impl VimTestContext {
                         prepare_provider: Some(true),
                         work_done_progress_options: Default::default(),
                     })),
+                    definition_provider: Some(lsp::OneOf::Left(true)),
                     ..Default::default()
                 },
                 cx,
