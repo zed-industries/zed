@@ -909,6 +909,7 @@ struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
+    needs_timeout: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -3898,7 +3899,27 @@ impl Window {
             currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            if match_result.pending_has_binding {
+
+            let text_input_requires_timeout = event
+                .downcast_ref::<KeyDownEvent>()
+                .filter(|key_down| {
+                    key_down.keystroke.key_char.is_some()
+                        && key_down
+                            .keystroke
+                            .modifiers
+                            .is_subset_of(&Modifiers::shift())
+                })
+                .and_then(|_| self.platform_window.take_input_handler())
+                .map_or(false, |mut input_handler| {
+                    let accepts = input_handler.accepts_text_input(self, cx);
+                    self.platform_window.set_input_handler(input_handler);
+                    accepts
+                });
+
+            currently_pending.needs_timeout |=
+                match_result.pending_has_binding || text_input_requires_timeout;
+
+            if currently_pending.needs_timeout {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                     cx.background_executor.timer(Duration::from_secs(1)).await;
                     cx.update(move |window, cx| {
