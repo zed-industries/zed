@@ -1,3 +1,7 @@
+mod lmstudio_completion_provider;
+
+pub use lmstudio_completion_provider::*;
+
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};

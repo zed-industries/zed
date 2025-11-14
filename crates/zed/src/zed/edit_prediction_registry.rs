@@ -7,6 +7,7 @@ use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
+use lmstudio::LMStudioCompletionProvider;
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -200,6 +201,16 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Codestral => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralCompletionProvider::new(http_client));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
+        }
+        EditPredictionProvider::LmStudio => {
+            let http_client = client.http_client();
+            let model_name = std::env::var("LMSTUDIO_MODEL")
+                .expect("LMSTUDIO_MODEL environment variable must be set");
+            let api_url = lmstudio::LMSTUDIO_API_URL.to_string();
+            let provider = cx.new(|_| {
+                LMStudioCompletionProvider::new(http_client, api_url, model_name)
+            });
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         EditPredictionProvider::Zed => {

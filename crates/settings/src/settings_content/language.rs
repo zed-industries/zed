@@ -79,6 +79,7 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    LmStudio,
 }
 
 impl EditPredictionProvider {
@@ -88,7 +89,8 @@ impl EditPredictionProvider {
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
-            | EditPredictionProvider::Codestral => false,
+            | EditPredictionProvider::Codestral
+            | EditPredictionProvider::LmStudio => false,
         }
     }
 }

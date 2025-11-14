@@ -233,6 +233,34 @@ impl Render for EditPredictionButton {
                 )
             }
 
+            EditPredictionProvider::LmStudio => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("lmstudio")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_lmstudio_context_menu(window, cx)
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("lmstudio-icon", IconName::AiLmStudio)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| Tooltip::for_action("LM Studio", &ToggleMenu, cx),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
+
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let has_api_key = CodestralCompletionProvider::has_api_key(cx);
@@ -473,6 +501,10 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
+        if std::env::var("LMSTUDIO_MODEL").is_ok() {
+            providers.push(EditPredictionProvider::LmStudio);
+        }
+
         providers
     }
 
@@ -522,6 +554,11 @@ impl EditPredictionButton {
                     }
                     EditPredictionProvider::Codestral => {
                         menu.entry("Codestral", None, move |_, cx| {
+                            set_completion_provider(fs.clone(), cx, provider);
+                        })
+                    }
+                    EditPredictionProvider::LmStudio => {
+                        menu.entry("LM Studio", None, move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         })
                     }
@@ -873,6 +910,17 @@ impl EditPredictionButton {
 
             menu.separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
+        })
+    }
+
+    fn build_lmstudio_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let menu = self.build_language_settings_menu(menu, window, cx);
+            self.add_provider_switching_section(menu, EditPredictionProvider::LmStudio, cx)
         })
     }
 
