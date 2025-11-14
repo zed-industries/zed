@@ -409,16 +409,9 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged { full_scan: true }
+                        RepositoryEvent::StatusesChanged
                         | RepositoryEvent::BranchChanged
                         | RepositoryEvent::MergeHeadsChanged,
-                        true,
-                    ) => {
-                        this.schedule_update(window, cx);
-                    }
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::StatusesChanged { full_scan: false },
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
