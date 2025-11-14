@@ -3,7 +3,10 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use ::util::{ResultExt, paths::SanitizedPath};
@@ -36,6 +39,9 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
     disable_direct_composition: bool,
 }
@@ -162,6 +168,7 @@ impl WindowsPlatform {
             disable_direct_composition,
             windows_version,
             drop_target_helper,
+            invalidate_devices: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -195,6 +202,7 @@ impl WindowsPlatform {
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.borrow().directx_devices.clone().unwrap(),
+            invalidate_devices: self.invalidate_devices.clone(),
         }
     }
 
@@ -247,13 +255,17 @@ impl WindowsPlatform {
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(&self.text_system);
+        let invalidate_devices = self.invalidate_devices.clone();
+
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
                 loop {
                     vsync_provider.wait_for_vsync();
-                    if check_device_lost(&directx_device.device) {
+                    if check_device_lost(&directx_device.device)
+                        || invalidate_devices.fetch_and(false, Ordering::Acquire)
+                    {
                         if let Err(err) = handle_gpu_device_lost(
                             &mut directx_device,
                             platform_window.as_raw(),
@@ -877,6 +889,9 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    pub(crate) invalidate_devices: Arc<AtomicBool>,
 }
 
 struct PlatformWindowCreateContext {
