@@ -17,4 +17,3 @@ anyhow.workspace = true
 futures.workspace = true
 net.workspace = true
 smol.workspace = true
-workspace-hack.workspace = true

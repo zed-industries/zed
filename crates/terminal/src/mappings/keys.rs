@@ -46,7 +46,7 @@ impl AlacModifiers {
 pub fn to_esc_str(
     keystroke: &Keystroke,
     mode: &TermMode,
-    alt_is_meta: bool,
+    option_as_meta: bool,
 ) -> Option<Cow<'static, str>> {
     let modifiers = AlacModifiers::new(keystroke);
 
@@ -218,7 +218,7 @@ pub fn to_esc_str(
         }
     }
 
-    if alt_is_meta {
+    if !cfg!(target_os = "macos") || option_as_meta {
         let is_alt_lowercase_ascii = modifiers == AlacModifiers::Alt && keystroke.key.is_ascii();
         let is_alt_uppercase_ascii =
             keystroke.modifiers.alt && keystroke.modifiers.shift && keystroke.key.is_ascii();

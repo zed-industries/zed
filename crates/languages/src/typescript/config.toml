@@ -22,6 +22,7 @@ prettier_parser_name = "typescript"
 tab_size = 2
 debuggers = ["JavaScript"]
 scope_opt_in_language_servers = ["tailwindcss-language-server"]
+import_path_strip_regex = "(?:/index)?\\.[jt]s$"
 
 [overrides.string]
 completion_query_characters = ["-", "."]

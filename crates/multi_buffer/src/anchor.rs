@@ -1,4 +1,4 @@
-use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
+use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
 use language::{OffsetUtf16, Point, TextDimension};
 use std::{
     cmp::Ordering,
@@ -185,9 +185,6 @@ impl ToOffset for Anchor {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize {
         self.summary(snapshot)
     }
-}
-
-impl ToOffsetUtf16 for Anchor {
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
         self.summary(snapshot)
     }
@@ -195,6 +192,9 @@ impl ToOffsetUtf16 for Anchor {
 
 impl ToPoint for Anchor {
     fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+        self.summary(snapshot)
+    }
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> rope::PointUtf16 {
         self.summary(snapshot)
     }
 }

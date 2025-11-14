@@ -199,7 +199,7 @@ impl Vim {
             let mut ranges = Vec::new();
             let mut cursor_positions = Vec::new();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            for selection in editor.selections.all_adjusted(cx) {
+            for selection in editor.selections.all_adjusted(&editor.display_snapshot(cx)) {
                 match vim.mode {
                     Mode::Visual | Mode::VisualLine => {
                         ranges.push(selection.start..selection.end);

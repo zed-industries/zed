@@ -1,9 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::App;
-use settings::{Settings, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsStore};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     ///

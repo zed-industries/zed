@@ -61,12 +61,11 @@ if (includesIssueUrl) {
 const PROMPT_PATHS = [
   "assets/prompts/content_prompt.hbs",
   "assets/prompts/terminal_assistant_prompt.hbs",
-  "crates/agent/src/prompts/stale_files_prompt_header.txt",
-  "crates/agent/src/prompts/summarize_thread_detailed_prompt.txt",
-  "crates/agent/src/prompts/summarize_thread_prompt.txt",
-  "crates/assistant_tools/src/templates/create_file_prompt.hbs",
-  "crates/assistant_tools/src/templates/edit_file_prompt_xml.hbs",
-  "crates/assistant_tools/src/templates/edit_file_prompt_diff_fenced.hbs",
+  "crates/agent_settings/src/prompts/summarize_thread_detailed_prompt.txt",
+  "crates/agent_settings/src/prompts/summarize_thread_prompt.txt",
+  "crates/agent/src/templates/create_file_prompt.hbs",
+  "crates/agent/src/templates/edit_file_prompt_xml.hbs",
+  "crates/agent/src/templates/edit_file_prompt_diff_fenced.hbs",
   "crates/git_ui/src/commit_message_prompt.txt",
 ];
 

@@ -15,8 +15,11 @@ runs:
         node-version: "18"
 
     - name: Limit target directory size
+      env:
+        MAX_SIZE: ${{ runner.os == 'macOS' && 300 || 100 }}
       shell: bash -euxo pipefail {0}
-      run: script/clear-target-dir-if-larger-than 100
+      # Use the variable in the run command
+      run: script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}
 
     - name: Run tests
       shell: bash -euxo pipefail {0}

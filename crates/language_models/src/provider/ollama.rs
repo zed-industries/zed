@@ -23,12 +23,12 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
 use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
+use crate::ui::{ConfiguredApiCard, InstructionListItem};
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -119,16 +119,16 @@ impl State {
                     let api_key = api_key.clone();
                     async move {
                         let name = model.name.as_str();
-                        let capabilities =
+                        let model =
                             show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
                                 .await?;
                         let ollama_model = ollama::Model::new(
                             name,
                             None,
-                            None,
-                            Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_vision()),
-                            Some(capabilities.supports_thinking()),
+                            model.context_length,
+                            Some(model.supports_tools()),
+                            Some(model.supports_vision()),
+                            Some(model.supports_thinking()),
                         );
                         Ok(ollama_model)
                     }
@@ -381,10 +381,13 @@ impl OllamaLanguageModel {
                                 thinking = Some(text)
                             }
                             MessageContent::ToolUse(tool_use) => {
-                                tool_calls.push(OllamaToolCall::Function(OllamaFunctionCall {
-                                    name: tool_use.name.to_string(),
-                                    arguments: tool_use.input,
-                                }));
+                                tool_calls.push(OllamaToolCall {
+                                    id: Some(tool_use.id.to_string()),
+                                    function: OllamaFunctionCall {
+                                        name: tool_use.name.to_string(),
+                                        arguments: tool_use.input,
+                                    },
+                                });
                             }
                             _ => (),
                         }
@@ -575,25 +578,23 @@ fn map_to_language_model_completion_events(
                     }
 
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
-                        match tool_call {
-                            OllamaToolCall::Function(function) => {
-                                let tool_id = format!(
-                                    "{}-{}",
-                                    &function.name,
-                                    TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
-                                );
-                                let event =
-                                    LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                                        id: LanguageModelToolUseId::from(tool_id),
-                                        name: Arc::from(function.name),
-                                        raw_input: function.arguments.to_string(),
-                                        input: function.arguments,
-                                        is_input_complete: true,
-                                    });
-                                events.push(Ok(event));
-                                state.used_tools = true;
-                            }
-                        }
+                        let OllamaToolCall { id, function } = tool_call;
+                        let id = id.unwrap_or_else(|| {
+                            format!(
+                                "{}-{}",
+                                &function.name,
+                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+                            )
+                        });
+                        let event = LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                            id: LanguageModelToolUseId::from(id),
+                            name: Arc::from(function.name),
+                            raw_input: function.arguments.to_string(),
+                            input: function.arguments,
+                            is_input_complete: true,
+                        });
+                        events.push(Ok(event));
+                        state.used_tools = true;
                     } else if !content.is_empty() {
                         events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                     }
@@ -623,18 +624,17 @@ fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
-    api_url_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
+    api_url_editor: Entity<InputField>,
     state: Entity<State>,
 }
 
 impl ConfigurationView {
     pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor =
-            cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
+        let api_key_editor = cx.new(|cx| InputField::new(window, cx, "63e02e...").label("API key"));
 
         let api_url_editor = cx.new(|cx| {
-            let input = SingleLineInput::new(window, cx, OLLAMA_API_URL).label("API URL");
+            let input = InputField::new(window, cx, OLLAMA_API_URL).label("API URL");
             input.set_text(OllamaLanguageModelProvider::api_url(cx), window, cx);
             input
         });
@@ -750,9 +750,14 @@ impl ConfigurationView {
             ))
     }
 
-    fn render_api_key_editor(&self, cx: &Context<Self>) -> Div {
+    fn render_api_key_editor(&self, cx: &Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let env_var_set = state.api_key_state.is_from_env_var();
+        let configured_card_label = if env_var_set {
+            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
+        } else {
+            "API key configured".to_string()
+        };
 
         if !state.api_key_state.has_key() {
             v_flex()
@@ -765,40 +770,15 @@ impl ConfigurationView {
                   .size(LabelSize::Small)
                   .color(Color::Muted),
               )
+              .into_any_element()
         } else {
-            h_flex()
-                .p_3()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(
-                            Label::new(
-                                if env_var_set {
-                                    format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
-                                } else {
-                                    "API key configured".to_string()
-                                }
-                            )
-                        )
-                )
-                .child(
-                    Button::new("reset-api-key", "Reset API Key")
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .layer(ElevationIndex::ModalSurface)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
-                )
+            ConfiguredApiCard::new(configured_card_label)
+                .disabled(env_var_set)
+                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+                .when(env_var_set, |this| {
+                    this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
+                })
+                .into_any_element()
         }
     }
 
@@ -907,6 +887,16 @@ impl Render for ConfigurationView {
                                             .child(Icon::new(IconName::Check).color(Color::Success))
                                             .child(Label::new("Connected"))
                                             .into_any_element(),
+                                    )
+                                    .child(
+                                        IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .tooltip(Tooltip::text("Refresh Models"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.update(cx, |state, _| {
+                                                    state.fetched_models.clear();
+                                                });
+                                                this.retry_connection(cx);
+                                            })),
                                     ),
                             )
                         } else {

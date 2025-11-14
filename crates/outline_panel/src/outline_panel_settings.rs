@@ -1,9 +1,10 @@
 use editor::EditorSettings;
 use gpui::{App, Pixels};
+use settings::RegisterSetting;
 pub use settings::{DockSide, Settings, ShowIndentGuides};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
@@ -60,22 +61,6 @@ impl Settings for OutlinePanelSettings {
                 show: panel.scrollbar.unwrap().show.map(Into::into),
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(b) = vscode.read_bool("outline.icons") {
-            let outline_panel = current.outline_panel.get_or_insert_default();
-            outline_panel.file_icons = Some(b);
-            outline_panel.folder_icons = Some(b);
-        }
-
-        if let Some(b) = vscode.read_bool("git.decorations.enabled") {
-            let outline_panel = current.outline_panel.get_or_insert_default();
-            outline_panel.git_status = Some(b);
         }
     }
 }

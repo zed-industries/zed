@@ -6,6 +6,7 @@ package=$1
 tag_prefix=$2
 tag_suffix=$3
 version_increment=$4
+gpui_release=${5:-false}
 
 if [[ -n $(git status --short --untracked-files=no) ]]; then
   echo "can't bump version with uncommitted changes"
@@ -25,6 +26,20 @@ tag_name=${tag_prefix}${new_version}${tag_suffix}
 git commit --quiet --all --message "${package} ${new_version}"
 git tag ${tag_name}
 
+if [[ "$gpui_release" == "true" ]]; then
+cat <<MESSAGE
+Locally committed and tagged ${package} version ${new_version}
+
+To push this:
+
+    git push origin ${tag_name} ${branch_name}; gh pr create -H ${branch_name}
+
+To undo this:
+
+    git branch -D ${branch_name} && git tag -d ${tag_name}
+
+MESSAGE
+else
 cat <<MESSAGE
 Locally committed and tagged ${package} version ${new_version}
 
@@ -37,3 +52,4 @@ To undo this:
     git reset --hard ${old_sha} && git tag -d ${tag_name}
 
 MESSAGE
+fi

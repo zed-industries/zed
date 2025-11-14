@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    size,
+    App, Application, Bounds, Context, FontStyle, FontWeight, StyledText, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, size,
 };
 
 struct HelloWorld {}
@@ -71,6 +71,12 @@ impl Render for HelloWorld {
                             .child("100%"),
                     ),
             )
+            .child(div().flex().gap_2().justify_between().child(
+                StyledText::new("ABCD").with_highlights([
+                    (0..1, FontWeight::EXTRA_BOLD.into()),
+                    (2..3, FontStyle::Italic.into()),
+                ]),
+            ))
     }
 }
 

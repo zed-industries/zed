@@ -2,7 +2,7 @@
 
 Zed supports ways to spawn (and rerun) commands using its integrated terminal to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
 
-```json
+```json [tasks]
 [
   {
     "label": "Example task",
@@ -89,7 +89,7 @@ These variables allow you to pull information from the current editor and use it
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
 
-```json
+```json [settings]
 {
   "label": "echo current file's path",
   "command": "echo $ZED_FILE"
@@ -106,7 +106,7 @@ When working with paths containing spaces or other special characters, please en
 
 For example, instead of this (which will fail if the path has a space):
 
-```json
+```json [settings]
 {
   "label": "stat current file",
   "command": "stat $ZED_FILE"
@@ -115,7 +115,7 @@ For example, instead of this (which will fail if the path has a space):
 
 Provide the following:
 
-```json
+```json [settings]
 {
   "label": "stat current file",
   "command": "stat",
@@ -125,7 +125,7 @@ Provide the following:
 
 Or explicitly include escaped quotes like so:
 
-```json
+```json [settings]
 {
   "label": "stat current file",
   "command": "stat \"$ZED_FILE\""
@@ -137,7 +137,7 @@ Or explicitly include escaped quotes like so:
 Task definitions with variables which are not present at the moment the task list is determined are filtered out.
 For example, the following task will appear in the spawn modal only if there is a text selection:
 
-```json
+```json [settings]
 {
   "label": "selected text",
   "command": "echo \"$ZED_SELECTED_TEXT\""
@@ -146,7 +146,7 @@ For example, the following task will appear in the spawn modal only if there is 
 
 Set default values to such variables to have such tasks always displayed:
 
-```json
+```json [settings]
 {
   "label": "selected text with default",
   "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
@@ -172,7 +172,7 @@ By default, tasks capture their variables into a context once, and this "resolve
 
 This can be controlled with the `"reevaluate_context"` argument to the task: setting it to `true` will force the task to be reevaluated before each run.
 
-```json
+```json [keymap]
 {
   "context": "Workspace",
   "bindings": {
@@ -185,7 +185,7 @@ This can be controlled with the `"reevaluate_context"` argument to the task: set
 
 You can define your own keybindings for your tasks via an additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:
 
-```json
+```json [keymap]
 {
   "context": "Workspace",
   "bindings": {
@@ -197,7 +197,7 @@ You can define your own keybindings for your tasks via an additional argument to
 Note that these tasks can also have a 'target' specified to control where the spawned task should show up.
 This could be useful for launching a terminal application that you want to use in the center area:
 
-```json
+```json [tasks]
 // In tasks.json
 {
   "label": "start lazygit",
@@ -205,7 +205,7 @@ This could be useful for launching a terminal application that you want to use i
 }
 ```
 
-```json
+```json [keymap]
 // In keymap.json
 {
   "context": "Workspace",
@@ -228,7 +228,7 @@ Zed supports overriding the default action for inline runnable indicators via wo
 
 To tag a task, add the runnable tag name to the `tags` field on the task template:
 
-```json
+```json [settings]
 {
   "label": "echo current file's path",
   "command": "echo $ZED_FILE",

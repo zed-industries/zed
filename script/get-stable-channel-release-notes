@@ -13,7 +13,7 @@
 // stable that didn't make it into a release, as they were cherry picked
 
 const { execFileSync } = require("child_process");
-const { GITHUB_ACCESS_TOKEN } = process.env;
+let { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_TAGS_API_URL = "https://api.github.com/repos/zed-industries/zed/releases/tags";
 const DIVIDER = "-".repeat(80);
 

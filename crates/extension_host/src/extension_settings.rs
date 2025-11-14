@@ -2,10 +2,10 @@ use collections::HashMap;
 use extension::{
     DownloadFileCapability, ExtensionCapability, NpmInstallPackageCapability, ProcessExecCapability,
 };
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use std::sync::Arc;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, RegisterSetting)]
 pub struct ExtensionSettings {
     /// The extensions that should be automatically installed by Zed.
     ///

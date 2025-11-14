@@ -30,7 +30,7 @@ which protols
 
 ## Configuration
 
-```json
+```json [settings]
 "lsp": {
   "protobuf-language-server": {
     "binary": {
@@ -62,7 +62,7 @@ ColumnLimit: 120
 
 Or you can have zed directly invoke `clang-format` by specifying it as a [formatter](https://zed.dev/docs/configuring-zed#formatter) in your settings:
 
-```json
+```json [settings]
   "languages": {
     "Proto": {
       "format_on_save": "on",

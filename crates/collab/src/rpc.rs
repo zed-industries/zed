@@ -343,11 +343,12 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
-            .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
+            .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
@@ -395,6 +396,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
             .add_message_handler(create_buffer_for_peer)
+            .add_message_handler(create_image_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
@@ -462,6 +464,8 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetTreeDiff>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
@@ -2370,6 +2374,26 @@ async fn lsp_query(
 /// Notify other participants that a new buffer has been created
 async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
+    session: MessageContext,
+) -> Result<()> {
+    session
+        .db()
+        .await
+        .check_user_is_project_host(
+            ProjectId::from_proto(request.project_id),
+            session.connection_id,
+        )
+        .await?;
+    let peer_id = request.peer_id.context("invalid peer id")?;
+    session
+        .peer
+        .forward_send(session.connection_id, peer_id.into(), request)?;
+    Ok(())
+}
+
+/// Notify other participants that a new image has been created
+async fn create_image_for_peer(
+    request: proto::CreateImageForPeer,
     session: MessageContext,
 ) -> Result<()> {
     session

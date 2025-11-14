@@ -1,22 +1,21 @@
-use crate::{App, PlatformDispatcher};
+use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
-use std::mem::ManuallyDrop;
-use std::panic::Location;
-use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
     marker::PhantomData,
-    mem,
+    mem::{self, ManuallyDrop},
     num::NonZeroUsize,
+    panic::Location,
     pin::Pin,
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    thread::{self, ThreadId},
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
@@ -39,7 +38,7 @@ pub struct BackgroundExecutor {
 /// This is intentionally `!Send` via the `not_send` marker field. This is because
 /// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
 /// only polled from the same thread it was spawned from. These checks would fail when spawning
-/// foreground tasks from from background threads.
+/// foreground tasks from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
@@ -63,7 +62,7 @@ enum TaskState<T> {
     Ready(Option<T>),
 
     /// A task that is currently running.
-    Spawned(async_task::Task<T>),
+    Spawned(async_task::Task<T, RunnableMeta>),
 }
 
 impl<T> Task<T> {
@@ -123,7 +122,12 @@ impl TaskLabel {
     /// Construct a new task label.
     pub fn new() -> Self {
         static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
+        Self(
+            NEXT_TASK_LABEL
+                .fetch_add(1, Ordering::SeqCst)
+                .try_into()
+                .unwrap(),
+        )
     }
 }
 
@@ -142,6 +146,7 @@ impl BackgroundExecutor {
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
+    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -151,6 +156,7 @@ impl BackgroundExecutor {
 
     /// Enqueues the given future to be run to completion on a background thread.
     /// The given label can be used to control the priority of the task in tests.
+    #[track_caller]
     pub fn spawn_labeled<R>(
         &self,
         label: TaskLabel,
@@ -162,14 +168,20 @@ impl BackgroundExecutor {
         self.spawn_internal::<R>(Box::pin(future), Some(label))
     }
 
+    #[track_caller]
     fn spawn_internal<R: Send + 'static>(
         &self,
         future: AnyFuture<R>,
         label: Option<TaskLabel>,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        let (runnable, task) =
-            async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
+        let location = core::panic::Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location })
+            .spawn(
+                move |_| future,
+                move |runnable| dispatcher.dispatch(RunnableVariant::Meta(runnable), label),
+            );
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -210,7 +222,8 @@ impl BackgroundExecutor {
         }
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
-        let unparker = self.dispatcher.unparker();
+        let parker = parking::Parker::new();
+        let unparker = parker.unparker();
         let waker = waker_fn(move || {
             unparker.unpark();
         });
@@ -222,10 +235,14 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout)
-                        && deadline.is_some_and(|deadline| deadline < Instant::now())
-                    {
-                        return Err(future);
+                    if let Some(timeout) = timeout {
+                        if !parker.park_timeout(timeout)
+                            && deadline.is_some_and(|deadline| deadline < Instant::now())
+                        {
+                            return Err(future);
+                        }
+                    } else {
+                        parker.park();
                     }
                 }
             }
@@ -242,6 +259,8 @@ impl BackgroundExecutor {
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
 
+        use parking::Parker;
+
         let mut future = Box::pin(future);
         if timeout == Some(Duration::ZERO) {
             return Err(future);
@@ -255,16 +274,27 @@ impl BackgroundExecutor {
         } else {
             usize::MAX
         };
-        let unparker = self.dispatcher.unparker();
+
+        let parker = Parker::new();
+        let unparker = parker.unparker();
+
         let awoken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn({
             let awoken = awoken.clone();
+            let unparker = unparker.clone();
             move || {
-                awoken.store(true, SeqCst);
+                awoken.store(true, Ordering::SeqCst);
                 unparker.unpark();
             }
         });
         let mut cx = std::task::Context::from_waker(&waker);
+
+        let duration = Duration::from_secs(
+            option_env!("GPUI_TEST_TIMEOUT")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(180),
+        );
+        let mut test_should_end_by = Instant::now() + duration;
 
         loop {
             match future.as_mut().poll(&mut cx) {
@@ -276,7 +306,7 @@ impl BackgroundExecutor {
                     max_ticks -= 1;
 
                     if !dispatcher.tick(background_only) {
-                        if awoken.swap(false, SeqCst) {
+                        if awoken.swap(false, Ordering::SeqCst) {
                             continue;
                         }
 
@@ -297,7 +327,11 @@ impl BackgroundExecutor {
                                 "parked with nothing left to run{waiting_message}{backtrace_message}",
                             )
                         }
-                        self.dispatcher.park(None);
+                        dispatcher.push_unparker(unparker.clone());
+                        parker.park_timeout(Duration::from_millis(1));
+                        if Instant::now() > test_should_end_by {
+                            panic!("test timed out after {duration:?} with allow_parking")
+                        }
                     }
                 }
             }
@@ -346,10 +380,13 @@ impl BackgroundExecutor {
         if duration.is_zero() {
             return Task::ready(());
         }
-        let (runnable, task) = async_task::spawn(async move {}, {
-            let dispatcher = self.dispatcher.clone();
-            move |runnable| dispatcher.dispatch_after(duration, runnable)
-        });
+        let location = core::panic::Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location })
+            .spawn(move |_| async move {}, {
+                let dispatcher = self.dispatcher.clone();
+                move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+            });
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -461,19 +498,23 @@ impl ForegroundExecutor {
         R: 'static,
     {
         let dispatcher = self.dispatcher.clone();
+        let location = core::panic::Location::caller();
 
         #[track_caller]
         fn inner<R: 'static>(
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
+            location: &'static core::panic::Location<'static>,
         ) -> Task<R> {
-            let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
-                dispatcher.dispatch_on_main_thread(runnable)
-            });
+            let (runnable, task) = spawn_local_with_source_location(
+                future,
+                move |runnable| dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable)),
+                RunnableMeta { location },
+            );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future))
+        inner::<R>(dispatcher, Box::pin(future), location)
     }
 }
 
@@ -482,14 +523,16 @@ impl ForegroundExecutor {
 /// Copy-modified from:
 /// <https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405>
 #[track_caller]
-fn spawn_local_with_source_location<Fut, S>(
+fn spawn_local_with_source_location<Fut, S, M>(
     future: Fut,
     schedule: S,
-) -> (Runnable<()>, async_task::Task<Fut::Output, ()>)
+    metadata: M,
+) -> (Runnable<M>, async_task::Task<Fut::Output, M>)
 where
     Fut: Future + 'static,
     Fut::Output: 'static,
-    S: async_task::Schedule<()> + Send + Sync + 'static,
+    S: async_task::Schedule<M> + Send + Sync + 'static,
+    M: 'static,
 {
     #[inline]
     fn thread_id() -> ThreadId {
@@ -513,9 +556,7 @@ where
                 "local task dropped by a thread that didn't spawn it. Task spawned at {}",
                 self.location
             );
-            unsafe {
-                ManuallyDrop::drop(&mut self.inner);
-            }
+            unsafe { ManuallyDrop::drop(&mut self.inner) };
         }
     }
 
@@ -539,7 +580,11 @@ where
         location: Location::caller(),
     };
 
-    unsafe { async_task::spawn_unchecked(future, schedule) }
+    unsafe {
+        async_task::Builder::new()
+            .metadata(metadata)
+            .spawn_unchecked(move |_| future, schedule)
+    }
 }
 
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
@@ -569,6 +614,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Spawn a future into this scope.
+    #[track_caller]
     pub fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,

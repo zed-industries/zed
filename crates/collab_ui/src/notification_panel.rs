@@ -612,6 +612,10 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
+    fn panel_key() -> &'static str {
+        NOTIFICATION_PANEL_KEY
+    }
+
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
@@ -734,19 +738,17 @@ impl Render for NotificationToast {
             .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .child(
                 IconButton::new(close_id, close_icon)
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         if suppress {
                             Tooltip::for_action(
                                 "Suppress.\nClose with click.",
                                 &workspace::SuppressNotification,
-                                window,
                                 cx,
                             )
                         } else {
                             Tooltip::for_action(
                                 "Close.\nSuppress with shift-click",
                                 &menu::Cancel,
-                                window,
                                 cx,
                             )
                         }

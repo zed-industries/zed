@@ -9,6 +9,7 @@ import "channel.proto";
 import "core.proto";
 import "debugger.proto";
 import "git.proto";
+import "image.proto";
 import "lsp.proto";
 import "notification.proto";
 import "task.proto";
@@ -418,7 +419,24 @@ message Envelope {
 
         GitRenameBranch git_rename_branch = 380;
 
-        RemoteStarted remote_started = 381; // current max
+        RemoteStarted remote_started = 381;
+
+        GetDirectoryEnvironment get_directory_environment = 382;
+        DirectoryEnvironment directory_environment = 383;
+
+        GetTreeDiff get_tree_diff = 384;
+        GetTreeDiffResponse get_tree_diff_response = 385;
+
+        GetBlobContent get_blob_content = 386;
+        GetBlobContentResponse get_blob_content_response = 387;
+
+        GitWorktreesResponse git_worktrees_response = 388;
+        GitGetWorktrees git_get_worktrees = 389;
+        GitCreateWorktree git_create_worktree = 390;
+
+        OpenImageByPath open_image_by_path = 391;
+        OpenImageResponse open_image_response = 392;
+        CreateImageForPeer create_image_for_peer = 393; // current max
     }
 
     reserved 87 to 88;

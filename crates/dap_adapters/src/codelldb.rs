@@ -1,7 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
@@ -329,6 +330,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -377,6 +379,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             command = Some(path);
         };
         let mut json_config = config.config.clone();
+
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
@@ -401,7 +404,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             request_args: self
                 .request_args(delegate, json_config, &config.label)
                 .await?,
-            envs: HashMap::default(),
+            envs: user_env.unwrap_or_default(),
             connection: None,
         })
     }

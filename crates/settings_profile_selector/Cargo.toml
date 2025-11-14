@@ -18,7 +18,6 @@ gpui.workspace = true
 picker.workspace = true
 settings.workspace = true
 ui.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

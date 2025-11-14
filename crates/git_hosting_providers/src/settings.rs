@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use git::GitHostingProviderRegistry;
 use gpui::App;
-use settings::{GitHostingProviderConfig, GitHostingProviderKind, Settings, SettingsStore};
+use settings::{
+    GitHostingProviderConfig, GitHostingProviderKind, RegisterSetting, Settings, SettingsStore,
+};
 use url::Url;
 use util::ResultExt as _;
 
 use crate::{Bitbucket, Github, Gitlab};
 
 pub(crate) fn init(cx: &mut App) {
-    GitHostingProviderSettings::register(cx);
-
     init_git_hosting_provider_settings(cx);
 }
 
@@ -52,7 +52,7 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
     provider_registry.set_setting_providers(iter);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RegisterSetting)]
 pub struct GitHostingProviderSettings {
     pub git_hosting_providers: Vec<GitHostingProviderConfig>,
 }

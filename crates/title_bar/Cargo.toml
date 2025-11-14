@@ -30,6 +30,7 @@ test-support = [
 anyhow.workspace = true
 auto_update.workspace = true
 call.workspace = true
+channel.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
@@ -50,7 +51,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

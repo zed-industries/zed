@@ -34,15 +34,14 @@ where
 
     pub fn insert(&mut self, new_bounds: Bounds<U>) -> u32 {
         // If the tree is empty, make the root the new leaf.
-        if self.root.is_none() {
+        let Some(mut index) = self.root else {
             let new_node = self.push_leaf(new_bounds, 1);
             self.root = Some(new_node);
             return 1;
-        }
+        };
 
         // Search for the best place to add the new leaf based on heuristics.
         let mut max_intersecting_ordering = 0;
-        let mut index = self.root.unwrap();
         while let Node::Internal {
             left,
             right,

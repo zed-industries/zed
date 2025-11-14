@@ -1,7 +1,7 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
-    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
-    GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
+    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
@@ -19,7 +19,7 @@ use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use settings::{Settings as _, SettingsStore};
+use settings::SettingsStore;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -159,6 +159,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
+                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -189,6 +190,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
+                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -368,6 +370,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
+                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
@@ -526,12 +529,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 }
 
-// todo(windows)
-// Disable this test on Windows for now. Because this test hangs at
-// `let fake_server = fake_servers.next().await.unwrap();`.
-// Reenable this test when we figure out why.
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
+    log::info!("Initializing test");
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -555,6 +555,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
+
+    log::info!("Setting up test");
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
@@ -673,6 +675,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             cx,
         )
     });
+
+    log::info!("Flushing events");
 
     // Ensure that debounces fire.
     let mut events = cx.events(&extension_store);
@@ -865,8 +869,6 @@ fn init_test(cx: &mut TestAppContext) {
         release_channel::init(SemanticVersion::default(), cx);
         extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        Project::init_settings(cx);
-        ExtensionSettings::register(cx);
-        language::init(cx);
+        gpui_tokio::init(cx);
     });
 }

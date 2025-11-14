@@ -31,7 +31,6 @@ smol.workspace = true
 util.workspace = true
 watch.workspace = true
 which.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }

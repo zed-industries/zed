@@ -27,7 +27,6 @@ rope.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

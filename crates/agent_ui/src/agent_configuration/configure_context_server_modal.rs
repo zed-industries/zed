@@ -7,8 +7,8 @@ use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
+    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -23,7 +23,8 @@ use project::{
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*,
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -252,6 +253,7 @@ pub struct ConfigureContextServerModal {
     source: ConfigurationSource,
     state: State,
     original_server_id: Option<ContextServerId>,
+    scroll_handle: ScrollHandle,
 }
 
 impl ConfigureContextServerModal {
@@ -361,6 +363,7 @@ impl ConfigureContextServerModal {
                         window,
                         cx,
                     ),
+                    scroll_handle: ScrollHandle::new(),
                 })
             })
         })
@@ -566,7 +569,7 @@ impl ConfigureContextServerModal {
             .into_any_element()
     }
 
-    fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
+    fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
         let is_connecting = matches!(self.state, State::Waiting);
 
@@ -584,12 +587,11 @@ impl ConfigureContextServerModal {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::with_meta(
                                         "Open Repository",
                                         None,
                                         repository_url.clone(),
-                                        window,
                                         cx,
                                     )
                                 }
@@ -616,7 +618,7 @@ impl ConfigureContextServerModal {
                             },
                         )
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -634,7 +636,7 @@ impl ConfigureContextServerModal {
                         )
                         .disabled(is_connecting)
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -681,6 +683,7 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_handle = self.scroll_handle.clone();
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -700,16 +703,31 @@ impl Render for ConfigureContextServerModal {
                 Modal::new("configure-context-server", None)
                     .header(self.render_modal_header())
                     .section(
-                        Section::new()
-                            .child(self.render_modal_description(window, cx))
-                            .child(self.render_modal_content(cx))
-                            .child(match &self.state {
-                                State::Idle => div(),
-                                State::Waiting => Self::render_waiting_for_context_server(),
-                                State::Error(error) => Self::render_modal_error(error.clone()),
-                            }),
+                        Section::new().child(
+                            div()
+                                .size_full()
+                                .child(
+                                    div()
+                                        .id("modal-content")
+                                        .max_h(vh(0.7, window))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&scroll_handle)
+                                        .child(self.render_modal_description(window, cx))
+                                        .child(self.render_modal_content(cx))
+                                        .child(match &self.state {
+                                            State::Idle => div(),
+                                            State::Waiting => {
+                                                Self::render_waiting_for_context_server()
+                                            }
+                                            State::Error(error) => {
+                                                Self::render_modal_error(error.clone())
+                                            }
+                                        }),
+                                )
+                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                        ),
                     )
-                    .footer(self.render_modal_footer(window, cx)),
+                    .footer(self.render_modal_footer(cx)),
             )
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    Vim,
+    Operator, Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
@@ -8,7 +8,7 @@ use editor::{
     Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
     display_map::ToDisplayPoint,
 };
-use gpui::{Context, Window, actions};
+use gpui::{ClipboardEntry, Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
-                let display_selections = editor.selections.all::<Point>(cx);
+                let display_selections = editor.selections.all::<Point>(&map.display_snapshot);
 
                 // Handles all string that require manipulation, including inserts and replaces
                 let edits = display_selections
@@ -98,7 +98,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&map.display_snapshot);
                 let mut new_selections = vec![];
                 let edits: Vec<(Range<Point>, String)> = selections
                     .into_iter()
@@ -150,7 +150,9 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let mut selection = editor.selections.newest_display(cx);
+            let mut selection = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
             object.expand_selection(&snapshot, &mut selection, around, None);
             let start = snapshot
@@ -196,7 +198,9 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
-            let mut selection = editor.selections.newest_display(cx);
+            let mut selection = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
             motion.expand_selection(
                 &snapshot,
@@ -274,10 +278,27 @@ impl Vim {
             );
         }
     }
+
+    /// Pastes the clipboard contents, replacing the same number of characters
+    /// as the clipboard's contents.
+    pub fn paste_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let clipboard_text =
+            cx.read_from_clipboard()
+                .and_then(|item| match item.entries().first() {
+                    Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
+                    _ => None,
+                });
+
+        if let Some(text) = clipboard_text {
+            self.push_operator(Operator::Replace, window, cx);
+            self.normal_replace(Arc::from(text), window, cx);
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use gpui::ClipboardItem;
     use indoc::indoc;
 
     use crate::{
@@ -516,5 +537,23 @@ mod test {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert_eq!(0, highlights.len());
         });
+    }
+
+    #[gpui::test]
+    async fn test_paste_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(ClipboardItem::new_string("456".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"45ˇ6"}, Mode::Replace);
+
+        // If the clipboard's contents length is greater than the remaining text
+        // length, nothing sould be replace and cursor should remain in the same
+        // position.
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(ClipboardItem::new_string("4567".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"ˇ123"}, Mode::Replace);
     }
 }

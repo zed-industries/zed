@@ -118,14 +118,14 @@ impl LanguageModelRegistry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut App) -> crate::fake_provider::FakeLanguageModelProvider {
-        let fake_provider = crate::fake_provider::FakeLanguageModelProvider::default();
+    pub fn test(cx: &mut App) -> Arc<crate::fake_provider::FakeLanguageModelProvider> {
+        let fake_provider = Arc::new(crate::fake_provider::FakeLanguageModelProvider::default());
         let registry = cx.new(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
             let model = fake_provider.provided_models(cx)[0].clone();
             let configured_model = ConfiguredModel {
-                provider: Arc::new(fake_provider.clone()),
+                provider: fake_provider.clone(),
                 model,
             };
             registry.set_default_model(Some(configured_model), cx);
@@ -137,7 +137,7 @@ impl LanguageModelRegistry {
 
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
-        provider: T,
+        provider: Arc<T>,
         cx: &mut Context<Self>,
     ) {
         let id = provider.id();
@@ -152,7 +152,7 @@ impl LanguageModelRegistry {
             subscription.detach();
         }
 
-        self.providers.insert(id.clone(), Arc::new(provider));
+        self.providers.insert(id.clone(), provider);
         cx.emit(Event::AddedProvider(id));
     }
 
@@ -395,7 +395,7 @@ mod tests {
     fn test_register_providers(cx: &mut App) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
-        let provider = FakeLanguageModelProvider::default();
+        let provider = Arc::new(FakeLanguageModelProvider::default());
         registry.update(cx, |registry, cx| {
             registry.register_provider(provider.clone(), cx);
         });

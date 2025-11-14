@@ -1,3 +1,7 @@
+// Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 float color_brightness(float3 color) {
     // REC. 601 luminance coefficients for perceived brightness
     return dot(color, float3(0.30f, 0.59f, 0.11f));

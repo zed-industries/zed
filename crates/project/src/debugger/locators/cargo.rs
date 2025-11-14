@@ -117,7 +117,7 @@ impl DapLocator for CargoLocator {
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
-        let builder = ShellBuilder::new(&build_config.shell).non_interactive();
+        let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
         let (program, args) = builder.build(
             Some("cargo".into()),
             &build_config
@@ -147,6 +147,8 @@ impl DapLocator for CargoLocator {
             .args
             .first()
             .is_some_and(|arg| arg == "test" || arg == "t");
+
+        let is_ignored = build_config.args.contains(&"--include-ignored".to_owned());
 
         let executables = output
             .lines()
@@ -205,6 +207,9 @@ impl DapLocator for CargoLocator {
         let mut args: Vec<_> = test_name.into_iter().collect();
         if is_test {
             args.push("--nocapture".to_owned());
+            if is_ignored {
+                args.push("--include-ignored".to_owned());
+            }
         }
 
         Ok(DebugRequest::Launch(task::LaunchRequest {

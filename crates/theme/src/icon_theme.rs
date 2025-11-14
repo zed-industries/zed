@@ -152,7 +152,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ),
     ("java", &["java"]),
     ("javascript", &["cjs", "js", "mjs"]),
-    ("json", &["json"]),
+    ("json", &["json", "jsonc"]),
     ("julia", &["jl"]),
     ("kdl", &["kdl"]),
     ("kotlin", &["kt"]),
@@ -199,9 +199,9 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     (
         "storage",
         &[
-            "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "jsonc",
-            "ldf", "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql",
-            "sqlite", "tsv",
+            "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "ldf",
+            "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
+            "tsv",
         ],
     ),
     (

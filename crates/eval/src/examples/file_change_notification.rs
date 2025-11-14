@@ -48,8 +48,8 @@ impl Example for FileChangeNotificationExample {
         })?;
 
         // Start conversation (specific message is not important)
-        cx.push_user_message("Find all files in this repo");
-        cx.run_turn().await?;
+        cx.prompt_with_max_turns("Find all files in this repo", 1)
+            .await?;
 
         // Edit the README buffer - the model should get a notification on next turn
         buffer.update(cx, |buffer, cx| {
@@ -58,7 +58,7 @@ impl Example for FileChangeNotificationExample {
 
         // Run for some more turns.
         // The model shouldn't thank us for letting it know about the file change.
-        cx.run_turns(3).await?;
+        cx.proceed_with_max_turns(3).await?;
 
         Ok(())
     }

@@ -11,7 +11,7 @@ Workspace configuration options can be passed to the language server via the `ls
 
 The following example enables support for resolving [tanka](https://tanka.dev) import paths in `jsonnet-language-server`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "jsonnet-language-server": {

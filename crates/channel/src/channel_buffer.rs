@@ -9,7 +9,7 @@ use rpc::{
     proto::{self, PeerId},
 };
 use std::{sync::Arc, time::Duration};
-use text::BufferId;
+use text::{BufferId, ReplicaId};
 use util::ResultExt;
 
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
@@ -65,7 +65,12 @@ impl ChannelBuffer {
 
         let buffer = cx.new(|cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
-            language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
+            language::Buffer::remote(
+                buffer_id,
+                ReplicaId::new(response.replica_id as u16),
+                capability,
+                base_text,
+            )
         })?;
         buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
@@ -272,7 +277,7 @@ impl ChannelBuffer {
         self.connected
     }
 
-    pub fn replica_id(&self, cx: &App) -> u16 {
+    pub fn replica_id(&self, cx: &App) -> ReplicaId {
         self.buffer.read(cx).replica_id()
     }
 }

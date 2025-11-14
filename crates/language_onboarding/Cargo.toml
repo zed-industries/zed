@@ -21,7 +21,6 @@ gpui.workspace = true
 project.workspace = true
 ui.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 # Uncomment other workspace dependencies as needed
 # assistant.workspace = true

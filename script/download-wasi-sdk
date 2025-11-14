@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Check if ./target/wasi-sdk exists
+if [ ! -d "./target/wasi-sdk" ]; then
+    echo "WASI SDK not found, downloading v25..."
+
+    # Determine OS and architecture
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+
+    # Map architecture names to WASI SDK format
+    case $ARCH in
+        x86_64)
+            ARCH="x86_64"
+            ;;
+        arm64|aarch64)
+            ARCH="arm64"
+            ;;
+        *)
+            echo "Unsupported architecture: $ARCH"
+            exit 1
+            ;;
+    esac
+
+    # Map OS names to WASI SDK format
+    case $OS in
+        darwin)
+            OS="macos"
+            ;;
+        linux)
+            OS="linux"
+            ;;
+        mingw*|msys*|cygwin*)
+            OS="mingw"
+            ;;
+        *)
+            echo "Unsupported OS: $OS"
+            exit 1
+            ;;
+    esac
+
+    # Construct download URL
+    WASI_SDK_VERSION="25"
+    WASI_SDK_URL="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-${ARCH}-${OS}.tar.gz"
+
+    echo "Downloading from: $WASI_SDK_URL"
+
+    # Create target directory if it doesn't exist
+    mkdir -p ./target
+
+    # Download and extract
+    curl -L "$WASI_SDK_URL" | tar -xz -C ./target
+
+    # Rename the extracted directory to wasi-sdk
+    mv "./target/wasi-sdk-${WASI_SDK_VERSION}.0-${ARCH}-${OS}" "./target/wasi-sdk"
+
+    echo "WASI SDK v25 installed successfully"
+else
+    echo "WASI SDK already exists at ./target/wasi-sdk"
+fi

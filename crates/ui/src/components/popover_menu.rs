@@ -270,11 +270,11 @@ fn show_menu<M: ManagedView>(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let previous_focus_handle = window.focused(cx);
     let Some(new_menu) = (builder)(window, cx) else {
         return;
     };
     let menu2 = menu.clone();
-    let previous_focus_handle = window.focused(cx);
 
     window
         .subscribe(&new_menu, cx, move |modal, _: &DismissEvent, window, cx| {

@@ -132,37 +132,31 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             }
         }
 
-        let chunk = self
-            .buffer_chunk
-            .get_or_insert_with(|| self.buffer_chunks.next().unwrap_or_default());
-        if chunk.text.is_empty() {
+        let chunk = match &mut self.buffer_chunk {
+            Some(it) => it,
+            slot => slot.insert(self.buffer_chunks.next()?),
+        };
+        while chunk.text.is_empty() {
             *chunk = self.buffer_chunks.next()?;
         }
 
         let split_idx = chunk.text.len().min(next_highlight_endpoint - self.offset);
         let (prefix, suffix) = chunk.text.split_at(split_idx);
-
-        let (chars, tabs) = if split_idx == 128 {
-            let output = (chunk.chars, chunk.tabs);
-            chunk.chars = 0;
-            chunk.tabs = 0;
-            output
-        } else {
-            let mask = (1 << split_idx) - 1;
-            let output = (chunk.chars & mask, chunk.tabs & mask);
-            chunk.chars = chunk.chars >> split_idx;
-            chunk.tabs = chunk.tabs >> split_idx;
-            output
-        };
-
-        chunk.text = suffix;
         self.offset += prefix.len();
+
+        let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
+        let chars = chunk.chars & mask;
+        let tabs = chunk.tabs & mask;
         let mut prefix = Chunk {
             text: prefix,
             chars,
             tabs,
             ..chunk.clone()
         };
+
+        chunk.chars = chunk.chars.unbounded_shr(split_idx as u32);
+        chunk.tabs = chunk.tabs.unbounded_shr(split_idx as u32);
+        chunk.text = suffix;
         if !self.active_highlights.is_empty() {
             prefix.highlight_style = self
                 .active_highlights

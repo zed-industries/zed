@@ -20,16 +20,14 @@ acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
-agent2.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
-assistant_context.workspace = true
+assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
-assistant_tool.workspace = true
 audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
@@ -71,6 +69,7 @@ postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
+ref-cast.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 rules_library.workspace = true
@@ -97,16 +96,13 @@ url.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
-agent2 = { workspace = true, features = ["test-support"] }
-assistant_context = { workspace = true, features = ["test-support"] }
-assistant_tools.workspace = true
+assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }

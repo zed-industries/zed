@@ -155,9 +155,9 @@ impl TabSwitcher {
         Self {
             picker: cx.new(|cx| {
                 if is_global {
-                    Picker::uniform_list(delegate, window, cx)
+                    Picker::list(delegate, window, cx)
                 } else {
-                    Picker::nonsearchable_uniform_list(delegate, window, cx)
+                    Picker::nonsearchable_list(delegate, window, cx)
                 }
             }),
             init_modifiers,
@@ -537,7 +537,7 @@ impl TabSwitcherDelegate {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
-        let Some(pane) = self.pane.upgrade() else {
+        let Some(pane) = tab_match.pane.upgrade() else {
             return;
         };
         pane.update(cx, |pane, cx| {

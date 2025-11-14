@@ -255,7 +255,7 @@ impl Database {
 
                 let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
-                    external_id: ActiveValue::Set(external_id.to_string()),
+                    external_id: ActiveValue::Set((*external_id).to_owned()),
                     id: ActiveValue::NotSet,
                     latest_version: ActiveValue::Set(latest_version.version.to_string()),
                     total_download_count: ActiveValue::NotSet,
@@ -309,6 +309,9 @@ impl Database {
                             version
                                 .provides
                                 .contains(&ExtensionProvides::ContextServers),
+                        ),
+                        provides_agent_servers: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::AgentServers),
                         ),
                         provides_slash_commands: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::SlashCommands),
@@ -420,6 +423,10 @@ fn apply_provides_filter(
 
     if provides_filter.contains(&ExtensionProvides::ContextServers) {
         condition = condition.add(extension_version::Column::ProvidesContextServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::AgentServers) {
+        condition = condition.add(extension_version::Column::ProvidesAgentServers.eq(true));
     }
 
     if provides_filter.contains(&ExtensionProvides::SlashCommands) {

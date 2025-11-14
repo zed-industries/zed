@@ -363,7 +363,10 @@ mod test {
                 point(0., 3.0)
             );
             assert_eq!(
-                editor.selections.newest(cx).range(),
+                editor
+                    .selections
+                    .newest(&editor.display_snapshot(cx))
+                    .range(),
                 Point::new(6, 0)..Point::new(6, 0)
             )
         });
@@ -380,7 +383,10 @@ mod test {
                 point(0., 3.0)
             );
             assert_eq!(
-                editor.selections.newest(cx).range(),
+                editor
+                    .selections
+                    .newest(&editor.display_snapshot(cx))
+                    .range(),
                 Point::new(0, 0)..Point::new(6, 1)
             )
         });

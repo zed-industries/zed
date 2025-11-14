@@ -51,6 +51,7 @@ impl ImageView {
             image::ImageFormat::WebP => ImageFormat::Webp,
             image::ImageFormat::Tiff => ImageFormat::Tiff,
             image::ImageFormat::Bmp => ImageFormat::Bmp,
+            image::ImageFormat::Ico => ImageFormat::Ico,
             format => {
                 anyhow::bail!("unsupported image format {format:?}");
             }

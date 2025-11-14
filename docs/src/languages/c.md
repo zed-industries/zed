@@ -17,7 +17,7 @@ CompileFlags:
 
 By default clang and gcc will recognize `*.C` and `*.H` (uppercase extensions) as C++ and not C and so Zed too follows this convention. If you are working with a C-only project (perhaps one with legacy uppercase pathing like `FILENAME.C`) you can override this behavior by adding this to your settings:
 
-```json
+```json [settings]
 {
   "file_types": {
     "C": ["C", "H"]
@@ -40,7 +40,7 @@ See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOpt
 
 You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
 
-```json
+```json [settings]
   "languages": {
     "C": {
       "format_on_save": "on",
@@ -67,9 +67,12 @@ After building your project, CMake will generate the `compile_commands.json` fil
 
 You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
 
+- [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
+- [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)
+
 ### Build and Debug Binary
 
-```json
+```json [debug]
 [
   {
     "label": "Debug native binary",

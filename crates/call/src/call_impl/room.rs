@@ -1683,7 +1683,9 @@ impl LiveKitRoom {
     }
 }
 
+#[derive(Default)]
 enum LocalTrack<Stream: ?Sized> {
+    #[default]
     None,
     Pending {
         publish_id: usize,
@@ -1692,12 +1694,6 @@ enum LocalTrack<Stream: ?Sized> {
         track_publication: LocalTrackPublication,
         _stream: Box<Stream>,
     },
-}
-
-impl<T: ?Sized> Default for LocalTrack<T> {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

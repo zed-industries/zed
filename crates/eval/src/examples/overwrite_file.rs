@@ -1,6 +1,6 @@
+use agent::{EditFileMode, EditFileToolInput};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_tools::{EditFileMode, EditFileToolInput};
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata};
@@ -36,17 +36,14 @@ impl Example for FileOverwriteExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        let response = cx.run_turns(1).await?;
-        let file_overwritten = if let Some(tool_use) = response.find_tool_call("edit_file") {
-            let input = tool_use.parse_input::<EditFileToolInput>()?;
-            match input.mode {
-                EditFileMode::Edit => false,
-                EditFileMode::Create | EditFileMode::Overwrite => {
-                    input.path.ends_with("src/language_model_selector.rs")
-                }
+        let response = cx.proceed_with_max_turns(1).await?;
+        let tool_use = response.expect_tool_call("edit_file", cx)?;
+        let input = tool_use.parse_input::<EditFileToolInput>()?;
+        let file_overwritten = match input.mode {
+            EditFileMode::Edit => false,
+            EditFileMode::Create | EditFileMode::Overwrite => {
+                input.path.ends_with("src/language_model_selector.rs")
             }
-        } else {
-            false
         };
 
         cx.assert(!file_overwritten, "File should be edited, not overwritten")

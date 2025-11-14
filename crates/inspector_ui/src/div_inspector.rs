@@ -576,7 +576,12 @@ fn render_layout_state(inspector_state: &DivInspectorState, cx: &App) -> Div {
         .child(
             div()
                 .text_ui(cx)
-                .child(format!("Bounds: {}", inspector_state.bounds)),
+                .child(format!(
+                    "Bounds: ⌜{} - {}⌟",
+                    inspector_state.bounds.origin,
+                    inspector_state.bounds.bottom_right()
+                ))
+                .child(format!("Size: {}", inspector_state.bounds.size)),
         )
         .child(
             div()
@@ -659,6 +664,8 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     replace_range: replace_range.clone(),
                     new_text: format!(".{}()", method.name),
                     label: CodeLabel::plain(method.name.to_string(), None),
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     icon_path: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())

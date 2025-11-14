@@ -285,6 +285,10 @@ impl Disableable for Button {
     /// This results in a button that is disabled and does not respond to click events.
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
+        self.key_binding = self
+            .key_binding
+            .take()
+            .map(|binding| binding.disabled(disabled));
         self
     }
 }
@@ -402,6 +406,11 @@ impl ButtonCommon for Button {
         self.base = self.base.layer(elevation);
         self
     }
+
+    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.base = self.base.track_focus(focus_handle);
+        self
+    }
 }
 
 impl RenderOnce for Button {
@@ -469,7 +478,6 @@ impl RenderOnce for Button {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
 impl Component for Button {
     fn scope() -> ComponentScope {
         ComponentScope::Input

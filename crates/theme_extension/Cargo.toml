@@ -17,4 +17,3 @@ extension.workspace = true
 fs.workspace = true
 gpui.workspace = true
 theme.workspace = true
-workspace-hack.workspace = true

@@ -27,6 +27,7 @@ extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 http_client.workspace = true
 language.workspace = true
 log.workspace = true
@@ -51,7 +52,6 @@ util.workspace = true
 wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

@@ -82,7 +82,7 @@ impl Editor {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
         }
-        let newest_selection = self.selections.newest::<usize>(cx);
+        let newest_selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
         let head = newest_selection.head();
 
         if !newest_selection.is_empty() && head != newest_selection.tail() {
@@ -396,13 +396,8 @@ impl SignatureHelpPopover {
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .tooltip(move |window, cx| {
-                    ui::Tooltip::for_action(
-                        "Previous Signature",
-                        &crate::SignatureHelpPrevious,
-                        window,
-                        cx,
-                    )
+                .tooltip(move |_window, cx| {
+                    ui::Tooltip::for_action("Previous Signature", &crate::SignatureHelpPrevious, cx)
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
@@ -412,8 +407,8 @@ impl SignatureHelpPopover {
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .tooltip(move |window, cx| {
-                    ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, window, cx)
+                .tooltip(move |_window, cx| {
+                    ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, cx)
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_next(&crate::SignatureHelpNext, window, cx);

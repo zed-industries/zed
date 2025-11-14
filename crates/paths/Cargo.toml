@@ -18,4 +18,3 @@ path = "src/paths.rs"
 dirs.workspace = true
 ignore.workspace = true
 util.workspace = true
-workspace-hack.workspace = true

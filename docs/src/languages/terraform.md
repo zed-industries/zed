@@ -13,7 +13,7 @@ TBD: Add example using `rootModulePaths` to match upstream example https://githu
 
 The Terraform language server can be configured in your `settings.json`, e.g.:
 
-```json
+```json [settings]
 {
   "lsp": {
     "terraform-ls": {

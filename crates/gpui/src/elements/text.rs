@@ -8,6 +8,7 @@ use crate::{
 use anyhow::Context as _;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     mem,
     ops::Range,
@@ -334,12 +335,11 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
-
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
@@ -378,15 +378,15 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
+                let (text, runs) = if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,
                         &truncation_suffix,
-                        &mut runs,
+                        &runs,
                     )
                 } else {
-                    text.clone()
+                    (text.clone(), Cow::Borrowed(&*runs))
                 };
                 let len = text.len();
 

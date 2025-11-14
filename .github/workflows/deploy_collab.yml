@@ -49,7 +49,7 @@ jobs:
 
       - name: Limit target directory size
         shell: bash -euxo pipefail {0}
-        run: script/clear-target-dir-if-larger-than 100
+        run: script/clear-target-dir-if-larger-than 300
 
       - name: Run tests
         shell: bash -euxo pipefail {0}

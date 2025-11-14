@@ -11,13 +11,13 @@ use project::Project;
 use prompt_store::PromptStore;
 use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
+use util::paths::PathStyle;
 
-use agent::context::{
+use crate::context::{
     AgentContextHandle, ContextId, ContextKind, DirectoryContextHandle, FetchedUrlContext,
     FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContextHandle,
     SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
-use util::paths::PathStyle;
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -244,8 +244,8 @@ impl RenderOnce for ContextPill {
                             .truncate(),
                     ),
                 )
-                .tooltip(|window, cx| {
-                    Tooltip::with_meta("Suggested Context", None, "Click to add it", window, cx)
+                .tooltip(|_window, cx| {
+                    Tooltip::with_meta("Suggested Context", None, "Click to add it", cx)
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
@@ -466,7 +466,7 @@ impl AddedContext {
             parent: None,
             tooltip: None,
             icon_path: None,
-            status: if handle.thread.read(cx).is_generating_detailed_summary() {
+            status: if handle.thread.read(cx).is_generating_summary() {
                 ContextStatus::Loading {
                     message: "Summarizing…".into(),
                 }
@@ -476,7 +476,11 @@ impl AddedContext {
             render_hover: {
                 let thread = handle.thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = thread.read(cx).latest_detailed_summary_or_text();
+                    let text = thread
+                        .update(cx, |thread, cx| thread.summary(cx))
+                        .now_or_never()
+                        .flatten()
+                        .unwrap_or_else(|| SharedString::from(thread.read(cx).to_markdown()));
                     ContextPillHover::new_text(text, cx).into()
                 }))
             },
@@ -493,9 +497,9 @@ impl AddedContext {
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: {
-                let context = handle.context.clone();
+                let text_thread = handle.text_thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = context.read(cx).to_xml(cx);
+                    let text = text_thread.read(cx).to_xml(cx);
                     ContextPillHover::new_text(text.into(), cx).into()
                 }))
             },

@@ -439,9 +439,6 @@ mod tests {
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
             editor::init(cx);
         });
     }

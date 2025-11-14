@@ -9,6 +9,39 @@
 (type_identifier) @type
 (predefined_type) @type.builtin
 
+;; Enables ts-pretty-errors
+;; The Lsp returns "snippets" of typescript, which are not valid typescript in totality,
+;; but should still be highlighted
+;; Highlights object literals by hijacking the statement_block pattern, but only if
+;; the statement block follows an object literal pattern
+((statement_block
+   (labeled_statement
+     ;; highlight the label like a property name
+     label: (statement_identifier) @property.name
+     body: [
+       ;; match a terminating expression statement
+       (expression_statement
+            ;; single identifier - treat as a type name
+           [(identifier) @type.name
+            ;; object - treat as a property - type pair
+            (object
+                (pair
+                    key: (_) @property.name
+                    value: (_) @type.name))
+            ;; subscript_expression - treat as an array declaration
+            (subscript_expression
+                object: (_) @type.name
+                index: (_)
+                )
+            ;; templated string - treat each identifier contained as a type name
+            (template_string
+                (template_substitution
+                    (identifier) @type.name))
+            ])
+       ;; match a nested statement block
+       (statement_block) @nested
+     ])))
+
 (import_specifier
   "type"
   name: (identifier) @type
@@ -79,6 +112,8 @@
   left: (identifier) @function
   right: [(function_expression) (arrow_function)])
 
+(arrow_function) @function
+
 ; Literals
 
 (this) @variable.special
@@ -120,6 +155,15 @@
 (number) @number
 
 ; Tokens
+
+[
+  ";"
+  "?."
+  "."
+  ","
+  ":"
+  "?"
+] @punctuation.delimiter
 
 [
   "..."
@@ -180,15 +224,6 @@
 )
 
 [
-  ";"
-  "?."
-  "."
-  ","
-  ":"
-  "?"
-] @punctuation.delimiter
-
-[
   "("
   ")"
   "["
@@ -218,27 +253,18 @@
   "as"
   "async"
   "await"
-  "break"
-  "case"
-  "catch"
   "class"
   "const"
-  "continue"
   "debugger"
   "declare"
   "default"
   "delete"
-  "do"
-  "else"
   "enum"
   "export"
   "extends"
-  "finally"
-  "for"
   "from"
   "function"
   "get"
-  "if"
   "implements"
   "import"
   "in"
@@ -257,20 +283,34 @@
   "protected"
   "public"
   "readonly"
-  "return"
   "satisfies"
   "set"
   "static"
-  "switch"
   "target"
-  "throw"
-  "try"
   "type"
   "typeof"
   "using"
   "var"
   "void"
-  "while"
   "with"
-  "yield"
 ] @keyword
+
+[
+  "break"
+  "case"
+  "catch"
+  "continue"
+  "do"
+  "else"
+  "finally"
+  "for"
+  "if"
+  "return"
+  "switch"
+  "throw"
+  "try"
+  "while"
+  "yield"
+] @keyword.control
+
+(switch_default "default" @keyword.control)

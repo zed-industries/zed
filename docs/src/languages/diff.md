@@ -10,7 +10,7 @@ Zed will not attempt to format diff files and has [`remove_trailing_whitespace_o
 
 Zed will automatically recognize files with `patch` and `diff` extensions as Diff files. To recognize other extensions, add them to `file_types` in your Zed settings.json:
 
-```json
+```json [settings]
   "file_types": {
     "Diff": ["dif"]
   },

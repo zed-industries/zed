@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 smol.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true

@@ -38,7 +38,7 @@ impl Vim {
                 .map(|s| s.to_vec())
             {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    let map = s.display_map();
+                    let map = s.display_snapshot();
                     s.select_display_ranges(selections.iter().map(|a| {
                         let point = a.to_display_point(&map);
                         point..point
@@ -50,7 +50,8 @@ impl Vim {
 
     pub(crate) fn push_to_change_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((new_positions, buffer)) = self.update_editor(cx, |vim, editor, cx| {
-            let (map, selections) = editor.selections.all_adjusted_display(cx);
+            let display_map = editor.display_snapshot(cx);
+            let selections = editor.selections.all_adjusted_display(&display_map);
             let buffer = editor.buffer().clone();
 
             let pop_state = editor
@@ -59,7 +60,7 @@ impl Vim {
                 .map(|previous| {
                     previous.len() == selections.len()
                         && previous.iter().enumerate().all(|(ix, p)| {
-                            p.to_display_point(&map).row() == selections[ix].head().row()
+                            p.to_display_point(&display_map).row() == selections[ix].head().row()
                         })
                 })
                 .unwrap_or(false);
@@ -68,11 +69,11 @@ impl Vim {
                 .into_iter()
                 .map(|s| {
                     let point = if vim.mode == Mode::Insert {
-                        movement::saturating_left(&map, s.head())
+                        movement::saturating_left(&display_map, s.head())
                     } else {
                         s.head()
                     };
-                    map.display_point_to_anchor(point, Bias::Left)
+                    display_map.display_point_to_anchor(point, Bias::Left)
                 })
                 .collect::<Vec<_>>();
 

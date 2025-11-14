@@ -17,12 +17,13 @@
 
 use crate::{
     AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
-    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
+    DispatchPhase, Display, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
+    Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
+    KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent,
+    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
+    size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -113,8 +114,8 @@ impl Interactivity {
         }
     }
 
-    /// Bind the given callback to the mouse down event for the given mouse button, during the bubble phase
-    /// The imperative API equivalent of [`InteractiveElement::on_mouse_down`]
+    /// Bind the given callback to the mouse down event for the given mouse button, during the bubble phase.
+    /// The imperative API equivalent of [`InteractiveElement::on_mouse_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
     pub fn on_mouse_down(
@@ -133,8 +134,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse down event for any button, during the capture phase
-    /// The imperative API equivalent of [`InteractiveElement::capture_any_mouse_down`]
+    /// Bind the given callback to the mouse down event for any button, during the capture phase.
+    /// The imperative API equivalent of [`InteractiveElement::capture_any_mouse_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_any_mouse_down(
@@ -149,8 +150,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse down event for any button, during the bubble phase
-    /// the imperative API equivalent to [`InteractiveElement::on_any_mouse_down`]
+    /// Bind the given callback to the mouse down event for any button, during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_any_mouse_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_any_mouse_down(
@@ -165,8 +166,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse up event for the given button, during the bubble phase
-    /// the imperative API equivalent to [`InteractiveElement::on_mouse_up`]
+    /// Bind the given callback to the mouse up event for the given button, during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_mouse_up(
@@ -185,8 +186,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse up event for any button, during the capture phase
-    /// the imperative API equivalent to [`InteractiveElement::capture_any_mouse_up`]
+    /// Bind the given callback to the mouse up event for any button, during the capture phase.
+    /// The imperative API equivalent to [`InteractiveElement::capture_any_mouse_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_any_mouse_up(
@@ -201,8 +202,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse up event for any button, during the bubble phase
-    /// the imperative API equivalent to [`Interactivity::on_any_mouse_up`]
+    /// Bind the given callback to the mouse up event for any button, during the bubble phase.
+    /// The imperative API equivalent to [`Interactivity::on_any_mouse_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_any_mouse_up(
@@ -219,7 +220,7 @@ impl Interactivity {
 
     /// Bind the given callback to the mouse down event, on any button, during the capture phase,
     /// when the mouse is outside of the bounds of this element.
-    /// The imperative API equivalent to [`InteractiveElement::on_mouse_down_out`]
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_down_out`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_mouse_down_out(
@@ -236,7 +237,7 @@ impl Interactivity {
 
     /// Bind the given callback to the mouse up event, for the given button, during the capture phase,
     /// when the mouse is outside of the bounds of this element.
-    /// The imperative API equivalent to [`InteractiveElement::on_mouse_up_out`]
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_up_out`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_mouse_up_out(
@@ -255,8 +256,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse move event, during the bubble phase
-    /// The imperative API equivalent to [`InteractiveElement::on_mouse_move`]
+    /// Bind the given callback to the mouse move event, during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_move`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_mouse_move(
@@ -275,7 +276,7 @@ impl Interactivity {
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
     /// UIs that don't conform to a drag and drop style interaction, like resizing.
-    /// The imperative API equivalent to [`InteractiveElement::on_drag_move`]
+    /// The imperative API equivalent to [`InteractiveElement::on_drag_move`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_drag_move<T>(
@@ -304,8 +305,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase
-    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`]
+    /// Bind the given callback to scroll wheel events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
@@ -320,8 +321,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to an action dispatch during the capture phase
-    /// The imperative API equivalent to [`InteractiveElement::capture_action`]
+    /// Bind the given callback to an action dispatch during the capture phase.
+    /// The imperative API equivalent to [`InteractiveElement::capture_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_action<A: Action>(
@@ -341,8 +342,8 @@ impl Interactivity {
         ));
     }
 
-    /// Bind the given callback to an action dispatch during the bubble phase
-    /// The imperative API equivalent to [`InteractiveElement::on_action`]
+    /// Bind the given callback to an action dispatch during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Window, &mut App) + 'static) {
@@ -360,7 +361,7 @@ impl Interactivity {
     /// Bind the given callback to an action dispatch, based on a dynamic action parameter
     /// instead of a type parameter. Useful for component libraries that want to expose
     /// action bindings to their users.
-    /// The imperative API equivalent to [`InteractiveElement::on_boxed_action`]
+    /// The imperative API equivalent to [`InteractiveElement::on_boxed_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_boxed_action(
@@ -379,8 +380,8 @@ impl Interactivity {
         ));
     }
 
-    /// Bind the given callback to key down events during the bubble phase
-    /// The imperative API equivalent to [`InteractiveElement::on_key_down`]
+    /// Bind the given callback to key down events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_key_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_key_down(
@@ -395,8 +396,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to key down events during the capture phase
-    /// The imperative API equivalent to [`InteractiveElement::capture_key_down`]
+    /// Bind the given callback to key down events during the capture phase.
+    /// The imperative API equivalent to [`InteractiveElement::capture_key_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_key_down(
@@ -411,8 +412,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to key up events during the bubble phase
-    /// The imperative API equivalent to [`InteractiveElement::on_key_up`]
+    /// Bind the given callback to key up events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_key_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_key_up(&mut self, listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static) {
@@ -424,8 +425,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to key up events during the capture phase
-    /// The imperative API equivalent to [`InteractiveElement::on_key_up`]
+    /// Bind the given callback to key up events during the capture phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_key_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_key_up(
@@ -441,7 +442,7 @@ impl Interactivity {
     }
 
     /// Bind the given callback to modifiers changing events.
-    /// The imperative API equivalent to [`InteractiveElement::on_modifiers_changed`]
+    /// The imperative API equivalent to [`InteractiveElement::on_modifiers_changed`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_modifiers_changed(
@@ -454,8 +455,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to drop events of the given type, whether or not the drag started on this element
-    /// The imperative API equivalent to [`InteractiveElement::on_drop`]
+    /// Bind the given callback to drop events of the given type, whether or not the drag started on this element.
+    /// The imperative API equivalent to [`InteractiveElement::on_drop`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_drop<T: 'static>(&mut self, listener: impl Fn(&T, &mut Window, &mut App) + 'static) {
@@ -467,8 +468,8 @@ impl Interactivity {
         ));
     }
 
-    /// Use the given predicate to determine whether or not a drop event should be dispatched to this element
-    /// The imperative API equivalent to [`InteractiveElement::can_drop`]
+    /// Use the given predicate to determine whether or not a drop event should be dispatched to this element.
+    /// The imperative API equivalent to [`InteractiveElement::can_drop`].
     pub fn can_drop(
         &mut self,
         predicate: impl Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static,
@@ -476,8 +477,8 @@ impl Interactivity {
         self.can_drop_predicate = Some(Box::new(predicate));
     }
 
-    /// Bind the given callback to click events of this element
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_click`]
+    /// Bind the given callback to click events of this element.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_click`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_click(&mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)
@@ -491,8 +492,8 @@ impl Interactivity {
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
-    /// the [`Self::on_drag_move`] API
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// the [`Self::on_drag_move`] API.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_drag<T, W>(
@@ -518,7 +519,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
@@ -533,7 +534,7 @@ impl Interactivity {
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip`].
     pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static)
     where
         Self: Sized,
@@ -550,7 +551,7 @@ impl Interactivity {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
-    /// the tooltip. The imperative API equivalent to [`StatefulInteractiveElement::hoverable_tooltip`]
+    /// the tooltip. The imperative API equivalent to [`StatefulInteractiveElement::hoverable_tooltip`].
     pub fn hoverable_tooltip(
         &mut self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
@@ -581,10 +582,10 @@ impl Interactivity {
         self.window_control = Some(area);
     }
 
-    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
-    /// [`Hitbox::is_hovered`] for details.
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox.
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`].
     ///
-    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
+    /// See [`Hitbox::is_hovered`] for details.
     pub fn block_mouse_except_scroll(&mut self) {
         self.hitbox_behavior = HitboxBehavior::BlockMouseExceptScroll;
     }
@@ -618,17 +619,25 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Designate this element as a tab stop, equivalent to `tab_index(0)`.
-    /// This should be the primary mechanism for tab navigation within the application.
-    fn tab_stop(mut self) -> Self {
-        self.tab_index(0)
+    /// Set whether this element is a tab stop.
+    ///
+    /// When false, the element remains in tab-index order but cannot be reached via keyboard navigation.
+    /// Useful for container elements: focus the container, then call `window.focus_next()` to focus
+    /// the first tab stop inside it while having the container element itself be unreachable via the keyboard.
+    /// Should only be used with `tab_index`.
+    fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.interactivity().tab_stop = tab_stop;
+        self
     }
 
-    /// Set index of the tab stop order. This should only be used in conjunction with `tab_group`
+    /// Set index of the tab stop order, and set this node as a tab stop.
+    /// This will default the element to being a tab stop. See [`Self::tab_stop`] for more information.
+    /// This should only be used in conjunction with `tab_group`
     /// in order to not interfere with the tab index of other elements.
     fn tab_index(mut self, index: isize) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tab_index = Some(index);
+        self.interactivity().tab_stop = true;
         self
     }
 
@@ -680,8 +689,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse down event for the given mouse button,
-    /// the fluent API equivalent to [`Interactivity::on_mouse_down`]
+    /// Bind the given callback to the mouse down event for the given mouse button.
+    /// The fluent API equivalent to [`Interactivity::on_mouse_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to the view state from this callback.
     fn on_mouse_down(
@@ -711,8 +720,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse down event for any button, during the capture phase
-    /// the fluent API equivalent to [`Interactivity::capture_any_mouse_down`]
+    /// Bind the given callback to the mouse down event for any button, during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_any_mouse_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_any_mouse_down(
@@ -723,8 +732,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse down event for any button, during the capture phase
-    /// the fluent API equivalent to [`Interactivity::on_any_mouse_down`]
+    /// Bind the given callback to the mouse down event for any button, during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::on_any_mouse_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_any_mouse_down(
@@ -735,8 +744,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse up event for the given button, during the bubble phase
-    /// the fluent API equivalent to [`Interactivity::on_mouse_up`]
+    /// Bind the given callback to the mouse up event for the given button, during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_mouse_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_mouse_up(
@@ -748,8 +757,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse up event for any button, during the capture phase
-    /// the fluent API equivalent to [`Interactivity::capture_any_mouse_up`]
+    /// Bind the given callback to the mouse up event for any button, during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_any_mouse_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_any_mouse_up(
@@ -762,7 +771,7 @@ pub trait InteractiveElement: Sized {
 
     /// Bind the given callback to the mouse down event, on any button, during the capture phase,
     /// when the mouse is outside of the bounds of this element.
-    /// The fluent API equivalent to [`Interactivity::on_mouse_down_out`]
+    /// The fluent API equivalent to [`Interactivity::on_mouse_down_out`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_mouse_down_out(
@@ -775,7 +784,7 @@ pub trait InteractiveElement: Sized {
 
     /// Bind the given callback to the mouse up event, for the given button, during the capture phase,
     /// when the mouse is outside of the bounds of this element.
-    /// The fluent API equivalent to [`Interactivity::on_mouse_up_out`]
+    /// The fluent API equivalent to [`Interactivity::on_mouse_up_out`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_mouse_up_out(
@@ -787,8 +796,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse move event, during the bubble phase
-    /// The fluent API equivalent to [`Interactivity::on_mouse_move`]
+    /// Bind the given callback to the mouse move event, during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_mouse_move`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_mouse_move(
@@ -803,7 +812,7 @@ pub trait InteractiveElement: Sized {
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
     /// UIs that don't conform to a drag and drop style interaction, like resizing.
-    /// The fluent API equivalent to [`Interactivity::on_drag_move`]
+    /// The fluent API equivalent to [`Interactivity::on_drag_move`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_drag_move<T: 'static>(
@@ -814,8 +823,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`]
+    /// Bind the given callback to scroll wheel events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_scroll_wheel(
@@ -826,8 +835,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Capture the given action, before normal action dispatch can fire
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`]
+    /// Capture the given action, before normal action dispatch can fire.
+    /// The fluent API equivalent to [`Interactivity::capture_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_action<A: Action>(
@@ -838,8 +847,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to an action dispatch during the bubble phase
-    /// The fluent API equivalent to [`Interactivity::on_action`]
+    /// Bind the given callback to an action dispatch during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_action<A: Action>(
@@ -853,7 +862,7 @@ pub trait InteractiveElement: Sized {
     /// Bind the given callback to an action dispatch, based on a dynamic action parameter
     /// instead of a type parameter. Useful for component libraries that want to expose
     /// action bindings to their users.
-    /// The fluent API equivalent to [`Interactivity::on_boxed_action`]
+    /// The fluent API equivalent to [`Interactivity::on_boxed_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_boxed_action(
@@ -865,8 +874,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to key down events during the bubble phase
-    /// The fluent API equivalent to [`Interactivity::on_key_down`]
+    /// Bind the given callback to key down events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_key_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_key_down(
@@ -877,8 +886,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to key down events during the capture phase
-    /// The fluent API equivalent to [`Interactivity::capture_key_down`]
+    /// Bind the given callback to key down events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_key_down`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_key_down(
@@ -889,8 +898,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to key up events during the bubble phase
-    /// The fluent API equivalent to [`Interactivity::on_key_up`]
+    /// Bind the given callback to key up events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_key_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_key_up(
@@ -901,8 +910,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to key up events during the capture phase
-    /// The fluent API equivalent to [`Interactivity::capture_key_up`]
+    /// Bind the given callback to key up events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_key_up`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_key_up(
@@ -914,7 +923,7 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Bind the given callback to modifiers changing events.
-    /// The fluent API equivalent to [`Interactivity::on_modifiers_changed`]
+    /// The fluent API equivalent to [`Interactivity::on_modifiers_changed`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_modifiers_changed(
@@ -960,8 +969,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to drop events of the given type, whether or not the drag started on this element
-    /// The fluent API equivalent to [`Interactivity::on_drop`]
+    /// Bind the given callback to drop events of the given type, whether or not the drag started on this element.
+    /// The fluent API equivalent to [`Interactivity::on_drop`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_drop<T: 'static>(
@@ -972,8 +981,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Use the given predicate to determine whether or not a drop event should be dispatched to this element
-    /// The fluent API equivalent to [`Interactivity::can_drop`]
+    /// Use the given predicate to determine whether or not a drop event should be dispatched to this element.
+    /// The fluent API equivalent to [`Interactivity::can_drop`].
     fn can_drop(
         mut self,
         predicate: impl Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static,
@@ -984,23 +993,23 @@ pub trait InteractiveElement: Sized {
 
     /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
     /// `block_mouse_except_scroll` should be preferred.
-    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`].
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
         self
     }
 
     /// Set the bounds of this element as a window control area for the platform window.
-    /// The fluent API equivalent to [`Interactivity::window_control_area`]
+    /// The fluent API equivalent to [`Interactivity::window_control_area`].
     fn window_control_area(mut self, area: WindowControlArea) -> Self {
         self.interactivity().window_control_area(area);
         self
     }
 
-    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
-    /// [`Hitbox::is_hovered`] for details.
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox.
+    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`].
     ///
-    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
+    /// See [`Hitbox::is_hovered`] for details.
     fn block_mouse_except_scroll(mut self) -> Self {
         self.interactivity().block_mouse_except_scroll();
         self
@@ -1023,6 +1032,18 @@ pub trait InteractiveElement: Sized {
         Self: Sized,
     {
         self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
+
+    /// Set the given styles to be applied when this element is focused via keyboard navigation.
+    /// This is similar to CSS's `:focus-visible` pseudo-class - it only applies when the element
+    /// is focused AND the user is navigating via keyboard (not mouse clicks).
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn focus_visible(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 }
@@ -1101,8 +1122,8 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// Bind the given callback to click events of this element
-    /// The fluent API equivalent to [`Interactivity::on_click`]
+    /// Bind the given callback to click events of this element.
+    /// The fluent API equivalent to [`Interactivity::on_click`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_click(mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self
@@ -1117,7 +1138,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`InteractiveElement::on_drag_move`] API.
     /// The callback also has access to the offset of triggering click from the origin of parent element.
-    /// The fluent API equivalent to [`Interactivity::on_drag`]
+    /// The fluent API equivalent to [`Interactivity::on_drag`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_drag<T, W>(
@@ -1136,7 +1157,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The fluent API equivalent to [`Interactivity::on_hover`]
+    /// The fluent API equivalent to [`Interactivity::on_hover`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self
@@ -1148,7 +1169,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
-    /// The fluent API equivalent to [`Interactivity::tooltip`]
+    /// The fluent API equivalent to [`Interactivity::tooltip`].
     fn tooltip(mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self
     where
         Self: Sized,
@@ -1159,7 +1180,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
-    /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
+    /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`].
     fn hoverable_tooltip(
         mut self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
@@ -1395,7 +1416,12 @@ impl Element for Div {
             content_size,
             window,
             cx,
-            |_style, scroll_offset, hitbox, window, cx| {
+            |style, scroll_offset, hitbox, window, cx| {
+                // skip children
+                if style.display == Display::None {
+                    return hitbox;
+                }
+
                 window.with_element_offset(scroll_offset, |window| {
                     for child in &mut self.children {
                         child.prepaint(window, cx);
@@ -1435,7 +1461,12 @@ impl Element for Div {
                 hitbox.as_ref(),
                 window,
                 cx,
-                |_style, window, cx| {
+                |style, window, cx| {
+                    // skip children
+                    if style.display == Display::None {
+                        return;
+                    }
+
                     for child in &mut self.children {
                         child.paint(window, cx);
                     }
@@ -1478,6 +1509,7 @@ pub struct Interactivity {
     pub base_style: Box<StyleRefinement>,
     pub(crate) focus_style: Option<Box<StyleRefinement>>,
     pub(crate) in_focus_style: Option<Box<StyleRefinement>>,
+    pub(crate) focus_visible_style: Option<Box<StyleRefinement>>,
     pub(crate) hover_style: Option<Box<StyleRefinement>>,
     pub(crate) group_hover_style: Option<GroupStyle>,
     pub(crate) active_style: Option<Box<StyleRefinement>>,
@@ -1505,6 +1537,7 @@ pub struct Interactivity {
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
+    pub(crate) tab_stop: bool,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1569,10 +1602,10 @@ impl Interactivity {
                         .focus_handle
                         .get_or_insert_with(|| cx.focus_handle())
                         .clone()
-                        .tab_stop(false);
+                        .tab_stop(self.tab_stop);
 
                     if let Some(index) = self.tab_index {
-                        handle = handle.tab_index(index).tab_stop(true);
+                        handle = handle.tab_index(index);
                     }
 
                     self.tracked_focus_handle = Some(handle);
@@ -2472,6 +2505,13 @@ impl Interactivity {
             {
                 style.refine(focus_style);
             }
+
+            if let Some(focus_visible_style) = self.focus_visible_style.as_ref()
+                && focus_handle.is_focused(window)
+                && window.last_input_was_keyboard()
+            {
+                style.refine(focus_visible_style);
+            }
         }
 
         if let Some(hitbox) = hitbox {
@@ -3025,7 +3065,20 @@ struct ScrollHandleState {
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
-    active_item: Option<usize>,
+    active_item: Option<ScrollActiveItem>,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+struct ScrollActiveItem {
+    index: usize,
+    strategy: ScrollStrategy,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+enum ScrollStrategy {
+    #[default]
+    FirstVisible,
+    Top,
 }
 
 /// A handle to the scrollable aspects of an element.
@@ -3075,6 +3128,25 @@ impl ScrollHandle {
         }
     }
 
+    /// Get the bottom child that's scrolled into view.
+    pub fn bottom_item(&self) -> usize {
+        let state = self.0.borrow();
+        let bottom = state.bounds.bottom() - state.offset.borrow().y;
+
+        match state.child_bounds.binary_search_by(|bounds| {
+            if bottom < bounds.top() {
+                Ordering::Greater
+            } else if bottom > bounds.bottom() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(ix) => ix,
+            Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
+        }
+    }
+
     /// Return the bounds into which this child is painted
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().bounds
@@ -3088,26 +3160,48 @@ impl ScrollHandle {
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     pub fn scroll_to_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
-        state.active_item = Some(ix);
+        state.active_item = Some(ScrollActiveItem {
+            index: ix,
+            strategy: ScrollStrategy::default(),
+        });
     }
 
-    /// Scrolls the minimal amount to ensure that the child is
-    /// fully visible
+    /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
+    /// This scrolls the minimal amount to ensure that the child is the first visible element
+    pub fn scroll_to_top_of_item(&self, ix: usize) {
+        let mut state = self.0.borrow_mut();
+        state.active_item = Some(ScrollActiveItem {
+            index: ix,
+            strategy: ScrollStrategy::Top,
+        });
+    }
+
+    /// Scrolls the minimal amount to either ensure that the child is
+    /// fully visible or the top element of the view depends on the
+    /// scroll strategy
     fn scroll_to_active_item(&self) {
         let mut state = self.0.borrow_mut();
 
-        let Some(active_item_index) = state.active_item else {
+        let Some(active_item) = state.active_item else {
             return;
         };
-        let active_item = match state.child_bounds.get(active_item_index) {
+
+        let active_item = match state.child_bounds.get(active_item.index) {
             Some(bounds) => {
                 let mut scroll_offset = state.offset.borrow_mut();
 
-                if state.overflow.y == Overflow::Scroll {
-                    if bounds.top() + scroll_offset.y < state.bounds.top() {
+                match active_item.strategy {
+                    ScrollStrategy::FirstVisible => {
+                        if state.overflow.y == Overflow::Scroll {
+                            if bounds.top() + scroll_offset.y < state.bounds.top() {
+                                scroll_offset.y = state.bounds.top() - bounds.top();
+                            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+                            }
+                        }
+                    }
+                    ScrollStrategy::Top => {
                         scroll_offset.y = state.bounds.top() - bounds.top();
-                    } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
-                        scroll_offset.y = state.bounds.bottom() - bounds.bottom();
                     }
                 }
 
@@ -3120,7 +3214,7 @@ impl ScrollHandle {
                 }
                 None
             }
-            None => Some(active_item_index),
+            None => Some(active_item),
         };
         state.active_item = active_item;
     }
@@ -3148,6 +3242,21 @@ impl ScrollHandle {
             (
                 ix,
                 child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
+            )
+        } else {
+            (ix, px(0.))
+        }
+    }
+
+    /// Get the logical scroll bottom, based on a child index and a pixel offset.
+    pub fn logical_scroll_bottom(&self) -> (usize, Pixels) {
+        let ix = self.bottom_item();
+        let state = self.0.borrow();
+
+        if let Some(child_bounds) = state.child_bounds.get(ix) {
+            (
+                ix,
+                child_bounds.bottom() + state.offset.borrow().y - state.bounds.bottom(),
             )
         } else {
             (ix, px(0.))

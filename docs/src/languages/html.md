@@ -7,7 +7,7 @@ HTML support is available through the [HTML extension](https://github.com/zed-in
 
 This extension is automatically installed, but if you do not want to use it, you can add the following to your settings:
 
-```json
+```json [settings]
 {
   "auto_install_extensions": {
     "html": false
@@ -21,7 +21,7 @@ By default Zed uses [Prettier](https://prettier.io/) for formatting HTML.
 
 You can disable `format_on_save` by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
   "languages": {
     "HTML": {
       "format_on_save": "off",
@@ -35,7 +35,7 @@ You can still trigger formatting manually with {#kb editor::Format} or by openin
 
 To use the `vscode-html-language-server` language server auto-formatting instead of Prettier, add the following to your Zed settings:
 
-```json
+```json [settings]
   "languages": {
     "HTML": {
       "formatter": "language_server",
@@ -45,7 +45,7 @@ To use the `vscode-html-language-server` language server auto-formatting instead
 
 You can customize various [formatting options](https://code.visualstudio.com/docs/languages/html#_formatting) for `vscode-html-language-server` via your Zed `settings.json`:
 
-```json
+```json [settings]
   "lsp": {
     "vscode-html-language-server": {
       "settings": {

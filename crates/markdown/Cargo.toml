@@ -31,7 +31,6 @@ sum_tree.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

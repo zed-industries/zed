@@ -17,9 +17,10 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 zed.workspace = true
 zlog.workspace = true
+task.workspace = true
+theme.workspace = true
 
 [lints]
 workspace = true

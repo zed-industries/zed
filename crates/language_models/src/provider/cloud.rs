@@ -810,15 +810,11 @@ impl LanguageModel for CloudLanguageModel {
             }
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
-                let model = match open_ai::Model::from_id(&self.model.id.0) {
-                    Ok(model) => model,
-                    Err(err) => return async move { Err(anyhow!(err).into()) }.boxed(),
-                };
                 let request = into_open_ai(
                     request,
-                    model.id(),
-                    model.supports_parallel_tool_calls(),
-                    model.supports_prompt_cache_key(),
+                    &self.model.id.0,
+                    self.model.supports_parallel_tool_calls,
+                    true,
                     None,
                     None,
                 );
@@ -860,15 +856,11 @@ impl LanguageModel for CloudLanguageModel {
             }
             cloud_llm_client::LanguageModelProvider::XAi => {
                 let client = self.client.clone();
-                let model = match x_ai::Model::from_id(&self.model.id.0) {
-                    Ok(model) => model,
-                    Err(err) => return async move { Err(anyhow!(err).into()) }.boxed(),
-                };
                 let request = into_open_ai(
                     request,
-                    model.id(),
-                    model.supports_parallel_tool_calls(),
-                    model.supports_prompt_cache_key(),
+                    &self.model.id.0,
+                    self.model.supports_parallel_tool_calls,
+                    false,
                     None,
                     None,
                 );

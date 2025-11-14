@@ -1,0 +1,14 @@
+[package]
+name = "worktree_benchmarks"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+fs.workspace = true
+gpui = { workspace = true, features = ["windows-manifest"] }
+settings.workspace = true
+worktree.workspace = true
+
+[lints]
+workspace = true

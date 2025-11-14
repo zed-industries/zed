@@ -18,6 +18,8 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds);
+float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                               Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation);
 float corner_dash_velocity(float dv1, float dv2);
 float dash_alpha(float t, float period, float length, float dash_velocity,
                  float antialias_threshold);
@@ -243,7 +245,15 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // out on each straight line, rather than around the whole
         // perimeter. This way each line starts and ends with a dash.
         bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
-        float border_width = is_horizontal ? border.x : border.y;
+
+        // Choosing the right border width for dashed borders.
+        // TODO: A better solution exists taking a look at the whole file.
+        // this does not fix single dashed borders at the corners
+        float2 dashed_border = float2(
+        fmax(quad.border_widths.bottom, quad.border_widths.top),
+        fmax(quad.border_widths.right, quad.border_widths.left));
+
+        float border_width = is_horizontal ? dashed_border.x : dashed_border.y;
         dash_velocity = dv_numerator / border_width;
         t = is_horizontal ? point.x : point.y;
         t *= dash_velocity;
@@ -599,13 +609,14 @@ struct MonochromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
-  float clip_distance [[clip_distance]][4];
+  float4 clip_distance;
 };
 
 struct MonochromeSpriteFragmentInput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  float4 clip_distance;
 };
 
 vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
@@ -620,8 +631,8 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position =
       to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
-  float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
-                                                 sprite.content_mask.bounds);
+  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
+                                                 sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{
@@ -635,6 +646,10 @@ fragment float4 monochrome_sprite_fragment(
     MonochromeSpriteFragmentInput input [[stage_in]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+  if (any(input.clip_distance < float4(0.0))) {
+    return float4(0.0);
+  }
+
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
   float4 sample =
@@ -1094,6 +1109,23 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                 clip_bounds.origin.x + clip_bounds.size.width - position.x,
                 position.y - clip_bounds.origin.y,
                 clip_bounds.origin.y + clip_bounds.size.height - position.y);
+}
+
+float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                               Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+  float2 transformed_position = float2(0, 0);
+  transformed_position[0] = position[0] * transformation.rotation_scale[0][0] + position[1] * transformation.rotation_scale[0][1];
+  transformed_position[1] = position[0] * transformation.rotation_scale[1][0] + position[1] * transformation.rotation_scale[1][1];
+  transformed_position[0] += transformation.translation[0];
+  transformed_position[1] += transformation.translation[1];
+
+  return float4(transformed_position.x - clip_bounds.origin.x,
+                clip_bounds.origin.x + clip_bounds.size.width - transformed_position.x,
+                transformed_position.y - clip_bounds.origin.y,
+                clip_bounds.origin.y + clip_bounds.size.height - transformed_position.y);
 }
 
 float4 over(float4 below, float4 above) {

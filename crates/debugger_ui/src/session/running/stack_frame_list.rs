@@ -566,6 +566,7 @@ impl StackFrameList {
                 this.activate_selected_entry(window, cx);
             }))
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .overflow_x_scroll()
             .child(
                 v_flex()
                     .gap_0p5()
@@ -872,8 +873,8 @@ impl StackFrameList {
                     "filter-by-visible-worktree-stack-frame-list",
                     IconName::ListFilter,
                 )
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, window, cx)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, cx)
                 })
                 .toggle_state(self.list_filter == StackFrameFilter::OnlyUserFrames)
                 .icon_size(IconSize::Small)

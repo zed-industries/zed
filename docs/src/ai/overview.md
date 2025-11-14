@@ -18,11 +18,11 @@ Learn how to get started using AI with Zed and all its capabilities.
 
 - [Rules](./rules.md): How to define rules for AI interactions.
 
-- [Tools](./tools.md): Explore the tools that enable agentic capabilities.
+- [Tools](./tools.md): Explore the tools that power Zed's built-in agent.
 
-- [Model Context Protocol](./mcp.md): Learn about how to install and configure MCP servers.
+- [Model Context Protocol](./mcp.md): Learn about how to configure and use MCP servers.
 
-- [Inline Assistant](./inline-assistant.md): Discover how to use the agent to power inline transformations directly within a file or terminal.
+- [Inline Assistant](./inline-assistant.md): Discover how to use AI to generate inline transformations directly within a file or terminal.
 
 ## Edit Prediction
 
@@ -30,4 +30,4 @@ Learn how to get started using AI with Zed and all its capabilities.
 
 ## Text Threads
 
-- [Text Threads](./text-threads.md): Learn about an alternative, text-based interface for interacting with language models.
+- [Text Threads](./text-threads.md): Learn about an editor-based interface for interacting with language models.

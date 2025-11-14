@@ -1,27 +1,30 @@
 [
+  "const"
+  "enum"
+  "extern"
+  "inline"
+  "sizeof"
+  "static"
+  "struct"
+  "typedef"
+  "union"
+  "volatile"
+] @keyword
+
+[
   "break"
   "case"
-  "const"
   "continue"
   "default"
   "do"
   "else"
-  "enum"
-  "extern"
   "for"
   "goto"
   "if"
-  "inline"
   "return"
-  "sizeof"
-  "static"
-  "struct"
   "switch"
-  "typedef"
-  "union"
-  "volatile"
   "while"
-] @keyword
+] @keyword.control
 
 [
   "#define"

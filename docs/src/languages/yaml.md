@@ -9,7 +9,7 @@ YAML support is available natively in Zed.
 
 You can configure various [yaml-language-server settings](https://github.com/redhat-developer/yaml-language-server?tab=readme-ov-file#language-server-settings) by adding them to your Zed settings.json in a `yaml-language-server` block under the `lsp` key. For example:
 
-```json
+```json [settings]
   "lsp": {
     "yaml-language-server": {
       "settings": {
@@ -19,7 +19,7 @@ You can configure various [yaml-language-server settings](https://github.com/red
             "singleQuote": true
           },
           "schemas": {
-              "http://json.schemastore.org/composer": ["/*"],
+              "https://getcomposer.org/schema.json": ["/*"],
               "../relative/path/schema.json": ["/config*.yaml"]
           }
         }
@@ -38,7 +38,7 @@ By default, Zed uses Prettier for formatting YAML files.
 
 You can customize the formatting behavior of Prettier. For example to use single-quotes in yaml files add the following to your `.prettierrc` configuration file:
 
-```json
+```json [settings]
 {
   "overrides": [
     {
@@ -55,7 +55,7 @@ You can customize the formatting behavior of Prettier. For example to use single
 
 To use `yaml-language-server` instead of Prettier for YAML formatting, add the following to your Zed `settings.json`:
 
-```json
+```json [settings]
   "languages": {
     "YAML": {
       "formatter": "language_server"
@@ -70,16 +70,16 @@ By default yaml-language-server will attempt to determine the correct schema for
 You can override any auto-detected schema via the `schemas` settings key (demonstrated above) or by providing an [inlined schema](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema) reference via a modeline comment at the top of your yaml file:
 
 ```yaml
-# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+# yaml-language-server: $schema=https://www.schemastore.org/github-action.json
 name: Issue Assignment
 on:
   issues:
-    types: [oppened]
+    types: [opened]
 ```
 
 You can disable the automatic detection and retrieval of schemas from the JSON Schema if desired:
 
-```json
+```json [settings]
   "lsp": {
     "yaml-language-server": {
       "settings": {
@@ -99,7 +99,7 @@ Yaml-language-server supports [custom tags](https://github.com/redhat-developer/
 
 For example Amazon CloudFormation YAML uses a number of custom tags, to support these you can add the following to your settings.json:
 
-```json
+```json [settings]
   "lsp": {
     "yaml-language-server": {
       "settings": {

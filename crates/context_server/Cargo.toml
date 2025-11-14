@@ -32,4 +32,3 @@ smol.workspace = true
 tempfile.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
-workspace-hack.workspace = true

@@ -324,7 +324,7 @@ This query marks number and string values in key-value pairs and arrays for reda
 
 The `runnables.scm` file defines rules for detecting runnable code.
 
-Here's an example from an `runnables.scm` file for JSON:
+Here's an example from a `runnables.scm` file for JSON:
 
 ```scheme
 (

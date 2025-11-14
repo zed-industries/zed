@@ -30,6 +30,5 @@ theme.workspace = true
 title_bar.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true

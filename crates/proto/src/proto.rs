@@ -51,6 +51,7 @@ messages!(
     (Commit, Background),
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
+    (CreateImageForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
     (CreateContext, Foreground),
@@ -179,9 +180,11 @@ messages!(
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
     (OpenBufferByPath, Background),
+    (OpenImageByPath, Background),
     (OpenBufferForSymbol, Background),
     (OpenBufferForSymbolResponse, Background),
     (OpenBufferResponse, Background),
+    (OpenImageResponse, Background),
     (OpenCommitMessageBuffer, Background),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
@@ -316,15 +319,24 @@ messages!(
     (PullWorkspaceDiagnostics, Background),
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
+    (GetTreeDiff, Background),
+    (GetTreeDiffResponse, Background),
+    (GetBlobContent, Background),
+    (GetBlobContentResponse, Background),
     (GitClone, Background),
     (GitCloneResponse, Background),
     (ToggleLspLogs, Background),
+    (GetDirectoryEnvironment, Background),
+    (DirectoryEnvironment, Background),
     (GetAgentServerCommand, Background),
     (AgentServerCommand, Background),
     (ExternalAgentsUpdated, Background),
     (ExternalAgentLoadingStatusUpdated, Background),
     (NewExternalAgentVersionAvailable, Background),
     (RemoteStarted, Background),
+    (GitGetWorktrees, Background),
+    (GitWorktreesResponse, Background),
+    (GitCreateWorktree, Background)
 );
 
 request_messages!(
@@ -388,6 +400,7 @@ request_messages!(
     (OnTypeFormatting, OnTypeFormattingResponse),
     (OpenBufferById, OpenBufferResponse),
     (OpenBufferByPath, OpenBufferResponse),
+    (OpenImageByPath, OpenImageResponse),
     (OpenBufferForSymbol, OpenBufferForSymbolResponse),
     (OpenCommitMessageBuffer, OpenBufferResponse),
     (OpenNewBuffer, OpenBufferResponse),
@@ -495,11 +508,16 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
+    (GetBlobContent, GetBlobContentResponse),
+    (GetTreeDiff, GetTreeDiffResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
+    (GitGetWorktrees, GitWorktreesResponse),
+    (GitCreateWorktree, Ack)
 );
 
 lsp_messages!(
@@ -514,6 +532,7 @@ lsp_messages!(
     (GetDeclaration, GetDeclarationResponse, true),
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
+    (InlayHints, InlayHintsResponse, false),
 );
 
 entity_messages!(
@@ -530,6 +549,7 @@ entity_messages!(
     GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
+    CreateImageForPeer,
     CreateProjectEntry,
     GetDocumentColor,
     DeleteProjectEntry,
@@ -566,6 +586,7 @@ entity_messages!(
     OpenNewBuffer,
     OpenBufferById,
     OpenBufferByPath,
+    OpenImageByPath,
     OpenBufferForSymbol,
     OpenCommitMessageBuffer,
     PerformRename,
@@ -634,6 +655,7 @@ entity_messages!(
     GitCheckoutFiles,
     SetIndexText,
     ToggleLspLogs,
+    GetDirectoryEnvironment,
 
     Push,
     Fetch,
@@ -654,11 +676,15 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
+    GetTreeDiff,
+    GetBlobContent,
     GitClone,
     GetAgentServerCommand,
     ExternalAgentsUpdated,
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
+    GitGetWorktrees,
+    GitCreateWorktree
 );
 
 entity_messages!(
@@ -843,6 +869,7 @@ impl LspQuery {
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
             None => ("<unknown>", true),
         }
     }
