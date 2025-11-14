@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
@@ -478,7 +478,9 @@ fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language
     editor
         .update(cx, |editor, cx| {
             let display_snapshot = editor.display_snapshot(cx);
-            let selection = editor.selections.newest::<usize>(&display_snapshot);
+            let selection = editor
+                .selections
+                .newest::<MultiBufferOffset>(&display_snapshot);
             display_snapshot
                 .buffer_snapshot()
                 .language_at(selection.head())

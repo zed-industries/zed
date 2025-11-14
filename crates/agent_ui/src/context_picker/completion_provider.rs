@@ -1082,7 +1082,7 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::AnchorRangeExt;
+    use editor::{AnchorRangeExt, MultiBufferOffset};
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
@@ -1677,7 +1677,7 @@ mod tests {
         editor.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
-                .folds_in_range(0..snapshot.len())
+                .folds_in_range(MultiBufferOffset(0)..snapshot.len())
                 .map(|fold| fold.range.to_point(&snapshot))
                 .collect()
         })

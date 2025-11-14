@@ -644,9 +644,9 @@ impl Editor {
                                         )
                                     {
                                         let highlight_start =
-                                            (part_range.start - hint_start).0 + extra_shift_left;
+                                            (part_range.start - hint_start) + extra_shift_left;
                                         let highlight_end =
-                                            (part_range.end - hint_start).0 + extra_shift_right;
+                                            (part_range.end - hint_start) + extra_shift_right;
                                         let highlight = InlayHighlight {
                                             inlay: hovered_hint.id,
                                             inlay_position: hovered_hint.position,
@@ -919,7 +919,7 @@ pub mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
     use lsp::FakeLanguageServer;
-    use multi_buffer::MultiBuffer;
+    use multi_buffer::{MultiBuffer, MultiBufferOffset};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
@@ -1000,7 +1000,7 @@ pub mod tests {
         editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([13..13])
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                 });
                 editor.handle_input("some change", window, cx);
             })
@@ -1400,7 +1400,7 @@ pub mod tests {
         rs_editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([13..13])
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                 });
                 editor.handle_input("some rs change", window, cx);
             })
@@ -1432,7 +1432,7 @@ pub mod tests {
         md_editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([13..13])
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                 });
                 editor.handle_input("some md change", window, cx);
             })
@@ -1880,7 +1880,7 @@ pub mod tests {
             editor
                 .update(cx, |editor, window, cx| {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.select_ranges([13..13])
+                        s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                     });
                     editor.handle_input(change_after_opening, window, cx);
                 })
@@ -1926,7 +1926,7 @@ pub mod tests {
                 task_editor
                     .update(&mut cx, |editor, window, cx| {
                         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_ranges([13..13])
+                            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                         });
                         editor.handle_input(async_later_change, window, cx);
                     })
@@ -2677,7 +2677,7 @@ let c = 3;"#
             let mut editor =
                 Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
             editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                s.select_ranges([0..0])
+                s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)])
             });
             editor
         });

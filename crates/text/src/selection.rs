@@ -130,9 +130,15 @@ impl<T: Copy> Selection<T> {
     }
 }
 
-impl Selection<usize> {
+impl<T: std::ops::Sub + Copy> Selection<T> {
+    pub fn len(&self) -> <T as std::ops::Sub>::Output {
+        self.end - self.start
+    }
+}
+
+impl<T: Copy + Eq> Selection<T> {
     #[cfg(feature = "test-support")]
-    pub fn from_offset(offset: usize) -> Self {
+    pub fn from_offset(offset: T) -> Self {
         Selection {
             id: 0,
             start: offset,
@@ -142,7 +148,7 @@ impl Selection<usize> {
         }
     }
 
-    pub fn equals(&self, offset_range: &Range<usize>) -> bool {
+    pub fn equals(&self, offset_range: &Range<T>) -> bool {
         self.start == offset_range.start && self.end == offset_range.end
     }
 }

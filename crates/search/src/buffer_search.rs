@@ -10,7 +10,7 @@ use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, VimFlavor,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, VimFlavor,
     actions::{Backtab, Tab},
     vim_flavor,
 };
@@ -870,7 +870,11 @@ impl BufferSearchBar {
                     .buffer()
                     .update(cx, |replacement_buffer, cx| {
                         let len = replacement_buffer.len(cx);
-                        replacement_buffer.edit([(0..len, replacement.unwrap())], None, cx);
+                        replacement_buffer.edit(
+                            [(MultiBufferOffset(0)..len, replacement.unwrap())],
+                            None,
+                            cx,
+                        );
                     });
             });
     }
@@ -894,7 +898,7 @@ impl BufferSearchBar {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
+                    query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, cx);
                 });
             });
             self.set_search_options(options, cx);

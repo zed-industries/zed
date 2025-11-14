@@ -14,13 +14,12 @@ use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset, ToPoint};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
     WeakEntity, anchored, deferred,
 };
-use text::ToPoint as _;
 
 use itertools::Itertools as _;
 use language::Buffer;
@@ -1216,11 +1215,11 @@ impl DebugPanel {
         let mut last_offset = None;
         while let Some(mat) = matches.next() {
             if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
-                last_offset = Some(pos)
+                last_offset = Some(MultiBufferOffset(pos))
             }
         }
         let mut edits = Vec::new();
-        let mut cursor_position = 0;
+        let mut cursor_position = MultiBufferOffset(0);
 
         if let Some(pos) = last_offset {
             edits.push((pos..pos, format!(",\n{new_scenario}")));
@@ -1234,24 +1233,25 @@ impl DebugPanel {
 
             if let Some(mat) = matches.next() {
                 if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
-                    edits.push((pos..pos, format!("\n{new_scenario}\n")));
-                    cursor_position = pos + "\n  ".len();
+                    edits.push((
+                        MultiBufferOffset(pos)..MultiBufferOffset(pos),
+                        format!("\n{new_scenario}\n"),
+                    ));
+                    cursor_position = MultiBufferOffset(pos) + "\n  ".len();
                 }
             } else {
-                edits.push((0..0, format!("[\n{}\n]", new_scenario)));
-                cursor_position = "[\n  ".len();
+                edits.push((
+                    MultiBufferOffset(0)..MultiBufferOffset(0),
+                    format!("[\n{}\n]", new_scenario),
+                ));
+                cursor_position = MultiBufferOffset("[\n  ".len());
             }
         }
         editor.transact(window, cx, |editor, window, cx| {
             editor.edit(edits, cx);
-            let snapshot = editor
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap()
-                .read(cx)
-                .snapshot();
+            let snapshot = editor.buffer().read(cx).read(cx);
             let point = cursor_position.to_point(&snapshot);
+            drop(snapshot);
             editor.go_to_singleton_buffer_point(point, window, cx);
         });
         Ok(editor.save(SaveOptions::default(), project, window, cx))
