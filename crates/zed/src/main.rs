@@ -240,7 +240,7 @@ pub fn main() {
     }
 
     zlog::init();
-    if stdout_is_a_pty() {
+    if args.log {
         zlog::init_output_stdout();
     } else {
         let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
@@ -1295,6 +1295,14 @@ struct Args {
     /// clipboard`
     #[arg(long)]
     system_specs: bool,
+
+    /// Log to stdout.
+    ///
+    /// Filters can be set with the ZED_LOG environment variable.
+    #[arg(long)]
+    #[cfg(debug_assertions)]
+    #[arg(hide = true, default_value_t = true)]
+    log: bool,
 
     /// Used for the MCP Server, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
