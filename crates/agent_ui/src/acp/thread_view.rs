@@ -5463,7 +5463,7 @@ impl AcpThreadView {
 
         let markdown_style = default_markdown_style(false, true, window, cx);
         let description = self
-            .render_markdown(markdown.clone(), markdown_style)
+            .render_markdown(markdown, markdown_style)
             .into_any_element();
 
         Callout::new()
