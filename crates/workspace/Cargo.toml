@@ -58,6 +58,7 @@ sqlez.workspace = true
 strum.workspace = true
 task.workspace = true
 telemetry.workspace = true
+hex_editor = { workspace = true }
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
