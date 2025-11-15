@@ -426,10 +426,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 })
             }
             PrimitiveKind::Shader => {
+                let shader_id = self.shaders_iter.peek().unwrap().shader_id;
                 let shaders_start = self.shaders_start;
                 let mut shaders_end = shaders_start + 1;
                 self.shaders_iter.next();
-                // For now, don't batch
+                while self
+                    .shaders_iter
+                    .next_if(|shader| {
+                        (shader.order, batch_kind) < max_order_and_kind
+                            && shader.shader_id == shader_id
+                    })
+                    .is_some()
+                {
+                    shaders_end += 1;
+                }
                 self.shaders_start = shaders_end;
                 Some(PrimitiveBatch::Shaders(
                     &self.shaders[shaders_start..shaders_end],

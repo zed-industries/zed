@@ -1,6 +1,6 @@
 use gpui::{
     App, AppContext, Application, Bounds, Context, ParentElement, Render, Styled, Window,
-    WindowBounds, WindowOptions, div, px, relative, rgb, shader, size,
+    WindowBounds, WindowOptions, div, px, rgb, shader, size,
 };
 
 struct ShaderExample {}
@@ -13,7 +13,9 @@ impl Render for ShaderExample {
             .items_center()
             .justify_center()
             .bg(rgb(0x202020))
-            .child(shader().w(relative(0.9)).h(relative(0.9)))
+            .gap_2()
+            .child(shader().size_full())
+            .child(shader().size_full())
     }
 }
 

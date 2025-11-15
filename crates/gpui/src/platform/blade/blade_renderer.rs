@@ -320,15 +320,15 @@ impl BladePipelines {
         &mut self,
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
-        shader: &CustomShader,
+        cusom_shader: &CustomShader,
     ) -> Result<CustomShaderId, &'static str> {
-        if let Some(id) = self.custom_ids.get(shader).cloned() {
+        if let Some(id) = self.custom_ids.get(cusom_shader).cloned() {
             return Ok(id);
         }
 
         let id = CustomShaderId(self.custom.len() as u32);
         let shader = gpu.try_create_shader(gpu::ShaderDesc {
-            source: &shader.source,
+            source: &cusom_shader.source,
         })?;
         shader.check_struct_size::<GlobalParams>();
         shader.check_struct_size::<PaintShader>();
@@ -359,6 +359,7 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }));
+        self.custom_ids.insert(cusom_shader.clone(), id);
         Ok(id)
     }
 
@@ -877,8 +878,6 @@ impl BladeRenderer {
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
                 PrimitiveBatch::Shaders(shaders) => {
-                    assert_eq!(shaders.len(), 1);
-
                     let pipeline = self
                         .pipelines
                         .custom
