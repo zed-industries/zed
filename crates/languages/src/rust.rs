@@ -442,7 +442,7 @@ impl LspInstaller for RustLspAdapter {
 
         // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
         // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+        log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
         let result = delegate
             .try_exec(LanguageServerBinary {
                 path: path.clone(),
