@@ -194,7 +194,7 @@ impl EncodingOptions {
     fn detect(bytes: &[u8]) -> Option<Encoding> {
         if bytes.starts_with(&[0xFE, 0xFF]) {
             Some(Encoding {
-                encoding: UTF_8,
+                encoding: UTF_16BE,
                 with_bom: true,
             })
         } else if bytes.starts_with(&[0xFF, 0xFE]) {
