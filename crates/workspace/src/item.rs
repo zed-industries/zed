@@ -151,49 +151,51 @@ impl Focusable for BrokenProjectItem {
 
 
 impl Render for BrokenProjectItem {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         match self {
             BrokenProjectItem::HexEditor(inner) => {
                 use ui::{h_flex, Label, LabelSize, Color, Styled, LabelCommon};
                 let bytes_per_row = 16;
                 let mut rows = Vec::new();
-                for (row_idx, chunk) in inner.file_data.chunks(bytes_per_row).enumerate() {
-                    let offset = row_idx * bytes_per_row;
-                    let hex_cells = chunk
-                        .iter()
-                        .map(|b| format!("{:02X}", b))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let ascii_cells = chunk
-                        .iter()
-                        .map(|b| {
-                            let c = *b as char;
-                            if c.is_ascii_graphic() {
-                                c
-                            } else {
-                                '.'
-                            }
-                        })
-                        .collect::<String>();
-                    rows.push(
-                        h_flex()
-                            .gap_x_2()
-                            .child(
-                                Label::new(format!("{:08X}", offset))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                Label::new(hex_cells)
-                                    .buffer_font(_cx)
-                                    .size(LabelSize::Small),
-                            )
-                            .child(
-                                Label::new(ascii_cells)
-                                    .buffer_font(_cx)
-                                    .size(LabelSize::Small),
-                            ),
-                    );
+                if let Some(data) = inner.file_data.as_ref() {
+                    for (row_idx, chunk) in data.chunks(bytes_per_row).enumerate() {
+                        let offset = row_idx * bytes_per_row;
+                        let hex_cells = chunk
+                            .iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let ascii_cells = chunk
+                            .iter()
+                            .map(|b| {
+                                let c = *b as char;
+                                if c.is_ascii_graphic() {
+                                    c
+                                } else {
+                                    '.'
+                                }
+                            })
+                            .collect::<String>();
+                        rows.push(
+                            h_flex()
+                                .gap_x_2()
+                                .child(
+                                    Label::new(format!("{:08X}", offset))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(hex_cells)
+                                        .buffer_font(_cx)
+                                        .size(LabelSize::Small),
+                                )
+                                .child(
+                                    Label::new(ascii_cells)
+                                        .buffer_font(_cx)
+                                        .size(LabelSize::Small),
+                                ),
+                        );
+                    }
                 }
                 let hex_ascii = v_flex().gap_y_0p5().children(rows);
 
@@ -212,7 +214,7 @@ impl Render for BrokenProjectItem {
                         Label::new(format!(
                             "Hex Editor — {} ({} bytes)",
                             inner.file_path.display(),
-                            inner.file_data.len()
+                            inner.file_data.as_ref().map(|d| d.len()).unwrap_or(0)
                         ))
                         .size(LabelSize::Large),
                     )
