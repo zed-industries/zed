@@ -264,6 +264,7 @@ mod tests {
             hide: HideStrategy::Never,
             shell: Shell::System,
             tags: vec![],
+            languages: vec![],
             show_summary: true,
             show_command: true,
         };
@@ -291,6 +292,7 @@ mod tests {
             hide: HideStrategy::Never,
             shell: Shell::System,
             tags: vec![],
+            languages: vec![],
             show_summary: true,
             show_command: true,
         };
@@ -429,6 +431,7 @@ mod tests {
             hide: HideStrategy::Never,
             shell: Shell::System,
             tags: vec![],
+            languages: vec![],
             show_summary: true,
             show_command: true,
         };
