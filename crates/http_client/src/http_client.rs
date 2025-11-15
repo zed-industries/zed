@@ -59,8 +59,6 @@ impl HttpRequestExt for http::request::Builder {
 }
 
 pub trait HttpClient: 'static + Send + Sync {
-    fn type_name(&self) -> &'static str;
-
     fn user_agent(&self) -> Option<&HeaderValue>;
 
     fn send(
@@ -161,10 +159,6 @@ impl HttpClient for HttpClientWithProxy {
 
     fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
     }
 
     #[cfg(feature = "test-support")]
@@ -314,10 +308,6 @@ impl HttpClient for HttpClientWithUrl {
         self.client.proxy.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
@@ -382,10 +372,6 @@ impl HttpClient for BlockedHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     #[cfg(feature = "test-support")]
@@ -480,10 +466,6 @@ impl HttpClient for FakeHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     fn as_fake(&self) -> &FakeHttpClient {
