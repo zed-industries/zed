@@ -61,6 +61,8 @@ impl HttpRequestExt for http::request::Builder {
 pub trait HttpClient: 'static + Send + Sync {
     fn user_agent(&self) -> Option<&HeaderValue>;
 
+    fn proxy(&self) -> Option<&Url>;
+
     fn send(
         &self,
         req: http::Request<AsyncBody>,
@@ -103,8 +105,6 @@ pub trait HttpClient: 'static + Send + Sync {
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
-
-    fn proxy(&self) -> Option<&Url>;
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
