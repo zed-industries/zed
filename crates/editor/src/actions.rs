@@ -526,6 +526,8 @@ actions!(
         GoToImplementationSplit,
         /// Goes to the next change in the file.
         GoToNextChange,
+        /// Goes to the corresponding test file for the current file.
+        GoToTest,
         /// Goes to the parent module of the current file.
         GoToParentModule,
         /// Goes to the previous change in the file.

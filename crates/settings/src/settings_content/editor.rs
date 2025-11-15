@@ -203,6 +203,9 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+
+    /// Go to test related settings
+    pub go_to_test: Option<GoToTestContent>,
     /// When to show the scrollbar in the completion menu.
     /// This setting can take four values:
     ///
@@ -799,6 +802,18 @@ pub struct DragAndDropSelectionContent {
     ///
     /// Default: 300
     pub delay: Option<DelayMs>,
+}
+
+/// Patterns for navigating between source and test files.
+#[skip_serializing_none]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct GoToTestContent {
+    /// Patterns for navigating between source and test files.
+    /// Use `{}` as a placeholder for the captured part of the path.
+    /// Define both directions to enable navigation from source to test and back.
+    ///
+    /// Default: `{"lib/{}.ex": "test/{}_test.exs", "test/{}_test.exs": "lib/{}.ex"}`
+    pub patterns: Option<HashMap<String, String>>,
 }
 
 /// When to show the minimap in the editor.

@@ -421,6 +421,9 @@ impl EditorElement {
                 .detach_and_log_err(cx);
         });
         register_action(editor, window, |editor, action, window, cx| {
+            editor.go_to_test(action, window, cx).detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
             editor
                 .go_to_type_definition(action, window, cx)
                 .detach_and_log_err(cx);

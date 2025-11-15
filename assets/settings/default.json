@@ -1601,6 +1601,16 @@
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"]
   },
+  // Patterns for navigating between source and test files.
+  // Use `{}` as a placeholder for the captured part of the path.
+  // Define both directions to enable navigation from source to test and back.
+  "go_to_test": {
+    "patterns": {
+      // Elixir
+      "lib/{}.ex": "test/{}_test.exs",
+      "test/{}_test.exs": "lib/{}.ex"
+    }
+  },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
   //

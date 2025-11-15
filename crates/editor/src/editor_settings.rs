@@ -1,5 +1,6 @@
 use core::num;
 
+use collections::HashMap;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
@@ -49,6 +50,7 @@ pub struct EditorSettings {
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub jupyter: Jupyter,
+    pub go_to_test: GoToTest,
     pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
@@ -69,6 +71,12 @@ pub struct Jupyter {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct StickyScroll {
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoToTest {
+    /// Patterns for navigating between source and test files.
+    pub patterns: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -273,6 +281,9 @@ impl Settings for EditorSettings {
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
+            },
+            go_to_test: GoToTest {
+                patterns: editor.go_to_test.unwrap().patterns.unwrap(),
             },
             hide_mouse: editor.hide_mouse,
             snippet_sort_order: editor.snippet_sort_order.unwrap(),

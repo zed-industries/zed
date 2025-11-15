@@ -160,6 +160,7 @@ use project::{
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
+use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
@@ -16632,6 +16633,100 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, window, cx)
+    }
+
+    pub fn go_to_test(
+        &mut self,
+        _: &GoToTest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let Some(file) = self.target_file(cx) else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        let Some(project) = self.project.clone() else {
+            return Task::ready(Ok(Navigated::No));
+        };
+
+        let target_path = file.path().as_unix_str().to_string();
+        let workspace = self.workspace();
+        let worktree_root = project
+            .read(cx)
+            .worktree_for_id(file.worktree_id(cx), cx)
+            .and_then(|worktree| worktree.read(cx).root_dir());
+        let patterns = EditorSettings::get_global(cx).go_to_test.patterns.clone();
+
+        cx.spawn_in(window, async move |_editor, cx| {
+            let Some(workspace) = workspace else {
+                return Ok(Navigated::No);
+            };
+
+            let test_path = patterns.iter().find_map(|(source_pattern, test_pattern)| {
+                let regex_pattern = regex::escape(source_pattern).replace(r"\{\}", "(.+)") + "$";
+                let regex = Regex::new(&regex_pattern).ok()?;
+                let captures = regex.captures(&target_path)?;
+                Some(test_pattern.replace("{}", &captures[1]))
+            });
+
+            let Some(test_path) = test_path else {
+                return Ok(Navigated::No);
+            };
+
+            let resolved = project
+                .update(cx, |project, cx| {
+                    project.resolve_path_in_buffer(&test_path, &buffer, cx)
+                })?
+                .await;
+
+            if let Some(resolved) = resolved {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_resolved_path(resolved, window, cx)
+                    })?
+                    .await?;
+            } else {
+                let Some(root) = worktree_root else {
+                    return Ok(Navigated::No);
+                };
+                let abs_path = root.join(&test_path);
+
+                let answer = workspace.update_in(cx, |_workspace, window, cx| {
+                    window.prompt(
+                        gpui::PromptLevel::Info,
+                        &format!(
+                            "Test file does not exist:\n{}\n\nWould you like to create it?",
+                            test_path
+                        ),
+                        None,
+                        &["Create", "Cancel"],
+                        cx,
+                    )
+                })?;
+
+                if answer.await? != 0 {
+                    return Ok(Navigated::No);
+                }
+
+                let fs =
+                    workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
+
+                if let Some(parent) = abs_path.parent() {
+                    fs.create_dir(parent).await?;
+                }
+                fs.create_file(&abs_path, Default::default()).await?;
+
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_abs_path(abs_path, Default::default(), window, cx)
+                    })?
+                    .await?;
+            }
+
+            Ok(Navigated::Yes)
+        })
     }
 
     pub fn go_to_type_definition(

@@ -264,6 +264,7 @@ impl VsCodeSettings {
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
             inline_code_actions: None,
             jupyter: None,
+            go_to_test: None,
             lsp_document_colors: None,
             lsp_highlight_debounce: None,
             middle_click_paste: None,
