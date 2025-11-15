@@ -1,9 +1,9 @@
 {"Exec":{"command":"set filetype=markdown"}}
-{"Put":{"state":"```rs\nimpl Worktree {\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {\n        todo!()\nˇ    }\n}\n```\n"}}
+{"Put":{"state":"```rs\nimpl Worktree {\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {\nˇ    }\n}\n```\n"}}
 {"Key":"["}
 {"Key":"{"}
-{"Get":{"state":"```rs\nimpl Worktree {\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{\n        todo!()\n    }\n}\n```\n","mode":"Normal"}}
-{"Put":{"state":"```rs\nimpl Worktree {\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {\n        todo!()\n    }   ˇ\n}\n```\n"}}
+{"Get":{"state":"```rs\nimpl Worktree {\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{\n    }\n}\n```\n","mode":"Normal"}}
+{"Put":{"state":"```rs\nimpl Worktree {\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {\n    }   ˇ\n}\n```\n"}}
 {"Key":"["}
 {"Key":"{"}
-{"Get":{"state":"```rs\nimpl Worktree ˇ{\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {\n        todo!()\n    }   \n}\n```\n","mode":"Normal"}}
+{"Get":{"state":"```rs\nimpl Worktree ˇ{\n    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {\n    }   \n}\n```\n","mode":"Normal"}}

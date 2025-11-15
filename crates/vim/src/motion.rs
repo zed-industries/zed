@@ -3322,7 +3322,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
             ˇ    }
             }
             ```
@@ -3333,7 +3332,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
                 ˇ}
             }
             ```
@@ -3343,7 +3341,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
                 }   ˇ
             }
             ```
@@ -3354,7 +3351,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
                 }  •
             ˇ}
             ```
@@ -3371,7 +3367,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
             ˇ    }
             }
             ```
@@ -3382,7 +3377,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{
-                    todo!()
                 }
             }
             ```
@@ -3392,7 +3386,6 @@ mod test {
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
                 }   ˇ
             }
             ```
@@ -3403,7 +3396,6 @@ mod test {
             ```rs
             impl Worktree ˇ{
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
                 }  •
             }
             ```

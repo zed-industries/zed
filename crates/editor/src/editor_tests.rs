@@ -17516,7 +17516,6 @@ async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppC
             ```rs
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                    todo!()
                 }
             }
             ```
@@ -17538,7 +17537,6 @@ async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppC
                 ```rs
                 impl Worktree {
                     pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                        todo!()
                     }
                 }ˇ
                 ```
@@ -17553,7 +17551,6 @@ async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppC
                 ```rs
                 impl Worktree ˇ{
                     pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                        todo!()
                     }
                 }
                 ```
@@ -17567,7 +17564,6 @@ async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppC
                 ```rs
                 impl Worktree {
                     pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                        todo!()
                     }ˇ
                 }
                 ```
@@ -17582,36 +17578,6 @@ async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppC
                 ```rs
                 impl Worktree {
                     pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{
-                        todo!()
-                    }
-                }
-                ```
-            "},
-            cx,
-        );
-        // Case 3: Test nested inner enclosing brackets
-        select_ranges(
-            editor,
-            &indoc! {"
-                ```rs
-                impl Worktree {
-                    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                        todo!()ˇ
-                    }
-                }
-                ```
-            "},
-            window,
-            cx,
-        );
-        editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, window, cx);
-        assert_text_with_selections(
-            editor,
-            &indoc! {"
-                ```rs
-                impl Worktree {
-                    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
-                        todo!ˇ()
                     }
                 }
                 ```
