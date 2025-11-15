@@ -64,7 +64,6 @@ use ui::{
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
-use zed_actions::git::CreateRemote;
 
 use cloud_llm_client::CompletionIntent;
 use workspace::{

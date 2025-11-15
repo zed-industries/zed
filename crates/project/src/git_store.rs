@@ -73,7 +73,6 @@ use std::{
 use sum_tree::{Edit, SumTree, TreeSet};
 use task::Shell;
 use text::{Bias, BufferId};
-use url::Url;
 use util::{
     ResultExt, debug_panic,
     paths::{PathStyle, SanitizedPath},
@@ -4619,7 +4618,6 @@ impl Repository {
     }
 
     pub fn remove_remote(&mut self, remote_name: String) -> oneshot::Receiver<Result<()>> {
-        let id = self.id;
         self.send_job(
             Some(format!("git remove remote {remote_name}").into()),
             move |repo, _cx| async move {

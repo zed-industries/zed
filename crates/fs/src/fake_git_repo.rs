@@ -644,11 +644,7 @@ impl GitRepository for FakeGitRepository {
         async { Ok(Some("main".into())) }.boxed()
     }
 
-    fn create_remote(
-        &self,
-        name: String,
-        url: gpui::http_client::Url,
-    ) -> BoxFuture<'_, Result<()>> {
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 

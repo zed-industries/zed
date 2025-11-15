@@ -15,7 +15,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
@@ -28,7 +27,6 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use url::Url;
 use util::command::new_smol_command;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -1339,7 +1337,6 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
-        dbg!(&name);
         let branch = self.executor.spawn(async move {
             let repo = repo.lock();
             let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
@@ -1349,7 +1346,6 @@ impl GitRepository for RealGitRepository {
 
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                dbg!(&branch_name);
                 let mut branch = match repo.branch(&branch_name, &branch_commit, false) {
                     Ok(branch) => branch,
                     Err(err) if err.code() == ErrorCode::Exists => {
@@ -1359,7 +1355,6 @@ impl GitRepository for RealGitRepository {
                         return Err(err.into());
                     }
                 };
-                dbg!(&name);
 
                 branch.set_upstream(Some(&name))?;
                 branch
@@ -1376,7 +1371,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let branch = branch.await?;
-                dbg!(&branch);
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["checkout", &branch])
                     .await?;
