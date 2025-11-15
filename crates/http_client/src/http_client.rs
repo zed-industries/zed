@@ -176,17 +176,11 @@ impl HttpClient for HttpClientWithProxy {
 }
 
 /// An [`HttpClient`] that has a base URL.
+#[derive(Deref)]
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
+    #[deref]
     client: HttpClientWithProxy,
-}
-
-impl std::ops::Deref for HttpClientWithUrl {
-    type Target = HttpClientWithProxy;
-
-    fn deref(&self) -> &Self::Target {
-        &self.client
-    }
 }
 
 impl HttpClientWithUrl {
