@@ -114,7 +114,7 @@ pub struct ConstantChannelCount<S: Source> {
 }
 
 impl<S: Source> ConstantChannelCount<S> {
-    fn new(source: S, target_channels: ChannelCount) -> Self {
+    pub fn new(source: S, target_channels: ChannelCount) -> Self {
         let input_channels = source.channels();
         let sample_rate = source.sample_rate();
         let inner = ChannelCountConverter::new(source, input_channels, target_channels);

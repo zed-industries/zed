@@ -184,26 +184,26 @@ impl Audio {
         let stream = raw_mic_input
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
-            .limit(LimitSettings::live_performance())
-            .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
-                let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
-                if voip_parts
-                    .echo_canceller
-                    .lock()
-                    .process_stream(
-                        &mut int_buffer,
-                        SAMPLE_RATE.get() as i32,
-                        CHANNEL_COUNT.get() as i32,
-                    )
-                    .context("livekit audio processor error")
-                    .log_err()
-                    .is_some()
-                {
-                    for (sample, processed) in buffer.iter_mut().zip(&int_buffer) {
-                        *sample = (*processed).to_sample();
-                    }
-                }
-            });
+            .limit(LimitSettings::live_performance());
+            // .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
+            //     let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
+            //     if voip_parts
+            //         .echo_canceller
+            //         .lock()
+            //         .process_stream(
+            //             &mut int_buffer,
+            //             SAMPLE_RATE.get() as i32,
+            //             CHANNEL_COUNT.get() as i32,
+            //         )
+            //         .context("livekit audio processor error")
+            //         .log_err()
+            //         .is_some()
+            //     {
+            //         for (sample, processed) in buffer.iter_mut().zip(&int_buffer) {
+            //             *sample = (*processed).to_sample();
+            //         }
+            //     }
+            // });
         // .denoise()
         // .context("Could not set up denoiser")?
         // .automatic_gain_control(automatic_gain_control_settings())
