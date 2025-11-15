@@ -16207,11 +16207,20 @@ impl Editor {
         let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
+
+        // in vim mode,helix mode, position cursor at start without selection to keep user in normal mode
+        // in normal mode, select entire range for better visibility
+        let selection_range = if vim_flavor(cx).is_some() {
+            start..start
+        } else {
+            start..end
+        };
+
         self.change_selections(
             SelectionEffects::default().nav_history(true),
             window,
             cx,
-            |s| s.select_anchor_ranges([start..end]),
+            |s| s.select_anchor_ranges([selection_range]),
         );
     }
 
