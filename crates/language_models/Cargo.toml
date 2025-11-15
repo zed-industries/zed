@@ -29,6 +29,7 @@ copilot.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 fs.workspace = true
+groq = { workspace = true, features = ["schemars"] }
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true

@@ -7402,6 +7402,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12101ecc8225ea6d675bc70263074eab6169079621c2186fe0c66590b2df9681"
 
 [[package]]
+name = "groq"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars 1.0.4",
+ "serde",
+ "strum 0.27.2",
+]
+
+[[package]]
 name = "group"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8916,6 +8926,7 @@ dependencies = [
  "google_ai",
  "gpui",
  "gpui_tokio",
+ "groq",
  "http_client",
  "language",
  "language_model",
