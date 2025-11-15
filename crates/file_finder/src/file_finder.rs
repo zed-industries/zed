@@ -105,7 +105,14 @@ impl FileFinder {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                    Self::open(workspace, action.separate_history, window, cx).detach();
+                    Self::open(
+                        workspace,
+                        action.separate_history,
+                        action.query.clone(),
+                        window,
+                        cx,
+                    )
+                    .detach();
                     return;
                 };
 
@@ -122,6 +129,7 @@ impl FileFinder {
     fn open(
         workspace: &mut Workspace,
         separate_history: bool,
+        query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -178,7 +186,16 @@ impl FileFinder {
                             cx,
                         );
 
-                        FileFinder::new(delegate, window, cx)
+                        let file_finder = FileFinder::new(delegate, window, cx);
+
+                        // Set the query if provided
+                        if let Some(query) = query.clone() {
+                            file_finder.picker.update(cx, |picker, cx| {
+                                picker.set_query(query, window, cx);
+                            });
+                        }
+
+                        file_finder
                     });
                 })
                 .ok();

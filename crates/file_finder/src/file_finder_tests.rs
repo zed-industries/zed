@@ -3246,6 +3246,7 @@ fn open_file_picker(
 ) -> Entity<Picker<FileFinderDelegate>> {
     cx.dispatch_action(ToggleFileFinder {
         separate_history: true,
+        query: None,
     });
     active_file_picker(workspace, cx)
 }

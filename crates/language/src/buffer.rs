@@ -80,6 +80,10 @@ pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new)
 pub enum Capability {
     /// The buffer is a mutable replica.
     ReadWrite,
+    /// The buffer is read-only, but can be made editable by saving it to disk.
+    /// This is useful for historical/virtual files that should become editable
+    /// only when the user explicitly saves them somewhere.
+    ReadOnlyUnlessSaved,
     /// The buffer is a read-only replica.
     ReadOnly,
 }
@@ -966,7 +970,15 @@ impl Buffer {
 
     /// Whether this buffer can only be read.
     pub fn read_only(&self) -> bool {
-        self.capability == Capability::ReadOnly
+        matches!(
+            self.capability,
+            Capability::ReadOnly | Capability::ReadOnlyUnlessSaved
+        )
+    }
+
+    /// Whether this buffer is read-only but can be made editable by saving it to disk.
+    pub fn read_only_unless_saved(&self) -> bool {
+        self.capability == Capability::ReadOnlyUnlessSaved
     }
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
@@ -2042,7 +2054,10 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        if self.capability == Capability::ReadOnly {
+        if matches!(
+            self.capability,
+            Capability::ReadOnly | Capability::ReadOnlyUnlessSaved
+        ) {
             return false;
         }
         if self.has_conflict {

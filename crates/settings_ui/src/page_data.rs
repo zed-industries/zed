@@ -5476,6 +5476,191 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Diff Views"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Controls",
+                    description: "Show toolbar controls (readonly button and quick action dropdown) in diff views.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.show_controls"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .show_controls
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .show_controls = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Commit Diff Views"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Quick Action",
+                    description: "Action to perform when using the keybind (alt+enter) in commit diff views.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.commit_quick_action"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .commit_quick_action
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .commit_quick_action = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Fallback Action",
+                    description: "Fallback action when commit quick action fails (excludes open_head and open_from_cursor).",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.commit_fallback_action"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .commit_fallback_action
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .commit_fallback_action = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Opens Readonly",
+                    description: "Whether files opened from commit diffs should be readonly.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.commit_opens_readonly"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .commit_opens_readonly
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .commit_opens_readonly = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Stash Diff Views"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Quick Action",
+                    description: "Action to perform when using the keybind (alt+enter) in stash diff views.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.stash_quick_action"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .stash_quick_action
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .stash_quick_action = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Fallback Action",
+                    description: "Fallback action when stash quick action fails (excludes open_head and open_from_cursor).",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.stash_fallback_action"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .stash_fallback_action
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .stash_fallback_action = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Opens Readonly",
+                    description: "Whether files opened from stash diffs should be readonly.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.diff_views.stash_opens_readonly"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .diff_views
+                                .as_ref()?
+                                .stash_opens_readonly
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .diff_views
+                                .get_or_insert_default()
+                                .stash_opens_readonly = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {

@@ -1334,5 +1334,19 @@
       "alt-left": "dev::Zeta2ContextGoBack",
       "alt-right": "dev::Zeta2ContextGoForward"
     }
+  },
+  {
+    "context": "CommitDiff > Editor",
+    "bindings": {
+      "alt-enter": "git::OpenExcerpts",
+      "cmd-alt-enter": "git::OpenExcerptsSplit"
+    }
+  },
+  {
+    "context": "StashDiff > Editor",
+    "bindings": {
+      "alt-enter": "git::OpenExcerpts",
+      "cmd-alt-enter": "git::OpenExcerptsSplit"
+    }
   }
 ]

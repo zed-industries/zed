@@ -885,14 +885,62 @@ impl Item for Editor {
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = path.path.extension().map(|a| a.to_string());
+        let file_extension = path.path.as_std_path().to_str().map(ToString::to_string);
         self.report_editor_event(
             ReportEditorEvent::Saved { auto_saved: false },
             file_extension,
             cx,
         );
 
-        project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
+        let save_task = project.update(cx, |project, cx| {
+            project.save_buffer_as(buffer.clone(), path, cx)
+        });
+
+        cx.spawn(async move |editor, cx| {
+            // Wait for save to complete
+            save_task.await?;
+
+            // Get fresh buffer reference from editor and update capability to ReadWrite
+            println!("Attempting to change to read write");
+            editor.update(cx, |editor, cx| {
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("cannot call save_as on an excerpt list");
+                println!("Attempting to change to read write with buffer");
+
+                // Check editor's own read_only field
+                println!("Editor read_only field: {}", editor.read_only);
+
+                buffer.update(cx, |buffer, cx| {
+                    let current_capability = buffer.capability();
+                    println!("Current buffer capability: {:?}", current_capability);
+                    println!("Attempting to change to read write with capabilities");
+                    if current_capability == language::Capability::ReadOnlyUnlessSaved {
+                        println!("Setting capability to ReadWrite");
+                        buffer.set_capability(language::Capability::ReadWrite, cx);
+                        println!("Capability set to: {:?}", buffer.capability());
+                    } else {
+                        println!(
+                            "Capability was not ReadOnlyUnlessSaved, it was: {:?}",
+                            current_capability
+                        );
+                    }
+                });
+
+                // Also clear the editor's read_only flag if it was set
+                if editor.read_only {
+                    println!("Clearing editor's read_only flag");
+                    editor.set_read_only(false);
+                }
+
+                // Notify to refresh the editor state
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 
     fn reload(

@@ -318,6 +318,88 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// Settings for diff views (commit and stash).
+    pub diff_views: DiffViewsSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum DiffViewQuickAction {
+    #[default]
+    /// Open the file from the cursor position
+    OpenFromCursor,
+    /// Open the current version of the file (HEAD)
+    OpenHead,
+    /// Open the file finder
+    OpenFinder,
+    /// Open the parent version (before commit)
+    OpenParent,
+    /// Open the modified version (after commit)
+    OpenModified,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum DiffViewFallbackAction {
+    /// Open the file finder
+    OpenFinder,
+    /// Open the parent version (before commit)
+    OpenParent,
+    #[default]
+    /// Open the modified version (after commit)
+    OpenModified,
+}
+
+impl From<settings::DiffViewFallbackAction> for DiffViewFallbackAction {
+    fn from(action: settings::DiffViewFallbackAction) -> Self {
+        match action {
+            settings::DiffViewFallbackAction::OpenFinder => DiffViewFallbackAction::OpenFinder,
+            settings::DiffViewFallbackAction::OpenParent => DiffViewFallbackAction::OpenParent,
+            settings::DiffViewFallbackAction::OpenModified => DiffViewFallbackAction::OpenModified,
+        }
+    }
+}
+
+impl From<settings::DiffViewQuickAction> for DiffViewQuickAction {
+    fn from(action: settings::DiffViewQuickAction) -> Self {
+        match action {
+            settings::DiffViewQuickAction::OpenFromCursor => DiffViewQuickAction::OpenFromCursor,
+            settings::DiffViewQuickAction::OpenHead => DiffViewQuickAction::OpenHead,
+            settings::DiffViewQuickAction::OpenFinder => DiffViewQuickAction::OpenFinder,
+            settings::DiffViewQuickAction::OpenParent => DiffViewQuickAction::OpenParent,
+            settings::DiffViewQuickAction::OpenModified => DiffViewQuickAction::OpenModified,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiffViewsSettings {
+    /// Quick action to perform when using the keybind (alt+enter) in commit diff views.
+    ///
+    /// Default: open_from_cursor
+    pub commit_quick_action: DiffViewQuickAction,
+    /// Fallback action when commit quick action fails (excludes open_head and open_from_cursor).
+    ///
+    /// Default: open_modified
+    pub commit_fallback_action: DiffViewFallbackAction,
+    /// Whether files opened from commit diffs should be readonly.
+    ///
+    /// Default: true
+    pub commit_opens_readonly: bool,
+    /// Quick action to perform when using the keybind (alt+enter) in stash diff views.
+    ///
+    /// Default: open_from_cursor
+    pub stash_quick_action: DiffViewQuickAction,
+    /// Fallback action when stash quick action fails (excludes open_head and open_from_cursor).
+    ///
+    /// Default: open_modified
+    pub stash_fallback_action: DiffViewFallbackAction,
+    /// Whether files opened from stash diffs should be readonly.
+    ///
+    /// Default: true
+    pub stash_opens_readonly: bool,
+    /// Whether to show controls (readonly button and quick action dropdown) in the toolbar.
+    ///
+    /// Default: true
+    pub show_controls: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -471,6 +553,18 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            diff_views: {
+                let diff_views = git.diff_views.unwrap();
+                DiffViewsSettings {
+                    commit_quick_action: diff_views.commit_quick_action.unwrap().into(),
+                    commit_fallback_action: diff_views.commit_fallback_action.unwrap().into(),
+                    commit_opens_readonly: diff_views.commit_opens_readonly.unwrap(),
+                    stash_quick_action: diff_views.stash_quick_action.unwrap().into(),
+                    stash_fallback_action: diff_views.stash_fallback_action.unwrap().into(),
+                    stash_opens_readonly: diff_views.stash_opens_readonly.unwrap(),
+                    show_controls: diff_views.show_controls.unwrap(),
+                }
+            },
         };
         Self {
             context_servers: project
