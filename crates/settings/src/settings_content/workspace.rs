@@ -350,6 +350,29 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBarOrientation {
+    /// Display the tab bar above the pane content.
+    #[default]
+    Horizontal,
+    /// Display the tab bar alongside the pane content.
+    Vertical,
+}
+
 #[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
@@ -365,6 +388,10 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_tab_bar_buttons: Option<bool>,
+    /// Orientation of the tab bar relative to the pane content.
+    ///
+    /// Default: "horizontal"
+    pub orientation: Option<TabBarOrientation>,
 }
 
 #[skip_serializing_none]

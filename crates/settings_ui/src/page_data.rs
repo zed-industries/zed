@@ -2981,6 +2981,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Bar Orientation",
+                    description: "Lay out the tab bar horizontally above panes or vertically beside them.",
+                    field: Box::new(SettingField {
+                        json_path: Some("tab_bar.orientation"),
+                        pick: |settings_content| {
+                            settings_content.tab_bar.as_ref()?.orientation.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.tab_bar.get_or_insert_default().orientation = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Git Status In Tabs",
                     description: "Show the Git file status on a tab item.",
                     field: Box::new(SettingField {

@@ -1029,7 +1029,9 @@
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
-    "show_tab_bar_buttons": true
+    "show_tab_bar_buttons": true,
+    // Orientation of the tab bar. One of: ["horizontal", "vertical"]
+    "orientation": "horizontal"
   },
   // Settings related to the editor's tabs
   "tabs": {

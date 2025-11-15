@@ -1,8 +1,15 @@
-use gpui::{AnyElement, ScrollHandle};
+use gpui::{AnyElement, ScrollHandle, Stateful};
 use smallvec::SmallVec;
 
 use crate::Tab;
 use crate::prelude::*;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum TabBarLayout {
+    #[default]
+    Horizontal,
+    Vertical,
+}
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct TabBar {
@@ -11,6 +18,7 @@ pub struct TabBar {
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
+    layout: TabBarLayout,
 }
 
 impl TabBar {
@@ -21,6 +29,7 @@ impl TabBar {
             children: SmallVec::new(),
             end_children: SmallVec::new(),
             scroll_handle: None,
+            layout: TabBarLayout::Horizontal,
         }
     }
 
@@ -81,25 +90,31 @@ impl TabBar {
         );
         self
     }
-}
 
-impl ParentElement for TabBar {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
+    pub fn layout(mut self, layout: TabBarLayout) -> Self {
+        self.layout = layout;
+        self
     }
-}
 
-impl RenderOnce for TabBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render_horizontal(self, cx: &mut App) -> Stateful<Div> {
+        let TabBar {
+            id,
+            start_children,
+            children,
+            end_children,
+            scroll_handle,
+            ..
+        } = self;
+
         div()
-            .id(self.id)
+            .id(id)
             .group("tab_bar")
             .flex()
             .flex_none()
             .w_full()
             .h(Tab::container_height(cx))
             .bg(cx.theme().colors().tab_bar_background)
-            .when(!self.start_children.is_empty(), |this| {
+            .when(!start_children.is_empty(), |this| {
                 this.child(
                     h_flex()
                         .flex_none()
@@ -108,7 +123,7 @@ impl RenderOnce for TabBar {
                         .border_b_1()
                         .border_r_1()
                         .border_color(cx.theme().colors().border)
-                        .children(self.start_children),
+                        .children(start_children),
                 )
             })
             .child(
@@ -131,13 +146,13 @@ impl RenderOnce for TabBar {
                             .id("tabs")
                             .flex_grow()
                             .overflow_x_scroll()
-                            .when_some(self.scroll_handle, |cx, scroll_handle| {
+                            .when_some(scroll_handle, |cx, scroll_handle| {
                                 cx.track_scroll(&scroll_handle)
                             })
-                            .children(self.children),
+                            .children(children),
                     ),
             )
-            .when(!self.end_children.is_empty(), |this| {
+            .when(!end_children.is_empty(), |this| {
                 this.child(
                     h_flex()
                         .flex_none()
@@ -146,9 +161,84 @@ impl RenderOnce for TabBar {
                         .border_b_1()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)
-                        .children(self.end_children),
+                        .children(end_children),
                 )
             })
+    }
+
+    fn render_vertical(self, cx: &mut App) -> Stateful<Div> {
+        let TabBar {
+            id,
+            start_children,
+            children,
+            end_children,
+            scroll_handle,
+            ..
+        } = self;
+
+        v_flex()
+            .id(id)
+            .group("tab_bar")
+            .flex_1()
+            .w_full()
+            .h_full()
+            .bg(cx.theme().colors().tab_bar_background)
+            .when(!start_children.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .flex_none()
+                        .gap(DynamicSpacing::Base04.rems(cx))
+                        .px(DynamicSpacing::Base06.rems(cx))
+                        .py(DynamicSpacing::Base04.rems(cx))
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .children(start_children),
+                )
+            })
+            .child(
+                v_flex()
+                    .relative()
+                    .flex_1()
+                    .w_full()
+                    .overflow_y_hidden()
+                    .child(
+                        v_flex()
+                            .id("tabs")
+                            .flex_grow()
+                            .overflow_y_scroll()
+                            .when_some(scroll_handle, |cx, scroll_handle| {
+                                cx.track_scroll(&scroll_handle)
+                            })
+                            .children(children),
+                    ),
+            )
+            .when(!end_children.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .flex_none()
+                        .gap(DynamicSpacing::Base04.rems(cx))
+                        .px(DynamicSpacing::Base06.rems(cx))
+                        .py(DynamicSpacing::Base04.rems(cx))
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .children(end_children),
+                )
+            })
+    }
+}
+
+impl ParentElement for TabBar {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
+    }
+}
+
+impl RenderOnce for TabBar {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        match self.layout {
+            TabBarLayout::Horizontal => self.render_horizontal(cx),
+            TabBarLayout::Vertical => self.render_vertical(cx),
+        }
     }
 }
 
