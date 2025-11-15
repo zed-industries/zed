@@ -4,9 +4,10 @@ path_suffixes = ["json", "flake.lock"]
 line_comments = ["// "]
 autoclose_before = ",]}"
 brackets = [
-    { start = "{", end = "}", close = true, newline = true },
-    { start = "[", end = "]", close = true, newline = true },
-    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+    { start = "{", end = "}", close = true, surround = true, newline = true },
+    { start = "[", end = "]", close = true, surround = true, newline = true },
+    { start = "(", end = ")", close = true, surround = true, newline = false },
+    { start = "\"", end = "\"", close = true, surround = true, newline = false, not_in = ["string"] },
 ]
 tab_size = 2
 prettier_parser_name = "json"

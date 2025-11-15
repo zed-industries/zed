@@ -10840,6 +10840,96 @@ async fn test_surround_with_pair(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_surround_with_pair_in_plain_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Use the PLAIN_TEXT language which now includes bracket pairs
+    let language = language::PLAIN_TEXT.clone();
+
+    let text = r#"
+        hello
+        world
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 5),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 5),
+            ])
+        });
+
+        // Test parentheses
+        editor.handle_input("(", window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "
+                (hello)
+                (world)
+            "
+            .unindent()
+        );
+
+        editor.undo(&Undo, window, cx);
+
+        // Test square brackets
+        editor.handle_input("[", window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "
+                [hello]
+                [world]
+            "
+            .unindent()
+        );
+
+        editor.undo(&Undo, window, cx);
+
+        // Test curly braces
+        editor.handle_input("{", window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "
+                {hello}
+                {world}
+            "
+            .unindent()
+        );
+
+        editor.undo(&Undo, window, cx);
+
+        // Test double quotes
+        editor.handle_input("\"", window, cx);
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                "hello"
+                "world"
+            "#
+            .unindent()
+        );
+
+        editor.undo(&Undo, window, cx);
+
+        // Test single quotes
+        editor.handle_input("'", window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "
+                'hello'
+                'world'
+            "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_delete_autoclose_pair(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
