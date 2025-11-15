@@ -18,6 +18,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+pub use settings::CustomHeader;
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -25,6 +26,7 @@ pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: Option<Vec<CustomHeader>>,
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -208,11 +210,12 @@ impl OpenAiCompatibleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+        let Ok((api_key, api_url, custom_headers)) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
             (
                 state.api_key_state.key(api_url),
                 state.settings.api_url.clone(),
+                state.settings.custom_headers.clone(),
             )
         }) else {
             return future::ready(Err(anyhow!("App state dropped").into())).boxed();
@@ -229,6 +232,7 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                custom_headers.as_ref(),
             );
             let response = request.await?;
             Ok(response)
