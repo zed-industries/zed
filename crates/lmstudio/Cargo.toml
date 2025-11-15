@@ -17,8 +17,11 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
+edit_prediction.workspace = true
 futures.workspace = true
+gpui.workspace = true
 http_client.workspace = true
+language.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
