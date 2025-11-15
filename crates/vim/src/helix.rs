@@ -13,10 +13,10 @@ use editor::{
 };
 use gpui::actions;
 use gpui::{Context, Hsla, Window};
-use language::{CharClassifier, CharKind, Point};
+use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use text::{Bias, SelectionGoal};
 use ui::prelude::*;
 use workspace::searchable;
@@ -756,7 +756,19 @@ impl Vim {
             let start_offset = buffer_snapshot.point_to_offset(start_point);
             let end_offset = buffer_snapshot.point_to_offset(end_point);
 
-            Self::build_helix_jump_ui_data(buffer_snapshot, start_offset, end_offset)
+            let selections = editor.selections.all::<Point>(&display_snapshot);
+            let (skip_points, skip_ranges) =
+                Self::selection_skip_offsets(buffer_snapshot, &selections);
+
+            let accent = HelixSettings::get_global(cx).jump_label_accent;
+            Self::build_helix_jump_ui_data(
+                buffer_snapshot,
+                start_offset,
+                end_offset,
+                accent,
+                &skip_points,
+                &skip_ranges,
+            )
         })
     }
 
@@ -764,6 +776,9 @@ impl Vim {
         buffer: &MultiBufferSnapshot,
         start_offset: usize,
         end_offset: usize,
+        accent: Hsla,
+        skip_points: &[usize],
+        skip_ranges: &[Range<usize>],
     ) -> HelixJumpUiData {
         if start_offset >= end_offset {
             return HelixJumpUiData::default();
@@ -796,16 +811,26 @@ impl Vim {
                 }
 
                 if !is_word && in_word {
-                    Self::finalize_jump_candidate(
-                        buffer,
-                        word_start,
-                        absolute,
-                        first_two_end,
-                        char_count,
-                        &mut labels,
-                        &mut highlights,
-                        &mut blocks,
-                    );
+                    if char_count >= 2
+                        && !Self::should_skip_jump_candidate(
+                            word_start,
+                            absolute,
+                            skip_points,
+                            skip_ranges,
+                        )
+                    {
+                        Self::finalize_jump_candidate(
+                            buffer,
+                            word_start,
+                            absolute,
+                            first_two_end,
+                            char_count,
+                            accent,
+                            &mut labels,
+                            &mut highlights,
+                            &mut blocks,
+                        );
+                    }
                     in_word = false;
                     if labels.len() == limit {
                         break 'chunks;
@@ -815,13 +840,18 @@ impl Vim {
             offset += chunk.len();
         }
 
-        if in_word && labels.len() < limit {
+        if in_word
+            && char_count >= 2
+            && labels.len() < limit
+            && !Self::should_skip_jump_candidate(word_start, end_offset, skip_points, skip_ranges)
+        {
             Self::finalize_jump_candidate(
                 buffer,
                 word_start,
                 end_offset,
                 first_two_end,
                 char_count,
+                accent,
                 &mut labels,
                 &mut highlights,
                 &mut blocks,
@@ -835,12 +865,52 @@ impl Vim {
         }
     }
 
+    fn selection_skip_offsets(
+        buffer: &MultiBufferSnapshot,
+        selections: &[Selection<Point>],
+    ) -> (Vec<usize>, Vec<Range<usize>>) {
+        let mut skip_points = Vec::with_capacity(selections.len());
+        let mut skip_ranges = Vec::new();
+
+        for selection in selections {
+            let head_offset = buffer.point_to_offset(selection.head());
+            skip_points.push(head_offset);
+
+            if selection.start != selection.end {
+                let mut start = buffer.point_to_offset(selection.start);
+                let mut end = buffer.point_to_offset(selection.end);
+                if start > end {
+                    std::mem::swap(&mut start, &mut end);
+                }
+                skip_ranges.push(start..end);
+            }
+        }
+
+        (skip_points, skip_ranges)
+    }
+
+    fn should_skip_jump_candidate(
+        word_start: usize,
+        word_end: usize,
+        skip_points: &[usize],
+        skip_ranges: &[Range<usize>],
+    ) -> bool {
+        skip_points
+            .iter()
+            .copied()
+            .any(|offset| offset >= word_start && offset < word_end)
+            || skip_ranges
+                .iter()
+                .any(|range| range.start < word_end && word_start < range.end)
+    }
+
     fn finalize_jump_candidate(
         buffer: &MultiBufferSnapshot,
         word_start: usize,
         word_end: usize,
         first_two_end: usize,
         char_count: usize,
+        accent: Hsla,
         labels: &mut Vec<HelixJumpLabel>,
         highlights: &mut Vec<Range<Anchor>>,
         blocks: &mut Vec<BlockProperties<Anchor>>,
@@ -866,10 +936,10 @@ impl Vim {
             range: start_anchor..end_anchor,
         });
 
-        blocks.push(Self::jump_label_block(start_anchor, label));
+        blocks.push(Self::jump_label_block(start_anchor, label, accent));
     }
 
-    fn jump_label_block(anchor: Anchor, label: [char; 2]) -> BlockProperties<Anchor> {
+    fn jump_label_block(anchor: Anchor, label: [char; 2], accent: Hsla) -> BlockProperties<Anchor> {
         let text: SharedString = label.iter().collect::<String>().into();
         BlockProperties {
             placement: BlockPlacement::Near(anchor),
@@ -881,11 +951,25 @@ impl Vim {
                     .child(
                         Label::new(text.clone())
                             .size(LabelSize::Default)
-                            .color(Color::Custom(HELIX_JUMP_ACCENT)),
+                            .color(Color::Custom(accent)),
                     )
                     .into_any_element()
             }),
             priority: 0,
+        }
+    }
+}
+
+#[derive(RegisterSetting)]
+struct HelixSettings {
+    jump_label_accent: Hsla,
+}
+
+impl Settings for HelixSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let helix = content.helix.clone().unwrap_or_default();
+        Self {
+            jump_label_accent: helix.jump_label_accent.unwrap_or(HELIX_JUMP_ACCENT),
         }
     }
 }
