@@ -3315,6 +3315,11 @@ mod test {
     #[gpui::test]
     async fn test_unmatched_forward_markdown(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_markdown(cx).await;
+        let language_registry = cx.workspace.read_with(cx, |workspace, cx| {
+            workspace.project().read(cx).languages().clone()
+        });
+        language_registry.add(rust_lang());
+
         cx.neovim.exec("set filetype=markdown").await;
 
         cx.set_shared_state(indoc! {r"
@@ -3354,7 +3359,7 @@ mod test {
             impl Worktree {
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
                     todo!()
-                }
+                }  •
             ˇ}
             ```
         "});
@@ -3363,6 +3368,11 @@ mod test {
     #[gpui::test]
     async fn test_unmatched_backward_markdown(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_markdown(cx).await;
+        let language_registry = cx.workspace.read_with(cx, |workspace, cx| {
+            workspace.project().read(cx).languages().clone()
+        });
+        language_registry.add(rust_lang());
+
         cx.neovim.exec("set filetype=markdown").await;
 
         cx.set_shared_state(indoc! {r"
@@ -3402,7 +3412,7 @@ mod test {
             impl Worktree ˇ{
                 pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
                     todo!()
-                }
+                }  •
             }
             ```
         "});

@@ -314,12 +314,13 @@ impl EditorLspTestContext {
     }
 
     pub async fn new_markdown(cx: &mut gpui::TestAppContext) -> Self {
-        Self::new(
+        let context = Self::new(
             Arc::into_inner(markdown_lang()).unwrap(),
             Default::default(),
             cx,
         )
-        .await
+        .await;
+        context
     }
 
     /// Constructs lsp range using a marked string with '[', ']' range delimiters
