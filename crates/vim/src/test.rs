@@ -18,7 +18,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
-use settings::SettingsStore;
+use settings::{ActionSequence, SettingsStore};
 use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
@@ -26,7 +26,10 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{
+    PushDelete, PushFindForward, PushObject, PushSneak, PushSneakBackward, SwitchToVisualMode,
+    helix::HelixGotoLastModification, insert::NormalBefore, motion, object::AnyQuotes, state::Mode,
+};
 
 use util_macros::perf;
 
@@ -2320,6 +2323,74 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
         },
         Mode::Normal,
     );
+}
+
+#[gpui::test]
+async fn test_vim_disabled_actions_work_with_manual_binding(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-'",
+            ActionSequence(vec![
+                Box::new(SwitchToVisualMode {}),
+                Box::new(PushObject { around: false }),
+                Box::new(AnyQuotes {}),
+            ]),
+            None,
+        )])
+    });
+
+    cx.simulate_keystrokes("l e t x = h e l l o w o r l d");
+    cx.set_state(r#"let x = "hello worldˇ";"#, Mode::Normal);
+    cx.simulate_keystrokes("ctrl-'");
+    cx.assert_state(r#"let x = "«hello worldˇ»";"#, Mode::Visual);
+}
+
+#[gpui::test]
+async fn test_vim_disabled_multi_keystroke_sequence_works(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-d", PushDelete, None),
+            KeyBinding::new(
+                "ctrl-alt-t",
+                PushFindForward {
+                    before: true,
+                    multiline: true,
+                },
+                None,
+            ),
+        ])
+    });
+
+    cx.set_state("helloˇ world test", Mode::Normal);
+
+    // This should delete until the next space
+    cx.simulate_keystrokes("ctrl-d ctrl-alt-t space");
+    cx.assert_editor_state("helloˇ test");
+}
+
+#[gpui::test]
+async fn test_vim_disabled_goto_last_modification(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    cx.update(|_, cx| cx.bind_keys([KeyBinding::new("ctrl-g", HelixGotoLastModification, None)]));
+
+    cx.set_state("hello ˇworld", Mode::Normal);
+
+    // Create a modification
+    cx.simulate_keystrokes("z e d space");
+    cx.assert_editor_state("hello zed ˇworld");
+
+    // Move away
+    cx.simulate_keystrokes("up");
+    cx.assert_editor_state("ˇhello zed world");
+
+    // Go to last modification
+    cx.simulate_keystrokes("ctrl-g");
+    cx.assert_editor_state("hello zed ˇworld");
 }
 
 #[gpui::test]

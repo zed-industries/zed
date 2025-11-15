@@ -685,6 +685,15 @@ impl MarksState {
 impl Global for VimGlobals {}
 
 impl VimGlobals {
+    fn reset_for_disabled(&mut self) {
+        // Preserve per-workspace mark entities so that Vim mode continues to track
+        // locations like "." even when modal editing is disabled.
+        let marks = std::mem::take(&mut self.marks);
+        let mut new_globals = VimGlobals::default();
+        new_globals.marks = marks;
+        *self = new_globals;
+    }
+
     pub(crate) fn register(cx: &mut App) {
         cx.set_global(VimGlobals::default());
 
@@ -710,12 +719,14 @@ impl VimGlobals {
 
         cx.observe_global::<SettingsStore>(move |cx| {
             let is_enabled = Vim::enabled(cx);
+
+            KeyBinding::set_vim_mode(cx, is_enabled);
+
             if was_enabled == Some(is_enabled) {
                 return;
             }
             was_enabled = Some(is_enabled);
             if is_enabled {
-                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -732,8 +743,7 @@ impl VimGlobals {
                     }
                 }
             } else {
-                KeyBinding::set_vim_mode(cx, false);
-                *Vim::globals(cx) = VimGlobals::default();
+                Vim::update_globals(cx, |globals, _| globals.reset_for_disabled());
                 GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
