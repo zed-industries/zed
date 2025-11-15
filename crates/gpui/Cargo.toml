@@ -138,6 +138,8 @@ waker-fn = "1.2.0"
 lyon = "1.0"
 libc.workspace = true
 pin-project = "1.1.10"
+subsecond = "0.7.0"
+dioxus-devtools = "0.7.0"
 circular-buffer.workspace = true
 spin = "0.10.0"
 
