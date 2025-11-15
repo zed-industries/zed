@@ -3597,6 +3597,7 @@ impl GitPanel {
                                     repo.clone(),
                                     workspace.clone(),
                                     None,
+                                    None,
                                     window,
                                     cx,
                                 );

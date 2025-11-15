@@ -436,7 +436,9 @@ message Envelope {
 
         OpenImageByPath open_image_by_path = 391;
         OpenImageResponse open_image_response = 392;
-        CreateImageForPeer create_image_for_peer = 393; // current max
+        CreateImageForPeer create_image_for_peer = 393;
+        GitFileHistory git_file_history = 394;
+        GitFileHistoryResponse git_file_history_response = 395; // current max
     }
 
     reserved 87 to 88;
