@@ -1,8 +1,9 @@
 use crate::markdown_elements::{
     HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
+    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
+    ParsedMarkdownMermaidDiagram, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
+    ParsedMarkdownTableRow,
 };
 use fs::normalize_path;
 use gpui::{
@@ -184,6 +185,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         Table(table) => render_markdown_table(table, cx),
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
+        MermaidDiagram(mermaid) => render_mermaid_diagram(mermaid, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
         Image(image) => render_markdown_image(image, cx),
     }
@@ -649,6 +651,57 @@ fn render_markdown_code_block(
                 .child(copy_block_button),
         )
         .into_any()
+}
+
+fn render_mermaid_diagram(
+    parsed: &ParsedMarkdownMermaidDiagram,
+    cx: &mut RenderContext,
+) -> AnyElement {
+    if let Some(error) = &parsed.error {
+        cx.with_common_p(div())
+            .px_3()
+            .py_3()
+            .bg(gpui::red())
+            .rounded_sm()
+            .child(
+                div()
+                    .child(Label::new("Mermaid rendering error:").color(Color::Error))
+                    .child(div().mt_2().child(StyledText::new(error.clone()))),
+            )
+            .into_any()
+    } else if let Some(svg_path) = &parsed.svg_path {
+        let image_resource = Resource::Path(Arc::from(svg_path.as_path()));
+
+        cx.with_common_p(div())
+            .px_3()
+            .py_3()
+            .bg(cx.code_block_background_color)
+            .rounded_sm()
+            .child(
+                div().w_full().child(
+                    img(ImageSource::Resource(image_resource))
+                        .max_w_full()
+                        .with_fallback(|| {
+                            div()
+                                .child(Label::new("Failed to load mermaid diagram"))
+                                .into_any_element()
+                        }),
+                ),
+            )
+            .into_any()
+    } else {
+        cx.with_common_p(div())
+            .px_3()
+            .py_3()
+            .bg(cx.code_block_background_color)
+            .rounded_sm()
+            .child(
+                div()
+                    .child(Label::new("Rendering mermaid diagram..."))
+                    .child(div().mt_2().child(StyledText::new(parsed.contents.clone()))),
+            )
+            .into_any()
+    }
 }
 
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {

@@ -209,8 +209,13 @@ impl<'a> MarkdownParser<'a> {
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await?;
-                    Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    if language.as_deref() == Some("mermaid") {
+                        let mermaid_diagram = self.parse_mermaid_diagram().await?;
+                        Some(vec![ParsedMarkdownElement::MermaidDiagram(mermaid_diagram)])
+                    } else {
+                        let code_block = self.parse_code_block(language).await?;
+                        Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    }
                 }
                 Tag::HtmlBlock => {
                     self.cursor += 1;
@@ -803,6 +808,44 @@ impl<'a> MarkdownParser<'a> {
             contents: code.into(),
             language,
             highlights,
+        })
+    }
+
+    async fn parse_mermaid_diagram(&mut self) -> Option<ParsedMarkdownMermaidDiagram> {
+        let Some((_event, source_range)) = self.previous() else {
+            return None;
+        };
+
+        let source_range = source_range.clone();
+        let mut code = String::new();
+
+        while !self.eof() {
+            let Some((current, _source_range)) = self.current() else {
+                break;
+            };
+
+            match current {
+                Event::Text(text) => {
+                    code.push_str(text);
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        code = code.strip_suffix('\n').unwrap_or(&code).to_string();
+
+        Some(ParsedMarkdownMermaidDiagram {
+            source_range,
+            contents: code.into(),
+            svg_path: None,
+            error: None,
         })
     }
 

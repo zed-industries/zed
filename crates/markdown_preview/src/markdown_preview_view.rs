@@ -325,6 +325,7 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let language_registry = self.language_registry.clone();
+        let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |view, cx| {
             if wait_for_debounce {
@@ -342,7 +343,27 @@ impl MarkdownPreviewView {
             let parsing_task = cx.background_spawn(async move {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
             });
-            let contents = parsing_task.await;
+            let mut contents = parsing_task.await;
+
+            let node_runtime = workspace.upgrade().and_then(|workspace| {
+                cx.update(|_window, cx| {
+                    workspace
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .node_runtime()
+                        .cloned()
+                        .map(Arc::new)
+                })
+                .ok()
+                .flatten()
+            });
+
+            if let Some(node_runtime) = node_runtime {
+                MarkdownPreviewView::render_mermaid_diagrams(&mut contents, node_runtime, &cx)
+                    .await;
+            }
+
             view.update(cx, move |view, cx| {
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
@@ -416,6 +437,44 @@ impl MarkdownPreviewView {
         }
 
         block_index.unwrap_or_default()
+    }
+
+    async fn render_mermaid_diagrams(
+        parsed: &mut ParsedMarkdown,
+        node_runtime: Arc<node_runtime::NodeRuntime>,
+        cx: &gpui::AsyncApp,
+    ) {
+        use crate::markdown_elements::ParsedMarkdownElement;
+
+        for (index, element) in parsed.children.iter_mut().enumerate() {
+            if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
+                let contents = mermaid.contents.clone();
+                let node_runtime = node_runtime.clone();
+                let diagram_id = index;
+
+                match cx
+                    .background_executor()
+                    .spawn(async move {
+                        crate::mermaid_renderer::render_mermaid_diagram(
+                            node_runtime,
+                            contents,
+                            diagram_id,
+                        )
+                        .await
+                    })
+                    .await
+                {
+                    Ok(svg_path) => {
+                        mermaid.svg_path = Some(svg_path);
+                        mermaid.error = None;
+                    }
+                    Err(err) => {
+                        mermaid.svg_path = None;
+                        mermaid.error = Some(err.to_string().into());
+                    }
+                }
+            }
+        }
     }
 
     fn should_apply_padding_between(
