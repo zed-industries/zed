@@ -1,5 +1,6 @@
 use anyhow::Context as _;
-use git::repository::{Remote, RemoteCommandOutput};
+use git::Remote;
+use git::repository::RemoteCommandOutput;
 use linkify::{LinkFinder, LinkKind};
 use ui::SharedString;
 use util::ResultExt as _;
@@ -162,6 +163,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git::RemoteUrl;
     use indoc::indoc;
 
     #[test]
@@ -170,6 +172,7 @@ mod tests {
             SharedString::new("test_branch"),
             Remote {
                 name: SharedString::new("test_remote"),
+                url: RemoteUrl::default(),
             },
         );
 
@@ -203,6 +206,7 @@ mod tests {
             SharedString::new("test_branch"),
             Remote {
                 name: SharedString::new("test_remote"),
+                url: RemoteUrl::default(),
             },
         );
 
@@ -239,6 +243,7 @@ mod tests {
             SharedString::new("test_branch"),
             Remote {
                 name: SharedString::new("test_remote"),
+                url: RemoteUrl::default(),
             },
         );
 
@@ -272,6 +277,7 @@ mod tests {
             SharedString::new("test_branch"),
             Remote {
                 name: SharedString::new("test_remote"),
+                url: RemoteUrl::default(),
             },
         );
 
