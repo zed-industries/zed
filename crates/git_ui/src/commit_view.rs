@@ -12,7 +12,7 @@ use language::{
     Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
-use project::{Project, WorktreeId, git_store::Repository};
+use project::{File as ProjectFile, Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
     fmt::Write as _,
@@ -192,24 +192,48 @@ impl CommitView {
             });
         }
 
+        let project_for_buffers = project.clone();
+
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
                 let new_text = file.new_text.unwrap_or_default();
                 let old_text = file.old_text;
-                let worktree_id = repository
-                    .update(cx, |repository, cx| {
-                        repository
-                            .repo_path_to_project_path(&file.path, cx)
-                            .map(|path| path.worktree_id)
-                            .or(first_worktree_id)
+                let (project_path, worktree_id) = repository.update(cx, |repository, cx| {
+                    let project_path = repository.repo_path_to_project_path(&file.path, cx);
+                    let worktree_id = project_path
+                        .as_ref()
+                        .map(|path| path.worktree_id)
+                        .or(first_worktree_id);
+                    (project_path, worktree_id)
+                })?;
+                let worktree_id = worktree_id.context("project has no worktrees")?;
+
+                let project_file = if let Some(project_path) = project_path.clone() {
+                    project_for_buffers.update(cx, |project, cx| {
+                        project
+                            .worktree_for_id(project_path.worktree_id, cx)
+                            .and_then(|worktree| {
+                                worktree
+                                    .read(cx)
+                                    .entry_for_path(&project_path.path)
+                                    .cloned()
+                                    .map(|entry| ProjectFile::for_entry(entry, worktree))
+                            })
                     })?
-                    .context("project has no worktrees")?;
-                let file = Arc::new(GitBlob {
-                    path: file.path.clone(),
-                    is_deleted,
-                    worktree_id,
-                }) as Arc<dyn language::File>;
+                } else {
+                    None
+                };
+
+                let file = project_file
+                    .map(|project_file| project_file as Arc<dyn language::File>)
+                    .unwrap_or_else(|| {
+                        Arc::new(GitBlob {
+                            path: file.path.clone(),
+                            is_deleted,
+                            worktree_id,
+                        }) as Arc<dyn language::File>
+                    });
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
                 let buffer_diff =
