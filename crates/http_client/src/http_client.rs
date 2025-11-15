@@ -14,9 +14,9 @@ use futures::{
 };
 use parking_lot::Mutex;
 use serde::Serialize;
+use std::sync::Arc;
 #[cfg(feature = "test-support")]
-use std::fmt;
-use std::{any::type_name, sync::Arc};
+use std::{any::type_name, fmt};
 pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
