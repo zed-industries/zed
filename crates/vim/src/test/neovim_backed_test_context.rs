@@ -183,7 +183,7 @@ impl NeovimBackedTestContext {
         }
     }
 
-    pub async fn new_markdown(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
         #[cfg(feature = "neovim")]
         cx.executor().allow_parking();
         let thread = thread::current();
@@ -195,7 +195,7 @@ impl NeovimBackedTestContext {
             .unwrap()
             .to_string();
         Self {
-            cx: VimTestContext::new_markdown(cx).await,
+            cx: VimTestContext::new_markdown_with_rust(cx).await,
             neovim: NeovimConnection::new(test_name).await,
 
             last_set_state: None,

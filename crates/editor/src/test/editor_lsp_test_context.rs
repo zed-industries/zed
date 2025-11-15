@@ -313,13 +313,19 @@ impl EditorLspTestContext {
         Self::new(language, Default::default(), cx).await
     }
 
-    pub async fn new_markdown(cx: &mut gpui::TestAppContext) -> Self {
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> Self {
         let context = Self::new(
             Arc::into_inner(markdown_lang()).unwrap(),
             Default::default(),
             cx,
         )
         .await;
+
+        let language_registry = context.workspace.read_with(cx, |workspace, cx| {
+            workspace.project().read(cx).languages().clone()
+        });
+        language_registry.add(rust_lang());
+
         context
     }
 

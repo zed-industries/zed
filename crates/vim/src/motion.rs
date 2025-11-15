@@ -3314,11 +3314,7 @@ mod test {
 
     #[gpui::test]
     async fn test_unmatched_forward_markdown(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new_markdown(cx).await;
-        let language_registry = cx.workspace.read_with(cx, |workspace, cx| {
-            workspace.project().read(cx).languages().clone()
-        });
-        language_registry.add(rust_lang());
+        let mut cx = NeovimBackedTestContext::new_markdown_with_rust(cx).await;
 
         cx.neovim.exec("set filetype=markdown").await;
 
@@ -3367,11 +3363,7 @@ mod test {
 
     #[gpui::test]
     async fn test_unmatched_backward_markdown(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new_markdown(cx).await;
-        let language_registry = cx.workspace.read_with(cx, |workspace, cx| {
-            workspace.project().read(cx).languages().clone()
-        });
-        language_registry.add(rust_lang());
+        let mut cx = NeovimBackedTestContext::new_markdown_with_rust(cx).await;
 
         cx.neovim.exec("set filetype=markdown").await;
 
