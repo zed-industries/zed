@@ -9,7 +9,9 @@ use acp_thread::MentionUri;
 use agent::{HistoryEntry, HistoryStore};
 use agent_client_protocol as acp;
 use anyhow::Result;
-use editor::{CompletionProvider, Editor, ExcerptId};
+use editor::{
+    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
@@ -24,6 +26,7 @@ use rope::Point;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
 use util::rel_path::RelPath;
+use util::truncate_and_remove_front;
 use workspace::Workspace;
 
 use crate::AgentPanel;
@@ -202,6 +205,7 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         message_editor: WeakEntity<MessageEditor>,
         project: Entity<Project>,
+        label_max_chars: usize,
         cx: &mut App,
     ) -> Option<Completion> {
         let path_style = project.read(cx).path_style(cx);
@@ -212,8 +216,12 @@ impl ContextPickerCompletionProvider {
                 path_style,
             );
 
-        let label =
-            build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
+        let label = build_code_label_for_full_path(
+            &file_name,
+            directory.as_ref().map(|s| s.as_ref()),
+            label_max_chars,
+            cx,
+        );
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
 
@@ -707,7 +715,12 @@ fn build_symbol_label(symbol_name: &str, file_name: &str, line: u32, cx: &App) -
     label.build()
 }
 
-fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
+fn build_code_label_for_full_path(
+    file_name: &str,
+    directory: Option<&str>,
+    label_max_chars: usize,
+    cx: &App,
+) -> CodeLabel {
     let path = cx
         .theme()
         .syntax()
@@ -719,7 +732,13 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(directory, path);
+        let file_name_chars = file_name.chars().count();
+        // Account for: file_name + space (ellipsis is handled by truncate_and_remove_front)
+        let directory_max_chars = label_max_chars
+            .saturating_sub(file_name_chars)
+            .saturating_sub(1);
+        let truncated_directory = truncate_and_remove_front(directory, directory_max_chars.max(5));
+        label.push_str(&truncated_directory, path);
     }
 
     label.build()
@@ -732,7 +751,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
         let state = buffer.update(cx, |buffer, _cx| {
@@ -838,6 +857,31 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
 
+                // Calculate maximum characters available for the full label (file_name + space + directory)
+                // based on maximum menu width after accounting for padding, spacing, and icon width
+                let label_max_chars = {
+                    // Base06 left padding + Base06 gap + Base06 right padding + icon width
+                    let used_pixels = DynamicSpacing::Base06.px(cx) * 3.0
+                        + IconSize::XSmall.rems() * window.rem_size();
+
+                    let style = window.text_style();
+                    let font_id = window.text_system().resolve_font(&style.font());
+                    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+
+                    // Fallback em_width of 10px matches file_finder.rs fallback for TextSize::Small
+                    let em_width = cx
+                        .text_system()
+                        .em_width(font_id, font_size)
+                        .unwrap_or(px(10.0));
+
+                    // Calculate available pixels for text (file_name + directory)
+                    // Using max width since dynamic_width allows the menu to expand up to this
+                    let available_pixels = COMPLETION_MENU_MAX_WIDTH - used_pixels;
+
+                    // Convert to character count (total available for file_name + directory)
+                    (f32::from(available_pixels) / f32::from(em_width)) as usize
+                };
+
                 cx.spawn(async move |_, cx| {
                     let matches = search_task.await;
 
@@ -871,6 +915,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                         source_range.clone(),
                                         editor.clone(),
                                         project.clone(),
+                                        label_max_chars,
                                         cx,
                                     )
                                 }
