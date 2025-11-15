@@ -24,8 +24,8 @@ use remote::{
     remote_client::ConnectionIdentifier,
 };
 use settings::{
-    RemoteSettingsContent, Settings as _, SettingsStore, SshProject, update_settings_file,
-    watch_config_file,
+    DevContainerConnection, RemoteSettingsContent, Settings as _, SettingsStore, SshProject,
+    update_settings_file, watch_config_file,
 };
 use smol::stream::StreamExt as _;
 use std::{
@@ -72,6 +72,18 @@ struct CreateRemoteServer {
 
 impl CreateRemoteServer {
     fn new(window: &mut Window, cx: &mut App) -> Self {
+        let address_editor = cx.new(|cx| Editor::single_line(window, cx));
+        address_editor.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(window);
+        });
+        Self {
+            address_editor,
+            address_error: None,
+            ssh_prompt: None,
+            _creating: None,
+        }
+    }
+    fn new_devcontainer(window: &mut Window, cx: &mut App) -> Self {
         let address_editor = cx.new(|cx| Editor::single_line(window, cx));
         address_editor.update(cx, |this, cx| {
             this.focus_handle(cx).focus(window);
@@ -207,6 +219,11 @@ impl ProjectPicker {
             RemoteConnectionOptions::Wsl(connection) => ProjectPickerData::Wsl {
                 distro_name: connection.distro_name.clone().into(),
             },
+            RemoteConnectionOptions::DockerExec(connection) => ProjectPickerData::Ssh {
+                // TODO
+                connection_string: "TODO".into(),
+                nickname: None,
+            },
         };
         let _path_task = cx
             .spawn_in(window, {
@@ -271,6 +288,9 @@ impl ProjectPicker {
                                     {
                                         server.projects.insert(SshProject { paths });
                                     };
+                                }
+                                ServerIndex::DevContainer(_) => {
+                                    () // TODO - we don't save this yet
                                 }
                             }
                         });
@@ -379,6 +399,15 @@ impl std::fmt::Display for SshServerIndex {
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+struct DevContainerIndex(usize);
+impl std::fmt::Display for DevContainerIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 struct WslServerIndex(usize);
 impl std::fmt::Display for WslServerIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -390,6 +419,7 @@ impl std::fmt::Display for WslServerIndex {
 enum ServerIndex {
     Ssh(SshServerIndex),
     Wsl(WslServerIndex),
+    DevContainer(DevContainerIndex),
 }
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
@@ -440,6 +470,7 @@ impl RemoteEntry {
 struct DefaultState {
     scroll_handle: ScrollHandle,
     add_new_server: NavigableEntry,
+    add_new_devcontainer: NavigableEntry,
     add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
 }
@@ -448,6 +479,7 @@ impl DefaultState {
     fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
         let handle = ScrollHandle::new();
         let add_new_server = NavigableEntry::new(&handle, cx);
+        let add_new_devcontainer = NavigableEntry::new(&handle, cx);
         let add_new_wsl = NavigableEntry::new(&handle, cx);
 
         let ssh_settings = SshSettings::get_global(cx);
@@ -493,7 +525,20 @@ impl DefaultState {
                 }
             });
 
-        let mut servers = ssh_servers.chain(wsl_servers).collect::<Vec<RemoteEntry>>();
+        let test_devcontainer_servers = vec![RemoteEntry::Project {
+            open_folder: NavigableEntry::new(&handle, cx),
+            configure: NavigableEntry::new(&handle, cx),
+            projects: vec![],
+            index: ServerIndex::DevContainer(DevContainerIndex(0)),
+            connection: Connection::DevContainer(DevContainerConnection {
+                name: "test".into(),
+            }),
+        }];
+
+        let mut servers = ssh_servers
+            .chain(wsl_servers)
+            .chain(test_devcontainer_servers)
+            .collect::<Vec<RemoteEntry>>();
 
         if read_ssh_config {
             let mut extra_servers_from_config = ssh_config_servers.clone();
@@ -517,6 +562,7 @@ impl DefaultState {
         Self {
             scroll_handle: handle,
             add_new_server,
+            add_new_devcontainer,
             add_new_wsl,
             servers,
         }
@@ -552,6 +598,7 @@ enum Mode {
     EditNickname(EditNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
+    CreateRemoteDevContainer(CreateRemoteServer),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
 }
@@ -981,6 +1028,9 @@ impl RemoteServerProjects {
 
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
+            Mode::CreateRemoteDevContainer(state) => {
+                println!("Creating remote dev container woo!");
+            }
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
@@ -1044,6 +1094,9 @@ impl RemoteServerProjects {
             }
             Connection::Wsl(wsl_connection_options) => {
                 (wsl_connection_options.distro_name.clone(), None, true)
+            }
+            Connection::DevContainer(dev_container_options) => {
+                (dev_container_options.name.clone(), None, false)
             }
         };
         v_flex()
@@ -1238,6 +1291,7 @@ impl RemoteServerProjects {
             match server_ix {
                 ServerIndex::Ssh(index) => format!("ssh-{index}"),
                 ServerIndex::Wsl(index) => format!("wsl-{index}"),
+                ServerIndex::DevContainer(index) => format!("dev-container-{index}"),
             }
         ));
         let container_element_id_base =
@@ -1382,6 +1436,9 @@ impl RemoteServerProjects {
             ServerIndex::Wsl(server) => {
                 self.delete_wsl_project(server, project, cx);
             }
+            ServerIndex::DevContainer(_) => {
+                todo!()
+            }
         }
     }
 
@@ -1449,6 +1506,71 @@ impl RemoteServerProjects {
                     port_forwards: connection_options.port_forwards,
                 })
         });
+    }
+
+    fn render_create_dev_container(
+        &self,
+        state: &CreateRemoteServer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        v_flex()
+            .track_focus(&self.focus_handle(cx))
+            .id("create-remote-server")
+            .overflow_hidden()
+            .size_full()
+            .flex_1()
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(theme.colors().border_variant)
+                    .child(state.address_editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .bg(theme.colors().editor_background)
+                    .rounded_b_sm()
+                    .w_full(), // .map(|this| {
+                               //     if let Some(ssh_prompt) = ssh_prompt {
+                               //         this.child(h_flex().w_full().child(ssh_prompt))
+                               //     } else if let Some(address_error) = &state.address_error {
+                               //         this.child(
+                               //             h_flex().p_2().w_full().gap_2().child(
+                               //                 Label::new(address_error.clone())
+                               //                     .size(LabelSize::Small)
+                               //                     .color(Color::Error),
+                               //             ),
+                               //         )
+                               //     } else {
+                               //         this.child(
+                               //             h_flex()
+                               //                 .p_2()
+                               //                 .w_full()
+                               //                 .gap_1()
+                               //                 .child(
+                               //                     Label::new(
+                               //                         "Enter the command you use to SSH into this server.",
+                               //                     )
+                               //                     .color(Color::Muted)
+                               //                     .size(LabelSize::Small),
+                               //                 )
+                               //                 .child(
+                               //                     Button::new("learn-more", "Learn More")
+                               //                         .label_size(LabelSize::Small)
+                               //                         .icon(IconName::ArrowUpRight)
+                               //                         .icon_size(IconSize::XSmall)
+                               //                         .on_click(|_, _, cx| {
+                               //                             cx.open_url(
+                               //                                 "https://zed.dev/docs/remote-development",
+                               //                             );
+                               //                         }),
+                               //                 ),
+                               //         )
+                               //     }
+                               // }),
+            )
     }
 
     fn render_create_remote_server(
@@ -2016,6 +2138,25 @@ impl RemoteServerProjects {
                         cx.notify();
                     })),
             )
+            .child(
+                ListItem::new("register-remove-server-button")
+                    .toggle_state(
+                        state
+                            .add_new_devcontainer
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                    .child(Label::new("Connect to Dev Container"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let state = CreateRemoteServer::new_devcontainer(window, cx);
+                        this.mode = Mode::CreateRemoteDevContainer(state);
+
+                        cx.notify();
+                    })),
+            )
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                 let state = CreateRemoteServer::new(window, cx);
                 this.mode = Mode::CreateRemoteServer(state);
@@ -2296,6 +2437,9 @@ impl Render for RemoteServerProjects {
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateRemoteServer(state) => self
                     .render_create_remote_server(state, window, cx)
+                    .into_any_element(),
+                Mode::CreateRemoteDevContainer(state) => self
+                    .render_create_dev_container(state, window, cx)
                     .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)

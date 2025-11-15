@@ -19,11 +19,11 @@ use language::{CursorShape, Point};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, RemoteClient, RemoteConnection, RemoteConnectionOptions, RemotePlatform,
-    SshConnectionOptions,
+    ConnectionIdentifier, DockerExecConnectionOptions, RemoteClient, RemoteConnection,
+    RemoteConnectionOptions, RemotePlatform, SshConnectionOptions,
 };
 pub use settings::SshConnection;
-use settings::{ExtendingVec, RegisterSetting, Settings, WslConnection};
+use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -85,6 +85,7 @@ impl SshSettings {
 pub enum Connection {
     Ssh(SshConnection),
     Wsl(WslConnection),
+    DevContainer(DevContainerConnection),
 }
 
 impl From<Connection> for RemoteConnectionOptions {
@@ -92,6 +93,11 @@ impl From<Connection> for RemoteConnectionOptions {
         match val {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
+            Connection::DevContainer(conn) => {
+                RemoteConnectionOptions::DockerExec(DockerExecConnectionOptions {
+                    name: conn.name.to_string(),
+                })
+            }
         }
     }
 }
@@ -292,6 +298,7 @@ impl RemoteConnectionModal {
                 (options.connection_string(), options.nickname.clone(), false)
             }
             RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true),
+            RemoteConnectionOptions::DockerExec(options) => (options.name.clone(), None, false),
         };
         Self {
             prompt: cx.new(|cx| {
@@ -670,6 +677,9 @@ pub async fn open_remote_project(
                                 match connection_options {
                                     RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                     RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                                    RemoteConnectionOptions::DockerExec(_) => {
+                                        "Failed to connect to Dev Container"
+                                    }
                                 },
                                 Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
@@ -726,6 +736,9 @@ pub async fn open_remote_project(
                             match connection_options {
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                                RemoteConnectionOptions::DockerExec(_) => {
+                                    "Failed to connect to Dev Container"
+                                }
                             },
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],

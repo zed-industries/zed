@@ -21,6 +21,7 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
+    env::args,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,

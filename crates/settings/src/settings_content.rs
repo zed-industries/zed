@@ -894,6 +894,23 @@ pub struct RemoteSettingsContent {
 }
 
 #[skip_serializing_none]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
+pub struct DevContainerConnection {
+    pub name: SharedString,
+}
+
+// impl From<settings::De> for DevContainerConnection {
+//     fn from(val: settings::WslConnection) -> Self {
+//         WslConnectionOptions {
+//             distro_name: val.distro_name.into(),
+//             user: val.user,
+//         }
+//     }
+// }
+
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct SshConnection {
     pub host: SharedString,

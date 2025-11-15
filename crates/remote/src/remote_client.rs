@@ -3,6 +3,7 @@ use crate::{
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        docker_exec::{DockerExecConnection, DockerExecConnectionOptions},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -1033,6 +1034,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::DockerExec(opts) => {
+                            DockerExecConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                     };
 
                     cx.update_global(|pool: &mut Self, _| {
@@ -1068,6 +1074,7 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    DockerExec(DockerExecConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
@@ -1075,6 +1082,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::DockerExec(opts) => opts.name.clone(),
         }
     }
 }

@@ -1126,6 +1126,10 @@ impl WorkspaceDb {
                 distro = Some(options.distro_name);
                 user = options.user;
             }
+            RemoteConnectionOptions::DockerExec(_opts) => {
+                kind = RemoteConnectionKind::Ssh; // TODO
+                user = None;
+            }
         }
         Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
     }
