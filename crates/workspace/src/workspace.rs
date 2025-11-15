@@ -746,9 +746,6 @@ impl Global for ProjectItemRegistry {}
 /// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     cx.default_global::<ProjectItemRegistry>().register::<I>();
-    // Register HexEditorView as the default handler for all files.
-    cx.default_global::<ProjectItemRegistry>().register::<HexEditorView>();
-    // Register HexEditorView as the default handler for all files.
     cx.default_global::<ProjectItemRegistry>().register::<HexEditorView>();
 }
 

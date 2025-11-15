@@ -12,7 +12,9 @@ use anyhow::Result;
 use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 
-/// An enum to wrap either a HexEditorView or InvalidItemView for dyn Item compatibility.
+/// Not sure if invalid files will still be
+/// present if we decide to open everything as binary
+/// but keeping this for now for that future case
 pub enum BrokenProjectItem {
     HexEditor(HexEditorView),
     Invalid(InvalidItemView),
@@ -1313,6 +1315,7 @@ pub trait ProjectItem: Item {
         Self: Sized,
     {
         // Always use the hex editor for any file open error (except images/media, which are handled elsewhere)
+        // This behavior might be changed in the future
         Some(BrokenProjectItem::HexEditor(HexEditorView::new(abs_path.to_path_buf(), window, cx)))
     }
 }

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
@@ -12,8 +10,6 @@ use gpui::ParentElement;
 use gpui::{App, Context, FocusHandle, IntoElement, Render, SharedString, Window};
 use ui::{Button, Color, Label, LabelCommon, LabelSize, Styled, div, h_flex, v_flex};
 
-/// A simple file-backed hex editor view.
-/// This is a minimal version; it will be extended to support editing and saving.
 pub struct HexEditorView {
     pub file_path: Arc<PathBuf>,
     pub file_data: Option<MmapMut>,
@@ -117,7 +113,6 @@ impl Render for HexEditorView {
 
         let file_len = self.file_data.as_ref().map(|d| d.len()).unwrap_or(0);
 
-        // Use a scrollable flex container for the hex rows
         v_flex()
             .size_full()
             .gap_y_2()
