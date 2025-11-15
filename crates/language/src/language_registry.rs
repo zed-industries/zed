@@ -618,11 +618,13 @@ impl LanguageRegistry {
         self.state.read().reload_count
     }
 
-    pub fn set_theme(&self, theme: Arc<Theme>) {
+    pub fn set_theme(&self, theme: Arc<Theme>, cx: &App) {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            language.set_theme(theme.syntax());
+            // Get the syntax_highlight setting for this language
+            let settings = crate::language_settings::language_settings(Some(language.name()), None, cx);
+            language.set_theme(theme.syntax(), settings.syntax_highlight);
         }
     }
 
@@ -1193,7 +1195,9 @@ impl LanguageRegistryState {
 
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
-            language.set_theme(theme.syntax());
+            // Use true as default for syntax_highlight during initial language addition
+            // The setting will be properly applied when set_theme is called with context
+            language.set_theme(theme.syntax(), true);
         }
         self.language_settings.languages.0.insert(
             language.name().0,

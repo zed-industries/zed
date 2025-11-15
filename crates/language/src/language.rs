@@ -1992,15 +1992,11 @@ impl Language {
         c.is_whitespace() || self.config.autoclose_before.contains(c)
     }
 
-    pub fn set_theme(&self, theme: &SyntaxTheme) {
+    pub fn set_theme(&self, theme: &SyntaxTheme, syntax_highlight: bool) {
         if let Some(grammar) = self.grammar.as_ref()
             && let Some(highlights_config) = &grammar.highlights_config
         {
-            // We just need to override this when themeing should be false
-            // &SyntaxTheme::default() should be the theme.
-            // Just need to find a way to get the live setting for this
-            println!("{:#?}", self.config().syntax_highlight);
-            let theme = if self.config().syntax_highlight.unwrap_or(true) {
+            let theme = if syntax_highlight {
                 theme
             } else {
                 &SyntaxTheme::default()

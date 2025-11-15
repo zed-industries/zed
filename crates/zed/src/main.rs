@@ -661,11 +661,18 @@ pub fn main() {
             }
         })
         .detach();
-        app_state.languages.set_theme(cx.theme().clone());
+        app_state.languages.set_theme(cx.theme().clone(), cx);
         cx.observe_global::<GlobalTheme>({
             let languages = app_state.languages.clone();
             move |cx| {
-                languages.set_theme(cx.theme().clone());
+                languages.set_theme(cx.theme().clone(), cx);
+            }
+        })
+        .detach();
+        cx.observe_global::<SettingsStore>({
+            let languages = app_state.languages.clone();
+            move |cx| {
+                languages.set_theme(cx.theme().clone(), cx);
             }
         })
         .detach();
