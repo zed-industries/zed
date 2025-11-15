@@ -853,6 +853,8 @@
       "ctrl-w shift-right": "workspace::SwapPaneRight",
       "ctrl-w shift-up": "workspace::SwapPaneUp",
       "ctrl-w shift-down": "workspace::SwapPaneDown",
+      "ctrl-w x": "workspace::SwapPaneDefault",
+      "ctrl-w ctrl-x": "workspace::SwapPaneDefault",
       "ctrl-w shift-h": "workspace::MovePaneLeft",
       "ctrl-w shift-l": "workspace::MovePaneRight",
       "ctrl-w shift-k": "workspace::MovePaneUp",
