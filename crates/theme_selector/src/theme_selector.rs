@@ -10,8 +10,7 @@ use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{
-    Appearance, Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry, ThemeSelection,
-    ThemeSettings,
+    Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry, ThemeSelection, ThemeSettings,
 };
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
@@ -121,6 +120,8 @@ struct ThemeSelectorDelegate {
     ///
     /// We use this to return back to theme that was set if the user dismisses the menu.
     original_theme_settings: ThemeSettings,
+    /// The currently selected new theme.
+    new_theme: Arc<Theme>,
     selection_completed: bool,
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
@@ -134,7 +135,7 @@ impl ThemeSelectorDelegate {
         themes_filter: Option<&Vec<String>>,
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
-        let original_theme_name = &cx.theme().clone().name;
+        let original_theme = cx.theme().clone();
         let original_theme_settings = ThemeSettings::get_global(cx).clone();
 
         let registry = ThemeRegistry::global(cx);
@@ -150,13 +151,15 @@ impl ThemeSelectorDelegate {
             })
             .collect::<Vec<_>>();
 
+        // Sort by dark vs light, then by name.
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
                 .cmp(&b.appearance.is_light())
                 .then(a.name.cmp(&b.name))
         });
-        let matches = themes
+
+        let matches: Vec<StringMatch> = themes
             .iter()
             .map(|meta| StringMatch {
                 candidate_id: 0,
@@ -165,19 +168,24 @@ impl ThemeSelectorDelegate {
                 string: meta.name.to_string(),
             })
             .collect();
-        let mut this = Self {
+
+        // The current theme is likely in this list, so default to first showing that.
+        let selected_index = matches
+            .iter()
+            .position(|mat| mat.string == original_theme.name)
+            .unwrap_or(0);
+
+        Self {
             fs,
             themes,
             matches,
             original_theme_settings,
-            selected_index: 0,
+            new_theme: original_theme, // Start with the original theme.
+            selected_index,
             selection_completed: false,
             selected_theme: None,
             selector,
-        };
-
-        this.select_if_matching(original_theme_name);
-        this
+        }
     }
 
     fn show_selected_theme(
@@ -186,6 +194,7 @@ impl ThemeSelectorDelegate {
     ) -> Option<Arc<Theme>> {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
+
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     self.set_theme(theme.clone(), cx);
@@ -201,15 +210,7 @@ impl ThemeSelectorDelegate {
         }
     }
 
-    fn select_if_matching(&mut self, theme_name: &str) {
-        self.selected_index = self
-            .matches
-            .iter()
-            .position(|mat| mat.string == theme_name)
-            .unwrap_or(self.selected_index);
-    }
-
-    fn set_theme(&self, new_theme: Arc<Theme>, cx: &mut App) {
+    fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
         let theme_name = ThemeName(new_theme.as_ref().name.clone().into());
         let new_theme_is_light = new_theme.appearance().is_light();
 
@@ -261,6 +262,8 @@ impl ThemeSelectorDelegate {
 
             store.override_global(curr_theme_settings);
         });
+
+        self.new_theme = new_theme;
     }
 }
 
@@ -277,19 +280,19 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
     fn confirm(
         &mut self,
-        _: bool,
-        window: &mut Window,
+        _secondary: bool,
+        _window: &mut Window,
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
         self.selection_completed = true;
 
-        let appearance = Appearance::from(window.appearance());
-        let theme_name = ThemeSettings::get_global(cx).theme.name(appearance).0;
+        let theme_appearance = self.new_theme.appearance;
+        let theme_name: Arc<str> = self.new_theme.name.as_str().into();
 
         telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme::set_theme(settings, theme_name.to_string(), appearance);
+            theme::set_theme(settings, theme_name, theme_appearance);
         });
 
         self.selector
