@@ -183,6 +183,26 @@ impl NeovimBackedTestContext {
         }
     }
 
+    pub async fn new_markdown(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
+        #[cfg(feature = "neovim")]
+        cx.executor().allow_parking();
+        let thread = thread::current();
+        let test_name = thread
+            .name()
+            .expect("thread is not named")
+            .split(':')
+            .next_back()
+            .unwrap()
+            .to_string();
+        Self {
+            cx: VimTestContext::new_markdown(cx).await,
+            neovim: NeovimConnection::new(test_name).await,
+
+            last_set_state: None,
+            recent_keystrokes: Default::default(),
+        }
+    }
+
     pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
         #[cfg(feature = "neovim")]
         cx.executor().allow_parking();
