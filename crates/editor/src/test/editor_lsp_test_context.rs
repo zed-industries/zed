@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use language::rust_lang;
+use language::{markdown_lang, rust_lang};
 use serde_json::json;
 
 use crate::{Editor, ToPoint};
@@ -54,10 +54,8 @@ impl EditorLspTestContext {
 
         cx.update(|cx| {
             assets::Assets.load_test_fonts(cx);
-            language::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         let file_name = format!(
@@ -313,6 +311,22 @@ impl EditorLspTestContext {
         })
         .expect("Could not parse queries");
         Self::new(language, Default::default(), cx).await
+    }
+
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> Self {
+        let context = Self::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            Default::default(),
+            cx,
+        )
+        .await;
+
+        let language_registry = context.workspace.read_with(cx, |workspace, cx| {
+            workspace.project().read(cx).languages().clone()
+        });
+        language_registry.add(rust_lang());
+
+        context
     }
 
     /// Constructs lsp range using a marked string with '[', ']' range delimiters

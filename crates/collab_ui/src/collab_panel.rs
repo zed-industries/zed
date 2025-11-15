@@ -7,10 +7,11 @@ use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
+use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
-use fuzzy::{StringMatchCandidate, match_strings};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent,
     Div, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement,
@@ -30,9 +31,9 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, Icon, IconButton,
-    IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip, prelude::*,
-    tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
+    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip,
+    prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -261,6 +262,8 @@ enum ListEntry {
         channel: Arc<Channel>,
         depth: usize,
         has_children: bool,
+        // `None` when the channel is a parent of a matched channel.
+        string_match: Option<StringMatch>,
     },
     ChannelNotes {
         channel_id: ChannelId,
@@ -630,6 +633,10 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, (_, channel))| StringMatchCandidate::new(ix, &channel.name)),
             );
+            let mut channels = channel_store
+                .ordered_channels()
+                .map(|(_, chan)| chan)
+                .collect::<Vec<_>>();
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -639,31 +646,56 @@ impl CollabPanel {
                 &Default::default(),
                 executor.clone(),
             ));
+
+            let matches_by_id: HashMap<_, _> = matches
+                .iter()
+                .map(|mat| (channels[mat.candidate_id].id, mat.clone()))
+                .collect();
+
+            let channel_ids_of_matches_or_parents: HashSet<_> = matches
+                .iter()
+                .flat_map(|mat| {
+                    let match_channel = channels[mat.candidate_id];
+
+                    match_channel
+                        .parent_path
+                        .iter()
+                        .copied()
+                        .chain(Some(match_channel.id))
+                })
+                .collect();
+
+            channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
+
             if let Some(state) = &self.channel_editing_state
                 && matches!(state, ChannelEditingState::Create { location: None, .. })
             {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
+
+            let should_respect_collapse = query.is_empty();
             let mut collapse_depth = None;
-            for mat in matches {
-                let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
+
+            for (idx, channel) in channels.into_iter().enumerate() {
                 let depth = channel.parent_path.len();
 
-                if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
-                    collapse_depth = Some(depth);
-                } else if let Some(collapsed_depth) = collapse_depth {
-                    if depth > collapsed_depth {
-                        continue;
-                    }
-                    if self.is_channel_collapsed(channel.id) {
+                if should_respect_collapse {
+                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
                         collapse_depth = Some(depth);
-                    } else {
-                        collapse_depth = None;
+                    } else if let Some(collapsed_depth) = collapse_depth {
+                        if depth > collapsed_depth {
+                            continue;
+                        }
+                        if self.is_channel_collapsed(channel.id) {
+                            collapse_depth = Some(depth);
+                        } else {
+                            collapse_depth = None;
+                        }
                     }
                 }
 
                 let has_children = channel_store
-                    .channel_at_index(mat.candidate_id + 1)
+                    .channel_at_index(idx + 1)
                     .is_some_and(|next_channel| next_channel.parent_path.ends_with(&[channel.id]));
 
                 match &self.channel_editing_state {
@@ -675,6 +707,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children: false,
+                            string_match: matches_by_id.get(&channel.id).map(|mat| (*mat).clone()),
                         });
                         self.entries
                             .push(ListEntry::ChannelEditor { depth: depth + 1 });
@@ -690,6 +723,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children,
+                            string_match: matches_by_id.get(&channel.id).map(|mat| (*mat).clone()),
                         });
                     }
                 }
@@ -2321,8 +2355,17 @@ impl CollabPanel {
                 channel,
                 depth,
                 has_children,
+                string_match,
             } => self
-                .render_channel(channel, *depth, *has_children, is_selected, ix, cx)
+                .render_channel(
+                    channel,
+                    *depth,
+                    *has_children,
+                    is_selected,
+                    ix,
+                    string_match.as_ref(),
+                    cx,
+                )
                 .into_any_element(),
             ListEntry::ChannelEditor { depth } => self
                 .render_channel_editor(*depth, window, cx)
@@ -2719,6 +2762,7 @@ impl CollabPanel {
         has_children: bool,
         is_selected: bool,
         ix: usize,
+        string_match: Option<&StringMatch>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let channel_id = channel.id;
@@ -2855,7 +2899,14 @@ impl CollabPanel {
                     .child(
                         h_flex()
                             .id(channel_id.0 as usize)
-                            .child(Label::new(channel.name.clone()))
+                            .child(match string_match {
+                                None => Label::new(channel.name.clone()).into_any_element(),
+                                Some(string_match) => HighlightedLabel::new(
+                                    channel.name.clone(),
+                                    string_match.positions.clone(),
+                                )
+                                .into_any_element(),
+                            })
                             .children(face_pile.map(|face_pile| face_pile.p_1())),
                     ),
             )

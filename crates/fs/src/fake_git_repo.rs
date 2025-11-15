@@ -272,7 +272,7 @@ impl GitRepository for FakeGitRepository {
                     .ok()
                     .map(|content| String::from_utf8(content).unwrap())?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
-                Some((repo_path.into(), (content, is_ignored)))
+                Some((RepoPath::from_rel_path(&repo_path), (content, is_ignored)))
             })
             .collect();
 
@@ -407,7 +407,11 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+    fn create_branch(
+        &self,
+        name: String,
+        _base_branch: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             state.branches.insert(name);
             Ok(())
@@ -432,7 +436,7 @@ impl GitRepository for FakeGitRepository {
             state
                 .blames
                 .get(&path)
-                .with_context(|| format!("failed to get blame for {:?}", path.0))
+                .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
     }
@@ -522,6 +526,7 @@ impl GitRepository for FakeGitRepository {
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         _options: CommitOptions,
+        _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
@@ -541,7 +546,7 @@ impl GitRepository for FakeGitRepository {
 
     fn pull(
         &self,
-        _branch: String,
+        _branch: Option<String>,
         _remote: String,
         _rebase: bool,
         _askpass: AskPassDelegate,

@@ -20,8 +20,8 @@ use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
-use task::Shell;
+use settings::{RegisterSetting, SettingsStore};
+use task::{Shell, SpawnInTerminal};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -438,6 +438,13 @@ impl AgentServerStore {
         cx.emit(AgentServersUpdated);
     }
 
+    pub fn node_runtime(&self) -> Option<NodeRuntime> {
+        match &self.state {
+            AgentServerStoreState::Local { node_runtime, .. } => Some(node_runtime.clone()),
+            _ => None,
+        }
+    }
+
     pub fn local(
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
@@ -752,6 +759,18 @@ impl AgentServerStore {
             }
         })
     }
+
+    pub fn get_extension_id_for_agent(
+        &mut self,
+        name: &ExternalAgentServerName,
+    ) -> Option<Arc<str>> {
+        self.external_agents.get_mut(name).and_then(|agent| {
+            agent
+                .as_any_mut()
+                .downcast_ref::<LocalExtensionArchiveAgent>()
+                .map(|ext_agent| ext_agent.extension_id.clone())
+        })
+    }
 }
 
 fn get_or_npm_install_builtin_agent(
@@ -991,7 +1010,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     env: Some(command.env),
                 },
                 root_dir,
-                None,
+                response.login.map(SpawnInTerminal::from_proto),
             ))
         })
     }
@@ -1560,7 +1579,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 env: Some(env),
             };
 
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+            Ok((command, version_dir.to_string_lossy().into_owned(), None))
         })
     }
 
@@ -1611,7 +1630,7 @@ pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
 
-#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
@@ -1944,6 +1963,51 @@ mod extension_agent_tests {
         let target = agent.targets.get("darwin-aarch64").unwrap();
         assert_eq!(target.cmd, "node");
         assert_eq!(target.args, vec!["index.js"]);
+    }
+
+    #[gpui::test]
+    async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let node_runtime = NodeRuntime::unavailable();
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment = cx.new(|cx| {
+            crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+        });
+
+        let agent = LocalExtensionArchiveAgent {
+            fs: fs.clone(),
+            http_client,
+            node_runtime,
+            project_environment,
+            extension_id: Arc::from("test-ext"),
+            agent_id: Arc::from("test-agent"),
+            targets: {
+                let mut map = HashMap::default();
+                map.insert(
+                    "darwin-aarch64".to_string(),
+                    extension::TargetConfig {
+                        archive: "https://example.com/test.zip".into(),
+                        cmd: "node".into(),
+                        args: vec![
+                            "server.js".into(),
+                            "--config".into(),
+                            "./config.json".into(),
+                        ],
+                        sha256: None,
+                    },
+                );
+                map
+            },
+            env: HashMap::default(),
+        };
+
+        // Verify the agent is configured with relative paths in args
+        let target = agent.targets.get("darwin-aarch64").unwrap();
+        assert_eq!(target.args[0], "server.js");
+        assert_eq!(target.args[2], "./config.json");
+        // These relative paths will resolve relative to the extraction directory
+        // when the command is executed
     }
 
     #[test]

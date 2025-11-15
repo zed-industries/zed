@@ -136,8 +136,24 @@ pub struct ProjectPanel {
     previous_drag_position: Option<Point<Pixels>>,
     sticky_items_count: usize,
     last_reported_update: Instant,
-    update_visible_entries_task: Task<()>,
+    update_visible_entries_task: UpdateVisibleEntriesTask,
     state: State,
+}
+
+struct UpdateVisibleEntriesTask {
+    _visible_entries_task: Task<()>,
+    focus_filename_editor: bool,
+    autoscroll: bool,
+}
+
+impl Default for UpdateVisibleEntriesTask {
+    fn default() -> Self {
+        UpdateVisibleEntriesTask {
+            _visible_entries_task: Task::ready(()),
+            focus_filename_editor: Default::default(),
+            autoscroll: Default::default(),
+        }
+    }
 }
 
 enum DragTarget {
@@ -360,13 +376,7 @@ impl FoldedAncestors {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    ProjectPanelSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -511,11 +521,7 @@ impl ProjectPanel {
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::StatusesChanged { full_scan: _ },
-                        _,
-                    )
+                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
@@ -743,7 +749,7 @@ impl ProjectPanel {
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
                 },
-                update_visible_entries_task: Task::ready(()),
+                update_visible_entries_task: Default::default(),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1661,7 +1667,10 @@ impl ProjectPanel {
                             }
                         project_panel.update_visible_entries(None, false, false, window, cx);
                         if is_new_entry && !is_dir {
-                            project_panel.open_entry(new_entry.id, true, false, cx);
+                            let settings = ProjectPanelSettings::get_global(cx);
+                            if settings.auto_open.should_open_on_create() {
+                                project_panel.open_entry(new_entry.id, true, false, cx);
+                            }
                         }
                         cx.notify();
                     })?;
@@ -1830,6 +1839,9 @@ impl ProjectPanel {
             depth: 0,
             validation_state: ValidationState::None,
         });
+        self.filename_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+        });
         self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), true, true, window, cx);
         cx.notify();
     }
@@ -1896,9 +1908,8 @@ impl ProjectPanel {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges([selection])
                     });
-                    window.focus(&editor.focus_handle(cx));
                 });
-                self.update_visible_entries(None, false, true, window, cx);
+                self.update_visible_entries(None, true, true, window, cx);
                 cx.notify();
             }
         }
@@ -2715,15 +2726,16 @@ impl ProjectPanel {
 
                             if item_count == 1 {
                                 // open entry if not dir, setting is enabled, and only focus if rename is not pending
-                                if !entry.is_dir()
-                                    && ProjectPanelSettings::get_global(cx).open_file_on_paste
-                                {
-                                    project_panel.open_entry(
-                                        entry.id,
-                                        disambiguation_range.is_none(),
-                                        false,
-                                        cx,
-                                    );
+                                if !entry.is_dir() {
+                                    let settings = ProjectPanelSettings::get_global(cx);
+                                    if settings.auto_open.should_open_on_paste() {
+                                        project_panel.open_entry(
+                                            entry.id,
+                                            disambiguation_range.is_none(),
+                                            false,
+                                            cx,
+                                        );
+                                    }
                                 }
 
                                 // if only one entry was pasted and it was disambiguated, open the rename editor
@@ -3235,7 +3247,8 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
-        self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
+
+        let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
                     for worktree_snapshot in visible_worktrees {
@@ -3481,19 +3494,27 @@ impl ProjectPanel {
                             .sum::<usize>(),
                     )
                 }
-                if focus_filename_editor {
+                if this.update_visible_entries_task.focus_filename_editor {
+                    this.update_visible_entries_task.focus_filename_editor = false;
                     this.filename_editor.update(cx, |editor, cx| {
-                        editor.clear(window, cx);
                         window.focus(&editor.focus_handle(cx));
                     });
                 }
-                if autoscroll {
+                if this.update_visible_entries_task.autoscroll {
+                    this.update_visible_entries_task.autoscroll = false;
                     this.autoscroll(cx);
                 }
                 cx.notify();
             })
             .ok();
         });
+
+        self.update_visible_entries_task = UpdateVisibleEntriesTask {
+            _visible_entries_task: visible_entries_task,
+            focus_filename_editor: focus_filename_editor
+                || self.update_visible_entries_task.focus_filename_editor,
+            autoscroll: autoscroll || self.update_visible_entries_task.autoscroll,
+        };
     }
 
     fn expand_entry(
@@ -3599,7 +3620,10 @@ impl ProjectPanel {
                 let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
-                        this.open_entry(opened_entries[0], true, false, cx);
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        if settings.auto_open.should_open_on_drop() {
+                            this.open_entry(opened_entries[0], true, false, cx);
+                        }
                     }
                 })
             }

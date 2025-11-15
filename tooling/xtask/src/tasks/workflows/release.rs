@@ -28,6 +28,7 @@ pub(crate) fn release() -> Workflow {
     let upload_release_assets = upload_release_assets(&[&create_draft_release], &bundle);
 
     let auto_release_preview = auto_release_preview(&[&upload_release_assets]);
+    let notify_on_failure = notify_on_failure(&[&upload_release_assets, &auto_release_preview]);
 
     named::workflow()
         .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
@@ -47,6 +48,7 @@ pub(crate) fn release() -> Workflow {
         })
         .add_job(upload_release_assets.name, upload_release_assets.job)
         .add_job(auto_release_preview.name, auto_release_preview.job)
+        .add_job(notify_on_failure.name, notify_on_failure.job)
 }
 
 pub(crate) struct ReleaseBundleJobs {
@@ -107,7 +109,6 @@ fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
                 )
                 .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
             )
-            .add_step(create_sentry_release()),
     )
 }
 
@@ -177,4 +178,18 @@ fn create_draft_release() -> NamedJob {
             .add_step(generate_release_notes())
             .add_step(create_release()),
     )
+}
+
+pub(crate) fn notify_on_failure(deps: &[&NamedJob]) -> NamedJob {
+    fn notify_slack() -> Step<Run> {
+        named::bash(
+            "curl -X POST -H 'Content-type: application/json'\\\n --data '{\"text\":\"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \"$SLACK_WEBHOOK\""
+        ).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
+    }
+
+    let job = dependant_job(deps)
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new("failure()"))
+        .add_step(notify_slack());
+    named::job(job)
 }

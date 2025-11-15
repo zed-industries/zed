@@ -877,7 +877,7 @@ mod tests {
     };
     use gpui::{AppContext as _, font, px};
     use language::Capability;
-    use project::{Project, project_settings::DiagnosticSeverity};
+    use project::project_settings::DiagnosticSeverity;
     use settings::SettingsStore;
     use util::post_inc;
 
@@ -1346,10 +1346,7 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
         crate::init(cx);
-        Project::init_settings(cx);
     }
 }

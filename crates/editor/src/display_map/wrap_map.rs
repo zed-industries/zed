@@ -43,6 +43,14 @@ pub struct WrapSnapshot {
     interpolated: bool,
 }
 
+impl std::ops::Deref for WrapSnapshot {
+    type Target = TabSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tab_snapshot
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Transform {
     summary: TransformSummary,
@@ -957,7 +965,7 @@ impl<'a> Iterator for WrapChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            self.input_chunk = self.input_chunks.next().unwrap();
+            self.input_chunk = self.input_chunks.next()?;
         }
 
         let mut input_len = 0;

@@ -14,7 +14,6 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
 use std::{
@@ -431,7 +430,8 @@ pub trait GitRepository: Send + Sync {
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
-    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn create_branch(&self, name: String, base_branch: Option<String>)
+    -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
@@ -490,6 +490,7 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -531,7 +532,7 @@ pub trait GitRepository: Send + Sync {
 
     fn pull(
         &self,
-        branch_name: String,
+        branch_name: Option<String>,
         upstream_name: String,
         rebase: bool,
         askpass: AskPassDelegate,
@@ -846,7 +847,7 @@ impl GitRepository for RealGitRepository {
                 }
 
                 files.push(CommitFile {
-                    path: rel_path.into(),
+                    path: RepoPath(Arc::from(rel_path)),
                     old_text,
                     new_text,
                 })
@@ -1358,14 +1359,28 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        let repo = self.repository.clone();
+    fn create_branch(
+        &self,
+        name: String,
+        base_branch: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let current_commit = repo.head()?.peel_to_commit()?;
-                repo.branch(&name, &current_commit, false)?;
-                Ok(())
+                let mut args = vec!["switch", "-c", &name];
+                let base_branch_str;
+                if let Some(ref base) = base_branch {
+                    base_branch_str = base.clone();
+                    args.push(&base_branch_str);
+                }
+
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&args)
+                    .await?;
+                anyhow::Ok(())
             })
             .boxed()
     }
@@ -1615,41 +1630,39 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
-        self.executor
-            .spawn(async move {
-                let mut cmd = new_smol_command(git_binary_path);
-                cmd.current_dir(&working_directory?)
-                    .envs(env.iter())
-                    .args(["commit", "--quiet", "-m"])
-                    .arg(&message.to_string())
-                    .arg("--cleanup=strip");
+        let executor = self.executor.clone();
+        async move {
+            let mut cmd = new_smol_command(git_binary_path);
+            cmd.current_dir(&working_directory?)
+                .envs(env.iter())
+                .args(["commit", "--quiet", "-m"])
+                .arg(&message.to_string())
+                .arg("--cleanup=strip")
+                .stdout(smol::process::Stdio::piped())
+                .stderr(smol::process::Stdio::piped());
 
-                if options.amend {
-                    cmd.arg("--amend");
-                }
+            if options.amend {
+                cmd.arg("--amend");
+            }
 
-                if options.signoff {
-                    cmd.arg("--signoff");
-                }
+            if options.signoff {
+                cmd.arg("--signoff");
+            }
 
-                if let Some((name, email)) = name_and_email {
-                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
-                }
+            if let Some((name, email)) = name_and_email {
+                cmd.arg("--author").arg(&format!("{name} <{email}>"));
+            }
 
-                let output = cmd.output().await?;
+            run_git_command(env, ask_pass, cmd, &executor).await?;
 
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to commit:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                Ok(())
-            })
-            .boxed()
+            Ok(())
+        }
+        .boxed()
     }
 
     fn push(
@@ -1689,7 +1702,7 @@ impl GitRepository for RealGitRepository {
 
     fn pull(
         &self,
-        branch_name: String,
+        branch_name: Option<String>,
         remote_name: String,
         rebase: bool,
         ask_pass: AskPassDelegate,
@@ -1713,7 +1726,7 @@ impl GitRepository for RealGitRepository {
 
             command
                 .arg(remote_name)
-                .arg(branch_name)
+                .args(branch_name)
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
@@ -2035,6 +2048,11 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
+    args.extend(
+        path_prefixes
+            .iter()
+            .map(|path_prefix| path_prefix.as_std_path().into()),
+    );
     args.extend(path_prefixes.iter().map(|path_prefix| {
         if path_prefix.is_empty() {
             Path::new(".").into()
@@ -2290,23 +2308,43 @@ async fn run_askpass_command(
     }
 }
 
-#[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(pub Arc<RelPath>);
+#[derive(Clone, Ord, Hash, PartialOrd, Eq, PartialEq)]
+pub struct RepoPath(Arc<RelPath>);
+
+impl std::fmt::Debug for RepoPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
         let rel_path = RelPath::unix(s.as_ref())?;
-        Ok(rel_path.into())
-    }
-
-    pub fn from_proto(proto: &str) -> Result<Self> {
-        let rel_path = RelPath::from_proto(proto)?;
-        Ok(rel_path.into())
+        Ok(Self::from_rel_path(rel_path))
     }
 
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Self> {
         let rel_path = RelPath::new(path, path_style)?;
-        Ok(Self(rel_path.as_ref().into()))
+        Ok(Self::from_rel_path(&rel_path))
+    }
+
+    pub fn from_proto(proto: &str) -> Result<Self> {
+        let rel_path = RelPath::from_proto(proto)?;
+        Ok(Self(rel_path))
+    }
+
+    pub fn from_rel_path(path: &RelPath) -> RepoPath {
+        Self(Arc::from(path))
+    }
+
+    pub fn as_std_path(&self) -> &Path {
+        // git2 does not like empty paths and our RelPath infra turns `.` into ``
+        // so undo that here
+        if self.is_empty() {
+            Path::new(".")
+        } else {
+            self.0.as_std_path()
+        }
     }
 }
 
@@ -2315,27 +2353,9 @@ pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
     RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
 }
 
-impl From<&RelPath> for RepoPath {
-    fn from(value: &RelPath) -> Self {
-        RepoPath(value.into())
-    }
-}
-
-impl<'a> From<Cow<'a, RelPath>> for RepoPath {
-    fn from(value: Cow<'a, RelPath>) -> Self {
-        value.as_ref().into()
-    }
-}
-
-impl From<Arc<RelPath>> for RepoPath {
-    fn from(value: Arc<RelPath>) -> Self {
-        RepoPath(value)
-    }
-}
-
-impl Default for RepoPath {
-    fn default() -> Self {
-        RepoPath(RelPath::empty().into())
+impl AsRef<Arc<RelPath>> for RepoPath {
+    fn as_ref(&self) -> &Arc<RelPath> {
+        &self.0
     }
 }
 
@@ -2346,12 +2366,6 @@ impl std::ops::Deref for RepoPath {
         &self.0
     }
 }
-
-// impl AsRef<Path> for RepoPath {
-//     fn as_ref(&self) -> &Path {
-//         RelPath::as_ref(&self.0)
-//     }
-// }
 
 #[derive(Debug)]
 pub struct RepoPathDescendants<'a>(pub &'a RepoPath);
@@ -2373,22 +2387,37 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
             continue;
         }
         let mut fields = line.split('\x00');
-        let is_current_branch = fields.next().context("no HEAD")? == "*";
-        let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
-        let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
-        let ref_name = fields.next().context("no refname")?.to_string().into();
-        let upstream_name = fields.next().context("no upstream")?.to_string();
-        let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
-        let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
-        let author_name = fields.next().context("no authorname")?.to_string().into();
-        let subject: SharedString = fields
-            .next()
-            .context("no contents:subject")?
-            .to_string()
-            .into();
+        let Some(head) = fields.next() else {
+            continue;
+        };
+        let Some(head_sha) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(parent_sha) = fields.next().map(|f| f.to_string()) else {
+            continue;
+        };
+        let Some(ref_name) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(upstream_name) = fields.next().map(|f| f.to_string()) else {
+            continue;
+        };
+        let Some(upstream_tracking) = fields.next().and_then(|f| parse_upstream_track(f).ok())
+        else {
+            continue;
+        };
+        let Some(commiterdate) = fields.next().and_then(|f| f.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(author_name) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(subject) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
 
         branches.push(Branch {
-            is_head: is_current_branch,
+            is_head: head == "*",
             ref_name,
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
@@ -2454,8 +2483,17 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    fn disable_git_global_config() {
+        unsafe {
+            std::env::set_var("GIT_CONFIG_GLOBAL", "");
+            std::env::set_var("GIT_CONFIG_SYSTEM", "");
+        }
+    }
+
     #[gpui::test]
     async fn test_checkpoint_basic(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2471,6 +2509,7 @@ mod tests {
             cx.executor(),
         )
         .unwrap();
+
         repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
             .await
             .unwrap();
@@ -2478,6 +2517,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -2504,6 +2544,7 @@ mod tests {
             "Commit after checkpoint".into(),
             None,
             CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -2541,6 +2582,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_checkpoint_empty_repo(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2585,6 +2628,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_compare_checkpoints(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2624,6 +2669,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_checkpoint_exclude_binary_files(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
@@ -2654,6 +2701,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -2708,6 +2756,44 @@ mod tests {
                     has_parent: false,
                 })
             }]
+        )
+    }
+
+    #[test]
+    fn test_branches_parsing_containing_refs_with_missing_fields() {
+        #[allow(clippy::octal_escapes)]
+        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0refs/heads/broken\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\0\01762948725\0Zed\0Add feature\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\0\01762948695\0Zed\0Initial commit\n";
+
+        let branches = parse_branch_input(input).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert_eq!(
+            branches,
+            vec![
+                Branch {
+                    is_head: false,
+                    ref_name: "refs/heads/dev".into(),
+                    upstream: None,
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "eb0cae33272689bd11030822939dd2701c52f81e".into(),
+                        subject: "Add feature".into(),
+                        commit_timestamp: 1762948725,
+                        author_name: SharedString::new("Zed"),
+                        has_parent: true,
+                    })
+                },
+                Branch {
+                    is_head: true,
+                    ref_name: "refs/heads/main".into(),
+                    upstream: None,
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "895951d681e5561478c0acdd6905e8aacdfd2249".into(),
+                        subject: "Initial commit".into(),
+                        commit_timestamp: 1762948695,
+                        author_name: SharedString::new("Zed"),
+                        has_parent: false,
+                    })
+                }
+            ]
         )
     }
 

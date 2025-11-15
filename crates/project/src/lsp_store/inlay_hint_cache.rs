@@ -6,6 +6,7 @@ use gpui::{App, Entity, Task};
 use language::{Buffer, BufferRow, BufferSnapshot};
 use lsp::LanguageServerId;
 use text::OffsetRangeExt;
+use util::RangeExt as _;
 
 use crate::{InlayHint, InlayId};
 
@@ -123,18 +124,17 @@ impl BufferInlayHints {
         let row_ranges = ranges
             .iter()
             .map(|range| range.to_point(&self.snapshot))
-            .map(|point_range| point_range.start.row..=point_range.end.row)
+            // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
+            // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
+            .map(|point_range| point_range.start.row..point_range.end.row + 1)
             .collect::<Vec<_>>();
         self.buffer_chunks
             .iter()
-            .filter(move |chunk| -> bool {
-                // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
-                // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
+            .filter(move |chunk| {
                 let chunk_range = chunk.start..=chunk.end;
-                row_ranges.iter().any(|row_range| {
-                    chunk_range.contains(&row_range.start())
-                        || chunk_range.contains(&row_range.end())
-                })
+                row_ranges
+                    .iter()
+                    .any(|row_range| chunk_range.overlaps(&row_range))
             })
             .copied()
     }

@@ -3206,11 +3206,8 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
         super::init(cx);
         editor::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         state
     })
 }
@@ -3454,4 +3451,100 @@ async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "file1.txt");
     });
+}
+
+#[gpui::test]
+async fn test_clear_navigation_history(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": "// First file",
+                    "second.rs": "// Second file",
+                    "third.rs": "// Third file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));
+
+    // Open some files to generate navigation history
+    open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+    open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+    let history_before_clear =
+        open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+
+    assert_eq!(
+        history_before_clear.len(),
+        2,
+        "Should have history items before clearing"
+    );
+
+    // Verify that file finder shows history items
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("fir");
+    picker.update(cx, |finder, _| {
+        let matches = collect_search_matches(finder);
+        assert!(
+            !matches.history.is_empty(),
+            "File finder should show history items before clearing"
+        );
+    });
+    workspace.update_in(cx, |_, window, cx| {
+        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+    });
+
+    // Verify navigation state before clear
+    workspace.update(cx, |workspace, cx| {
+        let pane = workspace.active_pane();
+        pane.read(cx).can_navigate_backward()
+    });
+
+    // Clear navigation history
+    cx.dispatch_action(workspace::ClearNavigationHistory);
+
+    // Verify that navigation is disabled immediately after clear
+    workspace.update(cx, |workspace, cx| {
+        let pane = workspace.active_pane();
+        assert!(
+            !pane.read(cx).can_navigate_backward(),
+            "Should not be able to navigate backward after clearing history"
+        );
+        assert!(
+            !pane.read(cx).can_navigate_forward(),
+            "Should not be able to navigate forward after clearing history"
+        );
+    });
+
+    // Verify that file finder no longer shows history items
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("fir");
+    picker.update(cx, |finder, _| {
+        let matches = collect_search_matches(finder);
+        assert!(
+            matches.history.is_empty(),
+            "File finder should not show history items after clearing"
+        );
+    });
+    workspace.update_in(cx, |_, window, cx| {
+        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+    });
+
+    // Verify history is empty by opening a new file
+    // (this should not show any previous history)
+    let history_after_clear =
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+    assert_eq!(
+        history_after_clear.len(),
+        0,
+        "Should have no history items after clearing"
+    );
 }

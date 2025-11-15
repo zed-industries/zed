@@ -3,7 +3,7 @@
 Zed supports terminal-based agents through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
 Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation.
-[Claude Code](https://www.anthropic.com/claude-code) and [Codex](https://developers.openai.com/codex) are also included by default, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
+[Claude Code](https://www.anthropic.com/claude-code) and [Codex](https://developers.openai.com/codex) are also included by default, and you can [add custom ACP-compatible agents](#add-more-agents) as well.
 
 > Note that Zed's affordance for external agents is strictly UI-based; the billing and legal/terms arrangement is directly between you and the agent provider.
 > Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
@@ -182,14 +182,18 @@ And to give it context, you can @-mention files, symbols, or fetch the web.
 > Note that some first-party agent features don't yet work with Codex: editing past messages, resuming threads from history, and checkpointing.
 > We hope to add these features in the near future.
 
-## Add Custom Agents {#add-custom-agents}
+## Add More Agents {#add-more-agents}
 
-You can run any agent speaking ACP in Zed by changing your settings as follows:
+Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
+
+See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with `zed: extensions`, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
+
+You can also add agents through your `settings.json`, by specifying certain fields under `agent_servers`, like so:
 
 ```json [settings]
 {
   "agent_servers": {
-    "Custom Agent": {
+    "My Custom Agent": {
       "command": "node",
       "args": ["~/projects/agent/index.js", "--acp"],
       "env": {}
@@ -198,9 +202,34 @@ You can run any agent speaking ACP in Zed by changing your settings as follows:
 }
 ```
 
-This can also be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
+This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
 
-You can also specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
+It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
+
+### Custom Keybinding For Extension-Based Agents
+
+To assign a custom keybinding to start a new thread for agents that were added by installing agent server extensions, add the following snippet to your `keymap.json` file:
+
+```json [keymap]
+{
+  "bindings": {
+    "cmd-alt-n": [ // Your custom keybinding
+      "agent::NewExternalAgentThread",
+      {
+        "agent": {
+          "custom": {
+            "name": "My Agent", // The agent name as it appears in the UI (e.g., "OpenCode", "Auggie CLI", etc.)
+            "command": {
+              "command": "my-agent", // The agent name in lowercase with no spaces
+              "args": ["acp"]
+            }
+          }
+        }
+      }
+    ]
+  }
+},
+```
 
 ## Debugging Agents
 

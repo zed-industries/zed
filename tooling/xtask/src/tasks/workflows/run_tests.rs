@@ -42,7 +42,7 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
-    let jobs = [
+    let mut jobs = vec![
         orchestrate,
         check_style(),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
@@ -50,7 +50,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(check_postgres_and_protobuf_migrations()), // could be more specific here?
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
@@ -73,6 +72,8 @@ pub(crate) fn run_tests() -> Workflow {
         )),
     ];
     let tests_pass = tests_pass(&jobs);
+
+    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
 
     named::workflow()
         .add_event(Event::default()
@@ -291,8 +292,8 @@ fn check_workspace_binaries() -> NamedJob {
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .map(steps::install_linux_dependencies)
             .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
@@ -311,16 +312,18 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
+            .when(platform == Platform::Linux, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
-            .add_step(steps::cargo_install_nextest(platform))
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::cargo_install_nextest())
+            })
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
             .add_step(steps::cleanup_cargo_config(platform)),

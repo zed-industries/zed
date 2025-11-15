@@ -173,6 +173,10 @@ pub struct AgentServerManifestEntry {
     /// cmd = "node"
     /// args = ["index.js", "--port", "3000"]
     /// ```
+    ///
+    /// Note: All commands are executed with the archive extraction directory as the
+    /// working directory, so relative paths in args (like "index.js") will resolve
+    /// relative to the extracted archive contents.
     pub targets: HashMap<String, TargetConfig>,
 }
 
@@ -263,10 +267,9 @@ impl ExtensionManifest {
 
         let mut extension_manifest_path = extension_dir.join("extension.json");
         if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
+            })?;
             let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
                 .with_context(|| {
                     format!("invalid extension.json for extension {extension_name}")
@@ -275,10 +278,9 @@ impl ExtensionManifest {
             Ok(manifest_from_old_manifest(manifest_json, extension_name))
         } else {
             extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
+            })?;
             toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
             })
