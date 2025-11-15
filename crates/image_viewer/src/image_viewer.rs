@@ -403,11 +403,13 @@ impl ProjectItem for ImageView {
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<InvalidItemView>
+    ) -> Option<workspace::item::BrokenProjectItem>
     where
         Self: Sized,
     {
-        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+        Some(workspace::item::BrokenProjectItem::Invalid(
+            InvalidItemView::new(abs_path, is_local, e, window, cx)
+        ))
     }
 }
 

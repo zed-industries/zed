@@ -1,3 +1,5 @@
+use hex_editor::HexEditorView;
+
 pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
@@ -744,6 +746,10 @@ impl Global for ProjectItemRegistry {}
 /// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     cx.default_global::<ProjectItemRegistry>().register::<I>();
+    // Register HexEditorView as the default handler for all files.
+    cx.default_global::<ProjectItemRegistry>().register::<HexEditorView>();
+    // Register HexEditorView as the default handler for all files.
+    cx.default_global::<ProjectItemRegistry>().register::<HexEditorView>();
 }
 
 #[derive(Default)]

@@ -7,14 +7,231 @@ use crate::{
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
 };
+use hex_editor::HexEditorView;
 use anyhow::Result;
 use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
+
+/// An enum to wrap either a HexEditorView or InvalidItemView for dyn Item compatibility.
+pub enum BrokenProjectItem {
+    HexEditor(HexEditorView),
+    Invalid(InvalidItemView),
+}
+
+// Dummy struct to satisfy ProjectItem trait requirements for HexEditorView
+pub struct HexEditorProjectItem {
+    pub abs_path: std::path::PathBuf,
+}
+
+impl project::ProjectItem for HexEditorProjectItem {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<Result<Entity<Self>>>> {
+        let abs_path = project.read(cx).absolute_path(path, cx)?;
+        Some(Task::ready(Ok(cx.new(|_| HexEditorProjectItem { abs_path }))))
+    }
+    fn entry_id(&self, _cx: &App) -> Option<ProjectEntryId> {
+        None
+    }
+    fn project_path(&self, _cx: &App) -> Option<ProjectPath> {
+        None
+    }
+    fn is_dirty(&self) -> bool {
+        false
+    }
+}
+
+// Implement ProjectItem for HexEditorView so it can be registered as a default handler
+impl ProjectItem for HexEditorView {
+    type Item = HexEditorProjectItem;
+
+    fn project_item_kind() -> Option<ProjectItemKind> {
+        Some(ProjectItemKind("hex_editor"))
+    }
+
+    fn for_project_item(
+        _project: Entity<Project>,
+        _pane: Option<&Pane>,
+        item: Entity<Self::Item>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        let abs_path = item.read(cx).abs_path.clone();
+        HexEditorView::new(abs_path, window, cx)
+    }
+
+    fn for_broken_project_item(
+        abs_path: &std::path::Path,
+        _is_local: bool,
+        _e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<BrokenProjectItem>
+    where
+        Self: Sized,
+    {
+        Some(BrokenProjectItem::HexEditor(HexEditorView::new(abs_path.to_path_buf(), window, cx)))
+    }
+}
+
+impl Item for BrokenProjectItem {
+    type Event = ();
+
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        match self {
+            BrokenProjectItem::HexEditor(inner) => inner.tab_content_text(detail, cx),
+            BrokenProjectItem::Invalid(inner) => inner.tab_content_text(detail, cx),
+        }
+    }
+
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
+        match self {
+            BrokenProjectItem::HexEditor(inner) => inner.buffer_kind(cx),
+            BrokenProjectItem::Invalid(inner) => inner.buffer_kind(cx),
+        }
+    }
+}
+
+impl Item for HexEditorView {
+    type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        format!(
+            "Hex Editor: {}",
+            self.file_path.file_name().unwrap_or_default().to_string_lossy()
+        )
+        .into()
+    }
+
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        // This is a binary buffer, not a text buffer
+        ItemBufferKind::None
+    }
+
+    fn is_dirty(&self, _cx: &App) -> bool {
+        // TODO: Implement dirty tracking when editing is supported
+        false
+    }
+
+    fn can_save(&self, _cx: &App) -> bool {
+        // TODO: Allow saving when editing is implemented
+        false
+    }
+
+    fn save(
+        &mut self,
+        _options: SaveOptions,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // TODO: Implement saving
+        Task::ready(Ok(()))
+    }
+}
+
+
+
+impl EventEmitter<()> for BrokenProjectItem {}
+
+impl Focusable for BrokenProjectItem {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self {
+            BrokenProjectItem::HexEditor(inner) => inner.focus_handle(cx),
+            BrokenProjectItem::Invalid(inner) => inner.focus_handle(cx),
+        }
+    }
+}
+
+
+
+impl Render for BrokenProjectItem {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
+        match self {
+            BrokenProjectItem::HexEditor(inner) => {
+                use ui::{h_flex, Label, LabelSize, Color, Styled, LabelCommon};
+                let bytes_per_row = 16;
+                let mut rows = Vec::new();
+                for (row_idx, chunk) in inner.file_data.chunks(bytes_per_row).enumerate() {
+                    let offset = row_idx * bytes_per_row;
+                    let hex_cells = chunk
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let ascii_cells = chunk
+                        .iter()
+                        .map(|b| {
+                            let c = *b as char;
+                            if c.is_ascii_graphic() {
+                                c
+                            } else {
+                                '.'
+                            }
+                        })
+                        .collect::<String>();
+                    rows.push(
+                        h_flex()
+                            .gap_x_2()
+                            .child(
+                                Label::new(format!("{:08X}", offset))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(hex_cells)
+                                    .buffer_font(_cx)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(
+                                Label::new(ascii_cells)
+                                    .buffer_font(_cx)
+                                    .size(LabelSize::Small),
+                            ),
+                    );
+                }
+                let hex_ascii = v_flex().gap_y_0p5().children(rows);
+
+                if let Some(error) = &inner.error {
+                    return v_flex()
+                        .size_full()
+                        .justify_center()
+                        .child(Label::new(error.clone()).color(Color::Error))
+                        .into_any_element();
+                }
+
+                v_flex()
+                    .size_full()
+                    .gap_y_2()
+                    .child(
+                        Label::new(format!(
+                            "Hex Editor — {} ({} bytes)",
+                            inner.file_path.display(),
+                            inner.file_data.len()
+                        ))
+                        .size(LabelSize::Large),
+                    )
+                    .child(hex_ascii)
+                    .into_any_element()
+            }
+            BrokenProjectItem::Invalid(_) => {
+                v_flex().child(ui::Label::new("Invalid Item View (render not implemented)")).into_any_element()
+            }
+        }
+    }
+}
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext, Context, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task,
     WeakEntity, Window,
 };
+use ui::v_flex;
+use gpui::ParentElement;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -1084,16 +1301,17 @@ pub trait ProjectItem: Item {
     /// with the error from that failure as an argument.
     /// Allows to open an item that can gracefully display and handle errors.
     fn for_broken_project_item(
-        _abs_path: &Path,
-        _is_local: bool,
-        _e: &anyhow::Error,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Option<InvalidItemView>
+        abs_path: &std::path::Path,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<BrokenProjectItem>
     where
         Self: Sized,
     {
-        None
+        // Always use the hex editor for any file open error (except images/media, which are handled elsewhere)
+        Some(BrokenProjectItem::HexEditor(HexEditorView::new(abs_path.to_path_buf(), window, cx)))
     }
 }
 

@@ -7643,6 +7643,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hex_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "ui",
+]
+
+[[package]]
 name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20788,6 +20797,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "hex_editor",
  "http_client",
  "itertools 0.14.0",
  "language",

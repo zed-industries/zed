@@ -118,6 +118,7 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/onboarding",
+    "crates/hex_editor",
     "crates/open_ai",
     "crates/open_router",
     "crates/outline",
@@ -235,6 +236,8 @@ edition = "2024"
 #
 # Workspace member crates
 #
+
+hex_editor = { path = "crates/hex_editor" }
 
 acp_tools = { path = "crates/acp_tools" }
 acp_thread = { path = "crates/acp_thread" }

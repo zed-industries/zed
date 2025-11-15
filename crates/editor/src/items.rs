@@ -1396,8 +1396,10 @@ impl ProjectItem for Editor {
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<InvalidItemView> {
-        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+    ) -> Option<workspace::item::BrokenProjectItem> {
+        Some(workspace::item::BrokenProjectItem::Invalid(
+            InvalidItemView::new(abs_path, is_local, e, window, cx)
+        ))
     }
 }
 
