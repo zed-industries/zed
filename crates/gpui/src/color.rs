@@ -10,6 +10,8 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use crate::Pixels;
+
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
     let [_, r, g, b] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
@@ -652,14 +654,6 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[repr(C)]
-pub(crate) enum BackgroundTag {
-    Solid = 0,
-    LinearGradient = 1,
-    PatternSlash = 2,
-}
-
 /// A color space for color interpolation.
 ///
 /// References:
@@ -683,11 +677,128 @@ impl Display for ColorSpace {
         }
     }
 }
-
 /// A background color, which can be either a solid color or a linear gradient.
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum Background {
+    /// A solid color background.
+    Solid {
+        /// The fill color.
+        color: Hsla,
+    },
+    /// A linear gradient background.
+    LinearGradient {
+        /// The color space for color interpolation.
+        color_space: ColorSpace,
+        /// The linear gradient angle in degrees, 0.0 to 360.0.
+        angle: f32,
+        /// The two color stops for the linear gradient.
+        colors: [LinearColorStop; 2],
+    },
+    /// A slash pattern background.
+    PatternSlash {
+        /// The width of the pattern.
+        width: Pixels,
+        /// The interval between the pattern lines.
+        interval: f32,
+        /// The solid color for the pattern.
+        color: Hsla,
+    },
+}
+
+impl Eq for Background {}
+impl Default for Background {
+    fn default() -> Self {
+        Self::Solid {
+            color: Hsla::default(),
+        }
+    }
+}
+
+impl Background {
+    /// Returns the fill color of the background.
+    ///
+    /// If the background is a solid or pattern color, returns that color.
+    /// If the background is a linear gradient, returns the first color stop's color.
+    pub fn fill(&self) -> Hsla {
+        match self {
+            Self::Solid { color } => *color,
+            Self::PatternSlash { color, .. } => *color,
+            Self::LinearGradient { colors, .. } => colors[0].color,
+        }
+    }
+
+    /// Use specified color space for color interpolation, for linear gradients.
+    ///
+    /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
+    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
+        let new_color_space = color_space;
+
+        match self {
+            Self::Solid { .. } => {}
+            Self::PatternSlash { .. } => {}
+            Self::LinearGradient {
+                ref mut color_space,
+                ..
+            } => {
+                *color_space = new_color_space;
+            }
+        }
+        self
+    }
+
+    /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
+    pub fn opacity(mut self, factor: f32) -> Self {
+        match self {
+            Self::Solid { ref mut color } => {
+                *color = color.opacity(factor);
+            }
+            Self::LinearGradient { ref mut colors, .. } => {
+                colors[0] = colors[0].opacity(factor);
+                colors[1] = colors[1].opacity(factor);
+            }
+            Self::PatternSlash { ref mut color, .. } => {
+                *color = color.opacity(factor);
+            }
+        }
+        self
+    }
+
+    /// Returns whether the background color is transparent.
+    pub fn is_transparent(&self) -> bool {
+        match self {
+            Self::Solid { color, .. } => color.is_transparent(),
+            Self::LinearGradient { colors, .. } => colors.iter().all(|c| c.color.is_transparent()),
+            Self::PatternSlash { color, .. } => color.is_transparent(),
+        }
+    }
+}
+
+impl From<Hsla> for Background {
+    fn from(color: Hsla) -> Self {
+        Background::Solid { color }
+    }
+}
+
+impl From<Rgba> for Background {
+    fn from(color: Rgba) -> Self {
+        Background::Solid {
+            color: Hsla::from(color),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[repr(C)]
+pub(crate) enum BackgroundTag {
+    Solid = 0,
+    LinearGradient = 1,
+    PatternSlash = 2,
+}
+
+/// A internal representation of a background color for GPU rendering.
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub struct Background {
+pub(crate) struct BackgroundColor {
     pub(crate) tag: BackgroundTag,
     pub(crate) color_space: ColorSpace,
     pub(crate) solid: Hsla,
@@ -697,7 +808,7 @@ pub struct Background {
     pad: u32,
 }
 
-impl std::fmt::Debug for Background {
+impl std::fmt::Debug for BackgroundColor {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.tag {
             BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
@@ -719,8 +830,50 @@ impl std::fmt::Debug for Background {
     }
 }
 
-impl Eq for Background {}
-impl Default for Background {
+impl From<Background> for BackgroundColor {
+    fn from(bg: Background) -> Self {
+        match bg {
+            Background::Solid { color } => BackgroundColor {
+                tag: BackgroundTag::Solid,
+                solid: color,
+                pad: 0,
+                ..Default::default()
+            },
+            Background::LinearGradient {
+                color_space,
+                angle,
+                colors,
+            } => BackgroundColor {
+                tag: BackgroundTag::LinearGradient,
+                color_space,
+                gradient_angle_or_pattern_height: angle,
+                colors,
+                pad: 0,
+                ..Default::default()
+            },
+            Background::PatternSlash {
+                color,
+                width,
+                interval,
+            } => {
+                let width_scaled = (width.0 * 255.0) as u32;
+                let interval_scaled = (interval * 255.0) as u32;
+                let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
+
+                BackgroundColor {
+                    tag: BackgroundTag::PatternSlash,
+                    solid: color,
+                    gradient_angle_or_pattern_height: height,
+                    pad: 0,
+                    ..Default::default()
+                }
+            }
+        }
+    }
+}
+
+impl Eq for BackgroundColor {}
+impl Default for BackgroundColor {
     fn default() -> Self {
         Self {
             tag: BackgroundTag::Solid,
@@ -734,24 +887,18 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla, width: f32, interval: f32) -> Background {
-    let width_scaled = (width * 255.0) as u32;
-    let interval_scaled = (interval * 255.0) as u32;
-    let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
-
-    Background {
-        tag: BackgroundTag::PatternSlash,
-        solid: color,
-        gradient_angle_or_pattern_height: height,
-        ..Default::default()
+pub fn pattern_slash(color: Hsla, width: impl Into<Pixels>, interval: f32) -> Background {
+    Background::PatternSlash {
+        color,
+        width: width.into(),
+        interval,
     }
 }
 
 /// Creates a solid background color.
 pub fn solid_background(color: impl Into<Hsla>) -> Background {
-    Background {
-        solid: color.into(),
-        ..Default::default()
+    Background::Solid {
+        color: color.into(),
     }
 }
 
@@ -767,11 +914,10 @@ pub fn linear_gradient(
     from: impl Into<LinearColorStop>,
     to: impl Into<LinearColorStop>,
 ) -> Background {
-    Background {
-        tag: BackgroundTag::LinearGradient,
-        gradient_angle_or_pattern_height: angle,
+    Background::LinearGradient {
+        color_space: ColorSpace::default(),
+        angle,
         colors: [from.into(), to.into()],
-        ..Default::default()
     }
 }
 
@@ -803,55 +949,6 @@ impl LinearColorStop {
         Self {
             percentage: self.percentage,
             color: self.color.opacity(factor),
-        }
-    }
-}
-
-impl Background {
-    /// Use specified color space for color interpolation.
-    ///
-    /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
-    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
-        self.color_space = color_space;
-        self
-    }
-
-    /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
-    pub fn opacity(&self, factor: f32) -> Self {
-        let mut background = *self;
-        background.solid = background.solid.opacity(factor);
-        background.colors = [
-            self.colors[0].opacity(factor),
-            self.colors[1].opacity(factor),
-        ];
-        background
-    }
-
-    /// Returns whether the background color is transparent.
-    pub fn is_transparent(&self) -> bool {
-        match self.tag {
-            BackgroundTag::Solid => self.solid.is_transparent(),
-            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
-            BackgroundTag::PatternSlash => self.solid.is_transparent(),
-        }
-    }
-}
-
-impl From<Hsla> for Background {
-    fn from(value: Hsla) -> Self {
-        Background {
-            tag: BackgroundTag::Solid,
-            solid: value,
-            ..Default::default()
-        }
-    }
-}
-impl From<Rgba> for Background {
-    fn from(value: Rgba) -> Self {
-        Background {
-            tag: BackgroundTag::Solid,
-            solid: Hsla::from(value),
-            ..Default::default()
         }
     }
 }
@@ -908,12 +1005,16 @@ mod tests {
     fn test_background_solid() {
         let color = Hsla::from(rgba(0xff0099ff));
         let mut background = Background::from(color);
-        assert_eq!(background.tag, BackgroundTag::Solid);
-        assert_eq!(background.solid, color);
-
-        assert_eq!(background.opacity(0.5).solid, color.opacity(0.5));
+        assert_eq!(background, Background::Solid { color });
+        assert_eq!(background.fill(), color);
         assert!(!background.is_transparent());
-        background.solid = hsla(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(background.opacity(0.5).fill(), color.opacity(0.5));
+
+        let background_color: BackgroundColor = background.into();
+        assert_eq!(background_color.tag, BackgroundTag::Solid);
+        assert_eq!(background_color.solid, color);
+
+        let background = Background::from(hsla(0.0, 0.0, 0.0, 0.0));
         assert!(background.is_transparent());
     }
 
@@ -922,13 +1023,67 @@ mod tests {
         let from = linear_color_stop(rgba(0xff0099ff), 0.0);
         let to = linear_color_stop(rgba(0x00ff99ff), 1.0);
         let background = linear_gradient(90.0, from, to);
-        assert_eq!(background.tag, BackgroundTag::LinearGradient);
-        assert_eq!(background.colors[0], from);
-        assert_eq!(background.colors[1], to);
-
-        assert_eq!(background.opacity(0.5).colors[0], from.opacity(0.5));
-        assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
+        assert_eq!(
+            background,
+            Background::LinearGradient {
+                color_space: ColorSpace::default(),
+                angle: 90.0,
+                colors: [from, to]
+            }
+        );
+        assert_eq!(background.fill(), from.color);
         assert!(!background.is_transparent());
-        assert!(background.opacity(0.0).is_transparent());
+
+        assert_eq!(
+            background.opacity(0.5),
+            Background::LinearGradient {
+                color_space: ColorSpace::default(),
+                angle: 90.0,
+                colors: [from.opacity(0.5), to.opacity(0.5)]
+            }
+        );
+
+        let background_color: BackgroundColor = background.into();
+        assert_eq!(background_color.tag, BackgroundTag::LinearGradient);
+        assert_eq!(background_color.colors[0], from);
+        assert_eq!(background_color.colors[1], to);
+
+        let background = linear_gradient(
+            0.,
+            linear_color_stop(gpui::transparent_white(), 0.0),
+            linear_color_stop(gpui::transparent_white(), 1.0),
+        );
+        assert!(background.is_transparent());
+    }
+
+    #[test]
+    fn test_background_pattern_slash() {
+        let color = Hsla::from(rgba(0xff0099ff));
+        let width = Pixels(4.0);
+        let interval = 2.0;
+        let background = pattern_slash(color, width, interval);
+        assert_eq!(
+            background,
+            Background::PatternSlash {
+                color,
+                width,
+                interval
+            }
+        );
+        assert_eq!(background.fill(), color);
+        assert!(!background.is_transparent());
+
+        let background_color: BackgroundColor = background.into();
+        assert_eq!(background_color.tag, BackgroundTag::PatternSlash);
+        assert_eq!(background_color.solid, color);
+        assert_eq!(
+            background_color.gradient_angle_or_pattern_height,
+            66846210.0
+        );
+
+        assert_eq!(background.opacity(0.5).fill(), color.opacity(0.5));
+
+        let background = pattern_slash(gpui::transparent_white(), width, interval);
+        assert!(background.is_transparent());
     }
 }

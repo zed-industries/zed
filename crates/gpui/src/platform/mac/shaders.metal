@@ -34,7 +34,7 @@ float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
 float radians(float degrees);
-float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
+float4 fill_color(BackgroundColor background, float2 position, Bounds_ScaledPixels bounds,
   float4 solid_color, float4 color0, float4 color1);
 
 struct GradientColor {
@@ -764,7 +764,7 @@ fragment float4 path_rasterization_fragment(
   float2 dy = dfdy(input.st_position);
 
   PathRasterizationVertex v = vertices[input.vertex_id];
-  Background background = v.color;
+  BackgroundColor background = v.color;
   Bounds_ScaledPixels path_bounds = v.bounds;
   float alpha;
   if (length(float2(dx.x, dy.x)) < 0.001) {
@@ -1164,7 +1164,7 @@ float2x2 rotate2d(float angle) {
     return float2x2(c, -s, s, c);
 }
 
-float4 fill_color(Background background,
+float4 fill_color(BackgroundColor background,
                       float2 position,
                       Bounds_ScaledPixels bounds,
                       float4 solid_color, float4 color0, float4 color1) {

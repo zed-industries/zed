@@ -106,7 +106,7 @@ struct LinearColorStop {
     percentage: f32,
 }
 
-struct Background {
+struct BackgroundColor {
     // 0u is Solid
     // 1u is LinearGradient
     // 2u is PatternSlash
@@ -403,7 +403,7 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
     return result;
 }
 
-fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
+fn gradient_color(background: BackgroundColor, position: vec2<f32>, bounds: Bounds,
     solid_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
     var background_color = vec4<f32>(0.0);
 
@@ -483,7 +483,7 @@ struct Quad {
     border_style: u32,
     bounds: Bounds,
     content_mask: Bounds,
-    background: Background,
+    background: BackgroundColor,
     border_color: Hsla,
     corner_radii: Corners,
     border_widths: Edges,
@@ -986,7 +986,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 struct PathRasterizationVertex {
     xy_position: vec2<f32>,
     st_position: vec2<f32>,
-    color: Background,
+    color: BackgroundColor,
     bounds: Bounds,
 }
 
