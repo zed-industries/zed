@@ -6,7 +6,7 @@ use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, Task};
 use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
-use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
+use settings::{CustomHeader, OpenAiCompatibleSettingsContent, update_settings_file};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState, prelude::*,
 };
@@ -37,6 +37,8 @@ struct AddLlmProviderInput {
     api_url: Entity<InputField>,
     api_key: Entity<InputField>,
     models: Vec<ModelInput>,
+    custom_header_names: Vec<Entity<InputField>>,
+    custom_header_values: Vec<Entity<InputField>>,
 }
 
 impl AddLlmProviderInput {
@@ -51,11 +53,16 @@ impl AddLlmProviderInput {
             cx,
         );
 
+        let header_name = single_line_input("Header Name", "Header Name", None, window, cx);
+        let header_value = single_line_input("Header Value", "Header Value", None, window, cx);
+
         Self {
             provider_name,
             api_url,
             api_key,
             models: vec![ModelInput::new(window, cx)],
+            custom_header_names: vec![header_name],
+            custom_header_values: vec![header_value],
         }
     }
 
@@ -229,7 +236,24 @@ fn save_provider_to_settings(
         }
     }
 
+    // Collect custom headers from input fields
+    let mut headers: Vec<CustomHeader> = Vec::new();
+    for i in 0..input.custom_header_names.len() {
+        let name = input.custom_header_names[i].read(cx).text(cx).to_string();
+        let value = input.custom_header_values[i].read(cx).text(cx).to_string();
+        if !name.trim().is_empty() {
+            headers.push(CustomHeader { name, value });
+        }
+    }
+
+    let custom_headers = if headers.is_empty() {
+        None
+    } else {
+        Some(headers)
+    };
+
     let fs = <dyn Fs>::global(cx);
+
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
     cx.spawn(async move |cx| {
         task.await
@@ -246,7 +270,7 @@ fn save_provider_to_settings(
                         OpenAiCompatibleSettingsContent {
                             api_url,
                             available_models: models,
-                            custom_headers: None,
+                            custom_headers: custom_headers,
                         },
                     );
             });
@@ -473,6 +497,69 @@ impl Render for AddLlmProviderModal {
                             .child(self.input.provider_name.clone())
                             .child(self.input.api_url.clone())
                             .child(self.input.api_key.clone())
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(Label::new("Custom HTTP headers").size(LabelSize::Small))
+                                    .children((0..self.input.custom_header_names.len()).map(|i| {
+                                        h_flex()
+                                            .gap_1()
+                                            .child(self.input.custom_header_names[i].clone())
+                                            .child(self.input.custom_header_values[i].clone())
+                                            .child(
+                                                Button::new(("remove-header", i), "")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .icon(IconName::Trash)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .on_click(cx.listener(
+                                                        move |this, _e, _w, cx| {
+                                                            if i < this
+                                                                .input
+                                                                .custom_header_names
+                                                                .len()
+                                                            {
+                                                                this.input
+                                                                    .custom_header_names
+                                                                    .remove(i);
+                                                                this.input
+                                                                    .custom_header_values
+                                                                    .remove(i);
+                                                                cx.notify();
+                                                            }
+                                                        },
+                                                    )),
+                                            )
+                                    }))
+                                    .child(
+                                        Button::new("add-header", "Add header")
+                                            .icon(IconName::Plus)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_position(IconPosition::Start)
+                                            .label_size(LabelSize::Small)
+                                            .style(ButtonStyle::Outlined)
+                                            .on_click(cx.listener(|this, _e, window, cx| {
+                                                this.input.custom_header_names.push(
+                                                    single_line_input(
+                                                        "Header Name",
+                                                        "Header Name",
+                                                        None,
+                                                        window,
+                                                        cx,
+                                                    ),
+                                                );
+                                                this.input.custom_header_values.push(
+                                                    single_line_input(
+                                                        "Header Value",
+                                                        "Header Value",
+                                                        None,
+                                                        window,
+                                                        cx,
+                                                    ),
+                                                );
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
                             .child(self.render_model_section(cx)),
                     )
                     .footer(
