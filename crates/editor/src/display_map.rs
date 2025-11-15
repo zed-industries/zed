@@ -970,7 +970,7 @@ impl DisplaySnapshot {
             let highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
-            
+
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
                     // For color inlays, blend the color with the editor background

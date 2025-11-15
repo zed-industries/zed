@@ -622,7 +622,8 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            let settings = crate::language_settings::language_settings(Some(language.name()), None, cx);
+            let settings =
+                crate::language_settings::language_settings(Some(language.name()), None, cx);
             if settings.syntax_highlight {
                 language.set_theme(theme.syntax());
             } else {
