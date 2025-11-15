@@ -1668,7 +1668,7 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
-    use agent::{HistoryStore, outline};
+    use agent::{HistoryScope, HistoryStore, outline};
     use agent_client_protocol as acp;
     use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
@@ -1703,7 +1703,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1808,7 +1809,8 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
@@ -1970,8 +1972,10 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
+
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand {
                 name: "quick-math".to_string(),
@@ -2208,7 +2212,8 @@ mod tests {
         }
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2701,7 +2706,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2797,7 +2803,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
         // Create a thread metadata to insert as summary
         let thread_metadata = agent::DbThreadMetadata {
@@ -2873,7 +2880,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3122,7 +3130,8 @@ mod tests {
         });
 
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store =
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually

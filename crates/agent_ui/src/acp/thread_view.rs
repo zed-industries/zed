@@ -6043,6 +6043,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 #[cfg(test)]
 pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
+    use agent::HistoryScope;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
     use fs::FakeFs;
@@ -6309,8 +6310,9 @@ pub(crate) mod tests {
 
         let text_thread_store =
             cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
-        let history_store =
-            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(text_thread_store, cx)));
+        let history_store = cx.update(|_window, cx| {
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx))
+        });
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -6587,8 +6589,9 @@ pub(crate) mod tests {
 
         let text_thread_store =
             cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
-        let history_store =
-            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(text_thread_store, cx)));
+        let history_store = cx.update(|_window, cx| {
+            cx.new(|cx| HistoryStore::new(text_thread_store, HistoryScope::global(), cx))
+        });
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
