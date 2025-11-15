@@ -501,7 +501,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if self.delegate.should_dismiss() {
+        if self.delegate.should_dismiss() && window.is_window_active() {
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
