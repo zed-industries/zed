@@ -956,7 +956,20 @@
       "j": "menu::SelectNext",
       "k": "menu::SelectPrevious",
       "shift-g": "menu::SelectLast",
-      "g g": "menu::SelectFirst"
+      "g g": "menu::SelectFirst",
+      "enter": "editor::ToggleFocus",
+      "/": "menu::Cancel",
+      "ctrl-u": "outline_panel::ScrollUp",
+      "ctrl-d": "outline_panel::ScrollDown",
+      "z t": "outline_panel::ScrollCursorTop",
+      "z z": "outline_panel::ScrollCursorCenter",
+      "z b": "outline_panel::ScrollCursorBottom"
+    }
+  },
+  {
+    "context": "OutlinePanel && editing",
+    "bindings": {
+      "enter": "menu::Cancel"
     }
   },
   {
