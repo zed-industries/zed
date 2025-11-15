@@ -29,7 +29,7 @@ use std::{
 };
 use sum_tree::Bias;
 use text::{Point, Rope};
-use theme::Theme;
+use theme::{SyntaxTheme, Theme};
 use unicase::UniCase;
 use util::{ResultExt, maybe, post_inc};
 
@@ -618,11 +618,17 @@ impl LanguageRegistry {
         self.state.read().reload_count
     }
 
-    pub fn set_theme(&self, theme: Arc<Theme>) {
+    pub fn set_theme(&self, theme: Arc<Theme>, cx: &App) {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            language.set_theme(theme.syntax());
+            let settings =
+                crate::language_settings::language_settings(Some(language.name()), None, cx);
+            if settings.syntax_highlight {
+                language.set_theme(theme.syntax());
+            } else {
+                language.set_theme(&SyntaxTheme::default());
+            }
         }
     }
 
