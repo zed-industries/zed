@@ -217,10 +217,18 @@ pub enum OpenAiReasoningEffort {
 }
 
 #[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct CustomHeader {
+    pub name: String,
+    pub value: String,
+}
+
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
+    pub custom_headers: Option<Vec<CustomHeader>>,
 }
 
 #[skip_serializing_none]
