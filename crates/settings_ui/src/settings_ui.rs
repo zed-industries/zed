@@ -8,8 +8,8 @@ use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
     Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
 use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
@@ -582,6 +582,31 @@ pub fn open_settings_editor(
             _ => gpui::WindowDecorations::Client,
         };
 
+        let target_display_id =
+            workspace::window_utils::display_id_for_window_center(&workspace_handle, cx);
+        // Compute an initial size that fits within the current display (<= 80% of the display size).
+        let display_size = target_display_id
+            .and_then(|id| cx.find_display(id))
+            .map(|display| display.bounds().size);
+        let initial_size = display_size.map_or(scaled_bounds, |disp| gpui::Size {
+            width: scaled_bounds.width.min(disp.width * 0.8),
+            height: scaled_bounds.height.min(disp.height * 0.8),
+        });
+        // Set a minimum window size (scaled with UI font size), but ensure it's not larger than the initial size.
+        let min_width = px(360.0) * scale_factor;
+        let min_height = px(400.0) * scale_factor;
+        let window_min_size = gpui::Size {
+            width: min_width.min(initial_size.width),
+            height: min_height.min(initial_size.height),
+        };
+
+        let window_bounds = workspace::window_utils::centered_bounds_for_display_id(
+            target_display_id,
+            initial_size,
+            cx,
+        );
+        let window_background = cx.theme().window_background_appearance();
+
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -592,12 +617,15 @@ pub fn open_settings_editor(
                 focus: true,
                 show: true,
                 is_movable: true,
+                is_resizable: true,
                 kind: gpui::WindowKind::Floating,
-                window_background: cx.theme().window_background_appearance(),
+                window_background,
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
-                window_min_size: Some(scaled_bounds),
-                window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
+                window_min_size: Some(window_min_size),
+                // Center the settings window on the same display as the originating workspace window
+                display_id: target_display_id,
+                window_bounds: Some(window_bounds),
                 ..Default::default()
             },
             |window, cx| {

@@ -15,6 +15,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+pub mod window_utils;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
