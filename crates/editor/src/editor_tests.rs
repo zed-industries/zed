@@ -29497,6 +29497,156 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
     cx.assert_editor_state(after);
 }
 
+async fn test_newline_markdown_lists(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    cx.set_state(indoc! {"
+        - Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - Item 1
+        - ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        * Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        * Item 1
+        * ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        + Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        + Item 1
+        + ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        1. Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        1. Item 1
+        2. ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        5. Item 5ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        5. Item 5
+        6. ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - [ ] Unchecked taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - [ ] Unchecked task
+        - [ ] ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - [x] Checked taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - [x] Checked task
+        - [ ] ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        1. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ
+    "});
+
+    cx.set_state(indoc! {"
+          - Indented itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+          - Indented item
+          - ˇ
+    "});
+
+    cx.set_state(indoc! {"
+          1. Indented ordered itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+          1. Indented ordered item
+          2. ˇ
+    "});
+
+    update_test_language_settings(cx.cx, |settings| {
+        settings.defaults.extend_list_on_newline = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx.cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Markdown".into(),
+                    ..LanguageConfig::default()
+                },
+                None,
+            ))),
+            cx,
+        )
+    });
+
+    cx.set_state(indoc! {"
+        - Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - Item 1
+        ˇ
+    "});
+}
+
 #[gpui::test]
 async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

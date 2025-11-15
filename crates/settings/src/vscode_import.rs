@@ -430,6 +430,7 @@ impl VsCodeSettings {
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
             extend_comment_on_newline: None,
+            extend_list_on_newline: None,
             format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
                 if b {
                     FormatOnSave::On
