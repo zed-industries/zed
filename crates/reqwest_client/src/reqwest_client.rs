@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
-use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
+use std::{borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -213,10 +213,6 @@ fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     fn user_agent(&self) -> Option<&HeaderValue> {
