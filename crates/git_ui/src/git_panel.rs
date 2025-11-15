@@ -50,6 +50,7 @@ use panel::{
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
+    project_settings::{GitPathStyle, ProjectSettings},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -3955,6 +3956,7 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let path_style = self.project.read(cx).path_style(cx);
+        let git_path_style = ProjectSettings::get_global(cx).git.path_style;
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
@@ -4054,7 +4056,13 @@ impl GitPanel {
         } else {
             cx.theme().colors().ghost_element_active
         };
-
+        let name_label =
+            |status: FileStatus, label_color: Color, this: Div, label: String| -> Div {
+                this.child(
+                    self.entry_label(label, label_color)
+                        .when(status.is_deleted(), |this| this.strikethrough()),
+                )
+            };
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -4153,19 +4161,27 @@ impl GitPanel {
                     .items_center()
                     .flex_1()
                     // .overflow_hidden()
-                    .child(
-                        self.entry_label(format!("{display_name} "), label_color)
-                            .when(status.is_deleted(), |this| this.strikethrough()),
-                    )
+                    .when(git_path_style == GitPathStyle::FileNameFirst, |this| {
+                        name_label(status, label_color, this, format!("{display_name} "))
+                    })
                     .when_some(entry.parent_dir(path_style), |this, parent| {
                         if !parent.is_empty() {
                             this.child(
-                                self.entry_label(parent, path_color)
-                                    .when(status.is_deleted(), |this| this.strikethrough()),
+                                self.entry_label(
+                                    match git_path_style {
+                                        GitPathStyle::FilePathFirst => parent,
+                                        _ => format!("{parent}{}", path_style.separator()),
+                                    },
+                                    path_color,
+                                )
+                                .when(status.is_deleted(), |this| this.strikethrough()),
                             )
                         } else {
                             this
                         }
+                    })
+                    .when(git_path_style == GitPathStyle::FilePathFirst, |this| {
+                        name_label(status, label_color, this, display_name)
                     }),
             )
             .into_any_element()
