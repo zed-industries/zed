@@ -19,6 +19,7 @@ use gpui::{
     Render, SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions,
     anchored, canvas, deferred, div, fill, list, point, prelude::*, px,
 };
+use livekit_client::screen_capture_sources;
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
@@ -152,10 +153,8 @@ pub fn init(cx: &mut App) {
                         if room.is_sharing_screen() {
                             room.unshare_screen(true, cx).ok();
                         } else {
-                            let sources = cx.screen_capture_sources();
-
+                            let sources = screen_capture_sources();
                             cx.spawn(async move |room, cx| {
-                                let sources = sources.await??;
                                 let first = sources.into_iter().next();
                                 if let Some(first) = first {
                                     room.update(cx, |room, cx| room.share_screen(first, cx))?

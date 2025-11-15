@@ -1459,16 +1459,6 @@ impl LinuxClient for X11Client {
         true
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
-    {
-        crate::platform::scap_screen_capture::scap_screen_sources(
-            &self.0.borrow().common.foreground_executor,
-        )
-    }
-
     fn open_window(
         &self,
         handle: AnyWindowHandle,

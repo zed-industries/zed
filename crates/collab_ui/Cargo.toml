@@ -41,6 +41,7 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
+livekit_client.workspace = true
 menu.workspace = true
 notifications.workspace = true
 picker.workspace = true
