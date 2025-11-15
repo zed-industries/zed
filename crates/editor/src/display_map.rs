@@ -2120,7 +2120,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         cx.update(|cx| {
             init_test(cx, |s| {
@@ -2226,7 +2226,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         cx.update(|cx| init_test(cx, |_| {}));
 
@@ -2559,7 +2559,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         cx.update(|cx| init_test(cx, |_| {}));
 
@@ -2646,7 +2646,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»«:» B = "c «d»""#, false);
 

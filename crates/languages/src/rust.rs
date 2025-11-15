@@ -1176,7 +1176,7 @@ mod tests {
             ("property", Hsla::default()),
         ]);
 
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
@@ -1410,7 +1410,7 @@ mod tests {
             ("property", Hsla::default()),
         ]);
 
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();

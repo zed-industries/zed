@@ -29,7 +29,7 @@ use std::{
 };
 use sum_tree::Bias;
 use text::{Point, Rope};
-use theme::Theme;
+use theme::{SyntaxTheme, Theme};
 use unicase::UniCase;
 use util::{ResultExt, maybe, post_inc};
 
@@ -622,9 +622,12 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            // Get the syntax_highlight setting for this language
             let settings = crate::language_settings::language_settings(Some(language.name()), None, cx);
-            language.set_theme(theme.syntax(), settings.syntax_highlight);
+            if settings.syntax_highlight {
+                language.set_theme(theme.syntax());
+            } else {
+                language.set_theme(&SyntaxTheme::default());
+            }
         }
     }
 
@@ -1195,9 +1198,7 @@ impl LanguageRegistryState {
 
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
-            // Use true as default for syntax_highlight during initial language addition
-            // The setting will be properly applied when set_theme is called with context
-            language.set_theme(theme.syntax(), true);
+            language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
             language.name().0,

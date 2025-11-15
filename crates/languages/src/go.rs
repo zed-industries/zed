@@ -765,7 +765,7 @@ mod tests {
             ("number", Hsla::default()),
             ("property", Hsla::default()),
         ]);
-        language.set_theme(&theme, true);
+        language.set_theme(&theme);
 
         let grammar = language.grammar().unwrap();
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();

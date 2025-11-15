@@ -1992,16 +1992,10 @@ impl Language {
         c.is_whitespace() || self.config.autoclose_before.contains(c)
     }
 
-    pub fn set_theme(&self, theme: &SyntaxTheme, syntax_highlight: bool) {
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref()
             && let Some(highlights_config) = &grammar.highlights_config
         {
-            let theme = if syntax_highlight {
-                theme
-            } else {
-                &SyntaxTheme::default()
-            };
-
             *grammar.highlight_map.lock() =
                 HighlightMap::new(highlights_config.query.capture_names(), theme);
         }
