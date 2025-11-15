@@ -30,8 +30,8 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput,
+        RemoteOperationKind, RepoPath, ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -2035,7 +2035,7 @@ impl GitStore {
 
         let remotes = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.get_remotes(branch_name)
+                repository_handle.get_remotes(branch_name, RemoteOperationKind::Fetch)
             })?
             .await??;
 
@@ -4588,11 +4588,14 @@ impl Repository {
     pub fn get_remotes(
         &mut self,
         branch_name: Option<String>,
+        operation_kind: RemoteOperationKind,
     ) -> oneshot::Receiver<Result<Vec<Remote>>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => backend.get_remotes(branch_name).await,
+                RepositoryState::Local { backend, .. } => {
+                    backend.get_remotes(branch_name, operation_kind).await
+                }
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GetRemotes {
