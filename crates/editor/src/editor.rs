@@ -23592,21 +23592,24 @@ fn detect_markdown_list_continuation(
 
     let content_after_whitespace = &line_content[leading_whitespace.len()..];
 
-    if let Some(task_list_match) = content_after_whitespace
-        .strip_prefix("- [x] ")
-        .or_else(|| content_after_whitespace.strip_prefix("- [ ] "))
+    // Check for task lists first (before unordered lists) since they start with "- " too
+    // Match both "- [x] text" and "- [x]text" (with or without space after bracket)
+    if content_after_whitespace.starts_with("- [x]")
+        || content_after_whitespace.starts_with("- [ ]")
     {
-        let marker_len = if content_after_whitespace.starts_with("- [x] ") {
-            6
-        } else {
-            6
-        };
-        if task_list_match.trim().is_empty() {
+        let has_space_after_bracket = content_after_whitespace.starts_with("- [x] ")
+            || content_after_whitespace.starts_with("- [ ] ");
+
+        let marker_len = if has_space_after_bracket { 6 } else { 5 };
+        let content_after_marker = &content_after_whitespace[marker_len..];
+
+        if content_after_marker.trim().is_empty() {
             return Some((None, marker_len));
         }
         return Some((Some(format!("{}- [ ] ", leading_whitespace).into()), 0));
     }
 
+    // Check for unordered lists
     if let Some(rest) = content_after_whitespace
         .strip_prefix("- ")
         .or_else(|| content_after_whitespace.strip_prefix("* "))
