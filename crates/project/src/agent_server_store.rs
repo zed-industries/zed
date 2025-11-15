@@ -410,6 +410,16 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
+        self.external_agents.insert(
+            CURSOR_NAME.into(),
+            Box::new(LocalCursor {
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .cursor
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+            }),
+        );
         self.external_agents
             .extend(new_settings.custom.iter().map(|(name, settings)| {
                 (
@@ -477,7 +487,7 @@ impl AgentServerStore {
         // Set up the builtin agents here so they're immediately available in
         // remote projects--we know that the HeadlessProject on the other end
         // will have them.
-        let external_agents: [(ExternalAgentServerName, Box<dyn ExternalAgentServer>); 3] = [
+        let external_agents: [(ExternalAgentServerName, Box<dyn ExternalAgentServer>); 4] = [
             (
                 CLAUDE_CODE_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
@@ -504,6 +514,16 @@ impl AgentServerStore {
                     project_id,
                     upstream_client: upstream_client.clone(),
                     name: GEMINI_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            ),
+            (
+                CURSOR_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: CURSOR_NAME.into(),
                     status_tx: None,
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
@@ -1390,6 +1410,11 @@ struct LocalCustomAgent {
     command: AgentServerCommand,
 }
 
+struct LocalCursor {
+    project_environment: Entity<ProjectEnvironment>,
+    custom_command: Option<AgentServerCommand>,
+}
+
 impl ExternalAgentServer for LocalExtensionArchiveAgent {
     fn get_command(
         &mut self,
@@ -1588,6 +1613,63 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
     }
 }
 
+impl ExternalAgentServer for LocalCursor {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let custom_command = self.custom_command.clone();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+        let project_environment = self.project_environment.downgrade();
+
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
+                })?
+                .await
+                .unwrap_or_default();
+
+            let mut command = if let Some(mut custom_command) = custom_command {
+                env.extend(custom_command.env.unwrap_or_default());
+                custom_command.env = Some(env);
+                custom_command
+            } else {
+                // If no custom command is provided, return an error indicating the user needs to configure it
+                anyhow::bail!(
+                    "Cursor agent requires configuration. Please add the following to your settings.json:\n\
+                     {{\n\
+                     \x20 \"agent_servers\": {{\n\
+                     \x20\x20\x20 \"cursor\": {{\n\
+                     \x20\x20\x20\x20\x20 \"command\": \"/path/to/cursor-agent\",\n\
+                     \x20\x20\x20\x20\x20 \"args\": [\"--acp\"]\n\
+                     \x20\x20\x20 }}\n\
+                     \x20 }}\n\
+                     }}"
+                )
+            };
+
+            command.env.get_or_insert_default().extend(extra_env);
+            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
         &mut self,
@@ -1629,12 +1711,14 @@ impl ExternalAgentServer for LocalCustomAgent {
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
+pub const CURSOR_NAME: &'static str = "cursor";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
     pub codex: Option<BuiltinAgentServerSettings>,
+    pub cursor: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
@@ -1712,6 +1796,7 @@ impl settings::Settings for AllAgentServersSettings {
             gemini: agent_settings.gemini.map(Into::into),
             claude: agent_settings.claude.map(Into::into),
             codex: agent_settings.codex.map(Into::into),
+            cursor: agent_settings.cursor.map(Into::into),
             custom: agent_settings
                 .custom
                 .into_iter()
@@ -2044,5 +2129,69 @@ mod extension_agent_tests {
             !path.to_string_lossy().starts_with("~"),
             "Tilde should be expanded for custom agent path"
         );
+    }
+
+    #[test]
+    fn test_cursor_agent_in_builtin_agents() {
+        // Verify that cursor agent name constant is defined
+        assert_eq!(CURSOR_NAME, "cursor");
+    }
+
+    #[gpui::test]
+    async fn test_cursor_agent_requires_configuration(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment = cx.new(|cx| {
+            crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+        });
+
+        let mut agent = LocalCursor {
+            project_environment,
+            custom_command: None,
+        };
+
+        // Attempt to get command without configuration should fail with helpful error
+        let result = agent
+            .get_command(None, HashMap::default(), None, None, &mut cx.to_async())
+            .await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Cursor agent requires configuration"),
+            "Error should indicate configuration is needed. Got: {}",
+            err_msg
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_agent_with_custom_command(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+        let project_environment = cx.new(|cx| {
+            crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+        });
+
+        let custom_command = AgentServerCommand {
+            path: PathBuf::from("/usr/local/bin/cursor-agent"),
+            args: vec!["--acp".to_string()],
+            env: Some(HashMap::from([("DEBUG".to_string(), "1".to_string())])),
+        };
+
+        let mut agent = LocalCursor {
+            project_environment,
+            custom_command: Some(custom_command.clone()),
+        };
+
+        // Get command should succeed with custom configuration
+        let result = agent
+            .get_command(None, HashMap::default(), None, None, &mut cx.to_async())
+            .await;
+
+        assert!(result.is_ok());
+        let (command, _root_dir, _login) = result.unwrap();
+        assert_eq!(command.path, PathBuf::from("/usr/local/bin/cursor-agent"));
+        assert_eq!(command.args, vec!["--acp"]);
+        assert!(command.env.is_some());
     }
 }
