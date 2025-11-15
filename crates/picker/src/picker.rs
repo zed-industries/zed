@@ -86,6 +86,10 @@ pub enum PickerEditorPosition {
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
 
+    fn use_modal_editing(&self) -> bool {
+        false
+    }
+
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -254,6 +258,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn uniform_list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::editor(
+            delegate.use_modal_editing(),
             delegate.placeholder_text(window, cx),
             Self::on_input_editor_event,
             window,
@@ -289,6 +294,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::editor(
+            delegate.use_modal_editing(),
             delegate.placeholder_text(window, cx),
             Self::on_input_editor_event,
             window,
