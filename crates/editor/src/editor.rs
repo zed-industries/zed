@@ -163,6 +163,7 @@ use project::{
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
+use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
@@ -4842,10 +4843,12 @@ impl Editor {
                                 return None;
                             }
 
-                            let language_name = language_scope
+                            let language_name =
+                                language_scope.as_ref().map(|scope| scope.language_name());
+                            if !language_name
                                 .as_ref()
-                                .and_then(|scope| scope.language_name());
-                            if language_name != Some("Markdown") {
+                                .is_some_and(|name| name.as_ref() == "Markdown")
+                            {
                                 return None;
                             }
 
@@ -23577,10 +23580,10 @@ impl NewlineFormatting {
 fn detect_markdown_list_continuation(
     buffer: &MultiBufferSnapshot,
     cursor_position: Point,
-) -> Option<(Option<String>, usize)> {
+) -> Option<(Option<Arc<str>>, usize)> {
     let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(cursor_position.row))?;
 
-    let line_content: String = snapshot.chars_for_range(range.clone()).collect();
+    let line_content: String = snapshot.chars_for_range(range).collect();
 
     let leading_whitespace: String = line_content
         .chars()
@@ -23601,7 +23604,7 @@ fn detect_markdown_list_continuation(
         if task_list_match.trim().is_empty() {
             return Some((None, marker_len));
         }
-        return Some((Some(format!("{}- [ ] ", leading_whitespace)), 0));
+        return Some((Some(format!("{}- [ ] ", leading_whitespace).into()), 0));
     }
 
     if let Some(rest) = content_after_whitespace
@@ -23613,10 +23616,10 @@ fn detect_markdown_list_continuation(
             return Some((None, 2));
         }
         let marker = content_after_whitespace.chars().next()?;
-        return Some((Some(format!("{}{} ", leading_whitespace, marker)), 0));
+        return Some((Some(format!("{}{} ", leading_whitespace, marker).into()), 0));
     }
 
-    let ordered_list_regex = regex::Regex::new(r"^(\d+)\.\s+(.*)").ok()?;
+    let ordered_list_regex = Regex::new(r"^(\d+)\.\s+(.*)").ok()?;
     if let Some(captures) = ordered_list_regex.captures(content_after_whitespace) {
         let content_after_marker = captures.get(2)?.as_str();
         let marker_text = captures.get(0)?.as_str();
@@ -23625,7 +23628,10 @@ fn detect_markdown_list_continuation(
             return Some((None, marker_len));
         }
         let number: u32 = captures.get(1)?.as_str().parse().ok()?;
-        return Some((Some(format!("{}{}. ", leading_whitespace, number + 1)), 0));
+        return Some((
+            Some(format!("{}{}. ", leading_whitespace, number + 1).into()),
+            0,
+        ));
     }
 
     None

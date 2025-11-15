@@ -29619,11 +29619,11 @@ async fn test_newline_markdown_lists(cx: &mut TestAppContext) {
           2. ˇ
     "});
 
-    update_test_language_settings(cx.cx, |settings| {
+    update_test_language_settings(&mut cx.cx, |settings| {
         settings.defaults.extend_list_on_newline = Some(false);
     });
 
-    let mut cx = EditorTestContext::new(cx.cx).await;
+    let mut cx = EditorTestContext::new(&mut cx.cx).await;
     cx.update_buffer(|buffer, cx| {
         buffer.set_language(
             Some(Arc::new(Language::new(
