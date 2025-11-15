@@ -3,15 +3,16 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, PaintShader, Path, Point,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
     get_gamma_correction_ratios,
 };
-use blade_graphics as gpu;
+use blade_graphics::{self as gpu, ShaderData};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
@@ -100,6 +101,12 @@ struct ShaderPolySpritesData {
 }
 
 #[derive(blade_macros::ShaderData)]
+struct ShaderCustomPipelineData {
+    globals: GlobalParams,
+    b_shaders: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
 struct ShaderSurfacesData {
     globals: GlobalParams,
     surface_locals: SurfaceParams,
@@ -132,6 +139,7 @@ struct BladePipelines {
     mono_sprites: gpu::RenderPipeline,
     poly_sprites: gpu::RenderPipeline,
     surfaces: gpu::RenderPipeline,
+    custom: HashMap<String, gpu::RenderPipeline>,
 }
 
 impl BladePipelines {
@@ -301,7 +309,117 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
+            custom: HashMap::new(),
         }
+    }
+
+    fn get_custom(
+        &mut self,
+        gpu: &gpu::Context,
+        surface_info: gpu::SurfaceInfo,
+        source: String,
+    ) -> &gpu::RenderPipeline {
+        // Just hardcode for now
+        self.custom.entry(source).or_insert_with(|| {
+            let source = r#"
+            struct GlobalParams {
+                viewport_size: vec2<f32>,
+                premultiplied_alpha: u32,
+                pad: u32,
+            }
+
+            var<uniform> globals: GlobalParams;
+
+            fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
+                let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
+                return vec4<f32>(device_position, 0.0, 1.0);
+            }
+
+            fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
+                let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+                return to_device_position_impl(position);
+            }
+
+            fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {
+                let tl = position - clip_bounds.origin;
+                let br = clip_bounds.origin + clip_bounds.size - position;
+                return vec4<f32>(tl.x, br.x, tl.y, br.y);
+            }
+
+            fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {
+                let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+                return distance_from_clip_rect_impl(position, clip_bounds);
+            }
+
+            struct Bounds {
+                origin: vec2<f32>,
+                size: vec2<f32>,
+            }
+
+            struct PaintShader {
+                order: u32,
+                pad: u32,
+                bounds: Bounds,
+                content_mask: Bounds,
+            }
+            var<storage, read> b_shaders: array<PaintShader>;
+
+            struct PaintShaderVarying {
+                @builtin(position) position: vec4<f32>,
+                @location(0) clip_distances: vec4<f32>,
+            }
+
+            @vertex
+            fn vs_custom(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PaintShaderVarying {
+                let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+                let view = b_shaders[instance_id];
+
+                var out = PaintShaderVarying();
+                out.position = to_device_position(unit_vertex, view.bounds);
+                out.clip_distances = distance_from_clip_rect(unit_vertex, view.bounds, view.content_mask);
+                return out;
+            }
+
+            @fragment
+            fn fs_custom(input: PaintShaderVarying) -> @location(0) vec4<f32> {
+                if (any(input.clip_distances < vec4<f32>(0.0))) {
+                    return vec4<f32>(0.0);
+                }
+
+                return vec4<f32>(input.position.x / globals.viewport_size.x, input.position.y / globals.viewport_size.y, 0.0, 1.0);
+            }
+            "#;
+
+            let shader = gpu.try_create_shader(gpu::ShaderDesc { source }).unwrap();
+            shader.check_struct_size::<GlobalParams>();
+            shader.check_struct_size::<PaintShader>();
+
+            let blend_mode = match surface_info.alpha {
+                gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
+                gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
+            };
+            let color_targets = &[gpu::ColorTargetState {
+                format: surface_info.format,
+                blend: Some(blend_mode),
+                write_mask: gpu::ColorWrites::default(),
+            }];
+
+                gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                    name: "custom0",
+                    data_layouts: &[&ShaderCustomPipelineData::layout()],
+                    vertex: shader.at("vs_custom"),
+                    vertex_fetches: &[],
+                    primitive: gpu::PrimitiveState {
+                        topology: gpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    fragment: Some(shader.at("fs_custom")),
+                    color_targets,
+                    multisample_state: gpu::MultisampleState::default(),
+                })
+        })
     }
 
     fn destroy(&mut self, gpu: &gpu::Context) {
@@ -313,6 +431,10 @@ impl BladePipelines {
         gpu.destroy_render_pipeline(&mut self.mono_sprites);
         gpu.destroy_render_pipeline(&mut self.poly_sprites);
         gpu.destroy_render_pipeline(&mut self.surfaces);
+
+        for pipeline in self.custom.values_mut() {
+            gpu.destroy_render_pipeline(pipeline);
+        }
     }
 }
 
@@ -813,6 +935,24 @@ impl BladeRenderer {
                         },
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
+                }
+                PrimitiveBatch::Shaders(shaders) => {
+                    assert_eq!(shaders.len(), 1);
+
+                    let pipeline =
+                        self.pipelines
+                            .get_custom(&self.gpu, self.surface.info(), String::new());
+                    let instance_buf =
+                        unsafe { self.instance_belt.alloc_typed(shaders, &self.gpu) };
+                    let mut encoder = pass.with(pipeline);
+                    encoder.bind(
+                        0,
+                        &ShaderCustomPipelineData {
+                            globals,
+                            b_shaders: instance_buf,
+                        },
+                    );
+                    encoder.draw(0, 4, 0, shaders.len() as u32);
                 }
                 PrimitiveBatch::Surfaces(surfaces) => {
                     let mut _encoder = pass.with(&self.pipelines.surfaces);
