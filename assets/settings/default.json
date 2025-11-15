@@ -1622,7 +1622,8 @@
   // If you don't want any of these extensions, add this field to your settings
   // and change the value to `false`.
   "auto_install_extensions": {
-    "html": true
+    "html": true,
+    "emmet": true
   },
   // The capabilities granted to extensions.
   //
