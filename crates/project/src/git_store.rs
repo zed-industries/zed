@@ -4592,7 +4592,7 @@ impl Repository {
     pub fn create_remote(
         &mut self,
         remote_name: String,
-        remote_url: Url,
+        remote_url: String,
     ) -> oneshot::Receiver<Result<()>> {
         self.send_job(
             Some(format!("git remote add {remote_name} {remote_url}").into()),

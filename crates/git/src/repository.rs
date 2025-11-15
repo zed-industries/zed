@@ -7,7 +7,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
-use git2::BranchType;
+use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
@@ -563,7 +563,7 @@ pub trait GitRepository: Send + Sync {
 
     fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>>;
 
-    fn create_remote(&self, name: String, url: Url) -> BoxFuture<'_, Result<()>>;
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>>;
 
     fn remote(&self) -> BoxFuture<'_, Result<Option<Remote>>>;
 
@@ -1339,15 +1339,28 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
+        dbg!(&name);
         let branch = self.executor.spawn(async move {
             let repo = repo.lock();
             let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
                 branch
             } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
+
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                dbg!(&branch_name);
+                let mut branch = match repo.branch(&branch_name, &branch_commit, false) {
+                    Ok(branch) => branch,
+                    Err(err) if err.code() == ErrorCode::Exists => {
+                        repo.find_branch(&branch_name, BranchType::Local)?
+                    }
+                    Err(err) => {
+                        return Err(err.into());
+                    }
+                };
+                dbg!(&name);
+
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
@@ -1363,7 +1376,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let branch = branch.await?;
-
+                dbg!(&branch);
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["checkout", &branch])
                     .await?;
@@ -1892,7 +1905,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn create_remote(&self, name: String, url: Url) -> BoxFuture<'_, Result<()>> {
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
         self.executor
             .spawn(async move {

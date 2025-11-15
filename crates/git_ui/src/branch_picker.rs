@@ -3,6 +3,7 @@ use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
 use git::repository::Branch;
+use gpui::http_client::{Uri, Url};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
@@ -204,6 +205,7 @@ impl Render for BranchList {
 struct BranchEntry {
     branch: Branch,
     positions: Vec<usize>,
+    is_url: bool,
     is_new: bool,
 }
 
@@ -255,6 +257,30 @@ impl BranchListDelegate {
             Ok(())
         })
         .detach_and_prompt_err("Failed to create branch", window, cx, |e, _, _| {
+            Some(e.to_string())
+        });
+        cx.emit(DismissEvent);
+    }
+
+    fn create_remote(
+        &self,
+        remote_url: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let new_remote_name = "TODO".to_string();
+        cx.spawn(async move |_, cx| {
+            repo.update(cx, |repo, _| {
+                repo.create_remote(new_remote_name, remote_url.to_string())
+            })?
+            .await??;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to create remote", window, cx, |e, _, _| {
             Some(e.to_string())
         });
         cx.emit(DismissEvent);
@@ -323,6 +349,7 @@ impl PickerDelegate for BranchListDelegate {
                     .map(|branch| BranchEntry {
                         branch,
                         positions: Vec::new(),
+                        is_url: false,
                         is_new: false,
                     })
                     .collect()
@@ -356,6 +383,7 @@ impl PickerDelegate for BranchListDelegate {
                 .map(|candidate| BranchEntry {
                     branch: branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,
+                    is_url: false,
                     is_new: false,
                 })
                 .collect()
@@ -368,18 +396,25 @@ impl PickerDelegate for BranchListDelegate {
                             .is_some_and(|entry| entry.branch.name() == query)
                     {
                         let query = query.replace(' ', "-");
+                        let is_url = query.trim_start_matches("git@").parse::<Url>().is_ok();
+                        let ref_name = if is_url {
+                            query.into()
+                        } else {
+                            if display_remotes {
+                                format!("refs/heads/{query}").into()
+                            } else {
+                                format!("refs/remotes/{query}").into()
+                            }
+                        };
                         matches.push(BranchEntry {
                             branch: Branch {
-                                ref_name: if display_remotes {
-                                    format!("refs/heads/{query}").into()
-                                } else {
-                                    format!("refs/remotes/{query}").into()
-                                },
+                                ref_name,
                                 is_head: false,
                                 upstream: None,
                                 most_recent_commit: None,
                             },
                             positions: Vec::new(),
+                            is_url,
                             is_new: true,
                         })
                     }
@@ -402,17 +437,22 @@ impl PickerDelegate for BranchListDelegate {
             return;
         };
         if entry.is_new {
-            let from_branch = if secondary {
-                self.default_branch.clone()
+            if entry.is_url {
+                self.create_remote(entry.branch.ref_name.clone(), window, cx);
             } else {
-                None
-            };
-            self.create_branch(
-                from_branch,
-                entry.branch.name().to_owned().into(),
-                window,
-                cx,
-            );
+                let from_branch = if secondary {
+                    self.default_branch.clone()
+                } else {
+                    None
+                };
+                self.create_branch(
+                    from_branch,
+                    entry.branch.name().to_owned().into(),
+                    window,
+                    cx,
+                );
+            }
+
             return;
         }
 
@@ -501,7 +541,17 @@ impl PickerDelegate for BranchListDelegate {
             None
         };
 
+        let icon_elt = if self.display_remotes {
+            Icon::new(IconName::Screen)
+        } else {
+            Icon::new(IconName::GitBranchAlt)
+        };
         let branch_name = if entry.is_new {
+            let label = if entry.is_url {
+                "Create remote repository".to_string()
+            } else {
+                format!("Create branch \"{}\"…", entry.branch.name())
+            };
             h_flex()
                 .gap_1()
                 .child(
@@ -509,15 +559,12 @@ impl PickerDelegate for BranchListDelegate {
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 )
-                .child(
-                    Label::new(format!("Create branch \"{}\"…", entry.branch.name()))
-                        .single_line()
-                        .truncate(),
-                )
+                .child(Label::new(label).single_line().truncate())
                 .into_any_element()
         } else {
             h_flex()
                 .max_w_48()
+                .child(h_flex().mr_1().child(icon_elt))
                 .child(
                     HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
                         .truncate(),
@@ -533,7 +580,11 @@ impl PickerDelegate for BranchListDelegate {
                 .tooltip({
                     let branch_name = entry.branch.name().to_string();
                     if entry.is_new {
-                        Tooltip::text(format!("Create branch \"{}\"", branch_name))
+                        if entry.is_url {
+                            Tooltip::text("Create remote repository".to_string())
+                        } else {
+                            Tooltip::text(format!("Create branch \"{}\"", branch_name))
+                        }
                     } else {
                         Tooltip::text(branch_name)
                     }
@@ -560,14 +611,18 @@ impl PickerDelegate for BranchListDelegate {
                         .when(self.style == BranchListStyle::Modal, |el| {
                             el.child(div().max_w_96().child({
                                 let message = if entry.is_new {
-                                    if let Some(current_branch) =
-                                        self.repo.as_ref().and_then(|repo| {
-                                            repo.read(cx).branch.as_ref().map(|b| b.name())
-                                        })
-                                    {
-                                        format!("based off {}", current_branch)
+                                    if entry.is_url {
+                                        format!("based off {}", entry.branch.ref_name)
                                     } else {
-                                        "based off the current branch".to_string()
+                                        if let Some(current_branch) =
+                                            self.repo.as_ref().and_then(|repo| {
+                                                repo.read(cx).branch.as_ref().map(|b| b.name())
+                                            })
+                                        {
+                                            format!("based off {}", current_branch)
+                                        } else {
+                                            "based off the current branch".to_string()
+                                        }
                                     }
                                 } else {
                                     let show_author_name = ProjectSettings::get_global(cx)
@@ -591,6 +646,28 @@ impl PickerDelegate for BranchListDelegate {
                         }),
                 )
                 .end_slot::<IconButton>(icon),
+        )
+    }
+
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let label = if self.display_remotes {
+            "Remote"
+        } else {
+            "Local"
+        };
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                .into_any(),
         )
     }
 
