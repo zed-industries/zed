@@ -56,6 +56,7 @@ pub struct PromptMetadata {
 pub enum PromptId {
     User { uuid: UserPromptId },
     EditWorkflow,
+    CommitMessage,
 }
 
 impl PromptId {
@@ -95,6 +96,7 @@ impl std::fmt::Display for PromptId {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
             PromptId::EditWorkflow => write!(f, "Edit workflow"),
+            PromptId::CommitMessage => write!(f, "Git Commit Prompt"),
         }
     }
 }
@@ -180,6 +182,32 @@ impl PromptStore {
             // a slash command instead.
             metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
             bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
+
+            // Initialize or update CommitMessage prompt
+            // Only update content if it doesn't exist, but always ensure correct title
+            const DEFAULT_COMMIT_PROMPT: &str =
+                include_str!("../../git_ui/src/commit_message_prompt.txt");
+
+            // Check if CommitMessage already exists and update metadata
+            let existing_metadata: Option<PromptMetadata> =
+                metadata.get(&txn, &PromptId::CommitMessage)?;
+            let (default_flag, saved_at) = match existing_metadata {
+                Some(metadata) => (metadata.default, metadata.saved_at),
+                None => (true, Utc::now()),
+            };
+            let commit_metadata = PromptMetadata {
+                id: PromptId::CommitMessage,
+                title: Some("Git Commit Prompt".into()),
+                default: default_flag,
+                saved_at,
+            };
+            metadata.put(&mut txn, &PromptId::CommitMessage, &commit_metadata)?;
+
+            // Check if body exists and set default if needed
+            let existing_body = bodies.get(&txn, &PromptId::CommitMessage)?;
+            if existing_body.is_none() {
+                bodies.put(&mut txn, &PromptId::CommitMessage, DEFAULT_COMMIT_PROMPT)?;
+            }
 
             txn.commit()?;
 
@@ -387,9 +415,16 @@ impl PromptStore {
         body: Rope,
         cx: &Context<Self>,
     ) -> Task<Result<()>> {
-        if id.is_built_in() {
+        // Allow CommitMessage to be saved (editable built-in), but not EditWorkflow
+        if id.is_built_in() && id != PromptId::CommitMessage {
             return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
         }
+
+        let title = if id == PromptId::CommitMessage {
+            Some(SharedString::from("Git Commit Prompt"))
+        } else {
+            title
+        };
 
         let prompt_metadata = PromptMetadata {
             id,
@@ -469,3 +504,6 @@ impl PromptStore {
 pub struct GlobalPromptStore(Shared<Task<Result<Entity<PromptStore>, Arc<anyhow::Error>>>>);
 
 impl Global for GlobalPromptStore {}
+
+#[cfg(test)]
+mod git_commit_prompt_tests;

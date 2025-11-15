@@ -68,6 +68,7 @@ use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use cloud_llm_client::CompletionIntent;
+use prompt_store::{PromptId, PromptStore};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -1879,17 +1880,50 @@ impl GitPanel {
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+                // Load custom prompt from PromptStore only if marked as default/active
+                let prompt_text = match cx.update(|cx| PromptStore::global(cx)) {
+                    Ok(prompt_store_future) => {
+                        match prompt_store_future.await {
+                            Ok(prompt_store) => {
+                                // Check if custom prompt is marked as default
+                                let is_default = cx.update(|cx| {
+                                    prompt_store.read(cx).metadata(PromptId::CommitMessage)
+                                        .map(|m| m.default)
+                                        .unwrap_or(false)
+                                });
+
+                                match is_default {
+                                    Ok(true) => {
+                                        // Load custom prompt when marked as default
+                                        match prompt_store.update(cx, |store, cx| store.load(PromptId::CommitMessage, cx)) {
+                                            Ok(load_future) => {
+                                                load_future.await.unwrap_or_else(|_| DEFAULT_PROMPT.to_string())
+                                            }
+                                            Err(_) => DEFAULT_PROMPT.to_string(),
+                                        }
+                                    }
+                                    _ => {
+                                        // Use default prompt when custom is not active or error
+                                        DEFAULT_PROMPT.to_string()
+                                    }
+                                }
+                            }
+                            Err(_) => DEFAULT_PROMPT.to_string(),
+                        }
+                    }
+                    Err(_) => DEFAULT_PROMPT.to_string(),
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
-
+                let content = if text_empty {
+                    format!("{prompt_text}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{prompt_text}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
                 let request = LanguageModelRequest {
                     thread_id: None,
-                    prompt_id: None,
+                    prompt_id: Some(PromptId::CommitMessage.to_string()),
                     intent: Some(CompletionIntent::GenerateGitCommitMessage),
                     mode: None,
                     messages: vec![LanguageModelRequestMessage {
