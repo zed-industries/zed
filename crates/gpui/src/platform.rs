@@ -36,7 +36,7 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, CustomShader,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
@@ -502,6 +502,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn register_shader(&self, shader: &CustomShader) -> Result<CustomShaderId, &'static str>;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -904,6 +905,10 @@ impl From<TileId> for etagere::AllocId {
         Self::deserialize(id.0)
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(C)]
+pub(crate) struct CustomShaderId(pub(crate) u32);
 
 pub(crate) struct PlatformInputHandler {
     cx: AsyncWindowContext,

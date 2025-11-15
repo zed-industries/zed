@@ -3,7 +3,7 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    Context, Corners, CursorStyle, CustomShader, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
@@ -3270,21 +3270,27 @@ impl Window {
     /// Paint a custom shader
     ///
     /// This method should only be called as a part of the paint phase of element drawing.
-    pub fn paint_shader(&mut self, bounds: Bounds<Pixels>) {
+    pub fn paint_shader(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        shader: &CustomShader,
+    ) -> Result<(), &'static str> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
+        let shader_id = self.platform_window.register_shader(shader)?;
 
         self.next_frame.scene.insert_primitive(PaintShader {
             order: 0,
+            shader_id,
             bounds: bounds
                 .map_origin(|origin| origin.floor())
                 .map_size(|size| size.ceil()),
             content_mask,
-            pad: 0,
         });
+        Ok(())
     }
 
     /// Paint a surface into the scene for the next frame at the current z-index.

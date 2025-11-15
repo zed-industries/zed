@@ -268,6 +268,13 @@ impl PlatformWindow for TestWindow {
 
     fn draw(&self, _scene: &crate::Scene) {}
 
+    fn register_shader(
+        &self,
+        _shader: &crate::CustomShader,
+    ) -> Result<crate::CustomShaderId, &'static str> {
+        unimplemented!()
+    }
+
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
     }

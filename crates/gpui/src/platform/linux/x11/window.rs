@@ -3,11 +3,12 @@ use x11rb::connection::RequestConnection;
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
-    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px, size,
+    AnyWindowHandle, Bounds, CustomShader, CustomShaderId, Decorations, DevicePixels,
+    ForegroundExecutor, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams,
+    X11ClientStatePtr, px, size,
 };
 
 use blade_graphics as gpu;
@@ -1473,6 +1474,11 @@ impl PlatformWindow for X11Window {
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
         inner.renderer.draw(scene);
+    }
+
+    fn register_shader(&self, shader: &CustomShader) -> Result<CustomShaderId, &'static str> {
+        let mut inner = self.0.state.borrow_mut();
+        inner.renderer.register_custom_shader(shader)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
