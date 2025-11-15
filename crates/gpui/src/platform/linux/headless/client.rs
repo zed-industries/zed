@@ -116,6 +116,9 @@ impl LinuxClient for HeadlessClient {
 
     fn write_to_clipboard(&self, _item: crate::ClipboardItem) {}
 
+    #[cfg(feature = "x11")]
+    fn write_file_to_clipboard(&self, _item: Vec<crate::ClipboardItem>) {}
+
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         None
     }
