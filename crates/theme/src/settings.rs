@@ -199,6 +199,12 @@ pub struct AgentFontSize(Pixels);
 impl Global for AgentFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
+///
+/// If a user sets their "theme" setting to a single name (for example, `"theme": "One Dark"`), then
+/// the selection is `Static`.
+///
+/// By default, the settings are set to `Dynamic` with `"mode": "system"`, `"light": "One Light"`,
+/// and `"dark": "One Dark"`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ThemeSelection {
