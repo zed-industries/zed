@@ -11800,7 +11800,7 @@ mod tests {
 
         window
             .update(cx, |editor, window, cx| {
-                editor.cursor_shape = CursorShape::Block;
+                editor.cursor_offset_on_selection = true;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),
