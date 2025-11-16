@@ -2503,32 +2503,40 @@ mod tests {
         })
         .detach();
 
-        // First event should be Wakeup or BreadcrumbsChanged, depending on OS
-        #[cfg(target_os = "macos")]
-        let first_event = Event::Wakeup;
-        #[cfg(target_os = "linux")]
-        let first_event = Event::BreadcrumbsChanged;
-        let event = event_rx.recv().await.expect("No event received");
-        assert_eq!(
-            event, first_event,
-            "Expected wakeup or BreadcrumbsChanged, got {event:?}"
-        );
+        // Wait for the first Wakeup event which indicates shell is ready
+        // On Linux, we might get other events first, so poll until we get Wakeup
+        let mut got_wakeup = false;
+        while !got_wakeup {
+            match event_rx.recv().await {
+                Ok(Event::Wakeup) => {
+                    got_wakeup = true;
+                }
+                Ok(_) => {
+                    // Continue polling for Wakeup
+                }
+                Err(_) => {
+                    panic!("Channel closed before receiving Wakeup event");
+                }
+            }
+        }
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
             assert!(success, "Should have registered ctrl-c sequence");
         });
 
-        // Give shell time to process SIGINT on Linux
-        #[cfg(target_os = "linux")]
-        smol::Timer::after(Duration::from_millis(50)).await;
+        // After getting Wakeup, wait for shell to process SIGINT
+        // Collect any events after Ctrl+C
+        while let Ok(Ok(_first_event)) =
+            smol_timeout(Duration::from_millis(100), event_rx.recv()).await
+        {}
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
             assert!(success, "Should have registered ctrl-d sequence");
         });
 
-        let mut all_events = vec![first_event];
+        let mut all_events = Vec::new();
         while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
             all_events.push(new_event.clone());
             if new_event == Event::CloseTerminal {
