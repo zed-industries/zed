@@ -31,7 +31,7 @@ use git::{
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
         GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        ResetMode, UpstreamTrackingStatus, GitCommitTemplate, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -5335,6 +5335,16 @@ impl Repository {
 
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
+
+    pub fn load_commit_template_text(&mut self) -> oneshot::Receiver<Result<GitCommitTemplate>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local { backend, .. } => backend.load_commit_template().await,
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
+            }
+        })
+    }
+
     fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
         let rx = self.send_job(None, move |state, _| async move {

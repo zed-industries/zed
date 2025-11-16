@@ -587,6 +587,7 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<String>>;
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>>;
 }
 
 pub enum DiffType {
@@ -649,6 +650,11 @@ pub struct GitRepositoryCheckpoint {
 pub struct GitCommitter {
     pub name: Option<String>,
     pub email: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitCommitTemplate {
+    pub template: Option<String>,
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
@@ -980,6 +986,53 @@ impl GitRepository for RealGitRepository {
                 Ok(String::from_utf8(content)?)
             })
             .boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+
+        async move {
+            let working_directory = working_directory?;
+
+            let mut cmd = new_smol_command(git_binary_path);
+            cmd.current_dir(&working_directory)
+                .args(["config", "--get", "commit.template"])
+                .stdout(smol::process::Stdio::piped())
+                .stderr(smol::process::Stdio::piped());
+
+            let output = cmd
+                .output()
+                .await
+                .context("failed to run git config --get commit.template")?;
+
+            if !output.status.success() {
+                return Ok(GitCommitTemplate { template: None })
+            }
+
+            let raw = String::from_utf8_lossy(&output.stdout);
+            let raw = raw.trim(); // strip newline etc
+            if raw.is_empty() {
+                return Ok(GitCommitTemplate { template: None });
+            }
+
+            let mut path = PathBuf::from(raw);
+            if path.is_relative() {
+                path = working_directory.join(path);
+            }
+
+            let contents = match smol::fs::read_to_string(&path).await {
+                Ok(contents) => contents,
+                _ => {
+                    log::warn!("failed to read commit template {}", path.display());
+                    String::new()
+                }
+            };
+
+            let template = (!contents.trim().is_empty()).then_some(contents);
+            Ok(GitCommitTemplate { template })
+        }
+        .boxed()
     }
 
     fn set_index_text(

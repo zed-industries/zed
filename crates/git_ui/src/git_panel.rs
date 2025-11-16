@@ -22,7 +22,7 @@ use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
     PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
-    UpstreamTrackingStatus, get_git_committer,
+    UpstreamTrackingStatus, GitCommitTemplate, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::StageStatus;
@@ -371,6 +371,7 @@ pub struct GitPanel {
     show_placeholders: bool,
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
+    commit_template: Option<GitCommitTemplate>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
@@ -528,6 +529,7 @@ impl GitPanel {
                 show_placeholders: false,
                 local_committer: None,
                 local_committer_task: None,
+                commit_template: None,
                 context_menu: None,
                 workspace: workspace.weak_handle(),
                 modal_open: false,
@@ -2742,10 +2744,24 @@ impl GitPanel {
                 cx,
             )
         });
+        let load_template = self.load_commit_template(cx);
 
         cx.spawn_in(window, async move |git_panel, cx| {
             let buffer = load_buffer.await?;
+            let template = load_template.await?;
+            let template_text = template.template.clone().unwrap_or_default();
             git_panel.update_in(cx, |git_panel, window, cx| {
+                git_panel.commit_template = Some(template.clone());
+                if buffer.read(cx).text().trim().is_empty() {
+                    if !template_text.is_empty() {
+                        buffer.update(cx, |buffer, cx| {
+                            let start = buffer.anchor_before(0);
+                            let end = buffer.anchor_after(buffer.len());
+                            buffer.edit([(start..end, template_text)], None, cx);
+                        })
+                    }
+                }
+
                 if git_panel
                     .commit_editor
                     .read(cx)
@@ -4367,6 +4383,19 @@ impl GitPanel {
 
     fn has_write_access(&self, cx: &App) -> bool {
         !self.project.read(cx).is_read_only(cx)
+    }
+
+    pub fn load_commit_template(
+        &self,
+        cx: &mut Context<Self>
+    ) -> Task<anyhow::Result<GitCommitTemplate>> {
+        let Some(repo) = self.active_repository.clone() else {
+            return Task::ready(Err(anyhow::anyhow!("no active repo")));
+        };
+        repo.update(cx, |repo, cx| {
+            let rx = repo.load_commit_template_text();
+            cx.spawn(async move |_, _| rx.await?)
+        })
     }
 
     pub fn amend_pending(&self) -> bool {
