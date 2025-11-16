@@ -45,8 +45,9 @@ use project::{
 };
 use serde_json::{self, json};
 use settings::{
-    AllLanguageSettingsContent, EditorSettingsContent, IndentGuideBackgroundColoring,
-    IndentGuideColoring, ProjectSettingsContent, SearchSettingsContent,
+    AllLanguageSettingsContent, EditorSettingsContent, GoToTestContent,
+    IndentGuideBackgroundColoring, IndentGuideColoring, ProjectSettingsContent,
+    SearchSettingsContent,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -28071,4 +28072,204 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         Z
         3
         "});
+}
+
+#[gpui::test]
+async fn test_go_to_test(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_editor_settings(cx, |settings| {
+        settings.go_to_test = Some(GoToTestContent {
+            patterns: Some(
+                [("src/{}.rs".to_string(), "tests/{}_test.rs".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "src": {
+                "lib.rs": "",
+            },
+            "tests": {
+                "lib_test.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/lib.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let navigated = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.go_to_test(&GoToTest, window, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(navigated, Navigated::Yes);
+
+    // Verify we opened the test file
+    workspace.update(cx, |workspace, cx| {
+        let editor = workspace
+            .active_item(cx)
+            .unwrap()
+            .act_as::<Editor>(cx)
+            .unwrap();
+        let path = editor.read(cx).project_path(cx).unwrap().path;
+        assert_eq!(path.as_ref(), "tests/lib_test.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_go_to_test_no_match(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_editor_settings(cx, |settings| {
+        settings.go_to_test = Some(GoToTestContent {
+            patterns: Some(
+                [("src/{}.rs".to_string(), "tests/{}_test.rs".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "other.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("other.rs")), None, true, window, cx)
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let navigated = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.go_to_test(&GoToTest, window, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(navigated, Navigated::No);
+
+    // Verify we are still in the original file
+    workspace.update(cx, |workspace, cx| {
+        let editor = workspace
+            .active_item(cx)
+            .unwrap()
+            .act_as::<Editor>(cx)
+            .unwrap();
+        let path = editor.read(cx).project_path(cx).unwrap().path;
+        assert_eq!(path.as_ref(), "other.rs");
+    });
+}
+#[gpui::test]
+async fn test_go_to_test_create_new(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_editor_settings(cx, |settings| {
+        settings.go_to_test = Some(GoToTestContent {
+            patterns: Some(
+                [("src/{}.rs".to_string(), "tests/{}_test.rs".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "src": {
+                "lib.rs": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/lib.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let navigate_task = editor.update_in(cx, |editor, window, cx| {
+        editor.go_to_test(&GoToTest, window, cx)
+    });
+
+    cx.executor().run_until_parked();
+    cx.simulate_prompt_answer("Create");
+
+    let navigated = navigate_task.await.unwrap();
+
+    assert_eq!(navigated, Navigated::Yes);
+
+    // Verify we created and opened the new test file
+    workspace.update(cx, |workspace, cx| {
+        let editor = workspace
+            .active_item(cx)
+            .unwrap()
+            .act_as::<Editor>(cx)
+            .unwrap();
+        let path = editor.read(cx).project_path(cx).unwrap().path;
+        assert_eq!(path.as_ref(), "tests/lib_test.rs");
+    });
 }
