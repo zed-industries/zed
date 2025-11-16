@@ -19491,6 +19491,17 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn toggle_syntax_highlight(&mut self, _: &ToggleSyntaxHighlight, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let fs = workspace.read(cx).app_state().fs.clone();
+        let current_syntax_highlight = crate::language_settings::language_settings(None, None, cx).syntax_highlight;
+        update_settings_file(fs, cx, move |setting, _| {
+            setting.project.all_languages.defaults.highlight_syntax = Some(!current_syntax_highlight);
+        });
+    }
+
     pub fn toggle_tab_bar(&mut self, _: &ToggleTabBar, _: &mut Window, cx: &mut Context<Self>) {
         let Some(workspace) = self.workspace() else {
             return;

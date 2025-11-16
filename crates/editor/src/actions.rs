@@ -800,6 +800,8 @@ actions!(
         SwapSelectionEnds,
         /// Sets a mark at the current position.
         SetMark,
+        /// Toggles syntax highlighting.
+        ToggleSyntaxHighlight,
         /// Toggles relative line numbers display.
         ToggleRelativeLineNumbers,
         /// Toggles diff display for selected hunks.
