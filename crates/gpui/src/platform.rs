@@ -45,6 +45,7 @@ use crate::{
 };
 use anyhow::Result;
 use async_task::Runnable;
+use bytemuck::{Pod, Zeroable};
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
@@ -909,6 +910,14 @@ impl From<TileId> for etagere::AllocId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub(crate) struct CustomShaderId(pub(crate) u32);
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub(crate) struct CustomShaderGlobalParams {
+    viewport_size: [f32; 2],
+    pad1: u32,
+    pad2: u32,
+}
 
 pub(crate) struct PlatformInputHandler {
     cx: AsyncWindowContext,

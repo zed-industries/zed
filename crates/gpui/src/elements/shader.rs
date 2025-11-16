@@ -77,8 +77,8 @@ impl Element for FragmentShader {
             source: r#"
             struct GlobalParams {
                 viewport_size: vec2<f32>,
-                premultiplied_alpha: u32,
-                pad: u32,
+                pad1: u32,
+                pad2: u32,
             }
 
             var<uniform> globals: GlobalParams;

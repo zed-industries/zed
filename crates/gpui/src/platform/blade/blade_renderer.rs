@@ -3,9 +3,9 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    Background, Bounds, CustomShader, CustomShaderId, DevicePixels, GpuSpecs, MonochromeSprite,
-    PaintShader, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
-    Size, Underline, get_gamma_correction_ratios,
+    Background, Bounds, CustomShader, CustomShaderGlobalParams, CustomShaderId, DevicePixels,
+    GpuSpecs, MonochromeSprite, PaintShader, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline, get_gamma_correction_ratios,
 };
 use blade_graphics::{self as gpu, ShaderData};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
@@ -102,7 +102,7 @@ struct ShaderPolySpritesData {
 
 #[derive(blade_macros::ShaderData)]
 struct ShaderCustomPipelineData {
-    globals: GlobalParams,
+    globals: CustomShaderGlobalParams,
     b_shaders: gpu::BufferPiece,
 }
 
@@ -889,7 +889,11 @@ impl BladeRenderer {
                     encoder.bind(
                         0,
                         &ShaderCustomPipelineData {
-                            globals,
+                            globals: CustomShaderGlobalParams {
+                                viewport_size: globals.viewport_size,
+                                pad1: 0,
+                                pad2: 0,
+                            },
                             b_shaders: instance_buf,
                         },
                     );
