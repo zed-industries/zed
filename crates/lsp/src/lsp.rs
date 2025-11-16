@@ -1230,11 +1230,7 @@ impl LanguageServer {
 
     /// Sends a custom LSP request with a dynamic method name.
     /// This is useful for extensions that need to send non-standard LSP requests.
-    pub fn request_custom<P, R>(
-        &self,
-        method: &str,
-        params: P,
-    ) -> impl LspRequestFuture<R>
+    pub fn request_custom<P, R>(&self, method: &str, params: P) -> impl LspRequestFuture<R>
     where
         P: Serialize,
         R: 'static + Send + DeserializeOwned,

@@ -4609,7 +4609,9 @@ impl LspStore {
                 &language_server,
                 cx,
             ) {
-                Ok(LspParamsOrResponse::Params(lsp_params)) => LspParamsOrResponse::Params(lsp_params),
+                Ok(LspParamsOrResponse::Params(lsp_params)) => {
+                    LspParamsOrResponse::Params(lsp_params)
+                }
                 Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
                 Err(err) => {
                     let message = format!(
@@ -8447,11 +8449,12 @@ impl LspStore {
                 .context("failed to get virtual file contents")?;
 
             // Get language from config
-            let language = if let Some(language_future) = lsp_store.update(cx, |lsp_store, _cx| {
-                lsp_store
-                    .as_local()
-                    .map(|local| local.languages.language_for_name(&config.language_name))
-            })? {
+            let language = if let Some(language_future) =
+                lsp_store.update(cx, |lsp_store, _cx| {
+                    lsp_store
+                        .as_local()
+                        .map(|local| local.languages.language_for_name(&config.language_name))
+                })? {
                 language_future.await.ok()
             } else {
                 None
@@ -8475,11 +8478,17 @@ impl LspStore {
 
                 // Register as virtual buffer
                 lsp_store.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.register_virtual_buffer(uri_string.clone(), uri.clone(), buffer.clone(), cx);
+                    buffer_store.register_virtual_buffer(
+                        uri_string.clone(),
+                        uri.clone(),
+                        buffer.clone(),
+                        cx,
+                    );
                 });
 
                 // Register the buffer with the language server so LSP features work
-                if let Some(language_server) = lsp_store.language_server_for_id(language_server_id) {
+                if let Some(language_server) = lsp_store.language_server_for_id(language_server_id)
+                {
                     // Notify the language server about this virtual document
                     language_server.register_buffer(
                         uri.clone(),

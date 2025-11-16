@@ -22,11 +22,11 @@ use rpc::{
     proto::{self},
 };
 
+use lsp;
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
-use lsp;
 
 /// A set of open buffers.
 pub struct BufferStore {
