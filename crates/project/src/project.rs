@@ -111,10 +111,11 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
+    ffi::OsString,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
-    str,
+    str::{self, FromStr},
     sync::Arc,
     time::Duration,
 };
@@ -3111,17 +3112,46 @@ impl Project {
 
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
-                        if let Some(capabilities) = update
-                            .capabilities
-                            .as_ref()
-                            .and_then(|capabilities| serde_json::from_str(capabilities).ok())
-                        {
-                            self.lsp_store.update(cx, |lsp_store, _| {
+                        self.lsp_store.update(cx, |lsp_store, _| {
+                            if let Some(capabilities) = update
+                                .capabilities
+                                .as_ref()
+                                .and_then(|capabilities| serde_json::from_str(capabilities).ok())
+                            {
                                 lsp_store
                                     .lsp_server_capabilities
                                     .insert(*language_server_id, capabilities);
-                            });
-                        }
+                            }
+
+                            if let Some(language_server_status) = lsp_store
+                                .language_server_statuses
+                                .get_mut(language_server_id)
+                            {
+                                if let Some(path) = &update.binary_path {
+                                    language_server_status.binary =
+                                        Some(lsp::LanguageServerBinary {
+                                            path: path.into(),
+                                            arguments: update
+                                                .binary_args
+                                                .iter()
+                                                .map(|arg| OsString::from(arg))
+                                                .collect(),
+                                            env: None,
+                                        });
+                                }
+
+                                language_server_status.configuration = update
+                                    .configuration
+                                    .as_ref()
+                                    .and_then(|config_str| serde_json::from_str(config_str).ok());
+
+                                language_server_status.workspace_folders = update
+                                    .workspace_folders
+                                    .iter()
+                                    .filter_map(|uri_str| lsp::Uri::from_str(uri_str).ok())
+                                    .collect();
+                            }
+                        });
                     }
                     proto::update_language_server::Variant::RegisteredForBuffer(update) => {
                         if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {

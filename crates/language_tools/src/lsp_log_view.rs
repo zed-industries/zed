@@ -632,17 +632,24 @@ impl LspLogView {
                     .or_else(move || {
                         let capabilities =
                             lsp_store.lsp_server_capabilities.get(&server_id)?.clone();
-                        let name = lsp_store
-                            .language_server_statuses
-                            .get(&server_id)
-                            .map(|status| status.name.clone())?;
+                        let language_server_status =
+                            lsp_store.language_server_statuses.get(&server_id)?;
+
                         Some(ServerInfo {
                             id: server_id,
                             capabilities,
-                            binary: None,
-                            name,
-                            workspace_folders: Vec::new(),
-                            configuration: None,
+                            name: language_server_status.name.clone(),
+                            binary: language_server_status.binary.clone(),
+                            configuration: language_server_status.configuration.clone(),
+                            workspace_folders: language_server_status
+                                .workspace_folders
+                                .iter()
+                                .filter_map(|uri| {
+                                    uri.to_file_path()
+                                        .ok()
+                                        .map(|path| path.to_string_lossy().into_owned())
+                                })
+                                .collect::<Vec<_>>(),
                         })
                     })
             })

@@ -617,6 +617,10 @@ message RegisteredForBuffer {
 
 message ServerMetadataUpdated {
     optional string capabilities = 1;
+    optional string binary_path = 2;
+    repeated string binary_args = 3;
+    optional string configuration = 4;
+    repeated string workspace_folders = 5;
 }
 
 message LanguageServerLog {
