@@ -1228,6 +1228,95 @@ impl LanguageServer {
         )
     }
 
+    /// Sends a custom LSP request with a dynamic method name.
+    /// This is useful for extensions that need to send non-standard LSP requests.
+    pub fn request_custom<P, R>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> impl LspRequestFuture<R>
+    where
+        P: Serialize,
+        R: 'static + Send + DeserializeOwned,
+    {
+        let method = method.to_string();
+        let id = self.next_id.fetch_add(1, SeqCst);
+        let message = serde_json::to_string(&Request {
+            jsonrpc: JSON_RPC_VERSION,
+            id: RequestId::Int(id),
+            method: &method,
+            params,
+        })
+        .unwrap();
+
+        let (tx, rx) = oneshot::channel();
+        let handle_response = self
+            .response_handlers
+            .lock()
+            .as_mut()
+            .context("server shut down")
+            .map(|handlers| {
+                let executor = self.executor.clone();
+                handlers.insert(
+                    RequestId::Int(id),
+                    Box::new(move |result| {
+                        executor
+                            .spawn(async move {
+                                let response = match result {
+                                    Ok(response) => match serde_json::from_str(&response) {
+                                        Ok(deserialized) => Ok(deserialized),
+                                        Err(error) => {
+                                            log::error!(
+                                                "failed to deserialize response: {}. response: {:?}",
+                                                error, response
+                                            );
+                                            Err(error).context("failed to deserialize response")
+                                        }
+                                    },
+                                    Err(error) => Err(anyhow!("{}", error.message)),
+                                };
+                                _ = tx.send(response);
+                            })
+                            .detach();
+                    }),
+                );
+            });
+
+        let send = self
+            .outbound_tx
+            .try_send(message)
+            .context("failed to write to language server's stdin");
+
+        let started = Instant::now();
+        LspRequest::new(id, async move {
+            if let Err(e) = handle_response {
+                return ConnectionResult::Result(Err(e));
+            }
+            if let Err(e) = send {
+                return ConnectionResult::Result(Err(e));
+            }
+
+            select! {
+                response = rx.fuse() => {
+                    let elapsed = started.elapsed();
+                    log::trace!("Took {elapsed:?} to receive response to custom request {method:?} id {id}");
+                    match response {
+                        Ok(response_result) => ConnectionResult::Result(response_result),
+                        Err(Canceled) => {
+                            log::error!("Server reset connection for request {method:?} id {id}");
+                            ConnectionResult::ConnectionReset
+                        },
+                    }
+                }
+
+                _ = self.executor.timer(LSP_REQUEST_TIMEOUT).fuse() => {
+                    log::error!("Request {method:?} id {id} timed out");
+                    ConnectionResult::Timeout
+                }
+            }
+        })
+    }
+
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,

@@ -61,11 +61,11 @@ use gpui::{
 use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
-    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
-    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
-    Transaction, Unclipped,
+    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
+    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
+    ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
@@ -139,6 +139,19 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+
+/// Configuration for handling virtual documents provided by extensions
+#[derive(Debug, Clone)]
+pub struct VirtualDocumentConfig {
+    /// The URI scheme to handle (e.g., "jdt" for jdt:// URIs)
+    pub scheme: String,
+    /// The LSP request method to call to get document contents (e.g., "java/classFileContents")
+    pub content_request_method: String,
+    /// The language name for syntax highlighting (e.g., "Java")
+    pub language_name: String,
+    /// The LSP language ID to use when registering the document (e.g., "java")
+    pub language_id: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -282,9 +295,18 @@ pub struct LocalLspStore {
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
     buffer_pull_diagnostics_result_ids: HashMap<LanguageServerId, HashMap<PathBuf, Option<String>>>,
+    /// Virtual document handlers registered by extensions (scheme -> config)
+    virtual_document_handlers: HashMap<String, VirtualDocumentConfig>,
 }
 
 impl LocalLspStore {
+    /// Registers a virtual document handler for a specific URI scheme.
+    /// This allows extensions to define how virtual documents (like decompiled code) should be handled.
+    pub fn register_virtual_document_handler(&mut self, config: VirtualDocumentConfig) {
+        self.virtual_document_handlers
+            .insert(config.scheme.clone(), config);
+    }
+
     /// Returns the running language server for the given ID. Note if the language server is starting, it will not be returned.
     pub fn running_language_server_for_id(
         &self,
@@ -1164,7 +1186,13 @@ impl LocalLspStore {
             let worktree_path = ProjectPath { worktree_id, path };
             self.language_server_ids_for_project_path(worktree_path, language, cx)
         } else {
-            Vec::new()
+            // Check if this is a virtual buffer - they're already registered with specific servers
+            let buffer_id = buffer.remote_id();
+            if let Some(server_ids) = self.buffers_opened_in_servers.get(&buffer_id) {
+                server_ids.iter().copied().collect()
+            } else {
+                Vec::new()
+            }
         }
     }
 
@@ -3882,6 +3910,23 @@ impl LspStore {
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
+                virtual_document_handlers: {
+                    let mut handlers = HashMap::default();
+                    // Register built-in virtual document handlers
+                    // Java/JDTLS: Decompiled class files
+                    handlers.insert(
+                        "jdt".to_string(),
+                        VirtualDocumentConfig {
+                            scheme: "jdt".to_string(),
+                            content_request_method: "java/classFileContents".to_string(),
+                            language_name: "Java".to_string(),
+                            language_id: "java".to_string(),
+                        },
+                    );
+                    // Future extensions can add more handlers here or via the WIT API
+                    // e.g., Go: handlers.insert("dap-browser", VirtualDocumentConfig { ... });
+                    handlers
+                },
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -4507,31 +4552,87 @@ impl LspStore {
 
         let file = File::from_dyn(buffer.read(cx).file()).and_then(File::as_local);
 
-        let Some(file) = file else {
+        // Check if this is a virtual buffer (no file)
+        let buffer_id = buffer.read(cx).remote_id();
+        let virtual_uri = if file.is_none() {
+            self.buffer_store()
+                .read(cx)
+                .virtual_buffers
+                .get(&buffer_id)
+                .cloned()
+        } else {
+            None
+        };
+
+        let lsp_params = if let Some(virtual_uri) = virtual_uri {
+            // For virtual buffers, we have the lsp::Uri directly
+            // Create a temporary PathBuf with a dummy path - we'll override the URI in to_lsp
+            // This is a workaround for the Path-based API
+            let dummy_path = PathBuf::from("/virtual");
+            match request.to_lsp_params_or_response(
+                &dummy_path,
+                buffer.read(cx),
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => {
+                    // Override the URI in the params with the actual virtual URI
+                    // This is hacky but works because most LSP params have a textDocument field
+                    // We'll need to handle this more gracefully in the future
+                    // For now, serialize, modify, and deserialize
+                    if let Ok(mut value) = serde_json::to_value(&lsp_params) {
+                        if let Some(text_doc) = value.get_mut("textDocument") {
+                            if let Some(uri_field) = text_doc.get_mut("uri") {
+                                *uri_field = serde_json::Value::String(virtual_uri.to_string());
+                            }
+                        }
+                        if let Ok(params) = serde_json::from_value(value) {
+                            LspParamsOrResponse::Params(params)
+                        } else {
+                            return Task::ready(Ok(Default::default()));
+                        }
+                    } else {
+                        return Task::ready(Ok(Default::default()));
+                    }
+                }
+                Ok(response @ LspParamsOrResponse::Response(_)) => response,
+                Err(err) => {
+                    log::warn!("Failed to create LSP params for virtual buffer: {}", err);
+                    return Task::ready(Ok(Default::default()));
+                }
+            }
+        } else if let Some(file) = &file {
+            // Regular file buffer
+            match request.to_lsp_params_or_response(
+                &file.abs_path(cx),
+                buffer.read(cx),
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => LspParamsOrResponse::Params(lsp_params),
+                Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
+                Err(err) => {
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    // rust-analyzer likes to error with this when its still loading up
+                    if !message.ends_with("content modified") {
+                        log::warn!("{message}");
+                    }
+                    return Task::ready(Err(anyhow!(message)));
+                }
+            }
+        } else {
+            // No file and not virtual - can't handle
             return Task::ready(Ok(Default::default()));
         };
 
-        let lsp_params = match request.to_lsp_params_or_response(
-            &file.abs_path(cx),
-            buffer.read(cx),
-            &language_server,
-            cx,
-        ) {
-            Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
-            Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
-            Err(err) => {
-                let message = format!(
-                    "{} via {} failed: {}",
-                    request.display_name(),
-                    language_server.name(),
-                    err
-                );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
-                    log::warn!("{message}");
-                }
-                return Task::ready(Err(anyhow!(message)));
-            }
+        let lsp_params = match lsp_params {
+            LspParamsOrResponse::Params(params) => params,
+            LspParamsOrResponse::Response(response) => return Task::ready(Ok(response)),
         };
 
         let status = request.status();
@@ -8296,12 +8397,142 @@ impl LspStore {
         }
     }
 
+    pub(crate) fn open_virtual_buffer_via_lsp(
+        &mut self,
+        uri: lsp::Uri,
+        language_server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        let uri_string = uri.to_string();
+        let scheme = uri.scheme().to_owned();
+
+        cx.spawn(async move |lsp_store, cx| {
+            // Check if buffer already exists for this URI
+            if let Some(buffer) = lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .buffer_store()
+                    .read(cx)
+                    .get_buffer_by_uri(&uri_string)
+            })? {
+                return Ok(buffer);
+            }
+
+            // Get the virtual document handler config for this scheme
+            let handler_config = lsp_store.update(cx, |lsp_store, _| {
+                lsp_store
+                    .as_local()
+                    .and_then(|local| local.virtual_document_handlers.get(&scheme).cloned())
+            })?;
+
+            let Some(config) = handler_config else {
+                return Err(anyhow!(
+                    "no virtual document handler registered for scheme: {}",
+                    scheme
+                ));
+            };
+
+            // Get the language server
+            let language_server = lsp_store
+                .update(cx, |lsp_store, _| {
+                    lsp_store.language_server_for_id(language_server_id)
+                })?
+                .context("language server not found")?;
+
+            // Send custom LSP request to get the decompiled content using the dynamic method
+            let params = lsp::TextDocumentIdentifier { uri: uri.clone() };
+            let content: String = language_server
+                .request_custom(&config.content_request_method, params)
+                .await
+                .into_response()
+                .context("failed to get virtual file contents")?;
+
+            // Get language from config
+            let language = if let Some(language_future) = lsp_store.update(cx, |lsp_store, _cx| {
+                lsp_store
+                    .as_local()
+                    .map(|local| local.languages.language_for_name(&config.language_name))
+            })? {
+                language_future.await.ok()
+            } else {
+                None
+            };
+
+            // Create a new buffer with the content
+            lsp_store.update(cx, |lsp_store, cx| {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(content.clone(), cx);
+                    buffer.set_capability(Capability::ReadOnly, cx);
+
+                    // Set language if determined
+                    if let Some(language) = language.clone() {
+                        buffer.set_language(Some(language), cx);
+                    }
+
+                    buffer
+                });
+
+                let buffer_id = buffer.read(cx).remote_id();
+
+                // Register as virtual buffer
+                lsp_store.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.register_virtual_buffer(uri_string.clone(), uri.clone(), buffer.clone(), cx);
+                });
+
+                // Register the buffer with the language server so LSP features work
+                if let Some(language_server) = lsp_store.language_server_for_id(language_server_id) {
+                    // Notify the language server about this virtual document
+                    language_server.register_buffer(
+                        uri.clone(),
+                        config.language_id.clone(),
+                        0, // Initial version
+                        content,
+                    );
+
+                    // Track that this buffer is opened in this server
+                    if let Some(local) = lsp_store.as_local_mut() {
+                        local
+                            .buffers_opened_in_servers
+                            .entry(buffer_id)
+                            .or_default()
+                            .insert(language_server_id);
+
+                        // Track the initial snapshot
+                        local
+                            .buffer_snapshots
+                            .entry(buffer_id)
+                            .or_default()
+                            .entry(language_server_id)
+                            .or_insert_with(|| {
+                                vec![LspBufferSnapshot {
+                                    version: 0,
+                                    snapshot: buffer.read(cx).text_snapshot(),
+                                }]
+                            });
+                    }
+                }
+
+                // Emit buffer added event
+                lsp_store.buffer_store().update(cx, |_, cx| {
+                    cx.emit(BufferStoreEvent::BufferAdded(buffer.clone()))
+                });
+
+                Ok(buffer)
+            })?
+        })
+    }
+
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        // Check if this is a virtual (non-file) URI
+        let scheme = abs_path.scheme();
+        if scheme != "file" {
+            return self.open_virtual_buffer_via_lsp(abs_path, language_server_id, cx);
+        }
+
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
