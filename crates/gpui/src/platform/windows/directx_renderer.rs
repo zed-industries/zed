@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     slice,
     sync::{Arc, OnceLock},
 };
@@ -90,6 +91,9 @@ struct DirectXRenderPipelines {
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
+
+    custom: Vec<PipelineState<PaintShader>>,
+    custom_ids: HashMap<CustomShader, CustomShaderId>,
 }
 
 struct DirectXGlobalElements {
@@ -323,17 +327,19 @@ impl DirectXRenderer {
                     texture_id,
                     sprites,
                 } => self.draw_polychrome_sprites(texture_id, sprites),
+                PrimitiveBatch::Shaders(shaders) => self.draw_custom_shaders(shaders),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
             }
             .context(format!(
                 "scene too large:\
-                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} custom, {} surfaces",
                 scene.paths.len(),
                 scene.shadows.len(),
                 scene.quads.len(),
                 scene.underlines.len(),
                 scene.monochrome_sprites.len(),
                 scene.polychrome_sprites.len(),
+                scene.shaders.len(),
                 scene.surfaces.len(),
             ))?;
         }
@@ -621,6 +627,29 @@ impl DirectXRenderer {
         )
     }
 
+    fn draw_custom_shaders(&mut self, shaders: &[PaintShader]) -> Result<()> {
+        if shaders.is_empty() {
+            return Ok(());
+        }
+
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let pipeline = self
+            .pipelines
+            .custom
+            .get_mut(shaders[0].shader_id.0 as usize)
+            .unwrap();
+        pipeline.update_buffer(&devices.device, &devices.device_context, shaders)?;
+        pipeline.draw(
+            &devices.device_context,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
+            shaders.len() as u32,
+        )
+    }
+
     fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {
         if surfaces.is_empty() {
             return Ok(());
@@ -673,6 +702,14 @@ impl DirectXRenderer {
 
     pub(crate) fn mark_drawable(&mut self) {
         self.skip_draws = false;
+    }
+
+    pub(crate) fn register_shader(
+        &mut self,
+        shader: &CustomShader,
+    ) -> Result<CustomShaderId, &'static str> {
+        self.pipelines
+            .register_custom_shader(&self.devices.as_ref().unwrap().device, shader)
     }
 }
 
@@ -805,7 +842,32 @@ impl DirectXRenderPipelines {
             underline_pipeline,
             mono_sprites,
             poly_sprites,
+            custom: Vec::new(),
+            custom_ids: HashMap::new(),
         })
+    }
+
+    fn register_custom_shader(
+        &mut self,
+        device: &ID3D11Device,
+        custom_shader: &CustomShader,
+    ) -> Result<CustomShaderId, &'static str> {
+        if let Some(id) = self.custom_ids.get(custom_shader).copied() {
+            return Ok(id);
+        }
+
+        let id = CustomShaderId(self.custom.len() as u32);
+        self.custom.push(
+            PipelineState::new_custom(
+                device,
+                custom_shader,
+                16,
+                create_blend_state(device).unwrap(),
+            )
+            .unwrap(),
+        );
+        self.custom_ids.insert(custom_shader.clone(), id);
+        Ok(id)
     }
 }
 
@@ -913,6 +975,50 @@ impl<T> PipelineState<T> {
 
         Ok(PipelineState {
             label,
+            vertex,
+            fragment,
+            buffer,
+            buffer_size,
+            view,
+            blend_state,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    fn new_custom(
+        device: &ID3D11Device,
+        custom_shader: &CustomShader,
+        buffer_size: usize,
+        blend_state: ID3D11BlendState,
+    ) -> Result<Self> {
+        let module = naga::front::wgsl::parse_str(&custom_shader.source)?;
+        let module_info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all() ^ naga::valid::ValidationFlags::BINDINGS,
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap();
+
+        let mut hlsl = String::new();
+        naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default())
+            .write(&module, &module_info, None)
+            .unwrap();
+        println!("{hlsl}");
+
+        let vertex = {
+            let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Vertex).unwrap();
+            create_vertex_shader(device, raw_shader.as_bytes()).unwrap()
+        };
+        let fragment = {
+            let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Fragment).unwrap();
+            create_fragment_shader(device, raw_shader.as_bytes()).unwrap()
+        };
+
+        let buffer = create_buffer(device, std::mem::size_of::<T>(), buffer_size).unwrap();
+        let view = create_buffer_view(device, &buffer).unwrap();
+
+        Ok(PipelineState {
+            label: "custom",
             vertex,
             fragment,
             buffer,
@@ -1393,6 +1499,7 @@ const BUFFER_COUNT: usize = 3;
 pub(crate) mod shader_resources {
     use anyhow::Result;
 
+    use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
     #[cfg(debug_assertions)]
     use windows::{
         Win32::Graphics::Direct3D::{
@@ -1443,6 +1550,63 @@ pub(crate) mod shader_resources {
                     )
                 };
                 Ok(Self { inner, _blob: blob })
+            }
+        }
+
+        pub(crate) fn new_custom(hlsl: &str, target: ShaderTarget) -> Result<Self> {
+            let mut compile_blob = None;
+            let mut error_blob = None;
+
+            unsafe {
+                let ret = D3DCompile(
+                    hlsl.as_ptr() as *const _,
+                    hlsl.len(),
+                    PCSTR::null(),
+                    None,
+                    None,
+                    PCSTR::from_raw(
+                        match target {
+                            ShaderTarget::Fragment => "fs\0",
+                            ShaderTarget::Vertex => "vs\0",
+                        }
+                        .as_ptr(),
+                    ),
+                    PCSTR::from_raw(
+                        match target {
+                            ShaderTarget::Vertex => "vs_4_1\0",
+                            ShaderTarget::Fragment => "ps_4_1\0",
+                        }
+                        .as_ptr(),
+                    ),
+                    if cfg!(debug_assertions) {
+                        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION
+                    } else {
+                        0
+                    },
+                    0,
+                    &mut compile_blob,
+                    Some(&mut error_blob),
+                );
+
+                if ret.is_err() {
+                    let Some(error_blob) = error_blob else {
+                        return Err(anyhow::anyhow!("{ret:?}"));
+                    };
+
+                    let error_string =
+                        std::ffi::CStr::from_ptr(error_blob.GetBufferPointer() as *const i8)
+                            .to_string_lossy();
+                    log::error!("Shader compile error: {}", error_string);
+                    return Err(anyhow::anyhow!("Compile error: {}", error_string));
+                }
+                let inner = std::slice::from_raw_parts(
+                    compile_blob.as_ref().unwrap().GetBufferPointer() as *const u8,
+                    compile_blob.as_ref().unwrap().GetBufferSize(),
+                );
+                Ok(Self {
+                    inner,
+                    _blob: compile_blob.unwrap(),
+                })
             }
         }
 

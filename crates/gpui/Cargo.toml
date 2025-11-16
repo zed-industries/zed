@@ -235,6 +235,7 @@ x11-clipboard = { version = "0.9.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 flume = "0.11"
+naga.workspace = true
 rand.workspace = true
 windows.workspace = true
 windows-core.workspace = true

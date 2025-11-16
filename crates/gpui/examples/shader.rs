@@ -12,7 +12,7 @@ impl Render for ShaderExample {
             .size_full()
             .items_center()
             .justify_center()
-            .bg(rgb(0x202020))
+            .bg(rgb(0x202060))
             .gap_2()
             .child(shader().size_full())
             .child(shader().size_full())

@@ -115,7 +115,11 @@ impl Element for FragmentShader {
                 bounds: Bounds,
                 content_mask: Bounds,
             }
-            var<storage, read> b_shaders: array<PaintShader>;
+            struct PaintShaderBuf {
+                shaders: array<PaintShader>,
+            }
+
+            var<storage, read> b_shaders: PaintShaderBuf;
 
             struct PaintShaderVarying {
                 @builtin(position) position: vec4<f32>,
@@ -125,7 +129,7 @@ impl Element for FragmentShader {
             @vertex
             fn vs(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PaintShaderVarying {
                 let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-                let view = b_shaders[instance_id];
+                let view = b_shaders.shaders[instance_id];
 
                 var out = PaintShaderVarying();
                 out.position = to_device_position(unit_vertex, view.bounds);

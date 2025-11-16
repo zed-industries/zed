@@ -536,7 +536,7 @@ markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
-naga = { version = "25.0", features = ["wgsl-in"] }
+naga = { version = "25.0", features = ["wgsl-in", "hlsl-out-if-target-windows"] }
 nanoid = "0.4"
 nbformat = "0.15.0"
 nix = "0.29"
