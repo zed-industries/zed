@@ -148,7 +148,9 @@ Zed currently supports links to the hosted versions of
 
 ### Custom Git Hosting Providers
 
-If you use a self-hosted Git instance (like a company GitLab server), you can configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting:
+Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed.
+
+However, if your self-hosted Git instance URL doesn't contain identifying keywords, you can manually configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting:
 
 ```json [settings]
 {
