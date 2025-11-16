@@ -1044,13 +1044,12 @@ impl BufferStore {
 
         // Set up cleanup when buffer is dropped
         let handle = cx.entity().downgrade();
-        let uri_for_cleanup = uri_string.clone();
         buffer.update(cx, move |_, cx| {
             cx.on_release(move |buffer, cx| {
                 let buffer_id = buffer.remote_id();
                 handle
                     .update(cx, |this, _cx| {
-                        this.uri_to_buffer_id.remove(&uri_for_cleanup);
+                        this.uri_to_buffer_id.remove(&uri_string);
                         this.virtual_buffers.remove(&buffer_id);
                     })
                     .ok();
