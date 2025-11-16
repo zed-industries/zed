@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
+use git::repository::GitCommitTemplate;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -116,6 +117,10 @@ impl GitRepository for FakeGitRepository {
         self.executor
             .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
             .boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
+        unimplemented!()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
