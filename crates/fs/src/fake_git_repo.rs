@@ -2,6 +2,7 @@ use crate::{FakeFs, FakeFsEntry, Fs};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
+use git::repository::GitCommitTemplate;
 use git::{
     Oid, RunHook,
     blame::Blame,
@@ -23,7 +24,6 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
-use git::repository::GitCommitTemplate;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
