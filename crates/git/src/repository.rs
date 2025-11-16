@@ -1007,7 +1007,7 @@ impl GitRepository for RealGitRepository {
                 .context("failed to run git config --get commit.template")?;
 
             if !output.status.success() {
-                return Ok(GitCommitTemplate { template: None })
+                return Ok(GitCommitTemplate { template: None });
             }
 
             let raw = String::from_utf8_lossy(&output.stdout);
