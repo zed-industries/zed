@@ -186,6 +186,27 @@ message ExternalAgentsUpdated {
     repeated string names = 2;
 }
 
+message ExternalExtensionAgentTarget {
+    string archive = 1;
+    string cmd = 2;
+    repeated string args = 3;
+    optional string sha256 = 4;
+    map<string, string> env = 5;
+}
+
+message ExternalExtensionAgent {
+    string name = 1;
+    optional string icon_path = 2;
+    string extension_id = 3;
+    map<string, ExternalExtensionAgentTarget> targets = 4;
+    map<string, string> env = 5;
+}
+
+message ExternalExtensionAgentsUpdated {
+    uint64 project_id = 1;
+    repeated ExternalExtensionAgent agents = 2;
+}
+
 message ExternalAgentLoadingStatusUpdated {
     uint64 project_id = 1;
     string name = 2;

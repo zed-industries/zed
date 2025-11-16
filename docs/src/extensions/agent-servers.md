@@ -46,14 +46,24 @@ Each target must specify:
 - `archive`: URL to download the archive from (supports `.tar.gz`, `.zip`, etc.)
 - `cmd`: Command to run the agent server (relative to the extracted archive)
 - `args`: Command-line arguments to pass to the agent server (optional)
+- `sha256`: SHA-256 hash string of the archive's bytes (optional, but recommended for security)
+- `env`: Environment variables specific to this target (optional, overrides agent-level env vars with the same name)
 
 ### Optional Fields
 
-You can also optionally specify:
+You can also optionally specify at the agent server level:
 
-- `sha256`: SHA-256 hash string of the archive's bytes. Zed will check this after the archive is downloaded and give an error if it doesn't match, so doing this improves security.
-- `env`: Environment variables to set in the agent's spawned process.
+- `env`: Environment variables to set in the agent's spawned process. These apply to all targets by default.
 - `icon`: Path to an SVG icon (relative to extension root) for display in menus.
+
+### Environment Variables
+
+Environment variables can be configured at two levels:
+
+1. **Agent-level** (`[agent_servers.my-agent.env]`): Variables that apply to all platforms
+2. **Target-level** (`[agent_servers.my-agent.targets.{platform}.env]`): Variables specific to a platform
+
+When both are specified, target-level environment variables override agent-level variables with the same name. Variables defined only at the agent level are inherited by all targets.
 
 ### Complete Example
 
@@ -79,6 +89,9 @@ archive = "https://github.com/example/agent/releases/download/v2.0.0/agent-linux
 cmd = "./bin/agent"
 args = ["serve", "--port", "8080"]
 sha256 = "def456abc123..."
+
+[agent_servers.example-agent.targets.linux-x86_64.env]
+AGENT_MEMORY_LIMIT = "2GB"  # Linux-specific override
 ```
 
 ## Installation Process
