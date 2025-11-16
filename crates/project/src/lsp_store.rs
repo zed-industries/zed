@@ -944,17 +944,18 @@ impl LocalLspStore {
                     async move {
                         let actions = params.actions.unwrap_or_default();
                         let (tx, rx) = smol::channel::bounded(1);
-                        let request = LanguageServerPromptRequest {
-                            level: match params.typ {
-                                lsp::MessageType::ERROR => PromptLevel::Critical,
-                                lsp::MessageType::WARNING => PromptLevel::Warning,
-                                _ => PromptLevel::Info,
-                            },
-                            message: params.message,
-                            actions,
-                            response_channel: tx,
-                            lsp_name: name.clone(),
+                        let level = match params.typ {
+                            lsp::MessageType::ERROR => PromptLevel::Critical,
+                            lsp::MessageType::WARNING => PromptLevel::Warning,
+                            _ => PromptLevel::Info,
                         };
+                        let request = LanguageServerPromptRequest::new(
+                            level,
+                            params.message,
+                            actions,
+                            name.clone(),
+                            tx,
+                        );
 
                         let did_update = this
                             .update(&mut cx, |_, cx| {
@@ -981,17 +982,13 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
 
                     let (tx, _) = smol::channel::bounded(1);
-                    let request = LanguageServerPromptRequest {
-                        level: match params.typ {
-                            lsp::MessageType::ERROR => PromptLevel::Critical,
-                            lsp::MessageType::WARNING => PromptLevel::Warning,
-                            _ => PromptLevel::Info,
-                        },
-                        message: params.message,
-                        actions: vec![],
-                        response_channel: tx,
-                        lsp_name: name,
+                    let level = match params.typ {
+                        lsp::MessageType::ERROR => PromptLevel::Critical,
+                        lsp::MessageType::WARNING => PromptLevel::Warning,
+                        _ => PromptLevel::Info,
                     };
+                    let request =
+                        LanguageServerPromptRequest::new(level, params.message, vec![], name, tx);
 
                     let _ = this.update(&mut cx, |_, cx| {
                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
@@ -13053,6 +13050,7 @@ struct LspBufferSnapshot {
 /// A prompt requested by LSP server.
 #[derive(Clone, Debug)]
 pub struct LanguageServerPromptRequest {
+    pub id: u64,
     pub level: PromptLevel,
     pub message: String,
     pub actions: Vec<MessageActionItem>,
@@ -13061,12 +13059,40 @@ pub struct LanguageServerPromptRequest {
 }
 
 impl LanguageServerPromptRequest {
+    pub fn new(
+        level: PromptLevel,
+        message: String,
+        actions: Vec<MessageActionItem>,
+        lsp_name: String,
+        response_channel: Sender<MessageActionItem>,
+    ) -> Self {
+        let id = rand::random::<u64>();
+        LanguageServerPromptRequest {
+            id,
+            level,
+            message,
+            actions,
+            lsp_name,
+            response_channel,
+        }
+    }
     pub async fn respond(self, index: usize) -> Option<()> {
         if let Some(response) = self.actions.into_iter().nth(index) {
             self.response_channel.send(response).await.ok()
         } else {
             None
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(
+        level: PromptLevel,
+        message: String,
+        actions: Vec<MessageActionItem>,
+        lsp_name: String,
+    ) -> Self {
+        let (tx, _rx) = smol::channel::unbounded();
+        LanguageServerPromptRequest::new(level, message, actions, lsp_name, tx)
     }
 }
 impl PartialEq for LanguageServerPromptRequest {
