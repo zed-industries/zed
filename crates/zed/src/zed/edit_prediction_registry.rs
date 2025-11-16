@@ -251,11 +251,12 @@ fn assign_edit_prediction_provider(
                             });
                         }
 
-                        let provider = cx.new(|_| {
+                        let provider = cx.new(|cx| {
                             zeta::ZetaEditPredictionProvider::new(
                                 zeta,
                                 project.clone(),
                                 singleton_buffer,
+                                cx,
                             )
                         });
                         editor.set_edit_prediction_provider(Some(provider), window, cx);
