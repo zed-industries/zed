@@ -120,7 +120,12 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
-        unimplemented!()
+        async {
+            Ok(GitCommitTemplate {
+                template: Some(String::new())
+            })
+        }
+        .boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
