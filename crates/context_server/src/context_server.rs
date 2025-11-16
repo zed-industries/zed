@@ -15,6 +15,7 @@ use client::Client;
 use gpui::AsyncApp;
 use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
+use util::shell::Shell;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -68,8 +69,8 @@ impl ContextServer {
         self.client.read().clone()
     }
 
-    pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
-        self.initialize(self.new_client(cx)?).await
+    pub async fn start(&self, shell: &Shell, cx: &AsyncApp) -> Result<()> {
+        self.initialize(self.new_client(shell, cx)?).await
     }
 
     /// Starts the context server, making sure handlers are registered before initialization happens
@@ -79,16 +80,17 @@ impl ContextServer {
             &'static str,
             Box<dyn 'static + Send + FnMut(serde_json::Value, AsyncApp)>,
         )>,
+        shell: &Shell,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let client = self.new_client(cx)?;
+        let client = self.new_client(shell, cx)?;
         for (method, handler) in notification_handlers {
             client.on_notification(method, handler);
         }
         self.initialize(client).await
     }
 
-    fn new_client(&self, cx: &AsyncApp) -> Result<Client> {
+    fn new_client(&self, shell: &Shell, cx: &AsyncApp) -> Result<Client> {
         Ok(match &self.configuration {
             ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
@@ -99,6 +101,7 @@ impl ContextServer {
                     timeout: command.timeout,
                 },
                 working_directory,
+                shell,
                 cx.clone(),
             )?,
             ContextServerTransport::Custom(transport) => Client::new(

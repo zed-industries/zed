@@ -7,6 +7,10 @@ use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::agent_server_store::GEMINI_NAME;
+use settings::Settings as _;
+use task::Shell;
+use terminal::terminal_settings::TerminalSettings;
+use util::get_default_system_shell;
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -37,6 +41,20 @@ impl AgentServer for Gemini {
         let store = delegate.store.downgrade();
         let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
+        let shell = delegate.project.update(cx, |project, cx| {
+            let settings = TerminalSettings::get(None, cx).clone();
+
+            let remote_client = project.remote_client();
+            match &remote_client {
+                Some(remote_client) => Shell::Program(
+                    remote_client
+                        .read(cx)
+                        .shell()
+                        .unwrap_or_else(get_default_system_shell),
+                ),
+                None => settings.shell,
+            }
+        });
 
         cx.spawn(async move |cx| {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
@@ -70,6 +88,7 @@ impl AgentServer for Gemini {
                 root_dir.as_ref(),
                 default_mode,
                 is_remote,
+                &shell,
                 cx,
             )
             .await?;

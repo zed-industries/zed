@@ -5,9 +5,12 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
-use settings::{SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::{path::Path, rc::Rc, sync::Arc};
+use task::Shell;
+use terminal::terminal_settings::TerminalSettings;
 use ui::IconName;
+use util::get_default_system_shell;
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
@@ -74,7 +77,20 @@ impl crate::AgentServer for CustomAgentServer {
         let default_mode = self.default_mode(cx);
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
+        let shell = delegate.project.update(cx, |project, cx| {
+            let settings = TerminalSettings::get(None, cx).clone();
 
+            let remote_client = project.remote_client();
+            match &remote_client {
+                Some(remote_client) => Shell::Program(
+                    remote_client
+                        .read(cx)
+                        .shell()
+                        .unwrap_or_else(get_default_system_shell),
+                ),
+                None => settings.shell,
+            }
+        });
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
@@ -99,6 +115,7 @@ impl crate::AgentServer for CustomAgentServer {
                 root_dir.as_ref(),
                 default_mode,
                 is_remote,
+                &shell,
                 cx,
             )
             .await?;

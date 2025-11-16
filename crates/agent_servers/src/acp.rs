@@ -9,6 +9,7 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use task::{Shell, ShellBuilder};
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -58,6 +59,7 @@ pub async fn connect(
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
     is_remote: bool,
+    shell: &Shell,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
@@ -67,6 +69,7 @@ pub async fn connect(
         root_dir,
         default_mode,
         is_remote,
+        shell,
         cx,
     )
     .await?;
@@ -83,11 +86,15 @@ impl AcpConnection {
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
         is_remote: bool,
+        shell: &Shell,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path);
+        let builder = ShellBuilder::new(shell, cfg!(windows));
+        let (cmd, args) = builder.build(Some(command.path.display().to_string()), &command.args);
+
+        let mut child = util::command::new_smol_command(cmd);
         child
-            .args(command.args.iter().map(|arg| arg.as_str()))
+            .args(args)
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
