@@ -361,6 +361,31 @@ fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
     }
 }
 
+// Squircle SDF: smoothness 0.0 = circle, 0.5 = squircle, 1.0 = square
+fn squircle_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners, smoothness: f32) -> f32 {
+    let half_size = bounds.size / 2.0;
+    let center = bounds.origin + half_size;
+    let center_to_point = point - center;
+    let corner_radius = pick_corner_radius(center_to_point, corner_radii);
+
+    if (corner_radius == 0.0) {
+        // No corner radius, use sharp corners
+        let corner_to_point = abs(center_to_point) - half_size;
+        return max(corner_to_point.x, corner_to_point.y);
+    }
+
+    // Power factor: 2 = circle, 4 = squircle, 8+ = square
+    let p = pow(2.0, 1.0 + smoothness * 2.0);
+
+    let corner_to_point = abs(center_to_point) - half_size + corner_radius;
+    let corner_max = max(corner_to_point, vec2<f32>(0.0));
+
+    // Superellipse SDF approximation
+    let dist = pow(pow(abs(corner_max.x), p) + pow(abs(corner_max.y), p), 1.0 / p);
+
+    return dist + min(0.0, max(corner_to_point.x, corner_to_point.y)) - corner_radius;
+}
+
 // Abstract away the final color transformation based on the
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
@@ -487,6 +512,8 @@ struct Quad {
     border_color: Hsla,
     corner_radii: Corners,
     border_widths: Edges,
+    smoothness: f32,
+    pad: u32,
 }
 var<storage, read> b_quads: array<Quad>;
 
@@ -618,7 +645,12 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     // Signed distance of the point to the outside edge of the quad's border. It
     // is positive outside this edge, and negative inside.
-    let outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+    var outer_sdf: f32;
+    if (quad.smoothness > 0.0) {
+        outer_sdf = squircle_sdf(input.position.xy, quad.bounds, quad.corner_radii, quad.smoothness);
+    } else {
+        outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+    }
 
     // Approximate signed distance of the point to the inside edge of the quad's
     // border. It is negative outside this edge (within the border), and
@@ -1205,6 +1237,10 @@ struct PolychromeSprite {
     content_mask: Bounds,
     corner_radii: Corners,
     tile: AtlasTile,
+    smoothness: f32,
+    pad2: u32,
+    pad3: u32,
+    pad4: u32,
 }
 var<storage, read> b_poly_sprites: array<PolychromeSprite>;
 
@@ -1237,7 +1273,13 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
     }
 
     let sprite = b_poly_sprites[input.sprite_id];
-    let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+
+    var distance: f32;
+    if (sprite.smoothness > 0.0) {
+        distance = squircle_sdf(input.position.xy, sprite.bounds, sprite.corner_radii, sprite.smoothness);
+    } else {
+        distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    }
 
     var color = sample;
     if ((sprite.grayscale & 0xFFu) != 0u) {
