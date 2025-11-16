@@ -42,7 +42,8 @@ pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: Option<DirectXRendererDevices>,
     resources: Option<DirectXResources>,
-    globals: DirectXGlobalElements,
+    globals: DirectXGlobalElements<GlobalParams>,
+    custom_shader_globals: DirectXGlobalElements<CustomShaderGlobalParams>,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
     font_info: &'static FontInfo,
@@ -96,9 +97,10 @@ struct DirectXRenderPipelines {
     custom_ids: HashMap<CustomShader, CustomShaderId>,
 }
 
-struct DirectXGlobalElements {
+struct DirectXGlobalElements<T> {
     global_params_buffer: Option<ID3D11Buffer>,
     sampler: Option<ID3D11SamplerState>,
+    _marker: std::marker::PhantomData<T>,
 }
 
 struct DirectComposition {
@@ -152,6 +154,8 @@ impl DirectXRenderer {
             .context("Creating DirectX resources")?;
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectX global elements")?;
+        let custom_shader_globals = DirectXGlobalElements::new(&devices.device)
+            .context("Creating DirectX custom global elements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectX render pipelines")?;
 
@@ -172,6 +176,7 @@ impl DirectXRenderer {
             devices: Some(devices),
             resources: Some(resources),
             globals,
+            custom_shader_globals,
             pipelines,
             direct_composition,
             font_info: Self::get_font_info(),
@@ -200,6 +205,18 @@ impl DirectXRenderer {
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
                 grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
                 _pad: 0,
+            }],
+        )?;
+        update_buffer(
+            device_context,
+            self.custom_shader_globals
+                .global_params_buffer
+                .as_ref()
+                .unwrap(),
+            &[CustomShaderGlobalParams {
+                viewport_size: [resources.viewport.Width, resources.viewport.Height],
+                pad1: 0,
+                pad2: 0,
             }],
         )?;
         unsafe {
@@ -274,6 +291,8 @@ impl DirectXRenderer {
         .context("Creating DirectX resources")?;
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectXGlobalElements")?;
+        let custom_shader_globals = DirectXGlobalElements::new(&devices.device)
+            .context("Creating DirectXGlobalElements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectXRenderPipelines")?;
 
@@ -297,6 +316,7 @@ impl DirectXRenderer {
         self.devices = Some(devices);
         self.resources = Some(resources);
         self.globals = globals;
+        self.custom_shader_globals = custom_shader_globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
         self.skip_draws = true;
@@ -643,7 +663,7 @@ impl DirectXRenderer {
         pipeline.draw(
             &devices.device_context,
             slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.custom_shader_globals.global_params_buffer),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             shaders.len() as u32,
@@ -894,11 +914,11 @@ impl DirectComposition {
     }
 }
 
-impl DirectXGlobalElements {
+impl<T> DirectXGlobalElements<T> {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
         let global_params_buffer = unsafe {
             let desc = D3D11_BUFFER_DESC {
-                ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
+                ByteWidth: std::mem::size_of::<T>() as u32,
                 Usage: D3D11_USAGE_DYNAMIC,
                 BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
                 CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
@@ -930,6 +950,7 @@ impl DirectXGlobalElements {
         Ok(Self {
             global_params_buffer,
             sampler,
+            _marker: std::marker::PhantomData,
         })
     }
 }

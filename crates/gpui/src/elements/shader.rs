@@ -81,6 +81,7 @@ impl Element for FragmentShader {
                 pad2: u32,
             }
 
+            @group(0) @binding(0)
             var<uniform> globals: GlobalParams;
 
             fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
@@ -119,6 +120,7 @@ impl Element for FragmentShader {
                 shaders: array<PaintShader>,
             }
 
+            @group(0) @binding(1)
             var<storage, read> b_shaders: PaintShaderBuf;
 
             struct PaintShaderVarying {
