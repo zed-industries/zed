@@ -46,7 +46,7 @@ pub async fn run_evaluate(
     }
     let all_tasks = args.example_paths.into_iter().map(|path| {
         let app_state = app_state.clone();
-        let example = NamedExample::load(&path).unwrap();
+        let example = NamedExample::load(&path).expect("Failed to load example");
 
         cx.spawn(async move |cx| {
             let (project, zetas, _edited_buffers) = example
