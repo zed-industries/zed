@@ -398,12 +398,17 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         json!({
             "settings.json": r#"
           {
-            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "languages": {"Rust":{"language_servers":["rust-analyzer", "fake-analyzer"]}},
             "lsp": {
               "rust-analyzer": {
                 "binary": {
                   "path": "~/.cargo/bin/rust-analyzer"
                 }
+              },
+              "fake-analyzer": {
+               "binary": {
+                "path": "~/.cargo/bin/rust-analyzer"
+               }
               }
             }
           }"#
@@ -431,12 +436,48 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
                 },
                 ..FakeLspAdapter::default()
             },
+        );
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    rename_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
         )
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
         headless.read(cx).languages.register_fake_language_server(
             LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                rename_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            None,
+        )
+    });
+
+    let mut fake_second_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    rename_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("fake-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
                 rename_provider: Some(lsp::OneOf::Left(true)),
@@ -469,12 +510,13 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.run_until_parked();
 
     let fake_lsp = fake_lsp.next().await.unwrap();
+    let fake_second_lsp = fake_second_lsp.next().await.unwrap();
 
     cx.read(|cx| {
         let file = buffer.read(cx).file();
         assert_eq!(
             language_settings(Some("Rust".into()), file, cx).language_servers,
-            ["rust-analyzer".to_string()]
+            ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });
 
@@ -497,12 +539,19 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     server_cx.read(|cx| {
         let lsp_store = headless.read(cx).lsp_store.read(cx);
-        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
+        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 2);
     });
 
     fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
+            ..Default::default()
+        }])))
+    });
+
+    fake_second_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+            label: "beep".to_string(),
             ..Default::default()
         }])))
     });
@@ -528,7 +577,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
-        vec!["boop".to_string()]
+        vec!["boop".to_string(), "beep".to_string()]
     );
 
     fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
