@@ -66,15 +66,11 @@ impl Display for Mode {
 }
 
 impl Mode {
-    pub fn is_visual(self) -> bool {
+    pub fn is_visual(&self) -> bool {
         match self {
             Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
-    }
-
-    pub fn is_helix(self) -> bool {
-        matches!(self, Mode::HelixNormal | Mode::HelixSelect)
     }
 }
 
@@ -996,7 +992,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
-    pub is_helix_regex_search: bool,
+    pub helix_select: bool,
 }
 
 impl Operator {
