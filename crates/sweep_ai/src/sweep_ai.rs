@@ -6,7 +6,7 @@ use collections::HashMap;
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task};
 use http_client::{AsyncBody, Method};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint, text_diff};
 use project::Project;
 use std::collections::{VecDeque, hash_map};
 use std::fmt::{self, Display};
@@ -23,7 +23,7 @@ use util::ResultExt;
 use util::rel_path::RelPath;
 use uuid::Uuid;
 
-use crate::api::{AutocompleteRequest, AutocompleteResponse};
+use crate::api::{ActionType, AutocompleteRequest, AutocompleteResponse, UserAction};
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_EVENT_COUNT: usize = 16;
@@ -57,8 +57,8 @@ impl fmt::Debug for EditPrediction {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct EditPredictionId(Uuid);
+#[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct EditPredictionId(String);
 
 impl Display for EditPredictionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -214,10 +214,11 @@ impl SweepAi {
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
         let snapshot = buffer.read(cx).snapshot();
-        let full_path = snapshot
+        let full_path: Arc<Path> = snapshot
             .file()
             .map(|file| file.full_path(cx))
-            .unwrap_or_else(|| "untitled".into());
+            .unwrap_or_else(|| "untitled".into())
+            .into();
 
         let project_file = project::File::from_dyn(snapshot.file());
         let repo_name = project_file
@@ -228,79 +229,153 @@ impl SweepAi {
 
         let project_state = self.get_or_init_sweep_ai_project(project, cx);
         let events = project_state.events.clone();
-        let http_client = cx.http_client();
 
-        cx.background_spawn(async move {
-            let text = snapshot.text();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let tokio_handle = reqwest_client::runtime().handle().clone();
 
-            let mut recent_changes = String::new();
+        let result = cx.background_spawn({
+            let full_path = full_path.clone();
+            async move {
+                let text = snapshot.text();
 
-            for event in events {
-                writeln!(&mut recent_changes, "{event}")?;
+                let mut recent_changes = String::new();
+
+                for event in events {
+                    writeln!(&mut recent_changes, "{event}")?;
+                }
+
+                let request_body = AutocompleteRequest {
+                    debug_info: "Zed".into(),
+                    device_id: "todo".into(),
+                    repo_name,
+                    branch: None,
+                    file_path: full_path.clone(),
+                    file_contents: text.clone(),
+                    original_file_contents: text,
+                    cursor_position: offset,
+                    recent_changes: recent_changes.clone(),
+                    // todo! what's the difference?
+                    recent_changes_high_res: recent_changes,
+                    // todo! rest
+                    changes_above_cursor: false,
+                    file_chunks: vec![],
+                    retrieval_chunks: vec![],
+                    recent_user_actions: vec![],
+                    multiple_suggestions: false,
+                    privacy_mode_enabled: false,
+                    client_ip: None,
+                    ping: false,
+                };
+
+                let mut buf: Vec<u8> = Vec::new();
+                let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
+                serde_json::to_writer(writer, &request_body)?;
+
+                // let body: AsyncBody = buf.into();
+
+                const SWEEP_API_URL: &str =
+                    "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+
+                // let request = http_client::Request::builder()
+                //     .uri(SWEEP_API_URL)
+                //     .header("Content-Type", "application/json")
+                //     .header(
+                //         "Authorization",
+                //         // todo!
+                //         format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
+                //     )
+                //     // .header("Connection", "keep-alive")
+                //     .header("Content-Encoding", "br")
+                //     .method(Method::POST)
+                //     .body(body)?;
+
+                let request = client
+                    .post(SWEEP_API_URL)
+                    .header("Content-Type", "application/json")
+                    .header(
+                        "Authorization",
+                        // todo!
+                        format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
+                    )
+                    // .header("Connection", "keep-alive")
+                    .header("Content-Encoding", "br")
+                    .body(buf);
+
+                let response = tokio_handle
+                    .spawn(async move { request.send().await })
+                    .await??;
+                // let mut response = http_client.send(request).await?;
+
+                dbg!(response.headers());
+                dbg!(response.status());
+
+                // let mut body: Vec<u8> = Vec::new();
+                let body = response.bytes().await?;
+                // let body = response.body_mut().collect().await;
+                eprintln!("{body:?}");
+
+                // if !response.status().is_success() {
+                //     anyhow::bail!(
+                //         "Request failed with status: {:?}\nBody: {}",
+                //         response.status(),
+                //         String::from_utf8_lossy(&body),
+                //     );
+                // };
+
+                let response: AutocompleteResponse = serde_json::from_slice(&body)?;
+                dbg!(&response);
+
+                let old_text = snapshot
+                    .text_for_range(response.start_index..response.end_index)
+                    .collect::<String>();
+                let edits = text_diff(&old_text, &response.completion)
+                    .into_iter()
+                    .map(|(range, text)| {
+                        (
+                            snapshot.anchor_after(response.start_index + range.start)
+                                ..snapshot.anchor_before(response.start_index + range.end),
+                            text,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                anyhow::Ok((response.autocomplete_id, edits, snapshot))
+            }
+        });
+
+        let buffer = buffer.clone();
+
+        cx.spawn(async move |_, cx| {
+            let (id, edits, old_snapshot) = result.await?;
+
+            if edits.is_empty() {
+                return anyhow::Ok(None);
             }
 
-            let request_body = AutocompleteRequest {
-                debug_info: "Zed".into(),
-                device_id: "todo".into(),
-                repo_name,
-                branch: None,
-                file_path: full_path,
-                file_contents: text.clone(),
-                original_file_contents: text,
-                cursor_position: offset,
-                recent_changes: recent_changes.clone(),
-                // todo! what's the difference?
-                recent_changes_high_res: recent_changes,
-                // todo! rest
-                changes_above_cursor: false,
-                file_chunks: vec![],
-                retrieval_chunks: vec![],
-                recent_user_actions: vec![],
-                multiple_suggestions: false,
-                privacy_mode_enabled: false,
-                client_ip: None,
-                ping: false,
+            let Some((edits, new_snapshot, preview_task)) =
+                buffer.read_with(cx, |buffer, cx| {
+                    let new_snapshot = buffer.snapshot();
+
+                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
+                        edit_prediction::interpolate_edits(&old_snapshot, &new_snapshot, &edits)?
+                            .into();
+                    let preview_task = buffer.preview_edits(edits.clone(), cx);
+
+                    Some((edits, new_snapshot, preview_task))
+                })?
+            else {
+                return anyhow::Ok(None);
             };
 
-            let mut buf: Vec<u8> = Vec::new();
-            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
-            serde_json::to_writer(writer, &request_body)?;
-
-            let body: AsyncBody = buf.into();
-
-            const SWEEP_API_URL: &str =
-                "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
-
-            let request = http_client::Request::builder()
-                .uri(SWEEP_API_URL)
-                .header("Content-Type", "application/json")
-                .header(
-                    "Authorization",
-                    // todo!
-                    format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
-                )
-                .header("Connection", "keep-alive")
-                .header("Content-Encoding", "br")
-                .method(Method::POST)
-                .body(body)?;
-
-            let mut response = http_client.send(request).await?;
-
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            if !response.status().is_success() {
-                anyhow::bail!(
-                    "Request failed with status: {:?}\nBody: {}",
-                    response.status(),
-                    body
-                );
+            let prediction = EditPrediction {
+                id: EditPredictionId(id),
+                path: full_path,
+                edits,
+                snapshot: new_snapshot,
+                edit_preview: preview_task.await,
             };
 
-            let response: AutocompleteResponse = serde_json::from_str(&body)?;
-
-            // todo!
-            anyhow::Ok(None)
+            anyhow::Ok(Some(prediction))
         })
     }
 
@@ -369,7 +444,7 @@ impl Display for Event {
                 if !diff.is_empty() {
                     write!(
                         f,
-                        "File: {}:\n```diff\n{}\n```",
+                        "File: {}:\n{}\n",
                         new_path.display(util::paths::PathStyle::Posix),
                         diff
                     )?

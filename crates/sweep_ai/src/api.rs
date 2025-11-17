@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ pub struct AutocompleteRequest {
     pub device_id: String,
     pub repo_name: String,
     pub branch: Option<String>,
-    pub file_path: PathBuf,
+    pub file_path: Arc<Path>,
     pub file_contents: String,
     pub recent_changes: String,
     pub cursor_position: usize,
