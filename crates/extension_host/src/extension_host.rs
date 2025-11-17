@@ -343,7 +343,7 @@ impl ExtensionStore {
                                 let index = this
                                     .update(cx, |this, cx| this.rebuild_extension_index(cx))?
                                     .await;
-                                this.update( cx, |this, cx| this.extensions_updated(index, cx))?
+                                this.update(cx, |this, cx| this.extensions_updated(index, cx))?
                                     .await;
                                 index_changed = false;
                             }
@@ -758,29 +758,28 @@ impl ExtensionStore {
             if let Some(content_length) = content_length {
                 let actual_len = tar_gz_bytes.len();
                 if content_length != actual_len {
-                    bail!("downloaded extension size {actual_len} does not match content length {content_length}");
+                    bail!(concat!(
+                        "downloaded extension size {actual_len} ",
+                        "does not match content length {content_length}"
+                    ));
                 }
             }
             let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(extension_dir).await?;
-            this.update( cx, |this, cx| {
-                this.reload(Some(extension_id.clone()), cx)
-            })?
-            .await;
+            this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
+                .await;
 
             if let ExtensionOperation::Install = operation {
-                this.update( cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                     if let Some(events) = ExtensionEvents::try_global(cx)
-                        && let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                            events.update(cx, |this, cx| {
-                                this.emit(
-                                    extension::Event::ExtensionInstalled(manifest.clone()),
-                                    cx,
-                                )
-                            });
-                        }
+                        && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
+                    {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                        });
+                    }
                 })
                 .ok();
             }
