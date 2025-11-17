@@ -33,7 +33,7 @@ You can also configure your settings manually in the Settings Editor.
 
 To edit your settings:
 1. `Cmd+,` to open the Settings Editor.
-2. {#kb command_palette::zed:open settings}
+2. Run `zed: open settings` in the Command Palette.
 
 Here’s how common VS Code settings translate:
 | VS Code | Zed | Notes |
@@ -100,11 +100,11 @@ Here’s a quick reference guide for how our keybindings compare to what you’r
 | Toggle right dock | `Ctrl + R` |  |
 | Syntactic selection| `Opt + Up/Down` | Selects code by structure (e.g., inside braces). |
 
-####  How to Customize Keybindings
+### Customize Keybindings
 
 To edit your keybindings:
 - Open the command palette (`Cmd+Shift+P`)
-- Run {#kb command_palette:Zed:Open Keymap Editor}
+- Run `Zed: Open Keymap Editor`
 
 This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
 

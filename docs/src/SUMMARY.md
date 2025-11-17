@@ -10,6 +10,9 @@
 - [Telemetry](./telemetry.md)
 - [Troubleshooting](./troubleshooting.md)
 
+# Migrate
+- [VS Code](./migrate/vs-code.md)
+
 # Configuration
 
 - [Configuring Zed](./configuring-zed.md)
@@ -83,6 +86,10 @@
 - [Slash Command Extensions](./extensions/slash-commands.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
+
+# Migrate
+
+- [From VS Code](./migrate/vs-code.md)
 
 # Language Support
 
