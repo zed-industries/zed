@@ -325,7 +325,24 @@ impl RemoteConnection for DockerExecConnection {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        todo!()
+        let dest_path_str = dest_path.to_string();
+        let src_path_display = src_path.display().to_string();
+
+        let mut command = util::command::new_smol_command("docker");
+        command.arg("cp");
+        command.arg(src_path_display);
+        command.arg(format!("{}:{}", "fa75b942d27c", dest_path_str));
+
+        cx.background_spawn(async move {
+            let output = command.output().await?;
+
+            // TODO stderr mapping and such
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Failed to upload directory"))
+            }
+        })
     }
 
     async fn kill(&self) -> Result<()> {
@@ -346,10 +363,85 @@ impl RemoteConnection for DockerExecConnection {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
+        use std::fmt::Write as _;
+
+        let mut parsed_working_dir = None;
+
+        let path_style = self.path_style();
+        // let shell_kind = self.shell_kind();
+
         let mut exec = String::new();
-        write!(exec, "docker exec -it")?;
-        // Cool, so this is needed to run the terminal inside at least
-        todo!()
+        if let Some(working_dir) = working_dir {
+            let working_dir = RemotePathBuf::new(working_dir, path_style).to_string();
+
+            // shlex will wrap the command in single quotes (''), disabling ~ expansion,
+            // replace with with something that works
+            const TILDE_PREFIX: &'static str = "~/";
+            if working_dir.starts_with(TILDE_PREFIX) {
+                let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
+                parsed_working_dir = Some(format!("$HOME/{working_dir}"));
+                // write!(
+                //     exec,
+                //     "cd \"$HOME/{working_dir}\" {} ",
+                //     ssh_shell_kind.sequential_and_commands_separator()
+                // )?;
+            } else {
+                parsed_working_dir = Some(working_dir);
+                // write!(
+                //     exec,
+                //     "cd \"{working_dir}\" {} ",
+                //     ssh_shell_kind.sequential_and_commands_separator()
+                // )?;
+            }
+        }
+
+        let mut env_str = String::new();
+
+        for (k, v) in env.iter() {
+            write!(env_str, "{}={}", k, v)?; // TODO shell escaping
+        }
+        write!(exec, "exec env ")?;
+
+        let mut inner_program = Vec::new();
+
+        if let Some(program) = program {
+            inner_program.push(program);
+            for arg in args {
+                // let arg = ssh_shell_kind.try_quote(&arg).context("shell quoting")?;
+                inner_program.push(arg.clone());
+            }
+        } else {
+            inner_program.push("/bin/bash".to_string()); // TODO shell extraction
+            inner_program.push("-l".to_string());
+        };
+
+        let mut the_args = vec!["exec".to_string()];
+
+        if parsed_working_dir.is_some() {
+            the_args.push("-w".to_string());
+            the_args.push(parsed_working_dir.unwrap());
+        }
+
+        if env_str != "" {
+            the_args.push("-e".to_string());
+            the_args.push(env_str);
+        }
+
+        // The hard-coded part
+        // TODO this basically assumes that we're using this case to open a terminal window in Zed
+        // That seems like a safe assumption, but perhaps warrants a switch?
+        the_args.push("-it".to_string());
+        the_args.push("fa75b942d27c".to_string());
+
+        the_args.append(&mut inner_program);
+
+        print!("The Args: {:?}", the_args);
+        Ok(CommandTemplate {
+            program: "docker".to_string(),
+            args: the_args,
+            // Docker-exec pipes in environment via the "-e" argument
+            env: Default::default(),
+        })
     }
 
     fn build_forward_ports_command(

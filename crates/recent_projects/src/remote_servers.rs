@@ -528,7 +528,12 @@ impl DefaultState {
         let test_devcontainer_servers = vec![RemoteEntry::Project {
             open_folder: NavigableEntry::new(&handle, cx),
             configure: NavigableEntry::new(&handle, cx),
-            projects: vec![],
+            projects: vec![(
+                NavigableEntry::new(&handle, cx),
+                SshProject {
+                    paths: vec!["/workspaces/zed".to_string()],
+                },
+            )],
             index: ServerIndex::DevContainer(DevContainerIndex(0)),
             connection: Connection::DevContainer(DevContainerConnection {
                 name: "test".into(),
