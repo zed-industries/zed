@@ -201,6 +201,17 @@ impl AgentTool for ReadFileTool {
                 anyhow::bail!("{file_path} not found");
             }
 
+            // Record the file read time and mtime
+            if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
+                buffer.file().and_then(|file| file.disk_state().mtime())
+            })? {
+                self.thread
+                    .update(cx, |thread, _| {
+                        thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
+                    })
+                    .ok();
+            }
+
             let mut anchor = None;
 
             // Check if specific line ranges are provided
