@@ -12,7 +12,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use crate::{AgentTool, ToolCallEventStream, outline};
+use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
 ///
