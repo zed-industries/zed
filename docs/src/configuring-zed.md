@@ -4126,7 +4126,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
   "terminal": {
     "path_hyperlink_regexes": [
       // Python-style diagnostics
-      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+      "(?<link>File \"(?<path>[^\"]+)\", line (?<line>[0-9]+))",
       // Common path syntax with optional line, column, description, trailing punctuation, or
       // surrounding symbols or quotes
       [

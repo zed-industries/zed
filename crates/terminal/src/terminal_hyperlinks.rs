@@ -239,7 +239,9 @@ fn path_match<T>(
     }
     let line = line.trim_ascii_end();
 
-    let found_from_range = |path_range: Range<usize>, position: Option<(u32, Option<u32>)>| {
+    let found_from_range = |path_range: Range<usize>,
+                            link_range: Option<Range<usize>>,
+                            position: Option<(u32, Option<u32>)>| {
         let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {
                 point = term
@@ -259,11 +261,12 @@ fn path_match<T>(
             }
         };
 
-        let path_start = advance_point_by_str(line_start, &line[..path_range.start]);
-        let path_end = advance_point_by_str(path_start, &line[path_range.clone()]);
-        let path_match = path_start
+        let link_range = link_range.unwrap_or(path_range.clone());
+        let link_start = advance_point_by_str(line_start, &line[..link_range.start]);
+        let link_end = advance_point_by_str(link_start, &line[link_range]);
+        let link_match = link_start
             ..=term
-                .expand_wide(path_end, AlacDirection::Left)
+                .expand_wide(link_end, AlacDirection::Left)
                 .sub(term, Boundary::Grid, 1);
 
         Some((
@@ -275,7 +278,7 @@ fn path_match<T>(
                 });
                 path
             },
-            path_match,
+            link_match,
         ))
     };
 
@@ -304,10 +307,11 @@ fn path_match<T>(
 
                 found_from_range(
                     path.range(),
+                    captures.name("link").map(|link| link.range()),
                     parse("line").map(|line| (line, parse("column"))),
                 )
             } else {
-                found_from_range(captures.get(0).unwrap().range(), None)
+                found_from_range(captures.get(0).unwrap().range(), None, None)
             };
 
             if let Some(found) = found {
@@ -559,10 +563,10 @@ mod tests {
             // Python
             test_path!("‹«awe👉some.py»›");
 
-            test_path!("    F👉ile \"/awesome.py\", line 42: Wat?");
-            test_path!("    File \"‹«/awe👉some.py»›\", line «42»");
-            test_path!("    File \"/awesome.py👉\", line 42: Wat?");
-            test_path!("    File \"/awesome.py\", line 4👉2");
+            test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awe👉some.py»\", line «42»›");
+            test_path!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›");
         }
 
         #[test]
@@ -726,17 +730,17 @@ mod tests {
             // Python
             test_path!("‹«👉例wesome.py»›");
             test_path!("‹«例👈wesome.py»›");
-            test_path!("    File \"‹«/👉例wesome.py»›\", line «42»: Wat?");
-            test_path!("    File \"‹«/例👈wesome.py»›\", line «42»: Wat?");
+            test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
         }
 
         #[test]
         fn non_word_wide_chars() {
             // Mojo diagnostic message
-            test_path!("    File \"‹«/awe👉some.🔥»›\", line «42»: Wat?");
-            test_path!("    File \"‹«/awesome👉.🔥»›\", line «42»: Wat?");
-            test_path!("    File \"‹«/awesome.👉🔥»›\", line «42»: Wat?");
-            test_path!("    File \"‹«/awesome.🔥👈»›\", line «42»: Wat?");
+            test_path!("    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
         }
 
         /// These likely rise to the level of being worth fixing.
@@ -757,8 +761,8 @@ mod tests {
                 // Python
                 test_path!("‹«👉例wesome.py»›");
                 test_path!("‹«例👈wesome.py»›");
-                test_path!("    File \"‹«/👉例wesome.py»›\", line «42»: Wat?");
-                test_path!("    File \"‹«/例👈wesome.py»›\", line «42»: Wat?");
+                test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+                test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
             }
 
             #[test]
@@ -791,16 +795,16 @@ mod tests {
                 // Python
                 test_path!("‹«👉🏃wesome.py»›");
                 test_path!("‹«🏃👈wesome.py»›");
-                test_path!("    File \"‹«/👉🏃wesome.py»›\", line «42»: Wat?");
-                test_path!("    File \"‹«/🏃👈wesome.py»›\", line «42»: Wat?");
+                test_path!("    ‹File \"«/👉🏃wesome.py»\", line «42»›: Wat?");
+                test_path!("    ‹File \"«/🏃👈wesome.py»\", line «42»›: Wat?");
 
                 // Mojo
                 test_path!("‹«/awe👉some.🔥»› is some good Mojo!");
                 test_path!("‹«/awesome👉.🔥»› is some good Mojo!");
                 test_path!("‹«/awesome.👉🔥»› is some good Mojo!");
                 test_path!("‹«/awesome.🔥👈»› is some good Mojo!");
-                test_path!("    File \"‹«/👉🏃wesome.🔥»›\", line «42»: Wat?");
-                test_path!("    File \"‹«/🏃👈wesome.🔥»›\", line «42»: Wat?");
+                test_path!("    ‹File \"«/👉🏃wesome.🔥»\", line «42»›: Wat?");
+                test_path!("    ‹File \"«/🏃👈wesome.🔥»\", line «42»›: Wat?");
             }
 
             #[test]

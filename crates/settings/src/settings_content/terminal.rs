@@ -34,7 +34,7 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: [
     ///   // Python-style diagnostics
-    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+    ///   "(?<link>File \"(?<path>[^\"]+)\", line (?<line>[0-9]+))",
     ///   // Common path syntax with optional line, column, description, trailing punctuation, or
     ///   // surrounding symbols or quotes
     ///   [
