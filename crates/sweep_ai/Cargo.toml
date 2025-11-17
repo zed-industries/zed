@@ -19,25 +19,18 @@ arrayvec.workspace = true
 brotli.workspace = true
 collections.workspace = true
 edit_prediction.workspace = true
-editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
-log.workspace = true
 project.workspace = true
-rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
 util.workspace = true
-uuid.workspace = true
 workspace.workspace = true
-worktree.workspace = true
 
 [dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
@@ -45,5 +38,4 @@ language = { workspace = true, features = ["test-support"] }
 reqwest_client = { workspace = true, features = ["test-support"] }
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
-worktree = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
