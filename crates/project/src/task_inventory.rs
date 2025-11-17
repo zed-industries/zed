@@ -302,12 +302,12 @@ impl Inventory {
         let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
 
         let adapter = task_contexts.location().and_then(|location| {
-            let (file, language) = {
+            let (file, language, modeline) = {
                 let buffer = location.buffer.read(cx);
-                (buffer.file(), buffer.language())
+                (buffer.file(), buffer.language(), buffer.modeline())
             };
             let language_name = language.as_ref().map(|l| l.name());
-            let adapter = language_settings(language_name, file, cx)
+            let adapter = language_settings(language_name, modeline, file, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -394,7 +394,7 @@ impl Inventory {
         });
         let language_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
+                language_settings(Some(language.name()), None, file.as_ref(), cx)
                     .tasks
                     .enabled
             })
@@ -478,7 +478,7 @@ impl Inventory {
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
         let associated_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
+                language_settings(Some(language.name()), None, file.as_ref(), cx)
                     .tasks
                     .enabled
             })

@@ -387,6 +387,7 @@ impl AgentTool for EditFileTool {
                 .read_with(cx, |buffer, cx| {
                     let settings = language_settings::language_settings(
                         buffer.language().map(|l| l.name()),
+                        buffer.modeline(),
                         buffer.file(),
                         cx,
                     );

@@ -245,6 +245,7 @@ impl LanguageServerTree {
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
             Some(language_name),
+            None,
             cx,
         );
         if !settings.enable_language_server {
