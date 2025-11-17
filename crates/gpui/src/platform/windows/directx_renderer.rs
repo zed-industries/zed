@@ -93,8 +93,8 @@ struct DirectXRenderPipelines {
     mono_sprites: PipelineState<MonochromeSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
 
-    custom: Vec<PipelineState<PaintShader>>,
-    custom_ids: HashMap<CustomShader, CustomShaderId>,
+    custom: Vec<(PipelineState<ShaderPrimitive>, usize, usize)>,
+    custom_ids: HashMap<String, CustomShaderId>,
 }
 
 struct DirectXGlobalElements<T> {
@@ -647,19 +647,52 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_custom_shaders(&mut self, shaders: &[PaintShader]) -> Result<()> {
+    fn draw_custom_shaders(&mut self, shaders: &[ShaderPrimitive]) -> Result<()> {
         if shaders.is_empty() {
             return Ok(());
         }
 
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let pipeline = self
+        let (pipeline, user_data_size, user_data_align) = self
             .pipelines
             .custom
             .get_mut(shaders[0].shader_id.0 as usize)
             .unwrap();
-        pipeline.update_buffer(&devices.device, &devices.device_context, shaders)?;
+        assert!(
+            shaders
+                .iter()
+                .all(|shader| shader.user_data.len() == *user_data_size)
+        );
+
+        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(*user_data_align);
+        let user_data_offset = size_of::<CustomShaderInstance>().next_multiple_of(*user_data_align);
+        let instance_size = (user_data_offset + *user_data_size).next_multiple_of(instance_align);
+        let mut instances = vec![0u8; instance_size * shaders.len()];
+        for (idx, shader) in shaders.iter().enumerate() {
+            let instance = CustomShaderInstance {
+                bounds: shader.bounds,
+                content_mask: shader.content_mask.clone(),
+            };
+            let instance_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    (&instance as *const CustomShaderInstance) as *const u8,
+                    size_of::<CustomShaderInstance>(),
+                )
+            };
+
+            let offset = idx * instance_size;
+            instances[offset..offset + instance_bytes.len()].copy_from_slice(instance_bytes);
+            instances[offset + user_data_offset..offset + user_data_offset + *user_data_size]
+                .copy_from_slice(&shader.user_data);
+        }
+
+        pipeline.update_buffer_raw(
+            &devices.device,
+            &devices.device_context,
+            &instances,
+            shaders.len(),
+        )?;
         pipeline.draw(
             &devices.device_context,
             slice::from_ref(&resources.viewport),
@@ -726,10 +759,16 @@ impl DirectXRenderer {
 
     pub(crate) fn register_shader(
         &mut self,
-        shader: &CustomShader,
+        source: &str,
+        user_data_size: usize,
+        user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
-        self.pipelines
-            .register_custom_shader(&self.devices.as_ref().unwrap().device, shader)
+        self.pipelines.register_custom_shader(
+            &self.devices.as_ref().unwrap().device,
+            source,
+            user_data_size,
+            user_data_align,
+        )
     }
 }
 
@@ -870,23 +909,33 @@ impl DirectXRenderPipelines {
     fn register_custom_shader(
         &mut self,
         device: &ID3D11Device,
-        custom_shader: &CustomShader,
+        source: &str,
+        user_data_size: usize,
+        user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
-        if let Some(id) = self.custom_ids.get(custom_shader).copied() {
+        if let Some(id) = self.custom_ids.get(source).copied() {
             return Ok(id);
         }
 
+        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(user_data_align);
+        let instance_size = (size_of::<CustomShaderInstance>().next_multiple_of(user_data_align)
+            + user_data_size)
+            .next_multiple_of(instance_align);
+
         let id = CustomShaderId(self.custom.len() as u32);
-        self.custom.push(
+        self.custom.push((
             PipelineState::new_custom(
                 device,
-                custom_shader,
-                16,
+                source,
+                4,
+                instance_size,
                 create_blend_state(device).unwrap(),
             )
             .unwrap(),
-        );
-        self.custom_ids.insert(custom_shader.clone(), id);
+            user_data_size,
+            user_data_align,
+        ));
+        self.custom_ids.insert(source.to_string(), id);
         Ok(id)
     }
 }
@@ -1008,11 +1057,12 @@ impl<T> PipelineState<T> {
 
     fn new_custom(
         device: &ID3D11Device,
-        custom_shader: &CustomShader,
+        source: &str,
         buffer_size: usize,
+        instance_size: usize,
         blend_state: ID3D11BlendState,
     ) -> Result<Self> {
-        let module = naga::front::wgsl::parse_str(&custom_shader.source)?;
+        let module = naga::front::wgsl::parse_str(source)?;
         let module_info = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all() ^ naga::valid::ValidationFlags::BINDINGS,
             naga::valid::Capabilities::empty(),
@@ -1034,7 +1084,7 @@ impl<T> PipelineState<T> {
             create_fragment_shader(device, raw_shader.as_bytes()).unwrap()
         };
 
-        let buffer = create_buffer(device, std::mem::size_of::<T>(), buffer_size).unwrap();
+        let buffer = create_buffer(device, instance_size, buffer_size).unwrap();
         let view = create_buffer_view(device, &buffer).unwrap();
 
         Ok(PipelineState {
@@ -1064,6 +1114,30 @@ impl<T> PipelineState<T> {
                 new_buffer_size
             );
             let buffer = create_buffer(device, std::mem::size_of::<T>(), new_buffer_size)?;
+            let view = create_buffer_view(device, &buffer)?;
+            self.buffer = buffer;
+            self.view = view;
+            self.buffer_size = new_buffer_size;
+        }
+        update_buffer(device_context, &self.buffer, data)
+    }
+
+    fn update_buffer_raw(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        data: &[u8],
+        num_elements: usize,
+    ) -> Result<()> {
+        if self.buffer_size < num_elements {
+            let new_buffer_size = num_elements.next_power_of_two();
+            log::info!(
+                "Updating {} buffer size from {} to {}",
+                self.label,
+                self.buffer_size,
+                new_buffer_size
+            );
+            let buffer = create_buffer(device, data.len() / num_elements, new_buffer_size)?;
             let view = create_buffer_view(device, &buffer)?;
             self.buffer = buffer;
             self.view = view;
