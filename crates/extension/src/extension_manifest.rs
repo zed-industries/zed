@@ -265,25 +265,26 @@ impl ExtensionManifest {
             .and_then(OsStr::to_str)
             .context("invalid extension name")?;
 
-        let mut extension_manifest_path = extension_dir.join("extension.json");
+        let extension_manifest_path = extension_dir.join("extension.toml");
         if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
-                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
-            })?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
-        } else {
-            extension_manifest_path.set_extension("toml");
             let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
                 format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
             })?;
             toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
             })
+        } else if let extension_manifest_path = extension_manifest_path.with_extension("json")
+            && fs.is_file(&extension_manifest_path).await
+        {
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
+            })?;
+
+            serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))
+        } else {
+            anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
     }
 }

@@ -2169,16 +2169,28 @@ async fn test_inlay_hint_refresh_is_forwarded(
                 } else {
                     "initial hint"
                 };
-                Ok(Some(vec![lsp::InlayHint {
-                    position: lsp::Position::new(0, character),
-                    label: lsp::InlayHintLabel::String(label.to_string()),
-                    kind: None,
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: None,
-                    padding_right: None,
-                    data: None,
-                }]))
+                Ok(Some(vec![
+                    lsp::InlayHint {
+                        position: lsp::Position::new(0, character),
+                        label: lsp::InlayHintLabel::String(label.to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    },
+                    lsp::InlayHint {
+                        position: lsp::Position::new(1090, 1090),
+                        label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    },
+                ]))
             }
         })
         .next()
