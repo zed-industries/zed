@@ -64,6 +64,7 @@ pub struct KeystrokeInput {
     clear_close_keystrokes_timer: Option<Task<()>>,
     #[cfg(test)]
     recording: bool,
+    pub actions_slot: Option<AnyElement>,
 }
 
 impl KeystrokeInput {
@@ -94,6 +95,7 @@ impl KeystrokeInput {
             clear_close_keystrokes_timer: None,
             #[cfg(test)]
             recording: false,
+            actions_slot: None,
         }
     }
 
@@ -445,6 +447,11 @@ impl KeystrokeInput {
         // not get de-synced
         self.inner_focus_handle.is_focused(window)
     }
+
+    pub fn actions_slot(mut self, action: impl IntoElement) -> Self {
+        self.actions_slot = Some(action.into_any_element());
+        self
+    }
 }
 
 impl EventEmitter<()> for KeystrokeInput {}
@@ -586,7 +593,7 @@ impl Render for KeystrokeInput {
                     .min_w_0()
                     .justify_center()
                     .flex_wrap()
-                    .gap(ui::DynamicSpacing::Base04.rems(cx))
+                    .gap_1()
                     .children(self.render_keystrokes(is_recording)),
             )
             .child(
@@ -636,6 +643,7 @@ impl Render for KeystrokeInput {
                             )
                         }
                     })
+                    .when_some(self.actions_slot.take(), |this, action| this.child(action))
                     .when(is_recording, |this| {
                         this.child(
                             IconButton::new("clear-btn", IconName::Backspace)

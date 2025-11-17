@@ -184,7 +184,7 @@ enum SearchMode {
 impl SearchMode {
     fn invert(&self) -> Self {
         match self {
-            SearchMode::Normal => SearchMode::KeyStroke { exact_match: false },
+            SearchMode::Normal => SearchMode::KeyStroke { exact_match: true },
             SearchMode::KeyStroke { .. } => SearchMode::Normal,
         }
     }
@@ -1600,9 +1600,33 @@ impl Item for KeymapEditor {
 
 impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
+        if let SearchMode::KeyStroke { exact_match } = self.search_mode {
+            let button = IconButton::new("keystrokes-exact-match", IconName::CaseSensitive)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action(
+                        "Toggle Exact Match Mode",
+                        &ToggleExactKeystrokeMatching,
+                        cx,
+                    )
+                })
+                .shape(IconButtonShape::Square)
+                .toggle_state(exact_match)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    window.dispatch_action(ToggleExactKeystrokeMatching.boxed_clone(), cx);
+                }));
+
+            self.keystroke_editor.update(cx, |editor, _| {
+                editor.actions_slot = Some(button.into_any_element());
+            });
+        } else {
+            self.keystroke_editor.update(cx, |editor, _| {
+                editor.actions_slot = None;
+            });
+        }
+
         let row_count = self.matches.len();
-        let theme = cx.theme();
         let focus_handle = &self.focus_handle;
+        let theme = cx.theme();
 
         v_flex()
             .id("keymap-editor")
@@ -1786,49 +1810,14 @@ impl Render for KeymapEditor {
                                     )
                             ),
                     )
-                    .when_some(
-                        match self.search_mode {
-                            SearchMode::Normal => None,
-                            SearchMode::KeyStroke { exact_match } => Some(exact_match),
-                        },
-                        |this, exact_match| {
+                    .when(
+                        matches!(self.search_mode, SearchMode::KeyStroke { .. }),
+                        |this| {
                             this.child(
                                 h_flex()
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
-                                    .child(
-                                        h_flex()
-                                            .min_w_64()
-                                            .child(
-                                                IconButton::new(
-                                                    "keystrokes-exact-match",
-                                                    IconName::CaseSensitive,
-                                                )
-                                                .tooltip({
-                                                    let keystroke_focus_handle =
-                                                        self.keystroke_editor.read(cx).focus_handle(cx);
-
-                                                    move |_window, cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Toggle Exact Match Mode",
-                                                            &ToggleExactKeystrokeMatching,
-                                                            &keystroke_focus_handle,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                                .shape(IconButtonShape::Square)
-                                                .toggle_state(exact_match)
-                                                .on_click(
-                                                    cx.listener(|_, _, window, cx| {
-                                                        window.dispatch_action(
-                                                            ToggleExactKeystrokeMatching.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                    }),
-                                                ),
-                                            ),
-                                    )
+                                    .child(div().min_w_64()), // Spacer div to align with the search input
                             )
                         },
                     ),
