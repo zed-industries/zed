@@ -1474,6 +1474,15 @@ impl PlatformWindow for MacWindow {
         this.renderer.draw(scene);
     }
 
+    fn register_shader(
+        &self,
+        _source: &str,
+        _user_data_size: usize,
+        _user_data_align: usize,
+    ) -> Result<crate::CustomShaderId, &'static str> {
+        unimplemented!()
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
