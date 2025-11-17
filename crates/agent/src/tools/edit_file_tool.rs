@@ -311,7 +311,7 @@ impl AgentTool for EditFileTool {
 
             // Check if the file has been modified since the agent last read it
             if let Some(abs_path) = abs_path.as_ref() {
-                let (last_read_mtime, current_mtime, is_dirty) = self.thread.update(cx, |thread, cx| {
+                let (last_read_mtime, current_mtime) = self.thread.update(cx, |thread, cx| {
                     // Check for unsaved changes first - these indicate modifications we don't know about
                     if buffer.read(cx).is_dirty() {
                         anyhow::bail!(
@@ -321,11 +321,10 @@ impl AgentTool for EditFileTool {
                         );
                     }
 
-                    let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let last_read = thread.file_read_times.get(abs_path).copied();
-                    (last_read, current, dirty)
+                    let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
+                    (last_read, current)
                 })?;
-
 
                 // Check if the file was modified on disk since we last read it
                 if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
@@ -1889,7 +1888,6 @@ mod tests {
             cx.set_global(settings_store);
         });
     }
-}
 
     #[gpui::test]
     async fn test_consecutive_edits_work(cx: &mut TestAppContext) {
@@ -2201,3 +2199,4 @@ mod tests {
             error_msg
         );
     }
+}
