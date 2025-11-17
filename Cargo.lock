@@ -16591,6 +16591,7 @@ name = "sweep_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "collections",
  "edit_prediction",
  "editor",
@@ -16607,6 +16608,7 @@ dependencies = [
  "settings",
  "tree-sitter-rust",
  "util",
+ "uuid",
  "workspace",
  "worktree",
  "zlog",
