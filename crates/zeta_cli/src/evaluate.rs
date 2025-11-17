@@ -593,7 +593,7 @@ fn write_bucketed_analysis(
             });
     }
 
-    let mut sorted_buckets: Vec<_> = buckets.into_iter().map(|(_, bucket)| bucket).collect();
+    let mut sorted_buckets = buckets.into_values().collect::<Vec<_>>();
     sorted_buckets.sort_by(|a, b| match (a.is_correct, b.is_correct) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
