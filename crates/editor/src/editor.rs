@@ -16208,19 +16208,11 @@ impl Editor {
             return;
         };
 
-        // in vim mode,helix mode, position cursor at start without selection to keep user in normal mode
-        // in normal mode, select entire range for better visibility
-        let selection_range = if vim_flavor(cx).is_some() {
-            start..start
-        } else {
-            start..end
-        };
-
         self.change_selections(
             SelectionEffects::default().nav_history(true),
             window,
             cx,
-            |s| s.select_anchor_ranges([selection_range]),
+            |s| s.select_anchor_ranges([start..end]),
         );
     }
 
@@ -16930,7 +16922,15 @@ impl Editor {
 
                 editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range, false);
+
+                    // When vim mode is enabled, ensure that the range is
+                    // collapsed to the range's start point, otherwise actions
+                    // like jumping to a function's definition in vim mode would
+                    // change the mode to Visual.
+                    let range = match vim_flavor(cx) {
+                        Some(_) => editor.range_for_match(&range, true),
+                        None => editor.range_for_match(&range, false),
+                    };
                     let range = collapse_multiline_range(range);
 
                     if !split
