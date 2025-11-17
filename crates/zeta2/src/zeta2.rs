@@ -1015,7 +1015,7 @@ impl Zeta {
                         // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
                     }
-                    PromptFormat::Minimal => {
+                    PromptFormat::Minimal | PromptFormat::MinimalQwen => {
                         if output_text.contains("--- a/\n+++ b/\nNo edits") {
                             let edits = vec![];
                             (&active_snapshot, edits)

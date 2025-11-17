@@ -250,6 +250,7 @@ impl<'a> DiffParser<'a> {
                 break;
             };
 
+            dbg!(&parsed_line);
             util::maybe!({
                 match parsed_line {
                     DiffLine::OldPath { path } => {
