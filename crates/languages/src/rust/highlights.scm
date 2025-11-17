@@ -102,6 +102,7 @@
   "ref"
   "static"
   "struct"
+  "for"
   "trait"
   "type"
   "union"
@@ -117,7 +118,6 @@
   "break"
   "continue"
   "else"
-  "for"
   "if"
   "in"
   "loop"
@@ -126,6 +126,9 @@
   "while"
   "yield"
 ] @keyword.control
+
+(for_expression
+  ("for" @keyword.control))
 
 [
   (string_literal)
