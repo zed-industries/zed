@@ -1,5 +1,4 @@
 import os
-from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -135,6 +134,7 @@ def get_label_to_issue_data(
         "crash": ["label:crash", "type:Crash"],
         "feature": ["label:feature", "type:Feature"],
         "meta": ["type:Meta"],
+        "windows": ["label:windows"],
         "unlabeled": ["no:label no:type"],
     }
 
