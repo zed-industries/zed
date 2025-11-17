@@ -4688,6 +4688,7 @@ mod tests {
                 "assistant",
                 "assistant2",
                 "auto_update",
+                "bedrock",
                 "branches",
                 "buffer_search",
                 "channel_modal",
