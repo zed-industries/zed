@@ -2256,14 +2256,7 @@ impl GitStore {
 
         let file_history = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.send_job(None, move |state, _| async move {
-                    match state {
-                        RepositoryState::Local { backend, .. } => backend.file_history(path).await,
-                        RepositoryState::Remote { .. } => {
-                            unreachable!("file history request received for remote repository")
-                        }
-                    }
-                })
+                repository_handle.file_history(path)
             })?
             .await??;
 
