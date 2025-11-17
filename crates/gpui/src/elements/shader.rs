@@ -73,8 +73,8 @@ impl Element for FragmentShader {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        let shader = CustomShader {
-            source: r#"
+        let shader = CustomShader::new::<UserData>(
+            r#"
             struct GlobalParams {
                 viewport_size: vec2<f32>,
                 pad1: u32,
@@ -109,11 +109,14 @@ impl Element for FragmentShader {
                 size: vec2<f32>,
             }
 
+            struct PaintShaderUserData {
+                blue: f32
+            }
+
             struct PaintShader {
-                order: u32,
-                shader_id: u32,
                 bounds: Bounds,
                 content_mask: Bounds,
+                user: PaintShaderUserData
             }
             struct PaintShaderBuf {
                 shaders: array<PaintShader>,
@@ -124,6 +127,9 @@ impl Element for FragmentShader {
             struct PaintShaderVarying {
                 @builtin(position) position: vec4<f32>,
                 @location(0) clip_distances: vec4<f32>,
+                @location(1) origin: vec2<f32>,
+                @location(2) size: vec2<f32>,
+                @location(3) blue: f32,
             }
 
             @vertex
@@ -134,6 +140,9 @@ impl Element for FragmentShader {
                 var out = PaintShaderVarying();
                 out.position = to_device_position(unit_vertex, view.bounds);
                 out.clip_distances = distance_from_clip_rect(unit_vertex, view.bounds, view.content_mask);
+                out.origin = view.bounds.origin;
+                out.size = view.bounds.size;
+                out.blue = view.user.blue;
                 return out;
             }
 
@@ -143,13 +152,14 @@ impl Element for FragmentShader {
                     return vec4<f32>(0.0);
                 }
 
-                return vec4<f32>(input.position.x / globals.viewport_size.x, input.position.y / globals.viewport_size.y, 0.0, 1.0);
+                return vec4<f32>((input.position.x - input.origin.x) / input.size.x, (input.position.y - input.origin.y) / input.size.y, input.blue, 1.0);
             }
-            "#.to_string(),
-        };
+            "#.to_string());
 
         // TODO: Better error type
-        window.paint_shader(bounds, &shader).unwrap();
+        window
+            .paint_shader(bounds, &shader, UserData { blue: 1.0 })
+            .unwrap();
     }
 }
 
@@ -159,9 +169,27 @@ impl Styled for FragmentShader {
     }
 }
 
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+struct UserData {
+    blue: f32,
+}
+
 /// A custom rendering pipeline which can be executed as a primitive.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CustomShader {
-    /// The source code of the shader written in WGSL
-    pub source: String,
+    pub(crate) source: String,
+    pub(crate) user_data_size: usize,
+    pub(crate) user_data_align: usize,
+}
+
+impl CustomShader {
+    /// Create a new custom shader. `source` is the WGSL source code of the shader and `T` is additional user-data to pass to each instance.
+    pub fn new<T>(source: String) -> Self {
+        Self {
+            source,
+            user_data_size: size_of::<T>(),
+            user_data_align: align_of::<T>(),
+        }
+    }
 }

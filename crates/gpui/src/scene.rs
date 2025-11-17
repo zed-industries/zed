@@ -31,7 +31,7 @@ pub(crate) struct Scene {
     pub(crate) underlines: Vec<Underline>,
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
-    pub(crate) shaders: Vec<PaintShader>,
+    pub(crate) shaders: Vec<ShaderPrimitive>,
     pub(crate) surfaces: Vec<PaintSurface>,
 }
 
@@ -214,7 +214,7 @@ pub(crate) enum Primitive {
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
-    Shader(PaintShader),
+    Shader(ShaderPrimitive),
     Surface(PaintSurface),
 }
 
@@ -272,9 +272,9 @@ struct BatchIterator<'a> {
     polychrome_sprites: &'a [PolychromeSprite],
     polychrome_sprites_start: usize,
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
-    shaders: &'a [PaintShader],
+    shaders: &'a [ShaderPrimitive],
     shaders_start: usize,
-    shaders_iter: Peekable<slice::Iter<'a, PaintShader>>,
+    shaders_iter: Peekable<slice::Iter<'a, ShaderPrimitive>>,
     surfaces: &'a [PaintSurface],
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -486,7 +486,7 @@ pub(crate) enum PrimitiveBatch<'a> {
         texture_id: AtlasTextureId,
         sprites: &'a [PolychromeSprite],
     },
-    Shaders(&'a [PaintShader]),
+    Shaders(&'a [ShaderPrimitive]),
     Surfaces(&'a [PaintSurface]),
 }
 
@@ -697,18 +697,28 @@ impl From<PolychromeSprite> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct PaintShader {
+pub(crate) struct ShaderPrimitive {
     pub order: DrawOrder,
     pub shader_id: CustomShaderId,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    pub user_data: Vec<u8>,
 }
 
-impl From<PaintShader> for Primitive {
-    fn from(value: PaintShader) -> Self {
+impl From<ShaderPrimitive> for Primitive {
+    fn from(value: ShaderPrimitive) -> Self {
         Primitive::Shader(value)
     }
 }
+
+#[repr(C)]
+#[derive(Clone)]
+pub(crate) struct CustomShaderInstance {
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+}
+
+pub(crate) const CUSTOM_SHADER_INSTANCE_ALIGN: usize = 8;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PaintSurface {
