@@ -310,6 +310,7 @@ mod test {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::sync::Arc;
     use util::path;
 
     #[gpui::test]
