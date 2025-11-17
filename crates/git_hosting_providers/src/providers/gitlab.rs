@@ -7,10 +7,11 @@ use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
-    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    RemoteUrl,
+    BuildCommitPermalinkParams, BuildCreatePullRequestParams, BuildPermalinkParams,
+    GitHostingProvider, ParsedGitRemote, RemoteUrl,
 };
 
 use crate::get_host_from_git_remote_url;
@@ -209,6 +210,38 @@ impl GitHostingProvider for Gitlab {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCreatePullRequestParams,
+    ) -> Option<Url> {
+        let BuildCreatePullRequestParams {
+            source_branch,
+            target_branch,
+        } = params;
+
+        let mut url = self
+            .base_url()
+            .join(&format!("{}/{}/-/merge_requests/new", remote.owner, remote.repo))
+            .ok()?;
+
+        let mut query = format!(
+            "merge_request%5Bsource_branch%5D={}",
+            encode(source_branch)
+        );
+
+        if let Some(target_branch) = target_branch {
+            query.push('&');
+            query.push_str(&format!(
+                "merge_request%5Btarget_branch%5D={}",
+                encode(target_branch)
+            ));
+        }
+
+        url.set_query(Some(&query));
+        Some(url)
+    }
+
     async fn commit_author_avatar_url(
         &self,
         repo_owner: &str,
@@ -374,6 +407,46 @@ mod tests {
 
         let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_gitlab_create_pr_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        let url = provider
+            .build_create_pull_request_url(
+                &remote,
+                BuildCreatePullRequestParams {
+                    source_branch: "feature/cool stuff",
+                    target_branch: Some("main"),
+                },
+            )
+            .expect("create PR url should be constructed");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff&merge_request%5Btarget_branch%5D=main"
+        );
+
+        let url_without_target = provider
+            .build_create_pull_request_url(
+                &remote,
+                BuildCreatePullRequestParams {
+                    source_branch: "feature/only-source",
+                    target_branch: None,
+                },
+            )
+            .expect("create PR url should be constructed without target");
+
+        assert_eq!(
+            url_without_target.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fonly-source"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -24,7 +24,10 @@ use git::repository::{
 };
 use git::stash::GitStash;
 use git::status::StageStatus;
-use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
+use git::{
+    Amend, Signoff, ToggleStaged, parse_git_remote_url, repository::RepoPath, status::FileStatus,
+};
+use git::{BuildCreatePullRequestParams, GitHostingProviderRegistry};
 use git::{
     ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
     TrashUntrackedFiles, UnstageAll,
@@ -49,7 +52,9 @@ use panel::{
 };
 use project::{
     Fs, Project, ProjectPath,
-    git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
+    git_store::{
+        GitStoreEvent, Repository, RepositoryEvent, RepositoryId, RepositorySnapshot, pending_op,
+    },
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -2931,6 +2936,7 @@ impl GitPanel {
         };
 
         workspace.update(cx, |workspace, cx| {
+            let view_log_output = format!("stdout:\n{}\nstderr:\n{}", &info.stdout, &info.stderr);
             let SuccessMessage { message, style } = remote_output::format_output(&action, info);
             let workspace_weak = cx.weak_entity();
             let operation = action.name();
@@ -2951,9 +2957,19 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink { text, link } => this
+                    PushPrLink {
+                        text: _text,
+                        link: _link,
+                    } => this
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
-                        .action(text, move |_, cx| cx.open_url(&link)),
+                        .action("View Log", move |window, cx| {
+                            let output = view_log_output.clone();
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(operation, workspace, &output, window, cx)
+                                })
+                                .ok();
+                        }),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)
@@ -4302,6 +4318,60 @@ impl GitPanel {
             self.load_last_commit_message_if_empty(cx);
         }
     }
+    pub fn open_create_pull_request(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.as_ref() else {
+            self.show_error_toast("create pull request", anyhow!("No active repository"), cx);
+            return;
+        };
+
+        let repo_snapshot = active_repository.read(cx);
+        let Some(branch) = repo_snapshot.branch.as_ref() else {
+            self.show_error_toast("create pull request", anyhow!("No active branch"), cx);
+            return;
+        };
+
+        // Prefer origin for MVP per request.
+        let remote_url = repo_snapshot.remote_origin_url.as_ref();
+
+        let Some(remote_url) = remote_url else {
+            self.show_error_toast(
+                "create pull request",
+                anyhow!("No remote URL found (origin missing)"),
+                cx,
+            );
+            return;
+        };
+
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
+        let Some((provider, parsed_remote)) = parse_git_remote_url(provider_registry, remote_url)
+        else {
+            self.show_error_toast(
+                "create pull request",
+                anyhow!("Could not parse remote URL for a supported hosting provider"),
+                cx,
+            );
+            return;
+        };
+
+        // Keep target_branch = None for MVP per request.
+        let params = BuildCreatePullRequestParams {
+            source_branch: branch.name(),
+            target_branch: None,
+        };
+
+        match provider.build_create_pull_request_url(&parsed_remote, params) {
+            Some(url) => {
+                cx.open_url(url.as_str());
+            }
+            None => {
+                self.show_error_toast(
+                    "create pull request",
+                    anyhow!("Provider did not return a create pull request URL"),
+                    cx,
+                );
+            }
+        }
+    }
 }
 
 impl Render for GitPanel {
@@ -4726,6 +4796,22 @@ impl RenderOnce for PanelRepoFooter {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
             } else {
                 None
+            })
+            .when(self.branch.is_some() && self.git_panel.is_some(), |this| {
+                this.child(
+                    panel_filled_button("Create PR")
+                        .size(ButtonSize::None)
+                        .tooltip(Tooltip::for_action_title(
+                            "Create Pull Request",
+                            &zed_actions::git::CreatePullRequest,
+                        ))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                zed_actions::git::CreatePullRequest.boxed_clone(),
+                                cx,
+                            );
+                        }),
+                )
             })
     }
 }
