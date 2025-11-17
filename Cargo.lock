@@ -21342,6 +21342,7 @@ dependencies = [
  "snippets_ui",
  "supermaven",
  "svg_preview",
+ "sweep_ai",
  "sysinfo 0.37.2",
  "system_specs",
  "tab_switcher",

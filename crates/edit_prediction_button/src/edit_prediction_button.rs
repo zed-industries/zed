@@ -297,6 +297,10 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::Sweep => {
+                // todo!
+                div().child("🧹")
+            }
 
             EditPredictionProvider::Zed => {
                 let enabled = self.editor_enabled.unwrap_or(true);
@@ -522,6 +526,11 @@ impl EditPredictionButton {
                     }
                     EditPredictionProvider::Codestral => {
                         menu.entry("Codestral", None, move |_, cx| {
+                            set_completion_provider(fs.clone(), cx, provider);
+                        })
+                    }
+                    EditPredictionProvider::Sweep => {
+                        menu.entry("Sweep", None, move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         })
                     }

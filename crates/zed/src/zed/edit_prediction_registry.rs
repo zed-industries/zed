@@ -202,6 +202,28 @@ fn assign_edit_prediction_provider(
             let provider = cx.new(|_| CodestralCompletionProvider::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
+        EditPredictionProvider::Sweep => {
+            if let Some(project) = editor.project() {
+                let sweep_ai = sweep_ai::SweepAi::register(cx);
+
+                if let Some(buffer) = &singleton_buffer
+                    && buffer.read(cx).file().is_some()
+                {
+                    sweep_ai.update(cx, |sweep_ai, cx| {
+                        sweep_ai.register_buffer(buffer, project, cx);
+                    });
+                }
+
+                let provider = cx.new(|_| {
+                    sweep_ai::SweepAiEditPredictionProvider::new(
+                        sweep_ai,
+                        project.clone(),
+                        singleton_buffer,
+                    )
+                });
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            }
+        }
         EditPredictionProvider::Zed => {
             if user_store.read(cx).current_user().is_some() {
                 let mut worktree = None;

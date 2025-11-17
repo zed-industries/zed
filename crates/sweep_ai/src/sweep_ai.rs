@@ -89,7 +89,7 @@ impl SweepAi {
             .map(|global| global.0.clone())
     }
 
-    pub fn register(worktree: Option<Entity<Worktree>>, cx: &mut App) -> Entity<Self> {
+    pub fn register(cx: &mut App) -> Entity<Self> {
         Self::global(cx).unwrap_or_else(|| {
             let entity = cx.new(|_cx| Self::new());
             cx.set_global(SweepAiGlobal(entity.clone()));
