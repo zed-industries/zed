@@ -3144,7 +3144,7 @@ impl AcpThreadView {
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
-                            if terminal_view
+                            let element = if terminal_view
                                 .read(cx)
                                 .content_mode(window, cx)
                                 .is_scrollable()
@@ -3152,7 +3152,15 @@ impl AcpThreadView {
                                 div().h_72().child(terminal_view).into_any_element()
                             } else {
                                 terminal_view.into_any_element()
-                            }
+                            };
+
+                            div()
+                                .on_action(cx.listener(|_this, _: &NewTerminal, window, cx| {
+                                    window.dispatch_action(NewThread.boxed_clone(), cx);
+                                    cx.stop_propagation();
+                                }))
+                                .child(element)
+                                .into_any_element()
                         })),
                 )
             })
