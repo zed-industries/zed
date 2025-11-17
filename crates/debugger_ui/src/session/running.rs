@@ -9,12 +9,13 @@ use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     ToggleExpandItem,
+    attach_modal::{AttachModal, ModalIntent},
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
     session::running::memory_view::MemoryView,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
@@ -55,6 +56,8 @@ use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
+
+static PROCESS_ID_PLACEHOLDER: &str = "$PickProcessId";
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -653,6 +656,40 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn contains_substring(config: &serde_json::Value, substring: &str) -> bool {
+        match config {
+            serde_json::Value::Object(obj) => obj
+                .values()
+                .any(|value| Self::contains_substring(value, substring)),
+            serde_json::Value::Array(array) => array
+                .iter()
+                .any(|value| Self::contains_substring(value, substring)),
+            serde_json::Value::String(s) => s.contains(substring),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn substitute_process_id_in_config(config: &mut serde_json::Value, process_id: i32) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.values_mut().for_each(|value| {
+                    Self::substitute_process_id_in_config(value, process_id);
+                });
+            }
+            serde_json::Value::Array(array) => {
+                array.iter_mut().for_each(|value| {
+                    Self::substitute_process_id_in_config(value, process_id);
+                });
+            }
+            serde_json::Value::String(s) => {
+                if s.contains(PROCESS_ID_PLACEHOLDER) {
+                    *s = s.replace(PROCESS_ID_PLACEHOLDER, &process_id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
@@ -954,6 +991,31 @@ impl RunningState {
             } = scenario;
             Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
+
+            if Self::contains_substring(&config, PROCESS_ID_PLACEHOLDER) || label.as_ref().contains(PROCESS_ID_PLACEHOLDER) {
+                let (tx, rx) = futures::channel::oneshot::channel::<Option<i32>>();
+
+                let weak_workspace_clone = weak_workspace.clone();
+                weak_workspace.update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        AttachModal::new(
+                            ModalIntent::ResolveProcessId(Some(tx)),
+                            weak_workspace_clone,
+                            project,
+                            true,
+                            window,
+                            cx,
+                        )
+                    });
+                }).ok();
+
+                let Some(process_id) = rx.await.ok().flatten() else {
+                    bail!("No process selected with config that contains {}", PROCESS_ID_PLACEHOLDER)
+                };
+
+                Self::substitute_process_id_in_config(&mut config, process_id);
+            }
 
             let request_type = match dap_registry
                 .adapter(&adapter)
