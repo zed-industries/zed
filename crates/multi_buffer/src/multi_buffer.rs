@@ -3828,21 +3828,10 @@ impl MultiBufferSnapshot {
         {
             let main_buffer_position = cursor.main_buffer_position()?;
             let buffer_snapshot = &cursor.excerpt()?.buffer;
-            // remove this assert once we figure out the cause of the panics for #40453
-            buffer_snapshot
-                .text
-                .as_rope()
-                .assert_char_boundary(main_buffer_position);
             return Some((buffer_snapshot, main_buffer_position));
         } else if buffer_offset > region.buffer.len() {
             return None;
         }
-        // remove this assert once we figure out the cause of the panics for #40453
-        region
-            .buffer
-            .text
-            .as_rope()
-            .assert_char_boundary(buffer_offset);
         Some((region.buffer, buffer_offset))
     }
 
