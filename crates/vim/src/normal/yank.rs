@@ -59,7 +59,7 @@ impl Vim {
                 });
             });
         });
-        self.exit_temporary_normal(None, window, cx);
+        self.exit_temporary_normal(window, cx);
     }
 
     pub fn yank_object(
@@ -90,7 +90,7 @@ impl Vim {
                 });
             });
         });
-        self.exit_temporary_normal(None, window, cx);
+        self.exit_temporary_normal(window, cx);
     }
 
     pub fn yank_selections_content(
