@@ -2084,6 +2084,8 @@ mod tests {
             .update(cx, |buffer, cx| buffer.reload(cx))
             .await
             .unwrap();
+        
+        cx.executor().run_until_parked();
 
         // Try to edit - should fail because file was modified externally
         let result = cx
