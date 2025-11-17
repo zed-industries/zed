@@ -6876,6 +6876,7 @@ impl LspStore {
                 }))
                 .await;
 
+                let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                 let mut has_errors = false;
                 let inlay_hints = inlay_hints
                     .into_iter()
@@ -6886,6 +6887,16 @@ impl LspStore {
                             log::error!("{e:#}");
                             None
                         }
+                    })
+                    .map(|(server_id, mut new_hints)| {
+                        new_hints.retain(|hint| {
+                            hint.position.is_valid(&buffer_snapshot)
+                                && range.start.is_valid(&buffer_snapshot)
+                                && range.end.is_valid(&buffer_snapshot)
+                                && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
+                                && hint.position.cmp(&range.end, &buffer_snapshot).is_lt()
+                        });
+                        (server_id, new_hints)
                     })
                     .collect::<HashMap<_, _>>();
                 anyhow::ensure!(
