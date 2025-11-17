@@ -16,9 +16,11 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
+brotli.workspace = true
 collections.workspace = true
 edit_prediction.workspace = true
 editor.workspace = true
+futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true

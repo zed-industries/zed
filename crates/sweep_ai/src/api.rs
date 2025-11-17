@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -6,7 +8,7 @@ pub struct AutocompleteRequest {
     pub device_id: String,
     pub repo_name: String,
     pub branch: Option<String>,
-    pub file_path: String,
+    pub file_path: PathBuf,
     pub file_contents: String,
     pub recent_changes: String,
     pub cursor_position: usize,
@@ -69,16 +71,16 @@ pub struct AutocompleteResponse {
     pub logprobs: Option<serde_json::Value>,
     pub finish_reason: Option<String>,
     pub elapsed_time_ms: u64,
-    pub completions: Vec<Completion>,
+    // pub completions: Vec<Completion>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Completion {
-    pub start_index: usize,
-    pub end_index: usize,
-    pub completion: String,
-    pub confidence: f64,
-    pub autocomplete_id: String,
-    pub logprobs: Option<serde_json::Value>,
-    pub finish_reason: Option<String>,
-}
+// #[derive(Debug, Clone, Deserialize)]
+// pub struct Completion {
+//     pub start_index: usize,
+//     pub end_index: usize,
+//     pub completion: String,
+//     pub confidence: f64,
+//     pub autocomplete_id: String,
+//     pub logprobs: Option<serde_json::Value>,
+//     pub finish_reason: Option<String>,
+// }

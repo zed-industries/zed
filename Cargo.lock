@@ -16592,9 +16592,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "brotli",
  "collections",
  "edit_prediction",
  "editor",
+ "futures 0.3.31",
  "gpui",
  "http_client",
  "indoc",

@@ -1,12 +1,15 @@
-pub mod api;
+mod api;
 
 use anyhow::{Context as _, Result};
 use arrayvec::ArrayVec;
 use collections::HashMap;
+use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint};
+use http_client::{AsyncBody, Method};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint};
 use project::Project;
 use std::collections::{VecDeque, hash_map};
+use std::fmt::{self, Display};
 use std::mem;
 use std::{
     cmp,
@@ -20,6 +23,8 @@ use util::ResultExt;
 use util::rel_path::RelPath;
 use uuid::Uuid;
 
+use crate::api::{AutocompleteRequest, AutocompleteResponse};
+
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_EVENT_COUNT: usize = 16;
 
@@ -32,32 +37,19 @@ impl Global for SweepAiGlobal {}
 pub struct EditPrediction {
     id: EditPredictionId,
     path: Arc<Path>,
-    excerpt_range: Range<usize>,
-    cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     snapshot: BufferSnapshot,
     edit_preview: EditPreview,
-    input_outline: Arc<str>,
-    input_events: Arc<str>,
-    input_excerpt: Arc<str>,
-    output_excerpt: Arc<str>,
-    buffer_snapshotted_at: Instant,
-    response_received_at: Instant,
 }
 
 impl EditPrediction {
-    fn latency(&self) -> Duration {
-        self.response_received_at
-            .duration_since(self.buffer_snapshotted_at)
-    }
-
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
 
-impl std::fmt::Debug for EditPrediction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for EditPrediction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EditPrediction")
             .field("path", &self.path)
             .field("edits", &self.edits)
@@ -68,8 +60,8 @@ impl std::fmt::Debug for EditPrediction {
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(Uuid);
 
-impl std::fmt::Display for EditPredictionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for EditPredictionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
@@ -221,10 +213,95 @@ impl SweepAi {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        let client = cx.http_client();
-        const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+        let snapshot = buffer.read(cx).snapshot();
+        let full_path = snapshot
+            .file()
+            .map(|file| file.full_path(cx))
+            .unwrap_or_else(|| "untitled".into());
 
-        todo!();
+        let project_file = project::File::from_dyn(snapshot.file());
+        let repo_name = project_file
+            .map(|file| file.worktree.read(cx).root_name_str())
+            .unwrap_or("untitled")
+            .into();
+        let offset = position.to_offset(&snapshot);
+
+        let project_state = self.get_or_init_sweep_ai_project(project, cx);
+        let events = project_state.events.clone();
+        let http_client = cx.http_client();
+
+        cx.background_spawn(async move {
+            let text = snapshot.text();
+
+            let mut recent_changes = String::new();
+
+            for event in events {
+                writeln!(&mut recent_changes, "{event}")?;
+            }
+
+            let request_body = AutocompleteRequest {
+                debug_info: "Zed".into(),
+                device_id: "todo".into(),
+                repo_name,
+                branch: None,
+                file_path: full_path,
+                file_contents: text.clone(),
+                original_file_contents: text,
+                cursor_position: offset,
+                recent_changes: recent_changes.clone(),
+                // todo! what's the difference?
+                recent_changes_high_res: recent_changes,
+                // todo! rest
+                changes_above_cursor: false,
+                file_chunks: vec![],
+                retrieval_chunks: vec![],
+                recent_user_actions: vec![],
+                multiple_suggestions: false,
+                privacy_mode_enabled: false,
+                client_ip: None,
+                ping: false,
+            };
+
+            let mut buf: Vec<u8> = Vec::new();
+            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
+            serde_json::to_writer(writer, &request_body)?;
+
+            let body: AsyncBody = buf.into();
+
+            const SWEEP_API_URL: &str =
+                "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+
+            let request = http_client::Request::builder()
+                .uri(SWEEP_API_URL)
+                .header("Content-Type", "application/json")
+                .header(
+                    "Authorization",
+                    // todo!
+                    format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
+                )
+                .header("Connection", "keep-alive")
+                .header("Content-Encoding", "br")
+                .method(Method::POST)
+                .body(body)?;
+
+            let mut response = http_client.send(request).await?;
+
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "Request failed with status: {:?}\nBody: {}",
+                    response.status(),
+                    body
+                );
+            };
+
+            let response: AutocompleteResponse = serde_json::from_str(&body)?;
+
+            // todo!
+            anyhow::Ok(None)
+        })
     }
 
     fn report_changes_for_buffer(
@@ -253,24 +330,6 @@ impl SweepAi {
     }
 }
 
-fn prompt_for_events_impl(events: &[Event], mut remaining_tokens: usize) -> (String, usize) {
-    let mut result = String::new();
-    for (ix, event) in events.iter().rev().enumerate() {
-        let event_string = event.to_prompt();
-        let event_tokens = guess_token_count(event_string.len());
-        if event_tokens > remaining_tokens {
-            return (result, ix);
-        }
-
-        if !result.is_empty() {
-            result.insert_str(0, "\n\n");
-        }
-        result.insert_str(0, &event_string);
-        remaining_tokens -= event_tokens;
-    }
-    return (result, events.len());
-}
-
 struct RegisteredBuffer {
     snapshot: BufferSnapshot,
     _subscriptions: [gpui::Subscription; 2],
@@ -285,16 +344,14 @@ pub enum Event {
     },
 }
 
-impl Event {
-    fn to_prompt(&self) -> String {
+impl Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Event::BufferChange {
                 old_snapshot,
                 new_snapshot,
                 ..
             } => {
-                let mut prompt = String::new();
-
                 let old_path = old_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
@@ -304,20 +361,21 @@ impl Event {
                     .map(|f| f.path().as_ref())
                     .unwrap_or(RelPath::unix("untitled").unwrap());
                 if old_path != new_path {
-                    writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
+                    // todo! confirm how to do this for sweep
+                    writeln!(f, "User renamed {:?} to {:?}\n", old_path, new_path)?;
                 }
 
                 let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
                 if !diff.is_empty() {
                     write!(
-                        prompt,
-                        "User edited {:?}:\n```diff\n{}\n```",
-                        new_path, diff
-                    )
-                    .unwrap();
+                        f,
+                        "File: {}:\n```diff\n{}\n```",
+                        new_path.display(util::paths::PathStyle::Posix),
+                        diff
+                    )?
                 }
 
-                prompt
+                fmt::Result::Ok(())
             }
         }
     }
