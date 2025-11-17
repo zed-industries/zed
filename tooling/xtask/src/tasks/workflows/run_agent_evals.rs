@@ -41,7 +41,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
                 .add_input(model_name.name, model_name.input())
                 .add_input(commit_sha.name, commit_sha.input()),
         ))
-        .concurrency(vars::one_workflow_per_non_main_branch())
+        .concurrency(vars::allow_concurrent_runs())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
@@ -118,21 +118,6 @@ fn cron_unit_evals() -> NamedJob {
 }
 
 fn unit_evals(commit: Option<&Input>) -> Job {
-    fn send_failure_to_slack() -> Step<Use> {
-        named::uses(
-            "slackapi",
-            "slack-github-action",
-            "b0fa283ad8fea605de13dc3f449259339835fc52",
-        )
-        .if_condition(Expression::new("${{ failure() }}"))
-        .add_with(("method", "chat.postMessage"))
-        .add_with(("token", vars::SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN))
-        .add_with(("payload", indoc::indoc!{r#"
-            channel: C04UDRNNJFQ
-            text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
-        "#}))
-    }
-
     let script_step = add_api_keys(steps::script("./script/run-unit-evals"));
 
     Job::default()
@@ -141,12 +126,11 @@ fn unit_evals(commit: Option<&Input>) -> Job {
         .add_step(steps::setup_cargo_config(Platform::Linux))
         .add_step(steps::cache_rust_dependencies_namespace())
         .map(steps::install_linux_dependencies)
-        .add_step(steps::cargo_install_nextest(Platform::Linux))
+        .add_step(steps::cargo_install_nextest())
         .add_step(steps::clear_target_dir_if_large(Platform::Linux))
         .add_step(match commit {
             Some(commit) => script_step.add_env(("UNIT_EVAL_COMMIT", commit)),
             None => script_step,
         })
-        .add_step(send_failure_to_slack())
         .add_step(steps::cleanup_cargo_config(Platform::Linux))
 }

@@ -107,8 +107,8 @@ actions!(
         Minimize,
         /// Opens the default settings file.
         OpenDefaultSettings,
-        /// Opens project-specific settings.
-        OpenProjectSettings,
+        /// Opens project-specific settings file.
+        OpenProjectSettingsFile,
         /// Opens the project tasks configuration.
         OpenProjectTasks,
         /// Opens the tasks panel.
@@ -393,6 +393,9 @@ pub fn initialize_workspace(
             }
         }
 
+        #[cfg(target_os = "windows")]
+        unstable_version_notification(cx);
+
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
             edit_prediction_button::EditPredictionButton::new(
@@ -469,6 +472,53 @@ pub fn initialize_workspace(
         workspace.focus_handle(cx).focus(window);
     })
     .detach();
+}
+
+#[cfg(target_os = "windows")]
+fn unstable_version_notification(cx: &mut App) {
+    if !matches!(
+        ReleaseChannel::try_global(cx),
+        Some(ReleaseChannel::Nightly)
+    ) {
+        return;
+    }
+    let db_key = "zed_windows_nightly_notif_shown_at".to_owned();
+    let time = chrono::Utc::now();
+    if let Some(last_shown) = db::kvp::KEY_VALUE_STORE
+        .read_kvp(&db_key)
+        .log_err()
+        .flatten()
+        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
+    {
+        if time.fixed_offset() - last_shown < chrono::Duration::days(7) {
+            return;
+        }
+    }
+    cx.spawn(async move |_| {
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(db_key, time.to_rfc3339())
+            .await
+    })
+    .detach_and_log_err(cx);
+    struct WindowsNightly;
+    show_app_notification(NotificationId::unique::<WindowsNightly>(), cx, |cx| {
+        cx.new(|cx| {
+            MessageNotification::new("You're using an unstable version of Zed (Nightly)", cx)
+                .primary_message("Download Stable")
+                .primary_icon_color(Color::Accent)
+                .primary_icon(IconName::Download)
+                .primary_on_click(|window, cx| {
+                    window.dispatch_action(
+                        zed_actions::OpenBrowser {
+                            url: "https://zed.dev/download".to_string(),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                    cx.emit(DismissEvent);
+                })
+        })
+    });
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -726,7 +776,24 @@ fn register_actions(
                 ..Default::default()
             })
         })
-        .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
+        .register_action(|workspace, action: &OpenBrowser, _window, cx| {
+            // Parse and validate the URL to ensure it's properly formatted
+            match url::Url::parse(&action.url) {
+                Ok(parsed_url) => {
+                    // Use the parsed URL's string representation which is properly escaped
+                    cx.open_url(parsed_url.as_str());
+                }
+                Err(e) => {
+                    workspace.show_error(
+                        &anyhow::anyhow!(
+                            "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
+                            action.url
+                        ),
+                        cx,
+                    );
+                }
+            }
+        })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
@@ -1716,7 +1783,7 @@ pub fn open_new_ssh_project_from_project(
 
 fn open_project_settings_file(
     workspace: &mut Workspace,
-    _: &OpenProjectSettings,
+    _: &OpenProjectSettingsFile,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -5000,7 +5067,7 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 // Call the exact function that contains the bug
                 eprintln!("About to call open_project_settings_file");
-                open_project_settings_file(workspace, &OpenProjectSettings, window, cx);
+                open_project_settings_file(workspace, &OpenProjectSettingsFile, window, cx);
             })
             .unwrap();
 

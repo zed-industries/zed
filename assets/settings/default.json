@@ -748,14 +748,31 @@
       //    "never"
       "show": "always"
     },
+    // Sort order for entries in the project panel.
+    // This setting can take three values:
+    //
+    // 1. Show directories first, then files:
+    //    "directories_first"
+    // 2. Mix directories and files together:
+    //    "mixed"
+    // 3. Show files first, then directories:
+    //    "files_first"
+    "sort_mode": "directories_first",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
-    // Whether to automatically open files when pasting them in the project panel.
-    "open_file_on_paste": true
+    // Settings for automatically opening files.
+    "auto_open": {
+      // Whether to automatically open newly created files in the editor.
+      "on_create": true,
+      // Whether to automatically open files after pasting or duplicating them.
+      "on_paste": true,
+      // Whether to automatically open files dropped from external sources.
+      "on_drop": true
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -1549,6 +1566,8 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     "max_scroll_history_lines": 10000,
+    // The multiplier for scrolling speed in the terminal.
+    "scroll_multiplier": 1.0,
     // The minimum APCA perceptual contrast between foreground and background colors.
     // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     // especially for dark mode. Values range from 0 to 106.

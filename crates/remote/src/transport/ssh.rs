@@ -113,7 +113,7 @@ impl MasterProcess {
             .args(additional_args)
             .args(args);
 
-        master_process.arg(format!("ControlPath={}", socket_path.display()));
+        master_process.arg(format!("ControlPath='{}'", socket_path.display()));
 
         let process = master_process.arg(&url).spawn()?;
 
@@ -487,7 +487,9 @@ impl SshRemoteConnection {
         drop(askpass);
 
         let ssh_shell = socket.shell().await;
+        log::info!("Remote shell discovered: {}", ssh_shell);
         let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
+        log::info!("Remote platform discovered: {}", ssh_shell);
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,
@@ -622,7 +624,7 @@ impl SshRemoteConnection {
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to download binary on server, attempting to upload server: {e:#}",
+                        "Failed to download binary on server, attempting to download locally and then upload it the server: {e:#}",
                     )
                 }
             }
@@ -688,6 +690,7 @@ impl SshRemoteConnection {
                     return Err(e);
                 }
 
+                log::info!("curl is not available, trying wget");
                 match self
                     .socket
                     .run_command(
@@ -973,13 +976,11 @@ impl SshSocket {
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
     ) -> Result<String> {
-        let output = self
-            .ssh_command(shell_kind, program, args, allow_pseudo_tty)
-            .output()
-            .await?;
+        let mut command = self.ssh_command(shell_kind, program, args, allow_pseudo_tty);
+        let output = command.output().await?;
         anyhow::ensure!(
             output.status.success(),
-            "failed to run command: {}",
+            "failed to run command {command:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(String::from_utf8_lossy(&output.stdout).to_string())

@@ -519,7 +519,12 @@ impl TerminalView {
                 return;
             }
         }
-        self.terminal.update(cx, |term, _| term.scroll_wheel(event));
+        self.terminal.update(cx, |term, cx| {
+            term.scroll_wheel(
+                event,
+                TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+            )
+        });
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -1447,7 +1452,6 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
-        _collapse: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {

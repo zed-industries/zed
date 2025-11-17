@@ -46,8 +46,7 @@ jobs:
       run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
@@ -60,20 +59,11 @@ jobs:
         GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
         GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
         UNIT_EVAL_COMMIT: ${{ inputs.commit_sha }}
-    - name: run_agent_evals::unit_evals::send_failure_to_slack
-      if: ${{ failure() }}
-      uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
-      with:
-        method: chat.postMessage
-        token: ${{ secrets.SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN }}
-        payload: |
-          channel: C04UDRNNJFQ
-          text: "Unit Evals Failed: https://github.com/zed-industries/zed/actions/runs/${{ github.run_id }}"
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}
   cancel-in-progress: true

@@ -386,6 +386,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let temp_mode_motion = motion.clone();
+
         match operator {
             None => self.move_cursor(motion, times, window, cx),
             Some(Operator::Change) => self.change_motion(motion, times, forced_motion, window, cx),
@@ -475,7 +477,7 @@ impl Vim {
             }
         }
         // Exit temporary normal mode (if active).
-        self.exit_temporary_normal(window, cx);
+        self.exit_temporary_normal(Some(&temp_mode_motion), window, cx);
     }
 
     pub fn normal_object(
@@ -671,13 +673,13 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
-                return;
-            };
-
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
-            });
+            if let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx)
+                && !marks.is_empty()
+            {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
         });
     }
 
@@ -1052,9 +1054,25 @@ impl Vim {
         });
     }
 
-    fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// If temporary mode is enabled, switches back to insert mode, using the
+    /// provided `motion` to determine whether to move the cursor before
+    /// re-enabling insert mode, for example, when `EndOfLine` ($) is used.
+    fn exit_temporary_normal(
+        &mut self,
+        motion: Option<&Motion>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.temp_mode {
             self.switch_mode(Mode::Insert, true, window, cx);
+
+            // Since we're switching from `Normal` mode to `Insert` mode, we'll
+            // move the cursor one position to the right, to ensure that, for
+            // motions like `EndOfLine` ($), the cursor is actually at the end
+            // of line and not on the last character.
+            if matches!(motion, Some(Motion::EndOfLine { .. })) {
+                self.move_cursor(Motion::Right, Some(1), window, cx);
+            }
         }
     }
 }
@@ -2268,5 +2286,36 @@ mod test {
         cx.workspace(|workspace, _, cx| {
             assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
         });
+    }
+
+    #[gpui::test]
+    async fn test_temporary_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test jumping to the end of the line ($).
+        cx.set_shared_state(indoc! {"lorem ˇipsum"}).await;
+        cx.simulate_shared_keystrokes("i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-o $").await;
+        cx.shared_state().await.assert_eq(indoc! {"lorem ipsumˇ"});
+
+        // Test jumping to the next word.
+        cx.set_shared_state(indoc! {"loremˇ ipsum dolor"}).await;
+        cx.simulate_shared_keystrokes("a").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("a n d space ctrl-o w").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {"lorem and ipsum ˇdolor"});
+
+        // Test yanking to end of line ($).
+        cx.set_shared_state(indoc! {"lorem ˇipsum dolor"}).await;
+        cx.simulate_shared_keystrokes("i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("a n d space ctrl-o y $")
+            .await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {"lorem and ˇipsum dolor"});
     }
 }

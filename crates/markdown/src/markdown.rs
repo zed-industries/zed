@@ -66,7 +66,6 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
-    pub table_overflow_x_scroll: bool,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
 }
@@ -87,7 +86,6 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
-            table_overflow_x_scroll: false,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
         }
@@ -992,54 +990,54 @@ impl Element for MarkdownElement {
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
                             builder.table_alignments = alignments.clone();
+
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .flex()
+                                    .min_w_0()
+                                    .size_full()
+                                    .mb_2()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .when(self.style.table_overflow_x_scroll, |mut table| {
-                                        table.style().restrict_scroll_to_axis = Some(true);
-                                        table.overflow_x_scroll()
-                                    }),
+                                    .overflow_hidden(),
                                 range,
                                 markdown_end,
                             );
-                            // This inner `v_flex` is so the table rows will stack vertically without disrupting the `overflow_x_scroll`.
-                            builder.push_div(div().v_flex().flex_grow(), range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
                                 div()
-                                    .flex()
-                                    .justify_between()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border),
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .bg(cx.theme().colors().title_bar_background),
                                 range,
                                 markdown_end,
                             );
                             builder.push_text_style(TextStyleRefinement {
-                                font_weight: Some(FontWeight::BOLD),
+                                font_weight: Some(FontWeight::SEMIBOLD),
                                 ..Default::default()
                             });
                         }
                         MarkdownTag::TableRow => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
-                                div().h_flex().justify_between().px_1().py_0p5(),
+                                div().grid().grid_cols(column_count as u16),
                                 range,
                                 markdown_end,
                             );
                         }
                         MarkdownTag::TableCell => {
-                            let column_count = builder.table_alignments.len();
-
                             builder.push_div(
                                 div()
-                                    .flex()
+                                    .min_w_0()
+                                    .border(px(0.5))
+                                    .border_color(cx.theme().colors().border)
                                     .px_1()
-                                    .w(relative(1. / column_count as f32))
-                                    .truncate(),
+                                    .py_0p5(),
                                 range,
                                 markdown_end,
                             );
@@ -1154,7 +1152,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table_alignments.clear();
                     }

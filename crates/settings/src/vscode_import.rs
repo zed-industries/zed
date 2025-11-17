@@ -665,13 +665,14 @@ impl VsCodeSettings {
             hide_root: None,
             indent_guides: None,
             indent_size: None,
-            open_file_on_paste: None,
             scrollbar: None,
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
+            sort_mode: None,
             starts_open: None,
             sticky_scroll: None,
+            auto_open: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -738,6 +739,7 @@ impl VsCodeSettings {
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
             scrollbar: None,
+            scroll_multiplier: None,
             toolbar: None,
         })
     }

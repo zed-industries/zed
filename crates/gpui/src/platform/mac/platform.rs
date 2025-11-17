@@ -651,9 +651,12 @@ impl Platform for MacPlatform {
 
     fn open_url(&self, url: &str) {
         unsafe {
-            let url = NSURL::alloc(nil)
-                .initWithString_(ns_string(url))
-                .autorelease();
+            let ns_url = NSURL::alloc(nil).initWithString_(ns_string(url));
+            if ns_url.is_null() {
+                log::error!("Failed to create NSURL from string: {}", url);
+                return;
+            }
+            let url = ns_url.autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
@@ -1043,6 +1046,7 @@ impl Platform for MacPlatform {
                         ClipboardEntry::Image(image) => {
                             self.write_image_to_clipboard(image);
                         }
+                        ClipboardEntry::ExternalPaths(_) => {}
                     },
                     None => {
                         // Writing an empty list of entries just clears the clipboard.

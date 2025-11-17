@@ -205,8 +205,13 @@ impl OpenAiCompatibleLanguageModel {
         &self,
         request: open_ai::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
@@ -216,7 +221,7 @@ impl OpenAiCompatibleLanguageModel {
                 state.settings.api_url.clone(),
             )
         }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let provider = self.provider_name.clone();
@@ -224,7 +229,13 @@ impl OpenAiCompatibleLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });

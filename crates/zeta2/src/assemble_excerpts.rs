@@ -3,27 +3,16 @@ use edit_prediction_context::Line;
 use language::{BufferSnapshot, Point};
 use std::ops::Range;
 
-pub fn merge_excerpts(
+pub fn assemble_excerpts(
     buffer: &BufferSnapshot,
-    sorted_line_ranges: impl IntoIterator<Item = Range<Line>>,
+    merged_line_ranges: impl IntoIterator<Item = Range<Line>>,
 ) -> Vec<Excerpt> {
     let mut output = Vec::new();
-    let mut merged_ranges = Vec::<Range<Line>>::new();
-
-    for line_range in sorted_line_ranges {
-        if let Some(last_line_range) = merged_ranges.last_mut()
-            && line_range.start <= last_line_range.end
-        {
-            last_line_range.end = last_line_range.end.max(line_range.end);
-            continue;
-        }
-        merged_ranges.push(line_range);
-    }
 
     let outline_items = buffer.outline_items_as_points_containing(0..buffer.len(), false, None);
     let mut outline_items = outline_items.into_iter().peekable();
 
-    for range in merged_ranges {
+    for range in merged_line_ranges {
         let point_range = Point::new(range.start.0, 0)..Point::new(range.end.0, 0);
 
         while let Some(outline_item) = outline_items.peek() {
@@ -155,7 +144,7 @@ mod tests {
 
                 let mut output = String::new();
                 cloud_zeta2_prompt::write_excerpts(
-                    merge_excerpts(&buffer.snapshot(), ranges).iter(),
+                    assemble_excerpts(&buffer.snapshot(), ranges).iter(),
                     &insertions,
                     Line(buffer.max_point().row),
                     true,

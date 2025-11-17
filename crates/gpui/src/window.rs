@@ -1819,6 +1819,7 @@ impl Window {
         self.platform_window.show_window_menu(position)
     }
 
+    /// Handle window movement for Linux and macOS.
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.

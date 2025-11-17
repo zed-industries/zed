@@ -73,7 +73,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub(crate) struct ProjectDiagnosticsEditor {
-    project: Entity<Project>,
+    pub project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
@@ -182,7 +182,6 @@ impl ProjectDiagnosticsEditor {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
                     this.close_diagnosticless_buffers(
-                        window,
                         cx,
                         this.editor.focus_handle(cx).contains_focused(window, cx)
                             || this.focus_handle.contains_focused(window, cx),
@@ -247,10 +246,10 @@ impl ProjectDiagnosticsEditor {
                             window.focus(&this.focus_handle);
                         }
                     }
-                    EditorEvent::Blurred => this.close_diagnosticless_buffers(window, cx, false),
-                    EditorEvent::Saved => this.close_diagnosticless_buffers(window, cx, true),
+                    EditorEvent::Blurred => this.close_diagnosticless_buffers(cx, false),
+                    EditorEvent::Saved => this.close_diagnosticless_buffers(cx, true),
                     EditorEvent::SelectionsChanged { .. } => {
-                        this.close_diagnosticless_buffers(window, cx, true)
+                        this.close_diagnosticless_buffers(cx, true)
                     }
                     _ => {}
                 }
@@ -298,12 +297,7 @@ impl ProjectDiagnosticsEditor {
     ///  - have no diagnostics anymore
     ///  - are saved (not dirty)
     ///  - and, if `retain_selections` is true, do not have selections within them
-    fn close_diagnosticless_buffers(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-        retain_selections: bool,
-    ) {
+    fn close_diagnosticless_buffers(&mut self, cx: &mut Context<Self>, retain_selections: bool) {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
@@ -447,7 +441,7 @@ impl ProjectDiagnosticsEditor {
     fn focus_out(&mut self, _: FocusOutEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
-            self.close_diagnosticless_buffers(window, cx, false);
+            self.close_diagnosticless_buffers(cx, false);
         }
     }
 
@@ -461,8 +455,7 @@ impl ProjectDiagnosticsEditor {
                 });
             }
         });
-        self.multibuffer
-            .update(cx, |multibuffer, cx| multibuffer.clear(cx));
+        self.close_diagnosticless_buffers(cx, false);
         self.project.update(cx, |project, cx| {
             self.paths_to_update = project
                 .diagnostic_summaries(false, cx)
@@ -552,11 +545,15 @@ impl ProjectDiagnosticsEditor {
                 if group_severity.is_none_or(|s| s > max_severity) {
                     continue;
                 }
+                let languages = this
+                    .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
+                    .ok();
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(diagnostics_toolbar_editor.clone()),
+                        languages,
                         cx,
                     )
                 })?;
