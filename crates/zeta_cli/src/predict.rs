@@ -180,10 +180,7 @@ pub async fn zeta2_predict(
                         let prediction_started_at = Instant::now();
                         start_time.get_or_insert(prediction_started_at);
                         let prompt = request.local_prompt.unwrap_or_default();
-                        fs::write(
-                            example_run_dir.join("prediction_prompt.md"),
-                            &prompt,
-                        )?;
+                        fs::write(example_run_dir.join("prediction_prompt.md"), &prompt)?;
 
                         {
                             let mut result = result.lock().unwrap();
