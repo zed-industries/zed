@@ -89,7 +89,7 @@ impl MermaidRenderer {
             .join(".bin")
             .join(if cfg!(windows) { "mmdc.cmd" } else { "mmdc" });
 
-        let scale_value = ((scale as f32 / 100.0) * 2.0).max(1.0).min(10.0) as u32;
+        let scale_value = ((scale as f32 / 100.0) * 2.0).clamp(1.0, 10.0) as u32;
 
         let output = util::command::new_smol_command(&node_path)
             .arg(&mmdc_path)

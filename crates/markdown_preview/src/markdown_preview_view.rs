@@ -373,9 +373,13 @@ impl MarkdownPreviewView {
                     .ok()
                     .unwrap_or_default();
 
-                let (updated_cache, updated_lru) =
-                    MarkdownPreviewView::render_mermaid_diagrams(&mut contents, cache, node_runtime, &cx)
-                        .await;
+                let (updated_cache, updated_lru) = MarkdownPreviewView::render_mermaid_diagrams(
+                    &mut contents,
+                    cache,
+                    node_runtime,
+                    &cx,
+                )
+                .await;
 
                 view.update(cx, |view, _cx| {
                     view.mermaid_cache = updated_cache;
@@ -529,7 +533,8 @@ impl MarkdownPreviewView {
 
                                 while cache_lru.len() > MAX_MERMAID_CACHE_SIZE {
                                     if let Some(evicted_hash) = cache_lru.pop_front() {
-                                        if let Some(evicted_path) = mermaid_cache.remove(&evicted_hash)
+                                        if let Some(evicted_path) =
+                                            mermaid_cache.remove(&evicted_hash)
                                         {
                                             smol::fs::remove_file(evicted_path).await.ok();
                                         }
