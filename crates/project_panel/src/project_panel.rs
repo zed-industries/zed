@@ -4698,7 +4698,7 @@ impl ProjectPanel {
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
                         let click_count = event.click_count();
-                        let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                        let focus_opened_item = click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
                         project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                     }

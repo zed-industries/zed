@@ -31,6 +31,7 @@ pub struct SharedState {
 }
 
 impl SharedState {
+    /// Assert that both Zed and NeoVim have the same content and mode.
     #[track_caller]
     pub fn assert_matches(&self) {
         if self.neovim != self.editor || self.neovim_mode != self.editor_mode {
