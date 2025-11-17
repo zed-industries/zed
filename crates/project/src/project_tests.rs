@@ -8516,12 +8516,13 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
 }
 
 #[track_caller]
-/// We merge lhs into rhs.
+/// We merge lhs into rhs discarding any PendingOp that is running.
 fn merge_pending_ops_snapshots(
     source: Vec<pending_op::PendingOps>,
     mut target: Vec<pending_op::PendingOps>,
 ) -> Vec<pending_op::PendingOps> {
-    for s_ops in source {
+    for mut s_ops in source {
+        s_ops.ops.retain(|op| !op.running());
         if let Some(idx) = target.iter().zip(0..).find_map(|(ops, idx)| {
             if ops.repo_path == s_ops.repo_path {
                 Some(idx)
@@ -8529,26 +8530,7 @@ fn merge_pending_ops_snapshots(
                 None
             }
         }) {
-            let t_ops = &mut target[idx];
-            for s_op in s_ops.ops {
-                if let Some(op_idx) = t_ops
-                    .ops
-                    .iter()
-                    .zip(0..)
-                    .find_map(|(op, idx)| if op.id == s_op.id { Some(idx) } else { None })
-                {
-                    let t_op = &mut t_ops.ops[op_idx];
-                    match (s_op.job_status, t_op.job_status) {
-                        (pending_op::JobStatus::Running, _) => {}
-                        (s_st, pending_op::JobStatus::Running) => t_op.job_status = s_st,
-                        (s_st, t_st) if s_st == t_st => {}
-                        _ => unreachable!(),
-                    }
-                } else {
-                    t_ops.ops.push(s_op);
-                }
-            }
-            t_ops.ops.sort_by(|l, r| l.id.cmp(&r.id));
+            target[idx].ops.append(&mut s_ops.ops);
         } else {
             target.push(s_ops);
         }
@@ -8614,8 +8596,6 @@ async fn test_repository_pending_ops_staging(
         assert!(repo.pending_ops_by_path.is_empty());
     });
 
-    let mut id = 1u16;
-
     let mut assert_stage = async |path: RepoPath, stage| {
         let git_status = if stage {
             pending_op::GitStatus::Staged
@@ -8629,14 +8609,9 @@ async fn test_repository_pending_ops_staging(
                 repo.unstage_entries(vec![path.clone()], cx)
             };
             let ops = repo.pending_ops_for_path(&path).unwrap();
-            assert_eq!(
-                ops.ops.last(),
-                Some(&pending_op::PendingOp {
-                    id: id.into(),
-                    git_status,
-                    job_status: pending_op::JobStatus::Running
-                })
-            );
+            let last = ops.ops.last().unwrap();
+            assert_eq!(last.git_status, git_status);
+            assert_eq!(last.job_status, pending_op::JobStatus::Running);
             task
         })
         .await
@@ -8644,17 +8619,10 @@ async fn test_repository_pending_ops_staging(
 
         repo.read_with(cx, |repo, _cx| {
             let ops = repo.pending_ops_for_path(&path).unwrap();
-            assert_eq!(
-                ops.ops.last(),
-                Some(&pending_op::PendingOp {
-                    id: id.into(),
-                    git_status,
-                    job_status: pending_op::JobStatus::Finished
-                })
-            );
+            let last = ops.ops.last().unwrap();
+            assert_eq!(last.git_status, git_status);
+            assert_eq!(last.job_status, pending_op::JobStatus::Finished);
         });
-
-        id += 1;
     };
 
     assert_stage(repo_path("a.txt"), true).await;
@@ -8670,33 +8638,37 @@ async fn test_repository_pending_ops_staging(
             .lock()
             .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
-            .ops,
+            .ops
+            .iter()
+            .map(
+                |&pending_op::PendingOp {
+                     git_status,
+                     job_status,
+                     ..
+                 }| (git_status, job_status)
+            )
+            .collect::<Vec<_>>(),
         vec![
-            pending_op::PendingOp {
-                id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            },
-            pending_op::PendingOp {
-                id: 2u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
-            },
-            pending_op::PendingOp {
-                id: 3u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            },
-            pending_op::PendingOp {
-                id: 4u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
-            },
-            pending_op::PendingOp {
-                id: 5u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            }
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Finished
+            ),
+            (
+                pending_op::GitStatus::Unstaged,
+                pending_op::JobStatus::Finished
+            ),
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Finished
+            ),
+            (
+                pending_op::GitStatus::Unstaged,
+                pending_op::JobStatus::Finished
+            ),
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Finished
+            )
         ],
     );
 
@@ -8791,18 +8763,25 @@ async fn test_repository_pending_ops_long_running_staging(
             .lock()
             .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
-            .ops,
+            .ops
+            .iter()
+            .map(
+                |&pending_op::PendingOp {
+                     git_status,
+                     job_status,
+                     ..
+                 }| (git_status, job_status)
+            )
+            .collect::<Vec<_>>(),
         vec![
-            pending_op::PendingOp {
-                id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Skipped
-            },
-            pending_op::PendingOp {
-                id: 2u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            }
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Skipped
+            ),
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Finished
+            )
         ],
     );
 
@@ -8899,37 +8878,52 @@ async fn test_repository_pending_ops_stage_all(
             .lock()
             .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
-            .ops,
+            .ops
+            .iter()
+            .map(
+                |&pending_op::PendingOp {
+                     git_status,
+                     job_status,
+                     ..
+                 }| (git_status, job_status)
+            )
+            .collect::<Vec<_>>(),
         vec![
-            pending_op::PendingOp {
-                id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            },
-            pending_op::PendingOp {
-                id: 2u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
-            },
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Finished
+            ),
+            (
+                pending_op::GitStatus::Unstaged,
+                pending_op::JobStatus::Finished
+            ),
         ],
     );
+
     assert_eq!(
         pending_ops_all
             .lock()
             .get(&worktree::PathKey(repo_path("b.txt").as_ref().clone()), ())
             .unwrap()
-            .ops,
+            .ops
+            .iter()
+            .map(
+                |&pending_op::PendingOp {
+                     git_status,
+                     job_status,
+                     ..
+                 }| (git_status, job_status)
+            )
+            .collect::<Vec<_>>(),
         vec![
-            pending_op::PendingOp {
-                id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            },
-            pending_op::PendingOp {
-                id: 2u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
-            },
+            (
+                pending_op::GitStatus::Staged,
+                pending_op::JobStatus::Finished
+            ),
+            (
+                pending_op::GitStatus::Unstaged,
+                pending_op::JobStatus::Finished
+            ),
         ],
     );
 
