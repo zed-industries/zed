@@ -1003,6 +1003,7 @@ impl Thread {
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
         self.add_tool(ReadFileTool::new(
+            cx.weak_entity(),
             self.project.clone(),
             self.action_log.clone(),
         ));
