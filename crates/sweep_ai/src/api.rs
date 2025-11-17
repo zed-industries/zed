@@ -47,6 +47,7 @@ pub struct UserAction {
     pub timestamp: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ActionType {
@@ -59,6 +60,26 @@ pub enum ActionType {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AutocompleteResponse {
+    pub autocomplete_id: String,
+    pub start_index: usize,
+    pub end_index: usize,
+    pub completion: String,
+    #[allow(dead_code)]
+    pub confidence: f64,
+    #[allow(dead_code)]
+    pub logprobs: Option<serde_json::Value>,
+    #[allow(dead_code)]
+    pub finish_reason: Option<String>,
+    #[allow(dead_code)]
+    pub elapsed_time_ms: u64,
+    #[allow(dead_code)]
+    #[serde(rename = "completions")]
+    pub additional_completions: Vec<AdditionalCompletion>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdditionalCompletion {
     pub start_index: usize,
     pub end_index: usize,
     pub completion: String,
@@ -66,17 +87,4 @@ pub struct AutocompleteResponse {
     pub autocomplete_id: String,
     pub logprobs: Option<serde_json::Value>,
     pub finish_reason: Option<String>,
-    pub elapsed_time_ms: u64,
-    // pub completions: Vec<Completion>,
 }
-
-// #[derive(Debug, Clone, Deserialize)]
-// pub struct Completion {
-//     pub start_index: usize,
-//     pub end_index: usize,
-//     pub completion: String,
-//     pub confidence: f64,
-//     pub autocomplete_id: String,
-//     pub logprobs: Option<serde_json::Value>,
-//     pub finish_reason: Option<String>,
-// }
