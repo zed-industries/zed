@@ -227,7 +227,9 @@ pub mod git {
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
-            Worktree
+            Worktree,
+            /// Creates a pull request for the current branch.
+            CreatePullRequest
         ]
     );
 }
