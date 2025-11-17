@@ -789,10 +789,14 @@ impl Item for Editor {
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, true, false, cx);
+        self.set_gutter_hovered(false, cx);
+        self.gutter_breakpoint_indicator = (None, None);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.hide_hovered_link(cx);
+        self.set_gutter_hovered(false, cx);
+        self.gutter_breakpoint_indicator = (None, None);
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

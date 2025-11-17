@@ -21999,6 +21999,8 @@ impl Editor {
             self.hide_context_menu(window, cx);
         }
         self.take_active_edit_prediction(cx);
+        self.set_gutter_hovered(false, cx);
+        self.gutter_breakpoint_indicator = (None, None);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
     }
