@@ -212,6 +212,40 @@ impl extension::Extension for WasmExtension {
         .await?
     }
 
+    async fn language_server_virtual_document_configs(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<extension::VirtualDocumentConfig>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let configs = extension
+                    .call_language_server_virtual_document_configs(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+
+                // Convert from WIT types to extension types
+                let converted = configs
+                    .into_iter()
+                    .map(|wit_config| extension::VirtualDocumentConfig {
+                        scheme: wit_config.scheme,
+                        content_request_method: wit_config.content_request_method,
+                        language_name: wit_config.language_name,
+                        language_id: wit_config.language_id,
+                    })
+                    .collect();
+                anyhow::Ok(converted)
+            }
+            .boxed()
+        })
+        .await?
+    }
+
     async fn labels_for_completions(
         &self,
         language_server_id: LanguageServerName,

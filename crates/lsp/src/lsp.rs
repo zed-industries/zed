@@ -1930,6 +1930,19 @@ impl FakeLanguageServer {
     }
 }
 
+/// Configuration for handling virtual documents (decompiled code, generated sources, etc.)
+#[derive(Debug, Clone)]
+pub struct VirtualDocumentConfig {
+    /// The URI scheme to handle (e.g., "jdt" for jdt:// URIs)
+    pub scheme: String,
+    /// The LSP request method to call to get document contents (e.g., "java/classFileContents")
+    pub content_request_method: String,
+    /// The language name for syntax highlighting (e.g., "Java")
+    pub language_name: String,
+    /// The LSP language ID to use when registering the document (e.g., "java")
+    pub language_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

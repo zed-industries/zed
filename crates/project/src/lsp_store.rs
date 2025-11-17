@@ -118,6 +118,7 @@ use std::{
 };
 use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, Point, ToPoint as _};
+use virtual_document::VirtualDocumentStore;
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -139,19 +140,6 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
-
-/// Configuration for handling virtual documents provided by extensions
-#[derive(Debug, Clone)]
-pub struct VirtualDocumentConfig {
-    /// The URI scheme to handle (e.g., "jdt" for jdt:// URIs)
-    pub scheme: String,
-    /// The LSP request method to call to get document contents (e.g., "java/classFileContents")
-    pub content_request_method: String,
-    /// The language name for syntax highlighting (e.g., "Java")
-    pub language_name: String,
-    /// The LSP language ID to use when registering the document (e.g., "java")
-    pub language_id: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -295,18 +283,11 @@ pub struct LocalLspStore {
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
     buffer_pull_diagnostics_result_ids: HashMap<LanguageServerId, HashMap<PathBuf, Option<String>>>,
-    /// Virtual document handlers registered by extensions (scheme -> config)
-    virtual_document_handlers: HashMap<String, VirtualDocumentConfig>,
+    /// Virtual document store for handling non-file URIs (decompiled code, etc.)
+    virtual_docs: Entity<VirtualDocumentStore>,
 }
 
 impl LocalLspStore {
-    /// Registers a virtual document handler for a specific URI scheme.
-    /// This allows extensions to define how virtual documents (like decompiled code) should be handled.
-    pub fn register_virtual_document_handler(&mut self, config: VirtualDocumentConfig) {
-        self.virtual_document_handlers
-            .insert(config.scheme.clone(), config);
-    }
-
     /// Returns the running language server for the given ID. Note if the language server is starting, it will not be returned.
     pub fn running_language_server_for_id(
         &self,
@@ -524,7 +505,7 @@ impl LocalLspStore {
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 lsp_store.insert_newly_running_language_server(
-                                    adapter,
+                                    adapter.clone(),
                                     server.clone(),
                                     server_id,
                                     key,
@@ -533,6 +514,7 @@ impl LocalLspStore {
                                 );
                             })
                             .ok();
+
                         stderr_capture.lock().take();
                         Some(server)
                     }
@@ -3867,6 +3849,8 @@ impl LspStore {
             .detach();
         subscribe_to_binary_statuses(&languages, cx).detach();
 
+        let virtual_docs = cx.new(|cx| VirtualDocumentStore::new(cx));
+
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
@@ -3910,23 +3894,7 @@ impl LspStore {
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
-                virtual_document_handlers: {
-                    let mut handlers = HashMap::default();
-                    // Register built-in virtual document handlers
-                    // Java/JDTLS: Decompiled class files
-                    handlers.insert(
-                        "jdt".to_string(),
-                        VirtualDocumentConfig {
-                            scheme: "jdt".to_string(),
-                            content_request_method: "java/classFileContents".to_string(),
-                            language_name: "Java".to_string(),
-                            language_id: "java".to_string(),
-                        },
-                    );
-                    // Future extensions can add more handlers here or via the WIT API
-                    // e.g., Go: handlers.insert("dap-browser", VirtualDocumentConfig { ... });
-                    handlers
-                },
+                virtual_docs,
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -8430,34 +8398,41 @@ impl LspStore {
                 return Ok(buffer);
             }
 
-            // Get the virtual document handler config for this scheme
-            let handler_config = lsp_store.update(cx, |lsp_store, _| {
-                lsp_store
-                    .as_local()
-                    .and_then(|local| local.virtual_document_handlers.get(&scheme).cloned())
-            })?;
+            // Get handler config and language server via VirtualDocumentStore delegation
+            let (config, _language_server, content_task) =
+                lsp_store.update(cx, |lsp_store, cx| {
+                    let local = lsp_store
+                        .as_local()
+                        .context("virtual documents only supported in local mode")?;
 
-            let Some(config) = handler_config else {
-                return Err(anyhow!(
-                    "no virtual document handler registered for scheme: {}",
-                    scheme
-                ));
-            };
+                    // Look up handler config for this scheme
+                    let config = local
+                        .virtual_docs
+                        .read(cx)
+                        .handler_for_scheme(&scheme)
+                        .cloned()
+                        .context(format!(
+                            "no virtual document handler registered for scheme: {}",
+                            scheme
+                        ))?;
 
-            // Get the language server
-            let language_server = lsp_store
-                .update(cx, |lsp_store, _| {
-                    lsp_store.language_server_for_id(language_server_id)
-                })?
-                .context("language server not found")?;
+                    // Get the language server
+                    let language_server = lsp_store
+                        .language_server_for_id(language_server_id)
+                        .context("language server not found")?;
 
-            // Send custom LSP request to get the decompiled content using the dynamic method
-            let params = lsp::TextDocumentIdentifier { uri: uri.clone() };
-            let content: String = language_server
-                .request_custom(&config.content_request_method, params)
-                .await
-                .into_response()
-                .context("failed to get virtual file contents")?;
+                    // Delegate to VirtualDocumentStore to fetch content
+                    let content_task = local
+                        .virtual_docs
+                        .read(cx)
+                        .process_uri(&uri, language_server.clone())
+                        .context("failed to create content fetch task")?;
+
+                    anyhow::Ok((config, language_server, content_task))
+                })??;
+
+            // Fetch the virtual document content
+            let content = content_task.await?;
 
             // Get language from config
             let language = if let Some(language_future) =
@@ -11236,6 +11211,42 @@ impl LspStore {
         local
             .languages
             .update_lsp_binary_status(adapter.name(), BinaryStatus::None);
+
+        // Register virtual document handlers from the extension
+        let worktree = local
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(key.worktree_id, cx);
+        if let Some(worktree) = worktree {
+            let lsp_adapter = adapter.adapter.clone();
+            let delegate: Arc<dyn LspAdapterDelegate> = LocalLspAdapterDelegate::new(
+                local.languages.clone(),
+                &local.environment,
+                local.weak.clone(),
+                &worktree,
+                local.http_client.clone(),
+                local.fs.clone(),
+                cx,
+            );
+            let virtual_docs = local.virtual_docs.clone();
+            cx.spawn(async move |_lsp_store, cx| {
+                if let Ok(configs) = lsp_adapter.virtual_document_configs(&delegate).await {
+                    // Register all configs at once
+                    let _: anyhow::Result<()> = virtual_docs.update(cx, |store, _cx| {
+                        for config in configs {
+                            log::info!(
+                                "Registering virtual document handler for scheme '{}' from extension",
+                                config.scheme
+                            );
+                            store.register_handler(config);
+                        }
+                    });
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+        }
+
         if let Some(file_ops_caps) = language_server
             .capabilities()
             .workspace
