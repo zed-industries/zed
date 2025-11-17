@@ -37,7 +37,7 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
 use crate::{
     git_store::GitStore,
-    lsp_store::{SymbolLocation, log_store::LogKind},
+    lsp_store::{LanguageServerBinaryInfo, SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
@@ -111,7 +111,6 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    ffi::OsString,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -3127,15 +3126,11 @@ impl Project {
                                 .language_server_statuses
                                 .get_mut(language_server_id)
                             {
-                                if let Some(path) = &update.binary_path {
+                                if let Some(binary) = &update.binary {
                                     language_server_status.binary =
-                                        Some(lsp::LanguageServerBinary {
-                                            path: path.into(),
-                                            arguments: update
-                                                .binary_args
-                                                .iter()
-                                                .map(|arg| OsString::from(arg))
-                                                .collect(),
+                                        Some(LanguageServerBinaryInfo {
+                                            path: binary.path.clone(),
+                                            arguments: binary.arguments.clone(),
                                             env: None,
                                         });
                                 }

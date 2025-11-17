@@ -8,12 +8,15 @@ use gpui::{
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    LanguageServer, LanguageServerBinary, LanguageServerName, LanguageServerSelector, MessageType,
-    SetTraceParams, TraceValue, notification::SetTrace,
+    LanguageServer, LanguageServerName, LanguageServerSelector, MessageType, SetTraceParams,
+    TraceValue, notification::SetTrace,
 };
 use project::{
     Project,
-    lsp_store::log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
+    lsp_store::{
+        LanguageServerBinaryInfo,
+        log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
+    },
     search::SearchQuery,
 };
 use proto::toggle_lsp_logs::LogType;
@@ -338,10 +341,11 @@ impl LspLogView {
 * Configuration: {CONFIGURATION}",
             NAME = info.name,
             ID = info.id,
-            BINARY = info
-                .binary
-                .as_ref()
-                .map_or_else(|| "Unknown".to_string(), |binary| format!("{binary:#?}")),
+            BINARY = info.binary.as_ref().map_or_else(
+                || "Unknown".to_string(),
+                |binary| serde_json::to_string_pretty(binary)
+                    .unwrap_or_else(|e| format!("Failed to serialize binary info: {e}"))
+            ),
             WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
@@ -1322,7 +1326,7 @@ impl LspLogToolbarItemView {
 struct ServerInfo {
     id: LanguageServerId,
     capabilities: lsp::ServerCapabilities,
-    binary: Option<LanguageServerBinary>,
+    binary: Option<LanguageServerBinaryInfo>,
     name: LanguageServerName,
     workspace_folders: Vec<String>,
     configuration: Option<serde_json::Value>,
@@ -1333,7 +1337,16 @@ impl ServerInfo {
         Self {
             id: server.server_id(),
             capabilities: server.capabilities(),
-            binary: Some(server.binary().clone()),
+            binary: Some(LanguageServerBinaryInfo {
+                path: server.binary().path.to_string_lossy().into_owned(),
+                arguments: server
+                    .binary()
+                    .arguments
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+                env: server.binary().env.clone(),
+            }),
             name: server.name(),
             workspace_folders: server
                 .workspace_folders()
