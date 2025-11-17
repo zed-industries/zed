@@ -7,9 +7,10 @@ use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
-use settings::SettingsStore;
+use settings::{EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
+use sweep_ai::{SweepAiEditPredictionProvider, SweepFeatureFlag};
 use ui::Window;
 use zeta::ZetaEditPredictionProvider;
 use zeta2::Zeta2FeatureFlag;
@@ -202,29 +203,36 @@ fn assign_edit_prediction_provider(
             let provider = cx.new(|_| CodestralCompletionProvider::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
-        EditPredictionProvider::Sweep => {
-            if let Some(project) = editor.project()
-                && let Some(workspace) = editor.workspace()
+        EditPredictionProvider::Experimental(name) => {
+            if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                && cx.has_flag::<SweepFeatureFlag>()
             {
-                let sweep_ai = sweep_ai::SweepAi::register(cx);
-
-                if let Some(buffer) = &singleton_buffer
-                    && buffer.read(cx).file().is_some()
+                if let Some(project) = editor.project()
+                    && let Some(workspace) = editor.workspace()
                 {
-                    sweep_ai.update(cx, |sweep_ai, cx| {
-                        sweep_ai.register_buffer(buffer, project, cx);
-                    });
-                }
+                    let sweep_ai = sweep_ai::SweepAi::register(cx);
 
-                let provider = cx.new(|_| {
-                    sweep_ai::SweepAiEditPredictionProvider::new(
-                        sweep_ai,
-                        workspace.downgrade(),
-                        project.clone(),
-                        singleton_buffer,
-                    )
-                });
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                    if let Some(buffer) = &singleton_buffer
+                        && buffer.read(cx).file().is_some()
+                    {
+                        sweep_ai.update(cx, |sweep_ai, cx| {
+                            sweep_ai.register_buffer(buffer, project, cx);
+                        });
+                    }
+
+                    let provider = cx.new(|_| {
+                        sweep_ai::SweepAiEditPredictionProvider::new(
+                            sweep_ai,
+                            workspace.downgrade(),
+                            project.clone(),
+                        )
+                    });
+                    editor.set_edit_prediction_provider(Some(provider), window, cx);
+                }
+            } else {
+                editor.set_edit_prediction_provider::<SweepAiEditPredictionProvider>(
+                    None, window, cx,
+                );
             }
         }
         EditPredictionProvider::Zed => {

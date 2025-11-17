@@ -18,12 +18,15 @@ use language::{
 };
 use project::DisableAiSettings;
 use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{
+    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
+};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use supermaven::{AccountStatus, Supermaven};
+use sweep_ai::SweepFeatureFlag;
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
     IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -78,7 +81,7 @@ impl Render for EditPredictionButton {
 
         let all_language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.edit_predictions.provider {
+        match &all_language_settings.edit_predictions.provider {
             EditPredictionProvider::None => div().hidden(),
 
             EditPredictionProvider::Copilot => {
@@ -297,9 +300,14 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            EditPredictionProvider::Sweep => {
-                // todo!
-                div().child("🧹")
+            EditPredictionProvider::Experimental(provider_name) => {
+                if *provider_name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                    && cx.has_flag::<SweepFeatureFlag>()
+                {
+                    div().child(Icon::new(IconName::SweepAi))
+                } else {
+                    div()
+                }
             }
 
             EditPredictionProvider::Zed => {
@@ -529,12 +537,7 @@ impl EditPredictionButton {
                             set_completion_provider(fs.clone(), cx, provider);
                         })
                     }
-                    EditPredictionProvider::Sweep => {
-                        menu.entry("Sweep", None, move |_, cx| {
-                            set_completion_provider(fs.clone(), cx, provider);
-                        })
-                    }
-                    EditPredictionProvider::None => continue,
+                    EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => continue,
                 };
             }
         }

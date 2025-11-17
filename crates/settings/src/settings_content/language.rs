@@ -3,7 +3,7 @@ use std::num::NonZeroU32;
 use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as _};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use std::sync::Arc;
@@ -68,9 +68,7 @@ pub struct FeaturesContent {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
-)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -79,7 +77,47 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
-    Sweep,
+    Experimental(&'static str),
+}
+
+pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
+
+impl<'de> Deserialize<'de> for EditPredictionProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum Content {
+            None,
+            Copilot,
+            Supermaven,
+            Zed,
+            Codestral,
+            Experimental(String),
+        }
+
+        Ok(match Content::deserialize(deserializer)? {
+            Content::None => EditPredictionProvider::None,
+            Content::Copilot => EditPredictionProvider::Copilot,
+            Content::Supermaven => EditPredictionProvider::Supermaven,
+            Content::Zed => EditPredictionProvider::Zed,
+            Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Experimental(name) => {
+                if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME {
+                    EditPredictionProvider::Experimental(
+                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+                    )
+                } else {
+                    return Err(D::Error::custom(format!(
+                        "Unknown experimental edit prediction provider: {}",
+                        name
+                    )));
+                }
+            }
+        })
+    }
 }
 
 impl EditPredictionProvider {
@@ -90,7 +128,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
-            | EditPredictionProvider::Sweep => false,
+            | EditPredictionProvider::Experimental(_) => false,
         }
     }
 }

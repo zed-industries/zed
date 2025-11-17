@@ -3,7 +3,8 @@ mod api;
 use anyhow::{Context as _, Result};
 use arrayvec::ArrayVec;
 use collections::HashMap;
-use futures::{AsyncReadExt as _, future};
+use feature_flags::FeatureFlag;
+use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task, WeakEntity};
 use http_client::{AsyncBody, Method};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint, text_diff};
@@ -21,13 +22,22 @@ use std::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
-use uuid::Uuid;
 use workspace::Workspace;
 
-use crate::api::{ActionType, AutocompleteRequest, AutocompleteResponse, FileChunk, UserAction};
+use crate::api::{AutocompleteRequest, AutocompleteResponse, FileChunk};
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_EVENT_COUNT: usize = 16;
+
+pub struct SweepFeatureFlag;
+
+impl FeatureFlag for SweepFeatureFlag {
+    const NAME: &str = "sweep-ai";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
 
 #[derive(Clone)]
 struct SweepAiGlobal(Entity<SweepAi>);
@@ -69,7 +79,6 @@ impl Display for EditPredictionId {
 
 pub struct SweepAi {
     projects: HashMap<EntityId, SweepAiProject>,
-    shown_completions: VecDeque<EditPrediction>,
 }
 
 struct SweepAiProject {
@@ -100,7 +109,6 @@ impl SweepAi {
     fn new() -> Self {
         Self {
             projects: HashMap::default(),
-            shown_completions: VecDeque::new(),
         }
     }
 
@@ -306,6 +314,7 @@ impl SweepAi {
                     file_chunks,
                     retrieval_chunks: vec![],
                     recent_user_actions: vec![],
+                    // TODO
                     privacy_mode_enabled: false,
                 };
 
@@ -513,7 +522,6 @@ struct PendingCompletion {
 pub struct SweepAiEditPredictionProvider {
     workspace: WeakEntity<Workspace>,
     sweep_ai: Entity<SweepAi>,
-    singleton_buffer: Option<Entity<Buffer>>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentEditPrediction>,
@@ -528,11 +536,9 @@ impl SweepAiEditPredictionProvider {
         sweep_ai: Entity<SweepAi>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        singleton_buffer: Option<Entity<Buffer>>,
     ) -> Self {
         Self {
             sweep_ai,
-            singleton_buffer,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
@@ -690,7 +696,7 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, cx: &mut Context<Self>) {
+    fn accept(&mut self, _cx: &mut Context<Self>) {
         self.pending_completions.clear();
     }
 
@@ -759,12 +765,4 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
             edit_preview: Some(completion.edit_preview.clone()),
         })
     }
-}
-
-/// Typical number of string bytes per token for the purposes of limiting model input. This is
-/// intentionally low to err on the side of underestimating limits.
-const BYTES_PER_TOKEN_GUESS: usize = 3;
-
-fn guess_token_count(bytes: usize) -> usize {
-    bytes / BYTES_PER_TOKEN_GUESS
 }
