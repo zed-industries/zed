@@ -14035,6 +14035,7 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "project",
+ "prompt_store",
  "proto",
  "rayon",
  "release_channel",
