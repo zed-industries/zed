@@ -1070,15 +1070,8 @@ impl Vim {
             // move the cursor one position to the right, to ensure that, for
             // motions like `EndOfLine` ($), the cursor is actually at the end
             // of line and not on the last character.
-            // TODO!: What should be the `SelectionEffects` here? What should be the `SelectionGoal` here?
             if matches!(motion, Some(Motion::EndOfLine { .. })) {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.move_cursors_with(|map, cursor, _| {
-                            (movement::right(map, cursor), SelectionGoal::None)
-                        });
-                    });
-                });
+                self.move_cursor(Motion::Right, Some(1), window, cx);
             }
         }
     }
