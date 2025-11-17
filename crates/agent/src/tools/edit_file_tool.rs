@@ -311,20 +311,21 @@ impl AgentTool for EditFileTool {
 
             // Check if the file has been modified since the agent last read it
             if let Some(abs_path) = abs_path.as_ref() {
-                let (last_read_mtime, current_mtime) = self.thread.update(cx, |thread, cx| -> Result<_> {
-                    // Check for unsaved changes first - these indicate modifications we don't know about
-                    if buffer.read(cx).is_dirty() {
-                        anyhow::bail!(
-                            "The file {} has unsaved changes. \
-                             Please read the file again to get the current state before editing it.",
-                            input.path.display()
-                        );
-                    }
-
+                let (last_read_mtime, current_mtime, is_dirty) = self.thread.update(cx, |thread, cx| {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
-                    Ok((last_read, current))
-                })??;
+                    let dirty = buffer.read(cx).is_dirty();
+                    (last_read, current, dirty)
+                })?;
+
+                // Check for unsaved changes first - these indicate modifications we don't know about
+                if is_dirty {
+                    anyhow::bail!(
+                        "The file {} has unsaved changes. \
+                         Please read the file again to get the current state before editing it.",
+                        input.path.display()
+                    );
+                }
 
                 // Check if the file was modified on disk since we last read it
                 if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
