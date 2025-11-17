@@ -1470,4 +1470,21 @@ mod tests {
             ]
         );
     }
+
+    #[perf]
+    fn test_text_style_refinement() {
+        let mut style = Style::default();
+        style.refine(&StyleRefinement::default().text_size(px(20.0)));
+        style.refine(&StyleRefinement::default().font_weight(FontWeight::SEMIBOLD));
+
+        assert_eq!(
+            Some(AbsoluteLength::from(px(20.0))),
+            style.text_style().unwrap().font_size
+        );
+
+        assert_eq!(
+            Some(FontWeight::SEMIBOLD),
+            style.text_style().unwrap().font_weight
+        );
+    }
 }
