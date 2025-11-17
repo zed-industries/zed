@@ -582,7 +582,7 @@ impl Zeta {
             } = params;
 
             let http_client = client.http_client();
-            let mut token = llm_token.acquire(&client).await?;
+            let mut token = llm_token.acquire(&client).await.unwrap_or_default();
             let mut did_retry = false;
 
             loop {
@@ -624,7 +624,8 @@ impl Zeta {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
                     return Ok((serde_json::from_str(&body)?, usage));
-                } else if !did_retry
+                } else if !token.is_empty()
+                    && !did_retry
                     && response
                         .headers()
                         .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
@@ -1501,14 +1502,26 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
             return;
         }
 
-        if self
+        let is_authenticated = self
             .zeta
             .read(cx)
             .user_store
-            .read_with(cx, |user_store, _cx| {
-                user_store.account_too_young() || user_store.has_overdue_invoices()
-            })
+            .read_with(cx, |user_store, _cx| user_store.current_user().is_some());
+        let has_custom_url = std::env::var("ZED_PREDICT_EDITS_URL").is_ok();
+
+        if is_authenticated
+            && self
+                .zeta
+                .read(cx)
+                .user_store
+                .read_with(cx, |user_store, _cx| {
+                    user_store.account_too_young() || user_store.has_overdue_invoices()
+                })
         {
+            return;
+        }
+
+        if !is_authenticated && !has_custom_url {
             return;
         }
 
