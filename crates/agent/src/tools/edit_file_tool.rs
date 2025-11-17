@@ -309,6 +309,37 @@ impl AgentTool for EditFileTool {
                 })?
                 .await?;
 
+            // Check if the file has been modified since the agent last read it
+            if let Some(abs_path) = abs_path.as_ref() {
+                let (last_read_mtime, current_mtime, is_dirty) = self.thread.update(cx, |thread, cx| {
+                    let last_read = thread.file_read_times.get(abs_path).copied();
+                    let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
+                    let dirty = buffer.read(cx).is_dirty();
+                    (last_read, current, dirty)
+                })?;
+
+                if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
+                    // MTime can be unreliable for comparisons, so our newtype intentionally
+                    // doesn't support comparing them. If the mtime at all different
+                    // (which could be because of a modification or because e.g. system clock changed),
+                    // we pessimistically assume it was modified.
+                    if current != last_read {
+                        anyhow::bail!(
+                            "The file {} has been modified since you last read it. \
+                             Please read the file again to get the current state before editing it.",
+                            input.path.display()
+                        );
+                    }
+                } else if is_dirty {
+                    // If the buffer has unsaved changes, that also means it was modified.
+                    anyhow::bail!(
+                        "The file {} has unsaved changes. \
+                         Please read the file again to get the current state before editing it.",
+                        input.path.display()
+                    );
+                }
+            }
+
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
             event_stream.update_diff(diff.clone());
             let _finalize_diff = util::defer({
@@ -1746,6 +1777,96 @@ mod tests {
             cx.run_until_parked();
             diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
         }
+    }
+
+    #[gpui::test]
+    async fn test_file_read_times_tracking(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "test.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        // Initially, file_read_times should be empty
+        let is_empty = thread.read_with(cx, |thread, _| thread.file_read_times.is_empty());
+        assert!(is_empty, "file_read_times should start empty");
+
+        // Create read tool
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+
+        // Read the file to record the read time
+        cx.update(|cx| {
+            read_tool.clone().run(
+                crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // Verify that file_read_times now contains an entry for the file
+        let has_entry = thread.read_with(cx, |thread, _| {
+            thread.file_read_times.len() == 1
+                && thread
+                    .file_read_times
+                    .keys()
+                    .any(|path| path.ends_with("test.txt"))
+        });
+        assert!(
+            has_entry,
+            "file_read_times should contain an entry after reading the file"
+        );
+
+        // Read the file again - should update the entry
+        cx.update(|cx| {
+            read_tool.clone().run(
+                crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // Should still have exactly one entry
+        let has_one_entry = thread.read_with(cx, |thread, _| thread.file_read_times.len() == 1);
+        assert!(
+            has_one_entry,
+            "file_read_times should still have one entry after re-reading"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
