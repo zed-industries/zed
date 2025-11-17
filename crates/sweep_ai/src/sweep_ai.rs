@@ -331,7 +331,6 @@ impl SweepAi {
                     .header("Content-Type", "application/json")
                     .header(
                         "Authorization",
-                        // todo!
                         format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
                     )
                     .header("Connection", "keep-alive")
@@ -465,8 +464,8 @@ impl Display for Event {
                     .map(|f| f.path().as_ref())
                     .unwrap_or(RelPath::unix("untitled").unwrap());
                 if old_path != new_path {
-                    // todo! confirm how to do this for sweep
-                    writeln!(f, "User renamed {:?} to {:?}\n", old_path, new_path)?;
+                    // TODO confirm how to do this for sweep
+                    // writeln!(f, "User renamed {:?} to {:?}\n", old_path, new_path)?;
                 }
 
                 let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
@@ -572,7 +571,6 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
         _cursor_position: language::Anchor,
         _cx: &App,
     ) -> bool {
-        // todo!
         true
     }
 
