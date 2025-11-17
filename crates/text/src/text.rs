@@ -2439,7 +2439,6 @@ impl BufferSnapshot {
             if offset > self.visible_text.len() {
                 panic!("offset {} is out of bounds", offset)
             }
-            self.visible_text.assert_char_boundary(offset);
             let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
             let fragment = item.unwrap();
             let overshoot = offset - start;
