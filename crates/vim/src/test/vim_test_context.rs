@@ -41,6 +41,11 @@ impl VimTestContext {
         Self::new_with_lsp(EditorLspTestContext::new_html(cx).await, true)
     }
 
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> VimTestContext {
+        Self::init(cx);
+        Self::new_with_lsp(EditorLspTestContext::new_markdown_with_rust(cx).await, true)
+    }
+
     pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(

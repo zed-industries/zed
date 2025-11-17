@@ -206,6 +206,31 @@ This can be useful if you're in the middle of developing a new agent that speaks
 
 It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
 
+### Custom Keybinding For Extension-Based Agents
+
+To assign a custom keybinding to start a new thread for agents that were added by installing agent server extensions, add the following snippet to your `keymap.json` file:
+
+```json [keymap]
+{
+  "bindings": {
+    "cmd-alt-n": [ // Your custom keybinding
+      "agent::NewExternalAgentThread",
+      {
+        "agent": {
+          "custom": {
+            "name": "My Agent", // The agent name as it appears in the UI (e.g., "OpenCode", "Auggie CLI", etc.)
+            "command": {
+              "command": "my-agent", // The agent name in lowercase with no spaces
+              "args": ["acp"]
+            }
+          }
+        }
+      }
+    ]
+  }
+},
+```
+
 ## Debugging Agents
 
 When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette. This lets you see the messages being sent and received between Zed and the agent.

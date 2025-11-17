@@ -42,14 +42,14 @@ use util::rel_path::RelPathBuf;
 use util::{LogErrorFuture, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-pub mod merge_excerpts;
+pub mod assemble_excerpts;
 mod prediction;
 mod provider;
 pub mod retrieval_search;
 pub mod udiff;
 mod xml_edits;
 
-use crate::merge_excerpts::merge_excerpts;
+use crate::assemble_excerpts::assemble_excerpts;
 use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 pub use provider::ZetaEditPredictionProvider;
@@ -91,12 +91,21 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
 
 static USE_OLLAMA: LazyLock<bool> =
     LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
-static MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    env::var("ZED_ZETA2_MODEL").unwrap_or(if *USE_OLLAMA {
+static CONTEXT_RETRIEVAL_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    env::var("ZED_ZETA2_CONTEXT_MODEL").unwrap_or(if *USE_OLLAMA {
         "qwen3-coder:30b".to_string()
     } else {
         "yqvev8r3".to_string()
     })
+});
+static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    match env::var("ZED_ZETA2_MODEL").as_deref() {
+        Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
+        Ok(model) => model,
+        Err(_) if *USE_OLLAMA => "qwen3-coder:30b",
+        Err(_) => "yqvev8r3", // Vanilla qwen3-coder @ Baseten
+    }
+    .to_string()
 });
 static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
     env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
@@ -811,22 +820,14 @@ impl Zeta {
                             })
                         {
                             let (_, buffer, _, ranges) = &mut included_files[buffer_ix];
-                            let range_ix = ranges
-                                .binary_search_by(|probe| {
-                                    probe
-                                        .start
-                                        .cmp(&excerpt_anchor_range.start, buffer)
-                                        .then(excerpt_anchor_range.end.cmp(&probe.end, buffer))
-                                })
-                                .unwrap_or_else(|ix| ix);
-
-                            ranges.insert(range_ix, excerpt_anchor_range);
+                            ranges.push(excerpt_anchor_range);
+                            retrieval_search::merge_anchor_ranges(ranges, buffer);
                             let last_ix = included_files.len() - 1;
                             included_files.swap(buffer_ix, last_ix);
                         } else {
                             included_files.push((
                                 active_buffer.clone(),
-                                active_snapshot,
+                                active_snapshot.clone(),
                                 excerpt_path.clone(),
                                 vec![excerpt_anchor_range],
                             ));
@@ -835,13 +836,14 @@ impl Zeta {
                         let included_files = included_files
                             .iter()
                             .map(|(_, snapshot, path, ranges)| {
-                                let excerpts = merge_excerpts(
-                                    &snapshot,
-                                    ranges.iter().map(|range| {
+                                let ranges = ranges
+                                    .iter()
+                                    .map(|range| {
                                         let point_range = range.to_point(&snapshot);
                                         Line(point_range.start.row)..Line(point_range.end.row)
-                                    }),
-                                );
+                                    })
+                                    .collect::<Vec<_>>();
+                                let excerpts = assemble_excerpts(&snapshot, ranges);
                                 predict_edits_v3::IncludedFile {
                                     path: path.clone(),
                                     max_row: Line(snapshot.max_point().row),
@@ -940,7 +942,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: MODEL_ID.clone(),
+                    model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
@@ -1010,7 +1012,16 @@ impl Zeta {
 
                 let (edited_buffer_snapshot, edits) = match options.prompt_format {
                     PromptFormat::NumLinesUniDiff => {
+                        // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                    }
+                    PromptFormat::Minimal => {
+                        if output_text.contains("--- a/\n+++ b/\nNo edits") {
+                            let edits = vec![];
+                            (&active_snapshot, edits)
+                        } else {
+                            crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                        }
                     }
                     PromptFormat::OldTextNewText => {
                         crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context)
@@ -1363,7 +1374,7 @@ impl Zeta {
         let (tool_schema, tool_description) = TOOL_SCHEMA.clone();
 
         let request = open_ai::Request {
-            model: MODEL_ID.clone(),
+            model: CONTEXT_RETRIEVAL_MODEL_ID.clone(),
             messages: vec![open_ai::RequestMessage::User {
                 content: open_ai::MessageContent::Plain(prompt),
             }],

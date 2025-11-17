@@ -64,7 +64,7 @@ pub async fn run_retrieval_searches(
                     })?
                     .await?;
                 let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                let mut ranges = ranges
+                let mut ranges: Vec<_> = ranges
                     .into_iter()
                     .map(|range| {
                         snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end)
@@ -172,11 +172,11 @@ pub async fn run_retrieval_searches(
     .await
 }
 
-fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapshot) {
+pub(crate) fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapshot) {
     ranges.sort_unstable_by(|a, b| {
         a.start
             .cmp(&b.start, snapshot)
-            .then(b.end.cmp(&b.end, snapshot))
+            .then(b.end.cmp(&a.end, snapshot))
     });
 
     let mut index = 1;
@@ -187,7 +187,9 @@ fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapsho
             .is_ge()
         {
             let removed = ranges.remove(index);
-            ranges[index - 1].end = removed.end;
+            if removed.end.cmp(&ranges[index - 1].end, snapshot).is_gt() {
+                ranges[index - 1].end = removed.end;
+            }
         } else {
             index += 1;
         }
@@ -416,7 +418,7 @@ fn expand_to_parent_range<T: ToPoint + ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::merge_excerpts::merge_excerpts;
+    use crate::assemble_excerpts::assemble_excerpts;
     use cloud_zeta2_prompt::write_codeblock;
     use edit_prediction_context::Line;
     use gpui::TestAppContext;
@@ -571,10 +573,15 @@ mod tests {
         expected_output: &str,
         cx: &mut TestAppContext,
     ) {
-        let results =
-            run_retrieval_searches(vec![query], project.clone(), None, &mut cx.to_async())
-                .await
-                .unwrap();
+        let results = run_retrieval_searches(
+            vec![query],
+            project.clone(),
+            #[cfg(feature = "eval-support")]
+            None,
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         let mut results = results.into_iter().collect::<Vec<_>>();
         results.sort_by_key(|results| {
@@ -597,7 +604,7 @@ mod tests {
 
                 write_codeblock(
                     &buffer.file().unwrap().full_path(cx),
-                    merge_excerpts(&buffer.snapshot(), excerpts).iter(),
+                    assemble_excerpts(&buffer.snapshot(), excerpts).iter(),
                     &[],
                     Line(buffer.max_point().row),
                     false,

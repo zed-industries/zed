@@ -81,7 +81,19 @@ impl MouseContextMenu {
         cx: &mut Context<Editor>,
     ) -> Self {
         let context_menu_focus = context_menu.focus_handle(cx);
-        window.focus(&context_menu_focus);
+
+        // Since `ContextMenu` is rendered in a deferred fashion its focus
+        // handle is not linked to the Editor's until after the deferred draw
+        // callback runs.
+        // We need to wait for that to happen before focusing it, so that
+        // calling `contains_focused` on the editor's focus handle returns
+        // `true` when the `ContextMenu` is focused.
+        let focus_handle = context_menu_focus.clone();
+        cx.on_next_frame(window, move |_, window, cx| {
+            cx.on_next_frame(window, move |_, window, _cx| {
+                window.focus(&focus_handle);
+            });
+        });
 
         let _dismiss_subscription = cx.subscribe_in(&context_menu, window, {
             let context_menu_focus = context_menu_focus.clone();
@@ -329,8 +341,18 @@ mod tests {
             }
         "});
         cx.editor(|editor, _window, _app| assert!(editor.mouse_context_menu.is_none()));
+
         cx.update_editor(|editor, window, cx| {
-            deploy_context_menu(editor, Some(Default::default()), point, window, cx)
+            deploy_context_menu(editor, Some(Default::default()), point, window, cx);
+
+            // Assert that, even after deploying the editor's mouse context
+            // menu, the editor's focus handle still contains the focused
+            // element. The pane's tab bar relies on this to determine whether
+            // to show the tab bar buttons and there was a small flicker when
+            // deploying the mouse context menu that would cause this to not be
+            // true, making it so that the buttons would disappear for a couple
+            // of frames.
+            assert!(editor.focus_handle.contains_focused(window, cx));
         });
 
         cx.assert_editor_state(indoc! {"

@@ -13,7 +13,7 @@ use language::{Anchor, Buffer, Point};
 use project::Project;
 use serde::Deserialize;
 use std::fs;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -98,7 +98,7 @@ pub async fn run_zeta2_predict(
     .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
-    print_run_data_dir(true);
+    print_run_data_dir(true, std::io::stdout().is_terminal());
 }
 
 pub async fn zeta2_predict(
@@ -126,7 +126,7 @@ pub async fn zeta2_predict(
         example_run_dir = example_run_dir.join(format!("{:03}", repetition_ix));
     }
     fs::create_dir_all(&example_run_dir)?;
-    if LATEST_EXAMPLE_RUN_DIR.exists() {
+    if LATEST_EXAMPLE_RUN_DIR.is_symlink() {
         fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
     }
 
@@ -179,13 +179,12 @@ pub async fn zeta2_predict(
                     zeta2::ZetaDebugInfo::EditPredictionRequested(request) => {
                         let prediction_started_at = Instant::now();
                         start_time.get_or_insert(prediction_started_at);
-                        fs::write(
-                            example_run_dir.join("prediction_prompt.md"),
-                            &request.local_prompt.unwrap_or_default(),
-                        )?;
+                        let prompt = request.local_prompt.unwrap_or_default();
+                        fs::write(example_run_dir.join("prediction_prompt.md"), &prompt)?;
 
                         {
                             let mut result = result.lock().unwrap();
+                            result.prompt_len = prompt.chars().count();
 
                             for included_file in request.request.included_files {
                                 let insertions =
@@ -217,6 +216,7 @@ pub async fn zeta2_predict(
                         fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 
                         let mut result = result.lock().unwrap();
+                        result.generated_len = response.chars().count();
 
                         if !use_expected_context {
                             result.planning_search_time =
@@ -289,8 +289,11 @@ pub async fn zeta2_predict(
             let new_text = prediction
                 .buffer
                 .update(cx, |buffer, cx| {
-                    buffer.edit(prediction.edits.iter().cloned(), None, cx);
-                    buffer.text()
+                    let branch = buffer.branch(cx);
+                    branch.update(cx, |branch, cx| {
+                        branch.edit(prediction.edits.iter().cloned(), None, cx);
+                        branch.text()
+                    })
                 })
                 .unwrap();
             language::unified_diff(&old_text, &new_text)
@@ -408,6 +411,8 @@ pub struct PredictionDetails {
     pub prediction_time: Duration,
     pub total_time: Duration,
     pub run_example_dir: PathBuf,
+    pub prompt_len: usize,
+    pub generated_len: usize,
 }
 
 impl PredictionDetails {
@@ -421,6 +426,8 @@ impl PredictionDetails {
             prediction_time: Default::default(),
             total_time: Default::default(),
             run_example_dir,
+            prompt_len: 0,
+            generated_len: 0,
         }
     }
 

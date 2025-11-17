@@ -823,6 +823,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
+    pub depth: usize,
 }
 
 impl Buffer {
@@ -2053,6 +2054,11 @@ impl Buffer {
             }
             _ => self.has_unsaved_edits(),
         }
+    }
+
+    /// Marks the buffer as having a conflict regardless of current buffer state.
+    pub fn set_conflict(&mut self) {
+        self.has_conflict = true;
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -4131,6 +4137,7 @@ impl BufferSnapshot {
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
+                let depth = mat.depth;
                 let config = &configs[mat.grammar_index];
                 let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
@@ -4156,6 +4163,7 @@ impl BufferSnapshot {
                     open_range,
                     close_range,
                     newline_only: pattern.newline_only,
+                    depth,
                 });
             }
             None
@@ -4315,8 +4323,12 @@ impl BufferSnapshot {
     ) -> impl Iterator<Item = BracketMatch> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        self.bracket_ranges(range.clone()).filter(move |pair| {
-            pair.open_range.start <= range.start && pair.close_range.end >= range.end
+        let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
+        let max_depth = result.iter().map(|mat| mat.depth).max().unwrap_or(0);
+        result.into_iter().filter(move |pair| {
+            pair.open_range.start <= range.start
+                && pair.close_range.end >= range.end
+                && pair.depth == max_depth
         })
     }
 

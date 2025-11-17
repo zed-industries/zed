@@ -11,11 +11,11 @@ pub fn build_prompt(request: predict_edits_v3::PlanContextRetrievalRequest) -> R
     let mut prompt = SEARCH_INSTRUCTIONS.to_string();
 
     if !request.events.is_empty() {
-        writeln!(&mut prompt, "## User Edits\n")?;
+        writeln!(&mut prompt, "\n## User Edits\n\n")?;
         push_events(&mut prompt, &request.events);
     }
 
-    writeln!(&mut prompt, "## Cursor context")?;
+    writeln!(&mut prompt, "## Cursor context\n")?;
     write_codeblock(
         &request.excerpt_path,
         &[Excerpt {

@@ -2631,6 +2631,10 @@ impl Editor {
             key_context.add("end_of_input");
         }
 
+        if self.has_any_expanded_diff_hunks(cx) {
+            key_context.add("diffs_expanded");
+        }
+
         key_context
     }
 
@@ -19334,6 +19338,16 @@ impl Editor {
                 false
             }
         })
+    }
+
+    fn has_any_expanded_diff_hunks(&self, cx: &App) -> bool {
+        if self.buffer.read(cx).all_diff_hunks_expanded() {
+            return true;
+        }
+        let ranges = vec![Anchor::min()..Anchor::max()];
+        self.buffer
+            .read(cx)
+            .has_expanded_diff_hunks_in_ranges(&ranges, cx)
     }
 
     fn toggle_diff_hunks_in_ranges(

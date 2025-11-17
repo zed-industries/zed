@@ -259,6 +259,11 @@ impl NamedExample {
                                 if !text.ends_with('\n') {
                                     text.push('\n');
                                 }
+
+                                if named.example.expected_context.is_empty() {
+                                    named.example.expected_context.push(Default::default());
+                                }
+
                                 let alternatives = &mut named
                                     .example
                                     .expected_context
