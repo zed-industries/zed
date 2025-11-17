@@ -1,7 +1,7 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use indoc::formatdoc;
 use language::Point;
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
@@ -42,13 +42,19 @@ pub struct ReadFileToolInput {
 }
 
 pub struct ReadFileTool {
+    thread: WeakEntity<Thread>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
 
 impl ReadFileTool {
-    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+    pub fn new(
+        thread: WeakEntity<Thread>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+    ) -> Self {
         Self {
+            thread,
             project,
             action_log,
         }
