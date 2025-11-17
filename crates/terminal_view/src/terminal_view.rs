@@ -1447,7 +1447,6 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
-        _collapse: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
