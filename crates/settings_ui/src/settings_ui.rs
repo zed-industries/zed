@@ -2841,17 +2841,30 @@ impl SettingsWindow {
                 .into_any_element();
         } else {
             page_header = h_flex()
-                .ml_neg_1p5()
-                .gap_1()
+                .w_full()
+                .justify_between()
                 .child(
-                    IconButton::new("back-btn", IconName::ArrowLeft)
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.pop_sub_page(cx);
+                    h_flex()
+                        .ml_neg_1p5()
+                        .gap_1()
+                        .child(
+                            IconButton::new("back-btn", IconName::ArrowLeft)
+                                .icon_size(IconSize::Small)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.pop_sub_page(cx);
+                                })),
+                        )
+                        .child(self.render_sub_page_breadcrumbs()),
+                )
+                .child(
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .tab_index(0_isize)
+                        .style(ButtonStyle::OutlinedGhost)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
                         })),
                 )
-                .child(self.render_sub_page_breadcrumbs())
                 .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
