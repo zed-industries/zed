@@ -101,7 +101,11 @@ pub struct CustomShader<T: Pod> {
 
 impl<T: Pod> CustomShader<T> {
     /// Create a new fragment shader with per-instance user-data
-    pub fn new_fragment(fragment_body: &str, user_data_definition: &str) -> Self {
+    pub fn new_fragment(
+        fragment_body: &str,
+        user_data_definition: &str,
+        extra_definitions: &str,
+    ) -> Self {
         Self {
             source: format!(
                 r#"
@@ -176,6 +180,8 @@ impl<T: Pod> CustomShader<T> {
                     out.instance_id = instance_id;
                     return out;
                 }}
+
+                {extra_definitions}
 
                 @fragment
                 fn fs(input: VertexOut) -> @location(0) vec4<f32> {{
