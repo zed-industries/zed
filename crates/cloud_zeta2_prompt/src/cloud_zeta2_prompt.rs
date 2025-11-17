@@ -942,7 +942,7 @@ impl MinimalQwenPrompt {
                 write!(context, "<|fim_prefix|>").unwrap();
                 write_excerpts(
                     &related_file.excerpts,
-                    &vec![(self.cursor_point, "<|fim_suffix|>")],
+                    &[(self.cursor_point, "<|fim_suffix|>")],
                     related_file.max_row,
                     include_line_numbers,
                     &mut context,
@@ -951,7 +951,7 @@ impl MinimalQwenPrompt {
             } else {
                 write_excerpts(
                     &related_file.excerpts,
-                    &vec![],
+                    &[],
                     related_file.max_row,
                     include_line_numbers,
                     &mut context,

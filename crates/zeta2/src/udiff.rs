@@ -250,7 +250,6 @@ impl<'a> DiffParser<'a> {
                 break;
             };
 
-            dbg!(&parsed_line);
             util::maybe!({
                 match parsed_line {
                     DiffLine::OldPath { path } => {
@@ -392,10 +391,12 @@ impl<'a> DiffLine<'a> {
                 return Some(Self::HunkHeader(None));
             }
 
-            let (start_line_old, header) = header.strip_prefix('-')?.split_once(',')?;
-            let mut parts = header.split_ascii_whitespace();
-            let count_old = parts.next()?;
-            let (start_line_new, count_new) = parts.next()?.strip_prefix('+')?.split_once(',')?;
+            let mut tokens = header.split_whitespace();
+            let old_range = tokens.next()?.strip_prefix('-')?;
+            let new_range = tokens.next()?.strip_prefix('+')?;
+
+            let (start_line_old, count_old) = old_range.split_once(',').unwrap_or((old_range, "1"));
+            let (start_line_new, count_new) = new_range.split_once(',').unwrap_or((new_range, "1"));
 
             Some(Self::HunkHeader(Some(HunkLocation {
                 start_line_old: start_line_old.parse::<u32>().ok()?.saturating_sub(1),
