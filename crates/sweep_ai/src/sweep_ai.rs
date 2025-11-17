@@ -1,3 +1,5 @@
+pub mod api;
+
 use anyhow::{Context as _, Result};
 use arrayvec::ArrayVec;
 use collections::HashMap;
@@ -17,7 +19,6 @@ use std::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use uuid::Uuid;
-use worktree::Worktree;
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_EVENT_COUNT: usize = 16;
@@ -220,6 +221,9 @@ impl SweepAi {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
+        let client = cx.http_client();
+        const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+
         todo!();
     }
 
