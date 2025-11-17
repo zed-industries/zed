@@ -323,7 +323,7 @@ impl AgentTool for EditFileTool {
 
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
-                    (last_read, current)
+                    Ok((last_read, current))
                 })?;
 
                 // Check if the file was modified on disk since we last read it
