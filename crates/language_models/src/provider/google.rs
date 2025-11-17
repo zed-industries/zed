@@ -439,11 +439,15 @@ pub fn into_google(
                     })]
                 }
                 language_model::MessageContent::ToolUse(tool_use) => {
+                    // Normalize empty string signatures to None
+                    let thought_signature = tool_use.thought_signature.filter(|s| !s.is_empty());
+
                     vec![Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
                         },
+                        thought_signature,
                     })]
                 }
                 language_model::MessageContent::ToolResult(tool_result) => {
@@ -655,6 +659,11 @@ impl GoogleEventMapper {
                             let id: LanguageModelToolUseId =
                                 format!("{}-{}", name, next_tool_id).into();
 
+                            // Normalize empty string signatures to None
+                            let thought_signature = function_call_part
+                                .thought_signature
+                                .filter(|s| !s.is_empty());
+
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
                                     id,
@@ -662,6 +671,7 @@ impl GoogleEventMapper {
                                     is_input_complete: true,
                                     raw_input: function_call_part.function_call.args.to_string(),
                                     input: function_call_part.function_call.args,
+                                    thought_signature,
                                 },
                             )));
                         }

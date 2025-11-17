@@ -150,6 +150,7 @@ impl DbThread {
                                     .unwrap_or_default(),
                                 input: tool_use.input,
                                 is_input_complete: true,
+                                thought_signature: None,
                             },
                         ));
                     }

@@ -515,6 +515,9 @@ pub struct LanguageModelToolUse {
     pub raw_input: String,
     pub input: serde_json::Value,
     pub is_input_complete: bool,
+    /// Thought signature the model sent us. Some models require that this
+    /// signature be preserved and sent back in conversation history for validation.
+    pub thought_signature: Option<String>,
 }
 
 pub struct LanguageModelTextStream {

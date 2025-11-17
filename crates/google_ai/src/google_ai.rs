@@ -229,6 +229,10 @@ pub struct GenerativeContentBlob {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionCallPart {
     pub function_call: FunctionCall,
+    /// Thought signature returned by the model for function calls.
+    /// Only present on the first function call in parallel call scenarios.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

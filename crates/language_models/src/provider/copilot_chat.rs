@@ -456,6 +456,7 @@ pub fn map_to_language_model_completion_events(
                                                 is_input_complete: true,
                                                 input,
                                                 raw_input: tool_call.arguments,
+                                                thought_signature: None,
                                             },
                                         )),
                                         Err(error) => Ok(
@@ -558,6 +559,7 @@ impl CopilotResponsesEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: arguments.clone(),
+                                thought_signature: None,
                             },
                         ))),
                         Err(error) => {
