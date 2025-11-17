@@ -24,6 +24,7 @@
   fontconfig,
   freetype,
   git,
+  glib,
   libgit2,
   libglvnd,
   libxkbcommon,
@@ -150,6 +151,7 @@ let
         curl
         fontconfig
         freetype
+        glib
         # TODO: need staticlib of this for linking the musl remote server.
         # should make it a separate derivation/flake output
         # see https://crane.dev/examples/cross-musl.html
