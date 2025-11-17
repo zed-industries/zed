@@ -85,7 +85,6 @@
 [
   "as"
   "async"
-  "await"
   "const"
   "default"
   "dyn"
@@ -115,6 +114,7 @@
 ] @keyword
 
 [
+  "await"
   "break"
   "continue"
   "else"
