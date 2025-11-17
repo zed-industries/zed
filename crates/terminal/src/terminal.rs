@@ -2532,12 +2532,6 @@ mod tests {
             assert!(success, "Should have registered ctrl-c sequence");
         });
 
-        // After getting Wakeup, wait for shell to process SIGINT
-        // Collect any events after Ctrl+C
-        while let Ok(Ok(_first_event)) =
-            smol_timeout(Duration::from_millis(100), event_rx.recv()).await
-        {}
-
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
             assert!(success, "Should have registered ctrl-d sequence");
