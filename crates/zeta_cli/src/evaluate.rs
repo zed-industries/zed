@@ -36,24 +36,10 @@ pub struct EvaluateArguments {
     skip_prediction: bool,
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-struct EditSignature {
-    diff: String,
-}
-
-#[derive(Debug)]
-struct EditBucket {
-    signature: EditSignature,
-    is_correct: bool,
-    execution_indices: Vec<String>,
-    reasoning_samples: Vec<String>,
-}
-
 #[derive(Debug)]
 pub(crate) struct ExecutionData {
     execution_id: String,
     diff: String,
-    is_correct: bool,
     reasoning: String,
 }
 
@@ -137,16 +123,7 @@ fn write_aggregated_scores(
                 }
 
                 failed_count += 1;
-                let err = format!("{err:?}")
-                    .replace("<edits", "```xml\n<edits")
-                    .replace("</edits>", "</edits>\n```");
-                writeln!(
-                    w,
-                    "### ERROR {name}{}\n\n{err}\n",
-                    repetition_ix
-                        .map(|ix| format!(" [RUN {ix:03}]"))
-                        .unwrap_or_default()
-                )?;
+                writeln!(w, "{}", fmt_evaluation_error(err, name, repetition_ix))?;
             }
         }
     }
@@ -233,33 +210,19 @@ pub async fn run_evaluate_one(
         .log_err();
     }
 
-    let reasoning = std::fs::read_to_string(
-        predict_result
-            .run_example_dir
-            .join("prediction_response.md"),
-    )
-    .unwrap_or_default();
-
-    let execution_id = if let Some(rep_ix) = repetition_ix {
-        format!("{:03}", rep_ix)
-    } else {
-        example.name.clone()
-    };
-
-    let is_correct = evaluation_result
-        .edit_prediction
-        .as_ref()
-        .map_or(false, |edit_prediction| {
-            edit_prediction.false_positives == 0
-                && edit_prediction.false_negatives == 0
-                && edit_prediction.true_positives > 0
-        });
-
     let execution_data = ExecutionData {
-        execution_id,
+        execution_id: if let Some(rep_ix) = repetition_ix {
+            format!("{:03}", rep_ix)
+        } else {
+            example.name.clone()
+        },
         diff: predict_result.diff.clone(),
-        is_correct,
-        reasoning,
+        reasoning: std::fs::read_to_string(
+            predict_result
+                .run_example_dir
+                .join("prediction_response.md"),
+        )
+        .unwrap_or_default(),
     };
 
     anyhow::Ok((evaluation_result, execution_data))
@@ -567,45 +530,44 @@ pub fn compare_diffs(patch_a: &str, patch_b: &str, use_color: bool) -> String {
     annotated.join("\n")
 }
 
-fn indent_text(text: &str, spaces: usize) -> String {
-    let indent = " ".repeat(spaces);
-    text.lines()
-        .collect::<Vec<_>>()
-        .join(&format!("\n{}", indent))
-}
-
 fn write_bucketed_analysis(
     all_results: &Vec<
         Vec<Result<(EvaluationResult, ExecutionData), (anyhow::Error, String, Option<u16>)>>,
     >,
 ) -> Result<()> {
-    let mut all_executions = Vec::new();
+    #[derive(Debug)]
+    struct EditBucket {
+        diff: String,
+        is_correct: bool,
+        execution_indices: Vec<String>,
+        reasoning_samples: Vec<String>,
+    }
+
     let mut total_executions = 0;
     let mut empty_predictions = Vec::new();
+    let mut errors = Vec::new();
+
+    let mut buckets: HashMap<String, EditBucket> = HashMap::new();
 
     for result in all_results.iter().flatten() {
         total_executions += 1;
-        match result {
-            Ok((_eval_result, execution_data)) => {
+
+        let (evaluation_result, execution_data) = match result {
+            Ok((eval_result, execution_data)) => {
                 if execution_data.diff.is_empty() {
                     empty_predictions.push(execution_data);
-                } else {
-                    all_executions.push(execution_data);
+                    continue;
                 }
+                (eval_result, execution_data)
             }
-            Err(_) => {}
-        }
-    }
-
-    let mut buckets: HashMap<EditSignature, EditBucket> = HashMap::new();
-
-    for execution_data in &all_executions {
-        let signature = EditSignature {
-            diff: execution_data.diff.clone(),
+            Err(err) => {
+                errors.push(err);
+                continue;
+            }
         };
 
         buckets
-            .entry(signature.clone())
+            .entry(execution_data.diff.clone())
             .and_modify(|bucket| {
                 bucket
                     .execution_indices
@@ -615,8 +577,17 @@ fn write_bucketed_analysis(
                     .push(execution_data.reasoning.clone());
             })
             .or_insert_with(|| EditBucket {
-                signature: signature.clone(),
-                is_correct: execution_data.is_correct,
+                diff: execution_data.diff.clone(),
+                is_correct: {
+                    evaluation_result
+                        .edit_prediction
+                        .as_ref()
+                        .map_or(false, |edit_prediction| {
+                            edit_prediction.false_positives == 0
+                                && edit_prediction.false_negatives == 0
+                                && edit_prediction.true_positives > 0
+                        })
+                },
                 execution_indices: vec![execution_data.execution_id.clone()],
                 reasoning_samples: vec![execution_data.reasoning.clone()],
             });
@@ -690,7 +661,7 @@ fn write_bucketed_analysis(
 
         writeln!(output, "**Predicted Edit:**\n")?;
         writeln!(output, "```diff")?;
-        writeln!(output, "{}", bucket.signature.diff)?;
+        writeln!(output, "{}", bucket.diff)?;
         writeln!(output, "```\n")?;
 
         writeln!(
@@ -711,7 +682,7 @@ fn write_bucketed_analysis(
 
         writeln!(output, "**Predicted Edit:**\n")?;
         writeln!(output, "```diff")?;
-        writeln!(output, "{}", bucket.signature.diff)?;
+        writeln!(output, "{}", bucket.diff)?;
         writeln!(output, "```\n")?;
 
         writeln!(
@@ -748,6 +719,15 @@ fn write_bucketed_analysis(
         writeln!(output, "\n---\n")?;
     }
 
+    if !errors.is_empty() {
+        writeln!(output, "## Errors ({} occurrences)\n", errors.len())?;
+
+        for (err, name, repetition_ix) in &errors {
+            writeln!(output, "{}", fmt_evaluation_error(err, name, repetition_ix))?;
+        }
+        writeln!(output, "\n---\n")?;
+    }
+
     fn fmt_execution(exec_id: &str, reasoning: &str) -> String {
         let exec_content = format!(
             "\n### Execution {} `{}/{}/prediction_response.md`{}",
@@ -759,5 +739,24 @@ fn write_bucketed_analysis(
         indent_text(&exec_content, 2)
     }
 
+    fn indent_text(text: &str, spaces: usize) -> String {
+        let indent = " ".repeat(spaces);
+        text.lines()
+            .collect::<Vec<_>>()
+            .join(&format!("\n{}", indent))
+    }
+
     Ok(())
+}
+
+fn fmt_evaluation_error(err: &anyhow::Error, name: &str, repetition_ix: &Option<u16>) -> String {
+    let err = format!("{err:?}")
+        .replace("<edits", "```xml\n<edits")
+        .replace("</edits>", "</edits>\n```");
+    format!(
+        "### ERROR {name}{}\n\n{err}\n",
+        repetition_ix
+            .map(|ix| format!(" [RUN {ix:03}]"))
+            .unwrap_or_default()
+    )
 }
