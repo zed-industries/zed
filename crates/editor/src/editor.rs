@@ -203,7 +203,6 @@ use workspace::{
 use crate::{
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
-    git::word_diff::Cache,
     hover_links::{find_url, find_url_from_range},
     inlays::{
         InlineValueCache,
@@ -1167,7 +1166,6 @@ pub struct Editor {
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
-    pub(crate) word_diff_cache: git::word_diff::Cache,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -2043,7 +2041,6 @@ impl Editor {
 
         let mut editor = Self {
             focus_handle,
-            word_diff_cache: git::word_diff::Cache::default(),
             show_cursor_when_unfocused: false,
             last_focused_descendant: None,
             buffer: multi_buffer.clone(),
@@ -22074,23 +22071,6 @@ impl Editor {
         // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
         // skip any LSP updates for it.
         self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
-    }
-
-    fn update_word_diff(&mut self, row_infos: &[RowInfo], cx: &mut Context<Editor>) {
-        let display_snapshot = self.display_snapshot(cx);
-        // self.word_diff_cache.update(row_infos, )
-    }
-
-    fn word_diff_highlights(
-        &mut self,
-        row_infos: &[RowInfo],
-    ) -> impl Iterator<Item = (Range<DisplayPoint>, Hsla)> {
-        // self.word_diff_cache.color_ranges(
-        //     row_infos
-        //         .iter()
-        //         .filter(|RowInfo { diff_status }| diff_status.is_some()),
-        // )
-        Vec::new().into_iter()
     }
 }
 

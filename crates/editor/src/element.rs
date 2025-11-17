@@ -58,13 +58,12 @@ use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
-    MultiBufferRow, RowInfo, ToOffset,
+    MultiBufferRow, RowInfo,
 };
 
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    git_store::branch_diff::DiffBase,
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -8762,14 +8761,8 @@ impl Element for EditorElement {
 
                         let base_display_point =
                             DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
-                        let base_offset =
-                            base_display_point.to_offset(&snapshot.display_snapshot, Bias::Left);
 
                         for word_diff in row_info.word_diffs.clone() {
-                            // let start = (word_diff.start + base_offset)
-                            //     .to_display_point(&snapshot.display_snapshot);
-                            // let end = (word_diff.end + base_offset)
-                            //     .to_display_point(&snapshot.display_snapshot);
                             let start =
                                 (word_diff.start).to_display_point(&snapshot.display_snapshot);
                             let end = (word_diff.end).to_display_point(&snapshot.display_snapshot);
@@ -8945,108 +8938,6 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-
-                    for (diff_hunk, _) in &display_hunks {
-                        if let DisplayDiffHunk::Unfolded {
-                            diff_base_byte_range,
-                            display_row_range,
-                            multi_buffer_range,
-                            status,
-                            ..
-                        } = diff_hunk
-                            && !diff_base_byte_range.is_empty()
-                            && status.is_modified()
-                            && status.has_secondary_hunk()
-                        {
-                            let buffer = snapshot.buffer_snapshot();
-                            let mut multi_buffer_range = multi_buffer_range.clone();
-                            let current_range =
-                                multi_buffer_range.start.to_point(buffer).to_offset(buffer)
-                                    ..multi_buffer_range.end.to_point(buffer).to_offset(buffer);
-
-                            if current_range.contains(&diff_base_byte_range.end) {
-                                multi_buffer_range.start =
-                                    buffer.anchor_after(diff_base_byte_range.end);
-                            }
-
-                            let first_is_removed = highlighted_rows
-                                .get(&display_row_range.start)
-                                .and_then(|highlight| highlight.type_id)
-                                .is_some_and(|type_id| type_id == TypeId::of::<HunkRemovedColor>());
-
-                            let last_row = DisplayRow(display_row_range.end.0.saturating_sub(1));
-                            let last_is_added = highlighted_rows
-                                .get(&last_row)
-                                .and_then(|highlight| highlight.type_id)
-                                .is_some_and(|type_id| type_id == TypeId::of::<HunkAddedColor>());
-
-                            if !first_is_removed || !last_is_added {
-                                continue;
-                            }
-
-                            let mut display_row = display_row_range.start;
-
-                            let mut old_text = Vec::default();
-                            while display_row < display_row_range.end {
-                                if !highlighted_rows
-                                    .get(&display_row)
-                                    .and_then(|highlight| highlight.type_id)
-                                    .is_some_and(|type_id| {
-                                        type_id == TypeId::of::<HunkRemovedColor>()
-                                    })
-                                {
-                                    break;
-                                }
-
-                                old_text.push(snapshot.line(display_row));
-                                display_row.0 += 1;
-                            }
-
-                            let mut current_text = Vec::default();
-                            let mut current_off = snapshot
-                                .display_point_to_anchor(
-                                    DisplayPoint::new(display_row, 0),
-                                    Bias::Left,
-                                )
-                                .to_offset(buffer);
-
-                            while display_row < display_row_range.end {
-                                if !highlighted_rows
-                                    .get(&display_row)
-                                    .and_then(|highlight| highlight.type_id)
-                                    .is_some_and(|type_id| {
-                                        type_id == TypeId::of::<HunkAddedColor>()
-                                    })
-                                {
-                                    break;
-                                }
-
-                                current_text.push(snapshot.line(display_row));
-                                display_row.0 += 1;
-                            }
-
-                            let current_text = current_text.concat();
-                            let old_text = old_text.concat();
-
-                            let diff = similar::TextDiff::configure()
-                                .algorithm(similar::Algorithm::Patience)
-                                .diff_words(&old_text, &current_text);
-
-                            for change in diff.iter_all_changes() {
-                                match change.tag() {
-                                    similar::ChangeTag::Equal => {
-                                        current_off += change.value().len();
-                                    }
-                                    similar::ChangeTag::Insert => {
-                                        let start = buffer.anchor_after(current_off);
-                                        current_off += change.value().len();
-                                        let end = buffer.anchor_before(current_off);
-                                    }
-                                    similar::ChangeTag::Delete => {}
-                                }
-                            }
-                        }
-                    }
 
                     let merged_highlighted_ranges =
                         if let Some((_, colors)) = document_colors.as_ref() {
