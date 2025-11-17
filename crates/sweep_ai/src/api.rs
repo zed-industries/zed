@@ -73,7 +73,7 @@ pub struct AutocompleteResponse {
     #[allow(dead_code)]
     pub elapsed_time_ms: u64,
     #[allow(dead_code)]
-    #[serde(rename = "completions")]
+    #[serde(default, rename = "completions")]
     pub additional_completions: Vec<AdditionalCompletion>,
 }
 
