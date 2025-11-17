@@ -409,16 +409,25 @@ pub fn init(cx: &mut App) {
 
 fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
-        .add_basic_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
-            Button::new("open-in-settings-file", "Edit in settings.json")
-                .style(ButtonStyle::Outlined)
-                .size(ButtonSize::Medium)
-                .tab_index(0_isize)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(OpenCurrentFile), cx);
-                })
-                .into_any_element()
-        })
+        .add_renderer::<UnimplementedSettingField>(
+            |settings_window, item, _, settings_file, _, sub_field, _, cx| {
+                render_settings_item(
+                    settings_window,
+                    item,
+                    settings_file.clone(),
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .tab_index(0_isize)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
+                        }))
+                        .into_any_element(),
+                    sub_field,
+                    cx,
+                )
+            },
+        )
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
