@@ -432,7 +432,7 @@ impl VsCodeSettings {
                                     .map(|s| s.to_owned());
 
                                 Some(SemanticTokenRule {
-                                    token_type: k.clone(),
+                                    token_type: Some(k.clone()),
                                     token_modifiers: vec![],
                                     style: vec![],
                                     underline: if underline {

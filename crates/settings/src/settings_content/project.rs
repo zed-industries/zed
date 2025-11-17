@@ -189,7 +189,7 @@ impl crate::merge_from::MergeFrom for SemanticTokenRules {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SemanticTokenRule {
-    pub token_type: String,
+    pub token_type: Option<String>,
     #[serde(default)]
     pub token_modifiers: Vec<String>,
     #[serde(default)]

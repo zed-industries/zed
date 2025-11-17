@@ -2037,12 +2037,12 @@
       {
         "token_type": "class",
         "token_modifiers": ["declaration"],
-        "style": ["type.class.definition", "type.definition", "type.class", "class", "type"]
+        "style": ["type.class.definition", "type.definition"]
       },
       {
         "token_type": "class",
         "token_modifiers": ["definition"],
-        "style": ["type.class.definition", "type.definition", "type.class", "class", "type"]
+        "style": ["type.class.definition", "type.definition"]
       },
       {
         "token_type": "class",
@@ -2052,12 +2052,12 @@
       {
         "token_type": "enum",
         "token_modifiers": ["declaration"],
-        "style": ["type.enum.definition", "type.definition", "type.enum", "enum", "type"]
+        "style": ["type.enum.definition", "type.definition"]
       },
       {
         "token_type": "enum",
         "token_modifiers": ["definition"],
-        "style": ["type.enum.definition", "type.definition", "type.enum", "enum", "type"]
+        "style": ["type.enum.definition", "type.definition"]
       },
       {
         "token_type": "enum",
@@ -2067,12 +2067,12 @@
       {
         "token_type": "interface",
         "token_modifiers": ["declaration"],
-        "style": ["type.interface.definition", "type.definition", "type.interface", "interface", "type"]
+        "style": ["type.interface.definition", "type.definition"]
       },
       {
         "token_type": "interface",
         "token_modifiers": ["definition"],
-        "style": ["type.interface.definition", "type.definition", "type.interface", "interface", "type"]
+        "style": ["type.interface.definition", "type.definition"]
       },
       {
         "token_type": "interface",
@@ -2082,12 +2082,12 @@
       {
         "token_type": "struct",
         "token_modifiers": ["declaration"],
-        "style": ["type.struct.definition", "type.definition", "type.struct", "struct", "type"]
+        "style": ["type.struct.definition", "type.definition"]
       },
       {
         "token_type": "struct",
         "token_modifiers": ["definition"],
-        "style": ["type.struct.definition", "type.definition", "type.struct", "struct", "type"]
+        "style": ["type.struct.definition", "type.definition"]
       },
       {
         "token_type": "struct",
@@ -2097,12 +2097,12 @@
       {
         "token_type": "typeParameter",
         "token_modifiers": ["declaration"],
-        "style": ["type.parameter.definition", "type.definition", "type.parameter", "type"]
+        "style": ["type.parameter.definition", "type.definition"]
       },
       {
         "token_type": "typeParameter",
         "token_modifiers": ["definition"],
-        "style": ["type.parameter.definition", "type.definition", "type.parameter", "type"]
+        "style": ["type.parameter.definition", "type.definition"]
       },
       {
         "token_type": "typeParameter",
@@ -2112,12 +2112,12 @@
       {
         "token_type": "type",
         "token_modifiers": ["declaration"],
-        "style": ["type.definition", "type"]
+        "style": ["type.definition"]
       },
       {
         "token_type": "type",
         "token_modifiers": ["definition"],
-        "style": ["type.definition", "type"]
+        "style": ["type.definition"]
       },
       {
         "token_type": "type",
@@ -2133,12 +2133,12 @@
       {
         "token_type": "variable",
         "token_modifiers": ["defaultLibrary", "constant"],
-        "style": ["constant.builtin", "constant"]
+        "style": ["constant.builtin"]
       },
       {
         "token_type": "variable",
         "token_modifiers": ["defaultLibrary"],
-        "style": ["variable.builtin", "variable"]
+        "style": ["variable.builtin"]
       },
       {
         "token_type": "variable",
@@ -2169,7 +2169,7 @@
       {
         "token_type": "function",
         "token_modifiers": ["defaultLibrary"],
-        "style": ["function.builtin", "function"]
+        "style": ["function.builtin"]
       },
       {
         "token_type": "function",
@@ -2179,7 +2179,7 @@
       {
         "token_type": "method",
         "token_modifiers": ["defaultLibrary"],
-        "style": ["function.builtin", "function.method", "function"]
+        "style": ["function.builtin"]
       },
       {
         "token_type": "method",
@@ -2200,7 +2200,7 @@
       {
         "token_type": "comment",
         "token_modifiers": ["documentation"],
-        "style": ["comment.documentation", "comment.doc", "comment"]
+        "style": ["comment.documentation", "comment.doc"]
       },
       {
         "token_type": "comment",

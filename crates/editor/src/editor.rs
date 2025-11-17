@@ -23912,62 +23912,97 @@ impl<'a> SemanticTokenStylizer<'a> {
     ) -> Option<HighlightStyle> {
         let name = self.token_type(token_type)?;
 
-        let rule = self.rules.rules.iter().find(|rule| {
-            rule.token_type == name
+        let matching = self.rules.rules.iter().rev().filter(|rule| {
+            rule.token_type.as_ref().is_none_or(|t| t == name)
                 && rule
                     .token_modifiers
                     .iter()
                     .all(|m| self.has_modifier(modifiers, m))
-        })?;
+        });
 
-        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+        let mut highlight = HighlightStyle::default();
+        let mut empty = true;
 
-        let color = rule
-            .foreground_color
-            .map(Into::into)
-            .or_else(|| style.and_then(|s| s.color));
+        for rule in matching {
+            empty = false;
 
-        Some(HighlightStyle {
-            color,
-            background_color: rule
-                .background_color
-                .map(Into::into)
-                .or_else(|| style.and_then(|s| s.background_color)),
-            font_weight: match rule.font_weight {
-                Some(SemanticTokenFontWeight::Normal) => Some(FontWeight::NORMAL),
-                Some(SemanticTokenFontWeight::Bold) => Some(FontWeight::BOLD),
-                None => style.and_then(|s| s.font_weight),
-            },
-            font_style: match rule.font_style {
-                Some(SemanticTokenFontStyle::Normal) => Some(FontStyle::Normal),
-                Some(SemanticTokenFontStyle::Italic) => Some(FontStyle::Italic),
-                None => style.and_then(|s| s.font_style),
-            },
-            underline: rule
-                .underline
-                .map(|u| UnderlineStyle {
+            let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+
+            // Overwriting rules:
+            // - Explicit fields have top priority.
+            // - Then, styles from the theme (if found).
+            // - Lastly, rules further down in the list are applied.
+            macro_rules! overwrite {
+                (
+                    highlight.$highlight_field:ident,
+                    SemanticTokenRule::$rule_field:ident,
+                    $transform:expr $(,)?
+                ) => {
+                    highlight.$highlight_field = rule
+                        .$rule_field
+                        .map($transform)
+                        .or_else(|| style.and_then(|s| s.$highlight_field))
+                        .or(highlight.$highlight_field)
+                };
+            }
+
+            overwrite!(
+                highlight.color,
+                SemanticTokenRule::foreground_color,
+                Into::into,
+            );
+
+            overwrite!(
+                highlight.background_color,
+                SemanticTokenRule::background_color,
+                Into::into,
+            );
+
+            overwrite!(
+                highlight.font_weight,
+                SemanticTokenRule::font_weight,
+                |w| match w {
+                    SemanticTokenFontWeight::Normal => FontWeight::NORMAL,
+                    SemanticTokenFontWeight::Bold => FontWeight::BOLD,
+                },
+            );
+
+            overwrite!(
+                highlight.font_style,
+                SemanticTokenRule::font_style,
+                |s| match s {
+                    SemanticTokenFontStyle::Normal => FontStyle::Normal,
+                    SemanticTokenFontStyle::Italic => FontStyle::Italic,
+                },
+            );
+
+            overwrite!(highlight.underline, SemanticTokenRule::underline, |u| {
+                UnderlineStyle {
                     thickness: 1.0.into(),
                     color: match u {
-                        SemanticTokenColorOverride::InheritForeground(true) => color,
+                        SemanticTokenColorOverride::InheritForeground(true) => highlight.color,
                         SemanticTokenColorOverride::InheritForeground(false) => None,
                         SemanticTokenColorOverride::Replace(c) => Some(c.into()),
                     },
                     ..Default::default()
-                })
-                .or_else(|| style.and_then(|s| s.underline)),
-            strikethrough: rule
-                .strikethrough
-                .map(|s| StrikethroughStyle {
+                }
+            });
+
+            overwrite!(
+                highlight.strikethrough,
+                SemanticTokenRule::strikethrough,
+                |s| StrikethroughStyle {
                     thickness: 1.0.into(),
                     color: match s {
-                        SemanticTokenColorOverride::InheritForeground(true) => color,
+                        SemanticTokenColorOverride::InheritForeground(true) => highlight.color,
                         SemanticTokenColorOverride::InheritForeground(false) => None,
                         SemanticTokenColorOverride::Replace(c) => Some(c.into()),
                     },
-                })
-                .or_else(|| style.and_then(|s| s.strikethrough)),
-            ..Default::default()
-        })
+                },
+            );
+        }
+
+        if empty { None } else { Some(highlight) }
     }
 }
 
