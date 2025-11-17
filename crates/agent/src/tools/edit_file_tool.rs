@@ -1962,13 +1962,17 @@ mod tests {
 
             cx.executor().run_until_parked();
             model.send_last_completion_stream_text_chunk(
-                "<old_text>original</old_text><new_text>modified</new_text>".to_string(),
+                "<old_text>original content</old_text><new_text>modified content</new_text>".to_string(),
             );
             model.end_last_completion_stream();
 
             edit_task.await
         };
-        assert!(edit_result.is_ok(), "First edit should succeed");
+        assert!(
+            edit_result.is_ok(),
+            "First edit should succeed, got error: {:?}",
+            edit_result.as_ref().err()
+        );
 
         // Second edit should also work because the edit updated the recorded read time
         let edit_result = {
@@ -1986,7 +1990,7 @@ mod tests {
 
             cx.executor().run_until_parked();
             model.send_last_completion_stream_text_chunk(
-                "<old_text>modified</old_text><new_text>further modified</new_text>".to_string(),
+                "<old_text>modified content</old_text><new_text>further modified content</new_text>".to_string(),
             );
             model.end_last_completion_stream();
 
@@ -1994,7 +1998,8 @@ mod tests {
         };
         assert!(
             edit_result.is_ok(),
-            "Second consecutive edit should succeed"
+            "Second consecutive edit should succeed, got error: {:?}",
+            edit_result.as_ref().err()
         );
     }
 
