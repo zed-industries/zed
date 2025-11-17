@@ -185,6 +185,13 @@ impl SelectionLayout {
     }
 }
 
+#[derive(Default)]
+struct RenderBlocksOutput {
+    blocks: Vec<BlockLayout>,
+    row_block_types: HashMap<DisplayRow, bool>,
+    resized_blocks: Option<HashMap<CustomBlockId, u32>>,
+}
+
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
@@ -4254,7 +4261,7 @@ impl EditorElement {
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(Vec<BlockLayout>, HashMap<DisplayRow, bool>), HashMap<CustomBlockId, u32>> {
+    ) -> RenderBlocksOutput {
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
@@ -4429,9 +4436,12 @@ impl EditorElement {
         if resized_blocks.is_empty() {
             *scroll_width =
                 (*scroll_width).max(fixed_block_max_width - editor_margins.gutter.width);
-            Ok((blocks, row_block_types))
-        } else {
-            Err(resized_blocks)
+        }
+
+        RenderBlocksOutput {
+            blocks,
+            row_block_types,
+            resized_blocks: (!resized_blocks.is_empty()).then_some(resized_blocks),
         }
     }
 
@@ -8772,8 +8782,37 @@ impl EditorElement {
     }
 }
 
+#[derive(Default)]
+struct EditorRequestLayoutState {
+    prepaint_depth: usize,
+}
+
+impl EditorRequestLayoutState {
+    const MAX_PREPAINT_DEPTH: usize = 2;
+
+    fn increment_prepaint_depth(&mut self) -> EditorPrepaintGuard<'_> {
+        debug_assert!(self.prepaint_depth < Self::MAX_PREPAINT_DEPTH);
+        self.prepaint_depth += 1;
+        EditorPrepaintGuard { state: self }
+    }
+
+    fn can_prepaint(&self) -> bool {
+        self.prepaint_depth < Self::MAX_PREPAINT_DEPTH
+    }
+}
+
+struct EditorPrepaintGuard<'a> {
+    state: &'a mut EditorRequestLayoutState,
+}
+
+impl Drop for EditorPrepaintGuard<'_> {
+    fn drop(&mut self) {
+        self.state.prepaint_depth = self.state.prepaint_depth.saturating_sub(1);
+    }
+}
+
 impl Element for EditorElement {
-    type RequestLayoutState = ();
+    type RequestLayoutState = EditorRequestLayoutState;
     type PrepaintState = EditorLayout;
 
     fn id(&self) -> Option<ElementId> {
@@ -8790,7 +8829,7 @@ impl Element for EditorElement {
         _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (gpui::LayoutId, ()) {
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             self.editor.update(cx, |editor, cx| {
@@ -8857,7 +8896,7 @@ impl Element for EditorElement {
                     }
                 };
 
-                (layout_id, ())
+                (layout_id, EditorRequestLayoutState::default())
             })
         })
     }
@@ -8867,10 +8906,11 @@ impl Element for EditorElement {
         _: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let _prepaint_depth_guard = request_layout.increment_prepaint_depth();
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
             line_height: Some(self.style.text.line_height),
@@ -9394,7 +9434,20 @@ impl Element for EditorElement {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in
                         // wrapping.
-                        return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
+                        if request_layout.can_prepaint() {
+                            return self.prepaint(
+                                None,
+                                _inspector_id,
+                                bounds,
+                                request_layout,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            log::debug!(
+                                "skipping recursive prepaint at max depth. renderer widths may be stale."
+                            );
+                        }
                     }
 
                     let longest_line_blame_width = self
@@ -9481,20 +9534,35 @@ impl Element for EditorElement {
                                 )
                             })
                         })
-                        .unwrap_or_else(|| Ok((Vec::default(), HashMap::default())));
-                    let (mut blocks, row_block_types) = match blocks {
-                        Ok(blocks) => blocks,
-                        Err(resized_blocks) => {
-                            self.editor.update(cx, |editor, cx| {
-                                editor.resize_blocks(
-                                    resized_blocks,
-                                    autoscroll_request.map(|(autoscroll, _)| autoscroll),
-                                    cx,
-                                )
-                            });
-                            return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
+                        .unwrap_or_default();
+                    let RenderBlocksOutput {
+                        mut blocks,
+                        row_block_types,
+                        resized_blocks,
+                    } = blocks;
+                    if let Some(resized_blocks) = resized_blocks {
+                        self.editor.update(cx, |editor, cx| {
+                            editor.resize_blocks(
+                                resized_blocks,
+                                autoscroll_request.map(|(autoscroll, _)| autoscroll),
+                                cx,
+                            )
+                        });
+                        if request_layout.can_prepaint() {
+                            return self.prepaint(
+                                None,
+                                _inspector_id,
+                                bounds,
+                                request_layout,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            log::debug!(
+                                "skipping recursive prepaint at max depth. block layout may be stale."
+                            );
                         }
-                    };
+                    }
 
                     let sticky_buffer_header = sticky_header_excerpt.map(|sticky_header_excerpt| {
                         window.with_element_namespace("blocks", |window| {
