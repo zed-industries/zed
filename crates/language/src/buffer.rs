@@ -851,7 +851,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
-    pub depth: usize,
+    pub syntax_layer_depth: usize,
     pub color_index: Option<usize>,
 }
 
@@ -4254,7 +4254,7 @@ impl BufferSnapshot {
                         None
                     })
                     .sorted_by_key(|(open_range, _, _, _)| open_range.start)
-                    .map(|(open_range, close_range, pattern, depth)| {
+                    .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
                         while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
                             if last_bracket_end <= open_range.start {
                                 bracket_pairs_ends.pop();
@@ -4263,15 +4263,15 @@ impl BufferSnapshot {
                             }
                         }
 
-                        let color_index = bracket_pairs_ends.len();
+                        let bracket_depth = bracket_pairs_ends.len();
                         bracket_pairs_ends.push(close_range.end);
 
                         BracketMatch {
                             open_range,
                             close_range,
-                            depth,
+                            syntax_layer_depth,
                             newline_only: pattern.newline_only,
-                            color_index: pattern.rainbow_exclude.not().then_some(color_index),
+                            color_index: pattern.rainbow_exclude.not().then_some(bracket_depth),
                         }
                     })
                     .collect::<Vec<_>>();
@@ -4471,11 +4471,15 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
-        let max_depth = result.iter().map(|mat| mat.depth).max().unwrap_or(0);
+        let max_depth = result
+            .iter()
+            .map(|mat| mat.syntax_layer_depth)
+            .max()
+            .unwrap_or(0);
         result.into_iter().filter(move |pair| {
             pair.open_range.start <= range.start
                 && pair.close_range.end >= range.end
-                && pair.depth == max_depth
+                && pair.syntax_layer_depth == max_depth
         })
     }
 
