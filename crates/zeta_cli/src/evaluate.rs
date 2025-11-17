@@ -54,7 +54,6 @@ pub(crate) struct ExecutionData {
     execution_id: String,
     diff: String,
     is_correct: bool,
-    is_abject_failure: bool,
     reasoning: String,
 }
 
@@ -168,7 +167,6 @@ fn write_aggregated_scores(
 
         writeln!(w, "\n{}", "-".repeat(80))?;
         writeln!(w, "\n## TOTAL SCORES")?;
-        writeln!(w, "\n### Success Rate")?;
         writeln!(w, "{:#}", aggregated_result)?;
     }
 
@@ -248,17 +246,19 @@ pub async fn run_evaluate_one(
         example.name.clone()
     };
 
-    let is_abject_failure = predict_result.diff.is_empty();
-
-    let is_correct = evaluation_result.edit_prediction.false_positives == 0
-        && evaluation_result.edit_prediction.false_negatives == 0
-        && evaluation_result.edit_prediction.true_positives > 0;
+    let is_correct = evaluation_result
+        .edit_prediction
+        .as_ref()
+        .map_or(false, |edit_prediction| {
+            edit_prediction.false_positives == 0
+                && edit_prediction.false_negatives == 0
+                && edit_prediction.true_positives > 0
+        });
 
     let execution_data = ExecutionData {
         execution_id,
         diff: predict_result.diff.clone(),
         is_correct,
-        is_abject_failure,
         reasoning,
     };
 
@@ -567,6 +567,13 @@ pub fn compare_diffs(patch_a: &str, patch_b: &str, use_color: bool) -> String {
     annotated.join("\n")
 }
 
+fn indent_text(text: &str, spaces: usize) -> String {
+    let indent = " ".repeat(spaces);
+    text.lines()
+        .collect::<Vec<_>>()
+        .join(&format!("\n{}", indent))
+}
+
 fn write_bucketed_analysis(
     all_results: &Vec<
         Vec<Result<(EvaluationResult, ExecutionData), (anyhow::Error, String, Option<u16>)>>,
@@ -574,14 +581,14 @@ fn write_bucketed_analysis(
 ) -> Result<()> {
     let mut all_executions = Vec::new();
     let mut total_executions = 0;
-    let mut abject_failures = Vec::new();
+    let mut empty_predictions = Vec::new();
 
     for result in all_results.iter().flatten() {
         total_executions += 1;
         match result {
             Ok((_eval_result, execution_data)) => {
-                if execution_data.is_abject_failure {
-                    abject_failures.push(execution_data);
+                if execution_data.diff.is_empty() {
+                    empty_predictions.push(execution_data);
                 } else {
                     all_executions.push(execution_data);
                 }
@@ -658,9 +665,9 @@ fn write_bucketed_analysis(
 
     writeln!(
         output,
-        "- **Abject failures**: {} ({:.1}%)",
-        abject_failures.len(),
-        (abject_failures.len() as f64 / total_executions as f64) * 100.0
+        "- **No Predictions**: {} ({:.1}%)",
+        empty_predictions.len(),
+        (empty_predictions.len() as f64 / total_executions as f64) * 100.0
     )?;
 
     let unique_incorrect = sorted_buckets.iter().filter(|b| !b.is_correct).count();
@@ -718,47 +725,38 @@ fn write_bucketed_analysis(
             .iter()
             .zip(bucket.reasoning_samples.iter())
         {
-            writeln!(output, "### Execution {}\n", exec_id)?;
-            writeln!(
-                output,
-                "**File:** `{}/{}/prediction_response.md`\n",
-                crate::paths::RUN_DIR.display(),
-                exec_id
-            )?;
-            writeln!(output, "**Reasoning:**\n")?;
-            writeln!(output, "```")?;
-            writeln!(output, "{}", reasoning)?;
-            writeln!(output, "```\n")?;
+            writeln!(output, "{}", fmt_execution(exec_id, reasoning))?;
         }
 
         writeln!(output, "\n---\n")?;
     }
 
-    if !abject_failures.is_empty() {
+    if !empty_predictions.is_empty() {
         writeln!(
             output,
-            "## Abject Failures ({} occurrences)\n",
-            abject_failures.len()
+            "## No Predictions ({} occurrences)\n",
+            empty_predictions.len()
         )?;
-        writeln!(output, "These executions produced no edit at all.\n")?;
 
-        for execution_data in &abject_failures {
-            writeln!(output, "### Execution {}\n", execution_data.execution_id)?;
-
+        for execution_data in &empty_predictions {
             writeln!(
                 output,
-                "**File:** `{}/{}/prediction_response.md`\n",
-                crate::paths::RUN_DIR.display(),
-                execution_data.execution_id
+                "{}",
+                fmt_execution(&execution_data.execution_id, &execution_data.reasoning)
             )?;
-
-            writeln!(output, "**Reasoning:**\n")?;
-            writeln!(output, "```")?;
-            writeln!(output, "{}", execution_data.reasoning)?;
-            writeln!(output, "```\n")?;
-
-            writeln!(output, "---\n")?;
         }
+        writeln!(output, "\n---\n")?;
+    }
+
+    fn fmt_execution(exec_id: &str, reasoning: &str) -> String {
+        let exec_content = format!(
+            "\n### Execution {} `{}/{}/prediction_response.md`{}",
+            exec_id,
+            crate::paths::RUN_DIR.display(),
+            exec_id,
+            indent_text(&format!("\n\n```\n{}\n```\n", reasoning,), 2)
+        );
+        indent_text(&exec_content, 2)
     }
 
     Ok(())
