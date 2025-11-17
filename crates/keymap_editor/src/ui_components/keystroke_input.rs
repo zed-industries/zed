@@ -636,18 +636,24 @@ impl Render for KeystrokeInput {
                             )
                         }
                     })
-                    .child(
-                        IconButton::new("clear-btn", IconName::Backspace)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(Tooltip::for_action_title(
-                                "Clear Keystrokes",
-                                &ClearKeystrokes,
-                            ))
-                            .when(!is_focused, |this| this.icon_color(Color::Muted))
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.clear_keystrokes(&ClearKeystrokes, window, cx);
-                            })),
-                    ),
+                    .when(is_recording, |this| {
+                        this.child(
+                            IconButton::new("clear-btn", IconName::Backspace)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |_, cx| {
+                                    Tooltip::with_meta(
+                                        "Clear Keystrokes",
+                                        Some(&ClearKeystrokes),
+                                        "Hit it three times to execute",
+                                        cx,
+                                    )
+                                })
+                                .when(!is_focused, |this| this.icon_color(Color::Muted))
+                                .on_click(cx.listener(|this, _event, window, cx| {
+                                    this.clear_keystrokes(&ClearKeystrokes, window, cx);
+                                })),
+                        )
+                    }),
             )
     }
 }
