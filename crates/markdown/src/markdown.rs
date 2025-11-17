@@ -828,8 +828,7 @@ impl Element for MarkdownElement {
 
                             heading.style().refine(&self.style.heading);
 
-                            let text_style =
-                                self.style.heading.text_style().clone().unwrap_or_default();
+                            let text_style = self.style.heading.text_style().clone();
 
                             builder.push_text_style(text_style);
                             builder.push_div(heading, range, markdown_end);
@@ -923,10 +922,7 @@ impl Element for MarkdownElement {
                                             }
                                         });
 
-                                    if let Some(code_block_text_style) = &self.style.code_block.text
-                                    {
-                                        builder.push_text_style(code_block_text_style.to_owned());
-                                    }
+                                    builder.push_text_style(self.style.code_block.text.to_owned());
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
@@ -1308,7 +1304,7 @@ fn apply_heading_style(
         };
 
         if let Some(style) = style_opt {
-            heading.style().text = Some(style.clone());
+            heading.style().text = style.clone();
         }
     }
 
