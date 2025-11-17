@@ -3028,6 +3028,10 @@ impl Editor {
         range.clone()
     }
 
+    pub fn clip_at_line_ends(&mut self, cx: &mut Context<Self>) -> bool {
+        self.display_map.read(cx).clip_at_line_ends
+    }
+
     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut Context<Self>) {
         if self.display_map.read(cx).clip_at_line_ends != clip {
             self.display_map
