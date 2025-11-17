@@ -107,7 +107,7 @@ pub(crate) fn run_tests() -> Workflow {
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
-fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -180,7 +180,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     NamedJob { name, job }
 }
 
-pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0

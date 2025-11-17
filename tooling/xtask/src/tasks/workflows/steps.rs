@@ -169,7 +169,7 @@ impl FluentBuilder for Workflow {}
 /// Copied from GPUI to avoid adding GPUI as dependency
 /// todo(ci) just put this in gh-workflow
 #[allow(unused)]
-pub(crate) trait FluentBuilder {
+pub trait FluentBuilder {
     /// Imperatively modify self with the given closure.
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where

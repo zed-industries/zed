@@ -76,7 +76,7 @@ pub fn bundle_envs(platform: Platform) -> Env {
     }
 }
 
-pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
+pub fn one_workflow_per_non_main_branch() -> Concurrency {
     Concurrency::default()
         .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
         .cancel_in_progress(true)
@@ -89,7 +89,7 @@ pub(crate) fn allow_concurrent_runs() -> Concurrency {
 }
 
 // Represents a pattern to check for changed files and corresponding output variable
-pub(crate) struct PathCondition {
+pub struct PathCondition {
     pub name: &'static str,
     pub pattern: &'static str,
     pub invert: bool,
