@@ -182,6 +182,7 @@ pub async fn run_evaluate_one(
             &evaluation_result,
             &mut std::io::stdout(),
             std::io::stdout().is_terminal(),
+            predict,
         )?;
     }
 
@@ -194,6 +195,7 @@ pub async fn run_evaluate_one(
             &evaluation_result,
             &mut results_file,
             false,
+            predict,
         )
         .log_err();
     }
@@ -207,25 +209,29 @@ fn write_eval_result(
     evaluation_result: &EvaluationResult,
     out: &mut impl Write,
     use_color: bool,
+    predict: bool,
 ) -> Result<()> {
-    writeln!(
-        out,
-        "## Expected edit prediction:\n\n```diff\n{}\n```\n",
-        compare_diffs(
-            &example.example.expected_patch,
-            &predictions.diff,
-            use_color
-        )
-    )?;
-    writeln!(
-        out,
-        "## Actual edit prediction:\n\n```diff\n{}\n```\n",
-        compare_diffs(
-            &predictions.diff,
-            &example.example.expected_patch,
-            use_color
-        )
-    )?;
+    if predict {
+        writeln!(
+            out,
+            "## Expected edit prediction:\n\n```diff\n{}\n```\n",
+            compare_diffs(
+                &example.example.expected_patch,
+                &predictions.diff,
+                use_color
+            )
+        )?;
+        writeln!(
+            out,
+            "## Actual edit prediction:\n\n```diff\n{}\n```\n",
+            compare_diffs(
+                &predictions.diff,
+                &example.example.expected_patch,
+                use_color
+            )
+        )?;
+    }
+
     writeln!(out, "{:#}", evaluation_result)?;
 
     anyhow::Ok(())
