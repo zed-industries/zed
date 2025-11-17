@@ -6689,9 +6689,19 @@ impl LspStore {
             };
             assert!(any_server_has_diagnostics_provider);
 
+            // TODO kb deduplicate
+            let identifier = match &dynamic_caps {
+                lsp::DiagnosticServerCapabilities::Options(options) => options.identifier.clone(),
+                lsp::DiagnosticServerCapabilities::RegistrationOptions(options) => {
+                    options.diagnostic_options.identifier.clone()
+                }
+            };
+
             let request = GetDocumentDiagnostics {
                 previous_result_id: None,
-                dynamic_caps,
+                identifier,
+                // TODO kb: wrong
+                registration_id: None,
             };
             let request_task = client.request_lsp(
                 upstream_project_id,
@@ -6724,12 +6734,12 @@ impl LspStore {
                             .language_server_dynamic_registrations
                             .get(&server_id)
                             .into_iter()
-                            .flat_map(|registrations| registrations.diagnostics.values().cloned())
+                            .flat_map(|registrations| registrations.diagnostics.clone())
                             .collect::<Vec<_>>();
                         Some(
                             providers_with_identifiers
                                 .into_iter()
-                                .map(|dynamic_caps| {
+                                .map(|(registration_id, dynamic_caps)| {
                                     // TODO kb deduplicate
                                     let identifier = match &dynamic_caps {
                                         lsp::DiagnosticServerCapabilities::Options(options) => {
@@ -6738,16 +6748,19 @@ impl LspStore {
                                         lsp::DiagnosticServerCapabilities::RegistrationOptions(
                                             options,
                                         ) => options.diagnostic_options.identifier.clone(),
-                                    }
-                                    .map(SharedString::from);
+                                    };
+
+                                    let registration_id = registration_id.map(SharedString::from);
+
                                     let result_id =
-                                        self.result_id(server_id, buffer_id, &identifier, cx);
+                                        self.result_id(server_id, buffer_id, &registration_id, cx);
                                     self.request_lsp(
                                         buffer.clone(),
                                         LanguageServerToQuery::Other(server_id),
                                         GetDocumentDiagnostics {
                                             previous_result_id: result_id,
-                                            dynamic_caps,
+                                            registration_id,
+                                            identifier,
                                         },
                                         cx,
                                     )
@@ -9673,7 +9686,7 @@ impl LspStore {
                 );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
-                let identifier = match progress_params.token {
+                let registration_id = match progress_params.token {
                     lsp::NumberOrString::Number(_) => None,
                     lsp::NumberOrString::String(token) => token
                         .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
@@ -9686,13 +9699,13 @@ impl LspStore {
                     .as_local_mut()
                     .and_then(|local| local.language_servers.get_mut(&language_server_id))
                     && let Some(workspace_diagnostics) =
-                        workspace_diagnostics_refresh_tasks.get_mut(&identifier)
+                        workspace_diagnostics_refresh_tasks.get_mut(&registration_id)
                 {
                     workspace_diagnostics.progress_tx.try_send(()).ok();
                     self.apply_workspace_diagnostic_report(
                         language_server_id,
                         report,
-                        identifier.map(SharedString::from),
+                        registration_id.map(SharedString::from),
                         cx,
                     )
                 }
@@ -12331,7 +12344,7 @@ impl LspStore {
                             .entry(server_id)
                             .or_default()
                             .diagnostics
-                            .insert(Some(reg.id.clone()), caps.clone());
+                            .insert(Some(reg.id.clone().into()), caps.clone());
 
                         if let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
@@ -12548,7 +12561,7 @@ impl LspStore {
                         .language_servers
                         .get_mut(&server_id)
                         .context("Could not obtain Language Servers state")?;
-                    let options = local
+                    local
                         .language_server_dynamic_registrations
                         .get_mut(&server_id)
                         .with_context(|| {
@@ -12561,13 +12574,12 @@ impl LspStore {
                         )?;
 
                     let mut has_any_diagnostic_providers_still = true;
-                    if let Some(identifier) = diagnostic_identifier(&options)
-                        && let LanguageServerState::Running {
-                            workspace_diagnostics_refresh_tasks,
-                            ..
-                        } = state
+                    if let LanguageServerState::Running {
+                        workspace_diagnostics_refresh_tasks,
+                        ..
+                    } = state
                     {
-                        workspace_diagnostics_refresh_tasks.remove(&identifier);
+                        workspace_diagnostics_refresh_tasks.remove(&Some(unreg.id.clone()));
                         has_any_diagnostic_providers_still =
                             !workspace_diagnostics_refresh_tasks.is_empty();
                     }
@@ -12866,8 +12878,6 @@ fn subscribe_to_binary_statuses(
 }
 
 fn lsp_workspace_diagnostics_refresh(
-    // TODO kb we actually use identifiers, not registration IDs, but those are also unique, so it's fine
-    // rename `registration_id` to that everywhere
     registration_id: Option<String>,
     options: DiagnosticServerCapabilities,
     server: Arc<LanguageServer>,
@@ -12875,7 +12885,7 @@ fn lsp_workspace_diagnostics_refresh(
 ) -> Option<WorkspaceRefreshTask> {
     let identifier = diagnostic_identifier(&options)?;
     // TODO kb deduplicate
-    let identifier_shared = identifier.as_ref().map(SharedString::from);
+    let registration_id_shared = registration_id.as_ref().map(SharedString::from);
 
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
     let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
@@ -12907,7 +12917,7 @@ fn lsp_workspace_diagnostics_refresh(
 
                 let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
                     lsp_store
-                        .all_result_ids(server.server_id(), &identifier_shared)
+                        .all_result_ids(server.server_id(), &registration_id_shared)
                         .into_iter()
                         .filter_map(|(abs_path, result_id)| {
                             let uri = file_path_to_lsp_url(&abs_path).ok()?;
@@ -12921,9 +12931,9 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = if let Some(identifier) = &registration_id {
+                let token = if let Some(registration_id) = &registration_id {
                     format!(
-                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{identifier}",
+                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{registration_id}",
                         server.server_id(),
                     )
                 } else {
@@ -12973,7 +12983,8 @@ fn lsp_workspace_diagnostics_refresh(
                                 lsp_store.apply_workspace_diagnostic_report(
                                     server.server_id(),
                                     pulled_diagnostics,
-                                    identifier_shared.clone(),
+                                    // TODO kb: Pull sharedstring out
+                                    registration_id_shared.clone(),
                                     cx,
                                 )
                             })

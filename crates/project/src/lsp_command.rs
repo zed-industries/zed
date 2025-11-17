@@ -26,8 +26,8 @@ use language::{
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
-    DiagnosticServerCapabilities, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    LinkedEditingRangeServerCapabilities, OneOf, RenameOptions, ServerCapabilities,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
+    OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -265,7 +265,8 @@ pub(crate) struct LinkedEditingRange {
 pub(crate) struct GetDocumentDiagnostics {
     /// We cannot blindly rely on server's capabilities.diagnostic_provider, as they're a singular field, whereas
     /// a server can register multiple diagnostic providers post-mortem.
-    pub dynamic_caps: DiagnosticServerCapabilities,
+    pub registration_id: Option<SharedString>,
+    pub identifier: Option<String>,
     pub previous_result_id: Option<String>,
 }
 
@@ -4060,19 +4061,11 @@ impl LspCommand for GetDocumentDiagnostics {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
-        // TODO kb deduplicate
-        let identifier = match &self.dynamic_caps {
-            lsp::DiagnosticServerCapabilities::Options(options) => options.identifier.clone(),
-            lsp::DiagnosticServerCapabilities::RegistrationOptions(options) => {
-                options.diagnostic_options.identifier.clone()
-            }
-        };
-
         Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: file_path_to_lsp_url(path)?,
             },
-            identifier,
+            identifier: self.identifier.clone(),
             previous_result_id: self.previous_result_id.clone(),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
@@ -4099,19 +4092,6 @@ impl LspCommand for GetDocumentDiagnostics {
                 .with_context(|| format!("missing url on buffer {}", buffer.remote_id()))
         })??;
 
-        let registration_id = match &self.dynamic_caps {
-            DiagnosticServerCapabilities::Options(diagnostic_options) => diagnostic_options
-                .identifier
-                .as_ref()
-                .map(SharedString::from),
-            DiagnosticServerCapabilities::RegistrationOptions(diagnostic_registration_options) => {
-                diagnostic_registration_options
-                    .diagnostic_options
-                    .identifier
-                    .as_ref()
-                    .map(SharedString::from)
-            }
-        };
         let mut pulled_diagnostics = HashMap::default();
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
@@ -4121,7 +4101,7 @@ impl LspCommand for GetDocumentDiagnostics {
                             &mut pulled_diagnostics,
                             server_id,
                             related_documents,
-                            registration_id.clone(),
+                            self.registration_id.clone(),
                         );
                     }
                     process_full_diagnostics_report(
@@ -4129,7 +4109,7 @@ impl LspCommand for GetDocumentDiagnostics {
                         server_id,
                         url,
                         report.full_document_diagnostic_report,
-                        registration_id,
+                        self.registration_id.clone(),
                     );
                 }
                 lsp::DocumentDiagnosticReport::Unchanged(report) => {
@@ -4138,7 +4118,7 @@ impl LspCommand for GetDocumentDiagnostics {
                             &mut pulled_diagnostics,
                             server_id,
                             related_documents,
-                            registration_id.clone(),
+                            self.registration_id.clone(),
                         );
                     }
                     process_unchanged_diagnostics_report(
@@ -4146,7 +4126,7 @@ impl LspCommand for GetDocumentDiagnostics {
                         server_id,
                         url,
                         report.unchanged_document_diagnostic_report,
-                        registration_id,
+                        self.registration_id.clone(),
                     );
                 }
             },
@@ -4156,7 +4136,7 @@ impl LspCommand for GetDocumentDiagnostics {
                         &mut pulled_diagnostics,
                         server_id,
                         related_documents,
-                        registration_id,
+                        self.registration_id.clone(),
                     );
                 }
             }
