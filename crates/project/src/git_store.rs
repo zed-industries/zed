@@ -3941,16 +3941,16 @@ impl Repository {
         let status = format!("git add {paths}");
         let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        let ids = self.new_pending_ops_for_paths(&entries, pending_op::GitStatus::Staged);
+        self.spawn_job_with_tracking(
+            entries.clone(),
+            pending_op::GitStatus::Staged,
+            cx,
+            async move |this, cx| {
+                for save_task in save_tasks {
+                    save_task.await?;
+                }
 
-        cx.spawn(async move |this, cx| {
-            for save_task in save_tasks {
-                save_task.await?;
-            }
-
-            let entries2 = entries.clone();
-            let res = this
-                .update(cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.send_keyed_job(
                         Some(job_key),
                         Some(status.into()),
@@ -3960,13 +3960,13 @@ impl Repository {
                                     backend,
                                     environment,
                                     ..
-                                } => backend.stage_paths(entries2, environment.clone()).await,
+                                } => backend.stage_paths(entries, environment.clone()).await,
                                 RepositoryState::Remote { project_id, client } => {
                                     client
                                         .request(proto::Stage {
                                             project_id: project_id.0,
                                             repository_id: id.to_proto(),
-                                            paths: entries2
+                                            paths: entries
                                                 .into_iter()
                                                 .map(|repo_path| repo_path.to_proto())
                                                 .collect(),
@@ -3980,63 +3980,9 @@ impl Repository {
                         },
                     )
                 })?
-                .await
-                .map_err(|e| e.into())
-                .flatten();
-
-            let job_status = res.as_ref().into();
-            let statuses = if let pending_op::JobStatus::Finished = job_status {
-                Some(
-                    this.update(cx, |this, _| {
-                        this.send_job(None, move |git_repo, _cx| async move {
-                            match git_repo {
-                                RepositoryState::Local { backend, .. } => {
-                                    backend.status(&entries).await
-                                }
-                                RepositoryState::Remote { .. } => {
-                                    todo!();
-                                }
-                            }
-                        })
-                    })?
-                    .await??,
-                )
-            } else {
-                None
-            };
-
-            this.update(cx, |this, _| {
-                let mut edits = Vec::with_capacity(ids.len());
-                let mut edits2 = Vec::with_capacity(ids.len());
-                for (id, entry) in ids {
-                    if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
-                        if let Some(op) = ops.op_by_id_mut(id) {
-                            op.job_status = job_status;
-                        }
-                        edits.push(sum_tree::Edit::Insert(ops));
-                    }
-                    if let Some(statuses) = statuses.as_ref() {
-                        if let Some(status) =
-                            statuses.entries.iter().find(|(path, _)| path == &entry)
-                        {
-                            edits2.push(sum_tree::Edit::Insert(StatusEntry {
-                                repo_path: entry,
-                                status: status.1,
-                            }));
-                        }
-                    }
-                }
-                this.snapshot.pending_ops_by_path.edit(edits, ());
-                println!("stage={edits2:#?}");
-                this.snapshot.statuses_by_path.edit(edits2, ());
-            })?;
-
-            match res {
-                Ok(()) => Ok(()),
-                Err(err) if err.is::<futures::channel::oneshot::Canceled>() => Ok(()),
-                Err(err) => Err(err),
-            }
-        })
+                .await?
+            },
+        )
     }
 
     pub fn unstage_entries(
@@ -4057,16 +4003,16 @@ impl Repository {
         let status = format!("git reset {paths}");
         let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        let ids = self.new_pending_ops_for_paths(&entries, pending_op::GitStatus::Unstaged);
+        self.spawn_job_with_tracking(
+            entries.clone(),
+            pending_op::GitStatus::Unstaged,
+            cx,
+            async move |this, cx| {
+                for save_task in save_tasks {
+                    save_task.await?;
+                }
 
-        cx.spawn(async move |this, cx| {
-            for save_task in save_tasks {
-                save_task.await?;
-            }
-
-            let entries2 = entries.clone();
-            let res = this
-                .update(cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.send_keyed_job(
                         Some(job_key),
                         Some(status.into()),
@@ -4076,13 +4022,13 @@ impl Repository {
                                     backend,
                                     environment,
                                     ..
-                                } => backend.unstage_paths(entries2, environment).await,
+                                } => backend.unstage_paths(entries, environment).await,
                                 RepositoryState::Remote { project_id, client } => {
                                     client
                                         .request(proto::Unstage {
                                             project_id: project_id.0,
                                             repository_id: id.to_proto(),
-                                            paths: entries2
+                                            paths: entries
                                                 .into_iter()
                                                 .map(|repo_path| repo_path.to_proto())
                                                 .collect(),
@@ -4096,63 +4042,9 @@ impl Repository {
                         },
                     )
                 })?
-                .await
-                .map_err(|e| e.into())
-                .flatten();
-
-            let job_status = res.as_ref().into();
-            let statuses = if let pending_op::JobStatus::Finished = job_status {
-                Some(
-                    this.update(cx, |this, _| {
-                        this.send_job(None, move |git_repo, _cx| async move {
-                            match git_repo {
-                                RepositoryState::Local { backend, .. } => {
-                                    backend.status(&entries).await
-                                }
-                                RepositoryState::Remote { .. } => {
-                                    todo!();
-                                }
-                            }
-                        })
-                    })?
-                    .await??,
-                )
-            } else {
-                None
-            };
-
-            this.update(cx, |this, _| {
-                let mut edits = Vec::with_capacity(ids.len());
-                let mut edits2 = Vec::with_capacity(ids.len());
-                for (id, entry) in ids {
-                    if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
-                        if let Some(op) = ops.op_by_id_mut(id) {
-                            op.job_status = job_status;
-                        }
-                        edits.push(sum_tree::Edit::Insert(ops));
-                    }
-                    if let Some(statuses) = statuses.as_ref() {
-                        if let Some(status) =
-                            statuses.entries.iter().find(|(path, _)| path == &entry)
-                        {
-                            edits2.push(sum_tree::Edit::Insert(StatusEntry {
-                                repo_path: entry,
-                                status: status.1,
-                            }));
-                        }
-                    }
-                }
-                this.snapshot.pending_ops_by_path.edit(edits, ());
-                println!("unstage={edits2:#?}");
-                this.snapshot.statuses_by_path.edit(edits2, ());
-            })?;
-
-            match res {
-                Ok(()) => Ok(()),
-                Err(err) if err.is::<futures::channel::oneshot::Canceled>() => Ok(()),
-                Err(err) => Err(err),
-            }
-        })
+                .await?
+            },
+        )
     }
 
     pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
@@ -5495,17 +5387,51 @@ impl Repository {
                 Err(err) => (pending_op::JobStatus::Error, Err(err)),
             };
 
+            // If the job finished successfully, we will go ahead and try immediately pulling latest git status
+            let statuses = if let pending_op::JobStatus::Finished = job_status {
+                this.update(cx, |this, _| {
+                    this.send_job(None, move |git_repo, _cx| async move {
+                        match git_repo {
+                            RepositoryState::Local { backend, .. } => {
+                                backend.status(&paths).await.ok()
+                            }
+                            // TODO decide whether we should also ping the remote for new status update.
+                            // At the same time, currently we do not clear pending ops for remote repos at all since
+                            // `compute_snapshot` runs only for local repos.
+                            RepositoryState::Remote { .. } => None,
+                        }
+                    })
+                })?
+                .await?
+            } else {
+                None
+            };
+
             this.update(cx, |this, _| {
-                let mut edits = Vec::with_capacity(ids.len());
+                let mut pending_ops_edits = Vec::with_capacity(ids.len());
+                let mut status_edits = Vec::with_capacity(ids.len());
                 for (id, entry) in ids {
                     if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
                         if let Some(op) = ops.op_by_id_mut(id) {
                             op.job_status = job_status;
                         }
-                        edits.push(sum_tree::Edit::Insert(ops));
+                        pending_ops_edits.push(sum_tree::Edit::Insert(ops));
+                    }
+                    if let Some(statuses) = statuses.as_ref() {
+                        if let Some(status) =
+                            statuses.entries.iter().find(|(path, _)| path == &entry)
+                        {
+                            status_edits.push(sum_tree::Edit::Insert(StatusEntry {
+                                repo_path: entry,
+                                status: status.1,
+                            }));
+                        }
                     }
                 }
-                this.snapshot.pending_ops_by_path.edit(edits, ());
+                this.snapshot
+                    .pending_ops_by_path
+                    .edit(pending_ops_edits, ());
+                this.snapshot.statuses_by_path.edit(status_edits, ());
             })?;
 
             result

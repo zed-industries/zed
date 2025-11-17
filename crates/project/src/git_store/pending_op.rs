@@ -145,13 +145,3 @@ impl PendingOp {
         self.job_status == JobStatus::Error
     }
 }
-
-impl From<Result<&(), &anyhow::Error>> for JobStatus {
-    fn from(result: Result<&(), &anyhow::Error>) -> Self {
-        match result {
-            Ok(()) => JobStatus::Finished,
-            Err(err) if err.is::<futures::channel::oneshot::Canceled>() => JobStatus::Skipped,
-            Err(_) => JobStatus::Error,
-        }
-    }
-}
