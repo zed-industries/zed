@@ -414,7 +414,7 @@ fn init_renderers(cx: &mut App) {
                 render_settings_item(
                     settings_window,
                     item,
-                    settings_file.clone(),
+                    settings_file,
                     Button::new("open-in-settings-file", "Edit in settings.json")
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
