@@ -5407,7 +5407,7 @@ impl Repository {
                 None
             };
 
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 let mut pending_ops_edits = Vec::with_capacity(ids.len());
                 let mut status_edits = Vec::with_capacity(ids.len());
                 for (id, entry) in ids {
@@ -5431,7 +5431,13 @@ impl Repository {
                 this.snapshot
                     .pending_ops_by_path
                     .edit(pending_ops_edits, ());
+
+                let emit_update = status_edits.len() > 0;
                 this.snapshot.statuses_by_path.edit(status_edits, ());
+
+                if emit_update {
+                    cx.emit(RepositoryEvent::StatusesChanged);
+                }
             })?;
 
             result
