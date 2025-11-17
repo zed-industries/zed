@@ -607,6 +607,8 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Tracks the last time files were read by the agent, to detect external modifications
+    pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
 }
 
 impl Thread {
@@ -665,6 +667,7 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -860,6 +863,7 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            file_read_times: HashMap::default(),
         }
     }
 
