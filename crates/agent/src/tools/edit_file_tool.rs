@@ -1960,7 +1960,9 @@ mod tests {
             });
 
             cx.executor().run_until_parked();
-            model.send_last_completion_stream_text_chunk("<old_text>original</old_text><new_text>modified</new_text>".to_string());
+            model.send_last_completion_stream_text_chunk(
+                "<old_text>original</old_text><new_text>modified</new_text>".to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1982,12 +1984,17 @@ mod tests {
             });
 
             cx.executor().run_until_parked();
-            model.send_last_completion_stream_text_chunk("<old_text>modified</old_text><new_text>further modified</new_text>".to_string());
+            model.send_last_completion_stream_text_chunk(
+                "<old_text>modified</old_text><new_text>further modified</new_text>".to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
         };
-        assert!(edit_result.is_ok(), "Second consecutive edit should succeed");
+        assert!(
+            edit_result.is_ok(),
+            "Second consecutive edit should succeed"
+        );
     }
 
     #[gpui::test]
