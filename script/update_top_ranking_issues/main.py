@@ -105,7 +105,7 @@ def get_label_to_issue_data(
     repository: Repository,
     start_date: datetime | None = None,
 ) -> dict[str, list[IssueData]]:
-    common_filters = [
+    common_queries = [
         f"repo:{repository.full_name}",
         "is:open",
         "is:issue",
@@ -118,9 +118,9 @@ def get_label_to_issue_data(
     )
 
     if date_query:
-        common_filters.append(date_query)
+        common_queries.append(date_query)
 
-    common_filter_string = " ".join(common_filters)
+    common_query = " ".join(common_queries)
 
     # Because PyGithub doesn't seem to support logical operators `AND` and `OR`
     # that GitHub issue queries can use, we use lists as values, rather than
@@ -140,11 +140,11 @@ def get_label_to_issue_data(
 
     label_to_issue_data: dict[str, list[IssueData]] = {}
 
-    for section, section_queries in section_queries.items():
+    for section, queries in section_queries.items():
         unique_issues = set()
 
-        for section_query in section_queries:
-            query: str = f"{common_filter_string} {section_query}"
+        for query in queries:
+            query: str = f"{common_query} {query}"
             issues = github.search_issues(query)
 
             for issue in issues:
