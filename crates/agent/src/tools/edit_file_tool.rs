@@ -311,7 +311,7 @@ impl AgentTool for EditFileTool {
 
             // Check if the file has been modified since the agent last read it
             if let Some(abs_path) = abs_path.as_ref() {
-                let (last_read_mtime, current_mtime) = self.thread.update(cx, |thread, cx| {
+                let (last_read_mtime, current_mtime) = self.thread.update(cx, |thread, cx| -> Result<_> {
                     // Check for unsaved changes first - these indicate modifications we don't know about
                     if buffer.read(cx).is_dirty() {
                         anyhow::bail!(
