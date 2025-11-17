@@ -457,8 +457,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       // When to show indent guides in the project panel. (always, never)
       "show": "always"
     },
-    // How to sort entries in the project panel.
-    // Options: directories_first (default), mixed, files_first
+    // Sort order for entries (directories_first, mixed, files_first)
     "sort_mode": "directories_first",
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
@@ -466,16 +465,6 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "hide_hidden": false
   }
 ```
-
-### Sort Modes
-
-The project panel supports three different sorting modes for files and folders:
-
-- **`directories_first`** (default): Groups all directories before files, with case-insensitive natural sorting within each group. This is the traditional behavior.
-- **`mixed`**: Files and directories sorted together with case-insensitive natural sorting (e.g., "Apple", "banana", and "Carrot" are intermixed alphabetically).
-- **`files_first`**: Groups all files before directories at each level, with case-insensitive natural sorting within each group.
-
-All modes use case-insensitive natural sorting for numbers (e.g., "file10.txt" comes after "file2.txt").
 
 ## Agent Panel
 

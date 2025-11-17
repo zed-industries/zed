@@ -4298,6 +4298,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "indent_guides": {
       "show": "always"
     },
+    "sort_mode": "directories_first",
     "hide_root": false,
     "hide_hidden": false,
     "starts_open": true,
@@ -4511,6 +4512,38 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "scrollbar": {
     "show": "never"
   }
+}
+```
+
+### Sort Mode
+
+- Description: Sort order for entries in the project panel
+- Setting: `sort_mode`
+- Default: `directories_first`
+
+**Options**
+
+1. Show directories first, then files
+
+```json [settings]
+{
+  "sort_mode": "directories_first"
+}
+```
+
+2. Mix directories and files together
+
+```json [settings]
+{
+  "sort_mode": "mixed"
+}
+```
+
+3. Show files first, then directories
+
+```json [settings]
+{
+  "sort_mode": "files_first"
 }
 ```
 

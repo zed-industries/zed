@@ -654,12 +654,12 @@ pub enum ProjectPanelEntrySpacing {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPanelSortMode {
-    /// Directories are listed before files (current default behavior)
+    /// Show directories first, then files
     #[default]
     DirectoriesFirst,
-    /// Case-insensitive sorting with files and directories mixed together
+    /// Mix directories and files together
     Mixed,
-    /// Files are listed before directories at each level (case-insensitive)
+    /// Show files first, then directories
     FilesFirst,
 }
 

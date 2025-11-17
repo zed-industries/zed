@@ -3824,7 +3824,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Sort Mode",
-                    description: "How to order files and directories in the project panel",
+                    description: "Sort order for entries in the project panel.",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.sort_mode.as_ref()
