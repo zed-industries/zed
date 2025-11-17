@@ -9448,7 +9448,7 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            log::debug!(
+                            debug_panic!(
                                 "skipping recursive prepaint at max depth. renderer widths may be stale."
                             );
                         }
@@ -9562,7 +9562,7 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            log::debug!(
+                            debug_panic!(
                                 "skipping recursive prepaint at max depth. block layout may be stale."
                             );
                         }
