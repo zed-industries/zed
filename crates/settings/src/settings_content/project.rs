@@ -196,10 +196,17 @@ pub struct SemanticTokenRule {
     pub style: Vec<String>,
     pub foreground_color: Option<Rgba>,
     pub background_color: Option<Rgba>,
-    pub underline: Option<Rgba>,
-    pub strikethrough: Option<Rgba>,
+    pub underline: Option<SemanticTokenColorOverride>,
+    pub strikethrough: Option<SemanticTokenColorOverride>,
     pub font_weight: Option<SemanticTokenFontWeight>,
     pub font_style: Option<SemanticTokenFontStyle>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum SemanticTokenColorOverride {
+    InheritForeground(bool),
+    Replace(Rgba),
 }
 
 #[derive(

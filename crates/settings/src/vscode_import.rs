@@ -435,8 +435,16 @@ impl VsCodeSettings {
                                     token_type: k.clone(),
                                     token_modifiers: vec![],
                                     style: vec![],
-                                    underline: if underline { foreground } else { None },
-                                    strikethrough: if strikethrough { foreground } else { None },
+                                    underline: if underline {
+                                        Some(SemanticTokenColorOverride::InheritForeground(true))
+                                    } else {
+                                        None
+                                    },
+                                    strikethrough: if strikethrough {
+                                        Some(SemanticTokenColorOverride::InheritForeground(true))
+                                    } else {
+                                        None
+                                    },
                                     foreground_color: foreground,
                                     background_color: background,
                                     font_weight,

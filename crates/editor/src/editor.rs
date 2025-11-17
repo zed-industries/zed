@@ -165,8 +165,9 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, SemanticTokenFontStyle, SemanticTokenFontWeight,
-    SemanticTokenRules, Settings, SettingsLocation, SettingsStore, update_settings_file,
+    GitGutterSetting, RelativeLineNumbers, SemanticTokenColorOverride, SemanticTokenFontStyle,
+    SemanticTokenFontWeight, SemanticTokenRules, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
@@ -23946,7 +23947,11 @@ impl<'a> SemanticTokenStylizer<'a> {
                 .underline
                 .map(|u| UnderlineStyle {
                     thickness: 1.0.into(),
-                    color: Some(u.into()),
+                    color: match u {
+                        SemanticTokenColorOverride::InheritForeground(true) => color,
+                        SemanticTokenColorOverride::InheritForeground(false) => None,
+                        SemanticTokenColorOverride::Replace(c) => Some(c.into()),
+                    },
                     ..Default::default()
                 })
                 .or_else(|| style.and_then(|s| s.underline)),
@@ -23954,7 +23959,11 @@ impl<'a> SemanticTokenStylizer<'a> {
                 .strikethrough
                 .map(|s| StrikethroughStyle {
                     thickness: 1.0.into(),
-                    color: Some(s.into()),
+                    color: match s {
+                        SemanticTokenColorOverride::InheritForeground(true) => color,
+                        SemanticTokenColorOverride::InheritForeground(false) => None,
+                        SemanticTokenColorOverride::Replace(c) => Some(c.into()),
+                    },
                 })
                 .or_else(|| style.and_then(|s| s.strikethrough)),
             ..Default::default()
