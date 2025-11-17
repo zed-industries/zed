@@ -410,10 +410,15 @@ impl RateCompletionModal {
                         .overflow_hidden()
                         .relative()
                         .child(self.render_view_nav(cx))
-                        .when_some(match self.current_view {
-                            RateCompletionView::SuggestedEdits => self.render_suggested_edits(cx),
-                            RateCompletionView::RawInput => self.render_raw_input(cx),
-                        }, |this, element| this.child(element))
+                        .when_some(
+                            match self.current_view {
+                                RateCompletionView::SuggestedEdits => {
+                                    self.render_suggested_edits(cx)
+                                }
+                                RateCompletionView::RawInput => self.render_raw_input(cx),
+                            },
+                            |this, element| this.child(element),
+                        ),
                 )
                 .when(!rated, |this| {
                     this.child(
@@ -425,19 +430,18 @@ impl RateCompletionModal {
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
-                                    .color(Color::Muted)
+                                    .color(Color::Muted),
                             )
                             .child(
-                                div()
-                                    .w_full()
-                                    .pr_2()
-                                    .flex_wrap()
-                                    .child(
-                                        Label::new("Explain why this completion is good or bad. If it's negative, describe what you expected instead.")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                    )
-                            )
+                                div().w_full().pr_2().flex_wrap().child(
+                                    Label::new(concat!(
+                                        "Explain why this completion is good or bad. ",
+                                        "If it's negative, describe what you expected instead."
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                ),
+                            ),
                     )
                 })
                 .when(!rated, |this| {
@@ -446,7 +450,7 @@ impl RateCompletionModal {
                             .h_40()
                             .pt_1()
                             .bg(bg_color)
-                            .child(active_completion.feedback_editor.clone())
+                            .child(active_completion.feedback_editor.clone()),
                     )
                 })
                 .child(
@@ -491,18 +495,21 @@ impl RateCompletionModal {
                                         .icon_position(IconPosition::Start)
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
-                                            this.tooltip(Tooltip::text("Explain what's bad about it before reporting it"))
+                                            this.tooltip(Tooltip::text(
+                                                "Explain what's bad about it before reporting it",
+                                            ))
                                         })
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsDownActiveCompletion,
                                             focus_handle,
-                                            cx
+                                            cx,
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             if this.active_completion.is_some() {
                                                 this.thumbs_down_active(
                                                     &ThumbsDownActiveCompletion,
-                                                    window, cx,
+                                                    window,
+                                                    cx,
                                                 );
                                             }
                                         })),
@@ -516,17 +523,95 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsUpActiveCompletion,
                                             focus_handle,
-                                            cx
+                                            cx,
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             if this.active_completion.is_some() {
-                                                this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                                this.thumbs_up_active(
+                                                    &ThumbsUpActiveCompletion,
+                                                    window,
+                                                    cx,
+                                                );
                                             }
                                         })),
                                 ),
                         ),
                 ),
         )
+    }
+
+    fn render_shown_completions(&self, cx: &Context<Self>) -> impl Iterator<Item = ListItem> {
+        self.zeta
+            .read(cx)
+            .shown_completions()
+            .cloned()
+            .enumerate()
+            .map(|(index, completion)| {
+                let selected = self
+                    .active_completion
+                    .as_ref()
+                    .is_some_and(|selected| selected.completion.id == completion.id);
+                let rated = self.zeta.read(cx).is_completion_rated(completion.id);
+
+                let (icon_name, icon_color, tooltip_text) =
+                    match (rated, completion.edits.is_empty()) {
+                        (true, _) => (IconName::Check, Color::Success, "Rated Completion"),
+                        (false, true) => (IconName::File, Color::Muted, "No Edits Produced"),
+                        (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
+                    };
+
+                let file_name = completion
+                    .path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or("untitled".to_string());
+                let file_path = completion
+                    .path
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned());
+
+                ListItem::new(completion.id)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .focused(index == self.selected_index)
+                    .toggle_state(selected)
+                    .child(
+                        h_flex()
+                            .id("completion-content")
+                            .gap_3()
+                            .child(Icon::new(icon_name).color(icon_color).size(IconSize::Small))
+                            .child(
+                                v_flex()
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(Label::new(file_name).size(LabelSize::Small))
+                                            .when_some(file_path, |this, p| {
+                                                this.child(
+                                                    Label::new(p)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            }),
+                                    )
+                                    .child(
+                                        Label::new(format!(
+                                            "{} ago, {:.2?}",
+                                            format_time_ago(
+                                                completion.response_received_at.elapsed()
+                                            ),
+                                            completion.latency()
+                                        ))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall),
+                                    ),
+                            ),
+                    )
+                    .tooltip(Tooltip::text(tooltip_text))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_completion(Some(completion.clone()), true, window, cx);
+                    }))
+            })
     }
 }
 
@@ -571,15 +656,12 @@ impl Render for RateCompletionModal {
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
-                            .child(
-                                Icon::new(IconName::ZedPredict)
-                                    .size(IconSize::Small)
-                            )
+                            .child(Icon::new(IconName::ZedPredict).size(IconSize::Small))
                             .child(
                                 Label::new("From most recent to oldest")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
-                            )
+                            ),
                     )
                     .child(
                         div()
@@ -593,66 +675,20 @@ impl Render for RateCompletionModal {
                                         div()
                                             .p_2()
                                             .child(
-                                                Label::new("No completions yet. Use the editor to generate some, and make sure to rate them!")
-                                                    .color(Color::Muted),
+                                                Label::new(concat!(
+                                                    "No completions yet. ",
+                                                    "Use the editor to generate some, ",
+                                                    "and make sure to rate them!"
+                                                ))
+                                                .color(Color::Muted),
                                             )
                                             .into_any_element(),
                                     )
-                                    .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
-                                        |(index, completion)| {
-                                            let selected =
-                                                self.active_completion.as_ref().is_some_and(|selected| {
-                                                    selected.completion.id == completion.id
-                                                });
-                                            let rated =
-                                                self.zeta.read(cx).is_completion_rated(completion.id);
-
-                                            let (icon_name, icon_color, tooltip_text) = match (rated, completion.edits.is_empty()) {
-                                                (true, _) => (IconName::Check, Color::Success, "Rated Completion"),
-                                                (false, true) => (IconName::File, Color::Muted, "No Edits Produced"),
-                                                (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
-                                            };
-
-                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or("untitled".to_string());
-                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().into_owned());
-
-                                            ListItem::new(completion.id)
-                                                .inset(true)
-                                                .spacing(ListItemSpacing::Sparse)
-                                                .focused(index == self.selected_index)
-                                                .toggle_state(selected)
-                                                .child(
-                                                    h_flex()
-                                                        .id("completion-content")
-                                                        .gap_3()
-                                                        .child(
-                                                            Icon::new(icon_name)
-                                                                .color(icon_color)
-                                                                .size(IconSize::Small)
-                                                        )
-                                                        .child(
-                                                            v_flex()
-                                                                .child(
-                                                                    h_flex().gap_1()
-                                                                        .child(Label::new(file_name).size(LabelSize::Small))
-                                                                        .when_some(file_path, |this, p| this.child(Label::new(p).size(LabelSize::Small).color(Color::Muted)))
-                                                                )
-                                                                .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
-                                                                    .color(Color::Muted)
-                                                                    .size(LabelSize::XSmall)
-                                                                )
-                                                        )
-                                                )
-                                                .tooltip(Tooltip::text(tooltip_text))
-                                                .on_click(cx.listener(move |this, _, window, cx| {
-                                                    this.select_completion(Some(completion.clone()), true, window, cx);
-                                                }))
-                                        },
-                                    )),
-                            )
+                                    .children(self.render_shown_completions(cx)),
+                            ),
                     ),
             )
-            .children(self.render_active_completion( cx))
+            .children(self.render_active_completion(cx))
             .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
     }
 }
