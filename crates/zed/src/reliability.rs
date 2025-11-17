@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use client::{TelemetrySettings, telemetry::MINIDUMP_ENDPOINT};
+use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, SerializedThreadTaskTimings};
 use http_client::{self, HttpClient, HttpClientWithUrl};
@@ -14,33 +14,30 @@ use util::ResultExt;
 
 use crate::STARTUP_TIME;
 
-pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>, cx: &mut App) {
+pub fn init(client: Arc<Client>, cx: &mut App) {
     monitor_hangs(cx);
 
-    #[cfg(target_os = "macos")]
-    monitor_main_thread_hangs(http_client.clone(), installation_id.clone(), cx);
-
-    if client::TelemetrySettings::get_global(cx).diagnostics {
-        let client = http_client.clone();
-        let id = installation_id.clone();
+    if client.telemetry().diagnostics_enabled() {
+        let client = client.clone();
         cx.background_spawn(async move {
-            upload_previous_minidumps(client, id).await.warn_on_err();
+            upload_previous_minidumps(client).await.warn_on_err();
         })
         .detach()
     }
 
     cx.observe_new(move |project: &mut Project, _, cx| {
-        let http_client = http_client.clone();
-        let installation_id = installation_id.clone();
+        let client = client.clone();
 
         let Some(remote_client) = project.remote_client() else {
             return;
         };
-        remote_client.update(cx, |client, cx| {
-            if !TelemetrySettings::get_global(cx).diagnostics {
+        remote_client.update(cx, |remote_client, cx| {
+            if !client.telemetry().diagnostics_enabled() {
                 return;
             }
-            let request = client.proto_client().request(proto::GetCrashFiles {});
+            let request = remote_client
+                .proto_client()
+                .request(proto::GetCrashFiles {});
             cx.background_spawn(async move {
                 let GetCrashFilesResponse { crashes } = request.await?;
 
@@ -53,15 +50,9 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>
                 } in crashes
                 {
                     if let Some(metadata) = serde_json::from_str(&metadata).log_err() {
-                        upload_minidump(
-                            http_client.clone(),
-                            endpoint,
-                            minidump_contents,
-                            &metadata,
-                            installation_id.clone(),
-                        )
-                        .await
-                        .log_err();
+                        upload_minidump(client.clone(), endpoint, minidump_contents, &metadata)
+                            .await
+                            .log_err();
                     }
                 }
 
@@ -365,10 +356,7 @@ fn save_hang_trace(
     );
 }
 
-pub async fn upload_previous_minidumps(
-    http: Arc<HttpClientWithUrl>,
-    installation_id: Option<String>,
-) -> anyhow::Result<()> {
+pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()> {
     let Some(minidump_endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
         log::warn!("Minidump endpoint not set");
         return Ok(());
@@ -385,13 +373,12 @@ pub async fn upload_previous_minidumps(
         json_path.set_extension("json");
         if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
             && upload_minidump(
-                http.clone(),
+                client.clone(),
                 minidump_endpoint,
                 smol::fs::read(&child_path)
                     .await
                     .context("Failed to read minidump")?,
                 &metadata,
-                installation_id.clone(),
             )
             .await
             .log_err()
@@ -405,11 +392,10 @@ pub async fn upload_previous_minidumps(
 }
 
 async fn upload_minidump(
-    http: Arc<HttpClientWithUrl>,
+    client: Arc<Client>,
     endpoint: &str,
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
-    installation_id: Option<String>,
 ) -> Result<()> {
     let mut form = Form::new()
         .part(
@@ -436,8 +422,19 @@ async fn upload_minidump(
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
     }
-    if let Some(id) = installation_id.clone() {
-        form = form.text("sentry[user][id]", id)
+
+    if let Some(id) = client.telemetry().metrics_id() {
+        form = form.text("sentry[user][id]", id.to_string());
+        form = form.text(
+            "sentry[user][is_staff]",
+            if client.telemetry().is_staff().unwrap_or_default() {
+                "true"
+            } else {
+                "false"
+            },
+        );
+    } else if let Some(id) = client.telemetry().installation_id() {
+        form = form.text("sentry[user][id]", format!("installation-{}", id))
     }
 
     ::telemetry::event!(
@@ -505,7 +502,10 @@ async fn upload_minidump(
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
     let mut response_text = String::new();
-    let mut response = http.send_multipart_form(endpoint, form).await?;
+    let mut response = client
+        .http_client()
+        .send_multipart_form(endpoint, form)
+        .await?;
     response
         .body_mut()
         .read_to_string(&mut response_text)
