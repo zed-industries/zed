@@ -23,7 +23,7 @@ use remote::{
     SshConnectionOptions,
 };
 pub use settings::SshConnection;
-use settings::{ExtendingVec, Settings, WslConnection};
+use settings::{ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -32,6 +32,7 @@ use ui::{
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
+#[derive(RegisterSetting)]
 pub struct SshSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
@@ -137,7 +138,7 @@ impl Drop for RemoteConnectionPrompt {
 }
 
 pub struct RemoteConnectionModal {
-    pub(crate) prompt: Entity<RemoteConnectionPrompt>,
+    pub prompt: Entity<RemoteConnectionPrompt>,
     paths: Vec<PathBuf>,
     finished: bool,
 }
@@ -280,7 +281,7 @@ impl Render for RemoteConnectionPrompt {
 }
 
 impl RemoteConnectionModal {
-    pub(crate) fn new(
+    pub fn new(
         connection_options: &RemoteConnectionOptions,
         paths: Vec<PathBuf>,
         window: &mut Window,
@@ -482,12 +483,14 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
+        let this = self.clone();
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
-                platform.os,
-                platform.arch,
                 release_channel,
                 version,
+                platform.os,
+                platform.arch,
+                move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
             .await
@@ -504,19 +507,19 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         })
     }
 
-    fn get_download_params(
+    fn get_download_url(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>> {
+    ) -> Task<Result<Option<String>>> {
         cx.spawn(async move |cx| {
             AutoUpdater::get_remote_server_release_url(
-                platform.os,
-                platform.arch,
                 release_channel,
                 version,
+                platform.os,
+                platform.arch,
                 cx,
             )
             .await
@@ -574,6 +577,7 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    let created_new_window = open_options.replace_window.is_none();
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
@@ -648,7 +652,45 @@ pub async fn open_remote_project(
         let Some(delegate) = delegate else { break };
 
         let remote_connection =
-            remote::connect(connection_options.clone(), delegate.clone(), cx).await?;
+            match remote::connect(connection_options.clone(), delegate.clone(), cx).await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    window
+                        .update(cx, |workspace, _, cx| {
+                            if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                                ui.update(cx, |modal, cx| modal.finished(cx))
+                            }
+                        })
+                        .ok();
+                    log::error!("Failed to open project: {e:#}");
+                    let response = window
+                        .update(cx, |_, window, cx| {
+                            window.prompt(
+                                PromptLevel::Critical,
+                                match connection_options {
+                                    RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
+                                    RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                                },
+                                Some(&format!("{e:#}")),
+                                &["Retry", "Cancel"],
+                                cx,
+                            )
+                        })?
+                        .await;
+
+                    if response == Ok(0) {
+                        continue;
+                    }
+
+                    if created_new_window {
+                        window
+                            .update(cx, |_, window, _| window.remove_window())
+                            .ok();
+                    }
+                    break;
+                }
+            };
+
         let (paths, paths_with_positions) =
             determine_paths_with_positions(&remote_connection, paths.clone()).await;
 
@@ -676,7 +718,7 @@ pub async fn open_remote_project(
 
         match opened_items {
             Err(e) => {
-                log::error!("Failed to open project: {e:?}");
+                log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
                         window.prompt(
@@ -685,8 +727,8 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                             },
-                            Some(&e.to_string()),
-                            &["Retry", "Ok"],
+                            Some(&format!("{e:#}")),
+                            &["Retry", "Cancel"],
                             cx,
                         )
                     })?
@@ -694,7 +736,14 @@ pub async fn open_remote_project(
                 if response == Ok(0) {
                     continue;
                 }
+
+                if created_new_window {
+                    window
+                        .update(cx, |_, window, _| window.remove_window())
+                        .ok();
+                }
             }
+
             Ok(items) => {
                 for (item, path) in items.into_iter().zip(paths_with_positions) {
                     let Some(item) = item else {

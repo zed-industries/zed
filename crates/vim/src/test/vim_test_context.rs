@@ -25,10 +25,6 @@ impl VimTestContext {
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
-            workspace::init_settings(cx);
-            language::init(cx);
-            editor::init_settings(cx);
-            project::Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             settings_ui::init(cx);
         });
@@ -43,6 +39,11 @@ impl VimTestContext {
     pub async fn new_html(cx: &mut gpui::TestAppContext) -> VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(EditorLspTestContext::new_html(cx).await, true)
+    }
+
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> VimTestContext {
+        Self::init(cx);
+        Self::new_with_lsp(EditorLspTestContext::new_markdown_with_rust(cx).await, true)
     }
 
     pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> VimTestContext {

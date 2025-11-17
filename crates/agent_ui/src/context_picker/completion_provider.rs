@@ -42,7 +42,7 @@ use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
     available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
-use crate::message_editor::ContextCreasesAddon;
+use crate::inline_prompt_editor::ContextCreasesAddon;
 
 pub(crate) enum Match {
     File(FileMatch),
@@ -278,6 +278,8 @@ impl ContextPickerCompletionProvider {
                 icon_path: Some(mode.icon().path().into()),
                 documentation: None,
                 source: project::CompletionSource::Custom,
+                match_start: None,
+                snippet_deduplication_key: None,
                 insert_text_mode: None,
                 // This ensures that when a user accepts this completion, the
                 // completion menu will still be shown after "@category " is
@@ -386,6 +388,8 @@ impl ContextPickerCompletionProvider {
                     icon_path: Some(action.icon().path().into()),
                     documentation: None,
                     source: project::CompletionSource::Custom,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     insert_text_mode: None,
                     // This ensures that when a user accepts this completion, the
                     // completion menu will still be shown after "@category " is
@@ -417,6 +421,8 @@ impl ContextPickerCompletionProvider {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(thread_entry.title().to_string(), None),
+            match_start: None,
+            snippet_deduplication_key: None,
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -484,6 +490,8 @@ impl ContextPickerCompletionProvider {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(rules.title.to_string(), None),
+            match_start: None,
+            snippet_deduplication_key: None,
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -524,6 +532,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::ToolWeb.path().into()),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::ToolWeb.path().into(),
@@ -612,6 +622,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
@@ -655,13 +667,12 @@ impl ContextPickerCompletionProvider {
         let SymbolLocation::InProject(symbol_path) = &symbol.path else {
             return None;
         };
-        let path_prefix = workspace
+        let _path_prefix = workspace
             .read(cx)
             .project()
             .read(cx)
-            .worktree_for_id(symbol_path.worktree_id, cx)?
-            .read(cx)
-            .root_name();
+            .worktree_for_id(symbol_path.worktree_id, cx)?;
+        let path_prefix = RelPath::empty();
 
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &symbol_path.path,
@@ -690,6 +701,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Code.path().into(),
@@ -818,9 +831,21 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 return None;
                             }
 
+                            // If path is empty, this means we're matching with the root directory itself
+                            // so we use the path_prefix as the name
+                            let path_prefix = if mat.path.is_empty() {
+                                project
+                                    .read(cx)
+                                    .worktree_for_id(project_path.worktree_id, cx)
+                                    .map(|wt| wt.read(cx).root_name().into())
+                                    .unwrap_or_else(|| mat.path_prefix.clone())
+                            } else {
+                                mat.path_prefix.clone()
+                            };
+
                             Some(Self::completion_for_path(
                                 project_path,
-                                &mat.path_prefix,
+                                &path_prefix,
                                 is_recent,
                                 mat.is_dir,
                                 excerpt_id,
@@ -1171,10 +1196,8 @@ mod tests {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         app_state
@@ -1309,10 +1332,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("seven.txt dir{slash}b{slash}"),
-                    format!("six.txt dir{slash}b{slash}"),
-                    format!("five.txt dir{slash}b{slash}"),
-                    format!("four.txt dir{slash}a{slash}"),
+                    format!("seven.txt b{slash}"),
+                    format!("six.txt b{slash}"),
+                    format!("five.txt b{slash}"),
+                    format!("four.txt a{slash}"),
                     "Files & Directories".into(),
                     "Symbols".into(),
                     "Fetch".into()
@@ -1344,7 +1367,7 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                vec![format!("one.txt dir{slash}a{slash}")]
+                vec![format!("one.txt a{slash}")]
             );
         });
 
@@ -1356,12 +1379,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt) ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1370,12 +1393,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1384,12 +1407,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum "),
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum "),
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1398,12 +1421,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum @file "),
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum @file "),
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
+                vec![Point::new(0, 6)..Point::new(0, 33)]
             );
         });
 
@@ -1416,14 +1439,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum [@seven.txt](@file:b{slash}seven.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80)
+                    Point::new(0, 6)..Point::new(0, 33),
+                    Point::new(0, 41)..Point::new(0, 72)
                 ]
             );
         });
@@ -1433,14 +1456,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n@")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum [@seven.txt](@file:b{slash}seven.txt) \n@")
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80)
+                    Point::new(0, 6)..Point::new(0, 33),
+                    Point::new(0, 41)..Point::new(0, 72)
                 ]
             );
         });
@@ -1454,17 +1477,198 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n[@six.txt](@file:dir{slash}b{slash}six.txt) ")
+                format!("Lorem [@one.txt](@file:a{slash}one.txt)  Ipsum [@seven.txt](@file:b{slash}seven.txt) \n[@six.txt](@file:b{slash}six.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80),
-                    Point::new(1, 0)..Point::new(1, 31)
+                    Point::new(0, 6)..Point::new(0, 33),
+                    Point::new(0, 41)..Point::new(0, 72),
+                    Point::new(1, 0)..Point::new(1, 27)
                 ]
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_completion_provider_multiple_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project1"),
+                json!({
+                    "a": {
+                        "one.txt": "",
+                        "two.txt": "",
+                    }
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project2"),
+                json!({
+                    "b": {
+                        "three.txt": "",
+                        "four.txt": "",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(
+            app_state.fs.clone(),
+            [path!("/project1").as_ref(), path!("/project2").as_ref()],
+            cx,
+        )
+        .await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktrees = project.update(cx, |project, cx| {
+            let worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 2);
+            worktrees
+        });
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        let slash = PathStyle::local().separator();
+
+        for (worktree_idx, paths) in [
+            vec![rel_path("a/one.txt"), rel_path("a/two.txt")],
+            vec![rel_path("b/three.txt"), rel_path("b/four.txt")],
+        ]
+        .iter()
+        .enumerate()
+        {
+            let worktree_id = worktrees[worktree_idx].read_with(&cx, |wt, _| wt.id());
+            for path in paths {
+                workspace
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        workspace.open_path(
+                            ProjectPath {
+                                worktree_id,
+                                path: (*path).into(),
+                            },
+                            None,
+                            false,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                Editor::new(
+                    editor::EditorMode::full(),
+                    multi_buffer::MultiBuffer::build_simple("", cx),
+                    None,
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| AtMentionEditor(editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            editor
+        });
+
+        let context_store = cx.new(|_| ContextStore::new(project.downgrade()));
+
+        let editor_entity = editor.downgrade();
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx));
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+                workspace.downgrade(),
+                context_store.downgrade(),
+                None,
+                None,
+                editor_entity,
+                None,
+            ))));
+        });
+
+        cx.simulate_input("@");
+
+        // With multiple worktrees, we should see the project name as prefix
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "@");
+            assert!(editor.has_visible_completions_menu());
+            let labels = current_completion_labels(editor);
+
+            assert!(
+                labels.contains(&format!("four.txt project2{slash}b{slash}")),
+                "Expected 'four.txt project2{slash}b{slash}' in labels: {:?}",
+                labels
+            );
+            assert!(
+                labels.contains(&format!("three.txt project2{slash}b{slash}")),
+                "Expected 'three.txt project2{slash}b{slash}' in labels: {:?}",
+                labels
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "@file ");
+            assert!(editor.has_visible_completions_menu());
+        });
+
+        cx.simulate_input("one");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "@file one");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt project1{slash}a{slash}")]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("[@one.txt](@file:project1{slash}a{slash}one.txt) ")
+            );
+            assert!(!editor.has_visible_completions_menu());
         });
     }
 
@@ -1492,11 +1696,6 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            client::init_settings(cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
         });
     }
 }

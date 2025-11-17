@@ -17,7 +17,6 @@ use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -28,18 +27,22 @@ use std::{
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
+use ui::{
+    Color, IntoElement, ListItem, Pixels, Popover, ScrollAxes, Scrollbars, Styled, WithScrollbar,
+    prelude::*,
+};
 use util::ResultExt;
 
-use crate::CodeActionSource;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
-    CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
-    EditorStyle, ResolvedTasks,
+    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
+    ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use settings::SnippetSortOrder;
+use crate::{CodeActionSource, EditorSettings};
+use collections::{HashSet, VecDeque};
+use settings::{Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -217,7 +220,9 @@ pub struct CompletionsMenu {
     pub is_incomplete: bool,
     pub buffer: Entity<Buffer>,
     pub completions: Rc<RefCell<Box<[Completion]>>>,
-    match_candidates: Arc<[StringMatchCandidate]>,
+    /// String match candidate for each completion, grouped by `match_start`.
+    match_candidates: Arc<[(Option<text::Anchor>, Vec<StringMatchCandidate>)]>,
+    /// Entries displayed in the menu, which is a filtered and sorted subset of `match_candidates`.
     pub entries: Rc<RefCell<Box<[StringMatch]>>>,
     pub selected_item: usize,
     filter_task: Task<()>,
@@ -249,8 +254,17 @@ enum MarkdownCacheKey {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CompletionsMenuSource {
+    /// Show all completions (words, snippets, LSP)
     Normal,
+    /// Show only snippets (not words or LSP)
+    ///
+    /// Used after typing a non-word character
+    SnippetsOnly,
+    /// Tab stops within a snippet that have a predefined finite set of choices
     SnippetChoices,
+    /// Show only words (not snippets or LSP)
+    ///
+    /// Used when word completions are explicitly triggered
     Words { ignore_threshold: bool },
 }
 
@@ -258,6 +272,20 @@ pub enum CompletionsMenuSource {
 impl Drop for CompletionsMenu {
     fn drop(&mut self) {
         self.cancel_filter.store(true, Ordering::Relaxed);
+    }
+}
+
+struct CompletionMenuScrollBarSetting;
+
+impl ui::scrollbars::GlobalSetting for CompletionMenuScrollBarSetting {
+    fn get_value(_cx: &App) -> &Self {
+        &Self
+    }
+}
+
+impl ui::scrollbars::ScrollbarVisibility for CompletionMenuScrollBarSetting {
+    fn visibility(&self, cx: &App) -> ui::scrollbars::ShowScrollbar {
+        EditorSettings::get_global(cx).completion_menu_scrollbar
     }
 }
 
@@ -282,6 +310,8 @@ impl CompletionsMenu {
             .iter()
             .enumerate()
             .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
+            .into_group_map_by(|candidate| completions[candidate.id].match_start)
+            .into_iter()
             .collect();
 
         let completions_menu = Self {
@@ -329,6 +359,8 @@ impl CompletionsMenu {
                 replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
                 label: CodeLabel::plain(choice.to_string(), None),
+                match_start: None,
+                snippet_deduplication_key: None,
                 icon_path: None,
                 documentation: None,
                 confirm: None,
@@ -337,11 +369,14 @@ impl CompletionsMenu {
             })
             .collect();
 
-        let match_candidates = choices
-            .iter()
-            .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion))
-            .collect();
+        let match_candidates = Arc::new([(
+            None,
+            choices
+                .iter()
+                .enumerate()
+                .map(|(id, completion)| StringMatchCandidate::new(id, completion))
+                .collect(),
+        )]);
         let entries = choices
             .iter()
             .enumerate()
@@ -471,7 +506,7 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) {
         self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            .scroll_to_item(self.selected_item, ScrollStrategy::Nearest);
         if let Some(provider) = provider {
             let entries = self.entries.borrow();
             let entry = if self.selected_item < entries.len() {
@@ -898,7 +933,17 @@ impl CompletionsMenu {
             }
         });
 
-        Popover::new().child(list).into_any_element()
+        Popover::new()
+            .child(
+                div().child(list).custom_scrollbars(
+                    Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
+                        .show_along(ScrollAxes::Vertical)
+                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                    window,
+                    cx,
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_aside(
@@ -912,7 +957,7 @@ impl CompletionsMenu {
         }
 
         let mat = &self.entries.borrow()[self.selected_item];
-        let completions = self.completions.borrow_mut();
+        let completions = self.completions.borrow();
         let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
             Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
             Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
@@ -990,57 +1035,74 @@ impl CompletionsMenu {
 
     pub fn filter(
         &mut self,
-        query: Option<Arc<String>>,
+        query: Arc<String>,
+        query_end: text::Anchor,
+        buffer: &Entity<Buffer>,
         provider: Option<Rc<dyn CompletionProvider>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         self.cancel_filter.store(true, Ordering::Relaxed);
-        if let Some(query) = query {
-            self.cancel_filter = Arc::new(AtomicBool::new(false));
-            let matches = self.do_async_filtering(query, cx);
-            let id = self.id;
-            self.filter_task = cx.spawn_in(window, async move |editor, cx| {
-                let matches = matches.await;
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.with_completions_menu_matching_id(id, |this| {
-                            if let Some(this) = this {
-                                this.set_filter_results(matches, provider, window, cx);
-                            }
-                        });
-                    })
-                    .ok();
-            });
-        } else {
-            self.filter_task = Task::ready(());
-            let matches = self.unfiltered_matches();
-            self.set_filter_results(matches, provider, window, cx);
-        }
+        self.cancel_filter = Arc::new(AtomicBool::new(false));
+        let matches = self.do_async_filtering(query, query_end, buffer, cx);
+        let id = self.id;
+        self.filter_task = cx.spawn_in(window, async move |editor, cx| {
+            let matches = matches.await;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.with_completions_menu_matching_id(id, |this| {
+                        if let Some(this) = this {
+                            this.set_filter_results(matches, provider, window, cx);
+                        }
+                    });
+                })
+                .ok();
+        });
     }
 
     pub fn do_async_filtering(
         &self,
         query: Arc<String>,
+        query_end: text::Anchor,
+        buffer: &Entity<Buffer>,
         cx: &Context<Editor>,
     ) -> Task<Vec<StringMatch>> {
-        let matches_task = cx.background_spawn({
-            let query = query.clone();
-            let match_candidates = self.match_candidates.clone();
-            let cancel_filter = self.cancel_filter.clone();
-            let background_executor = cx.background_executor().clone();
-            async move {
-                fuzzy::match_strings(
-                    &match_candidates,
-                    &query,
-                    query.chars().any(|c| c.is_uppercase()),
-                    false,
-                    1000,
-                    &cancel_filter,
-                    background_executor,
-                )
-                .await
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let background_executor = cx.background_executor().clone();
+        let match_candidates = self.match_candidates.clone();
+        let cancel_filter = self.cancel_filter.clone();
+        let default_query = query.clone();
+
+        let matches_task = cx.background_spawn(async move {
+            let queries_and_candidates = match_candidates
+                .iter()
+                .map(|(query_start, candidates)| {
+                    let query_for_batch = match query_start {
+                        Some(start) => {
+                            Arc::new(buffer_snapshot.text_for_range(*start..query_end).collect())
+                        }
+                        None => default_query.clone(),
+                    };
+                    (query_for_batch, candidates)
+                })
+                .collect_vec();
+
+            let mut results = vec![];
+            for (query, match_candidates) in queries_and_candidates {
+                results.extend(
+                    fuzzy::match_strings(
+                        &match_candidates,
+                        &query,
+                        query.chars().any(|c| c.is_uppercase()),
+                        false,
+                        1000,
+                        &cancel_filter,
+                        background_executor.clone(),
+                    )
+                    .await,
+                );
             }
+            results
         });
 
         let completions = self.completions.clone();
@@ -1049,43 +1111,29 @@ impl CompletionsMenu {
         cx.foreground_executor().spawn(async move {
             let mut matches = matches_task.await;
 
+            let completions_ref = completions.borrow();
+
             if sort_completions {
                 matches = Self::sort_string_matches(
                     matches,
-                    Some(&query),
+                    Some(&query), // used for non-snippets only
                     snippet_sort_order,
-                    completions.borrow().as_ref(),
+                    &completions_ref,
                 );
             }
 
+            // Remove duplicate snippet prefixes (e.g., "cool code" will match
+            // the text "c c" in two places; we should only show the longer one)
+            let mut snippets_seen = HashSet::<(usize, usize)>::default();
+            matches.retain(|result| {
+                match completions_ref[result.candidate_id].snippet_deduplication_key {
+                    Some(key) => snippets_seen.insert(key),
+                    None => true,
+                }
+            });
+
             matches
         })
-    }
-
-    /// Like `do_async_filtering` but there is no filter query, so no need to spawn tasks.
-    pub fn unfiltered_matches(&self) -> Vec<StringMatch> {
-        let mut matches = self
-            .match_candidates
-            .iter()
-            .enumerate()
-            .map(|(candidate_id, candidate)| StringMatch {
-                candidate_id,
-                score: Default::default(),
-                positions: Default::default(),
-                string: candidate.string.clone(),
-            })
-            .collect();
-
-        if self.sort_completions {
-            matches = Self::sort_string_matches(
-                matches,
-                None,
-                self.snippet_sort_order,
-                self.completions.borrow().as_ref(),
-            );
-        }
-
-        matches
     }
 
     pub fn set_filter_results(
@@ -1130,27 +1178,12 @@ impl CompletionsMenu {
             .and_then(|c| c.to_lowercase().next());
 
         if snippet_sort_order == SnippetSortOrder::None {
-            matches.retain(|string_match| {
-                let completion = &completions[string_match.candidate_id];
-
-                let is_snippet = matches!(
-                    &completion.source,
-                    CompletionSource::Lsp { lsp_completion, .. }
-                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
-                );
-
-                !is_snippet
-            });
+            matches
+                .retain(|string_match| !completions[string_match.candidate_id].is_snippet_kind());
         }
 
         matches.sort_unstable_by_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
-
-            let is_snippet = matches!(
-                &completion.source,
-                CompletionSource::Lsp { lsp_completion, .. }
-                if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
-            );
 
             let sort_text = match &completion.source {
                 CompletionSource::Lsp { lsp_completion, .. } => lsp_completion.sort_text.as_deref(),
@@ -1163,14 +1196,17 @@ impl CompletionsMenu {
             let score = string_match.score;
             let sort_score = Reverse(OrderedFloat(score));
 
-            let query_start_doesnt_match_split_words = query_start_lower
-                .map(|query_char| {
-                    !split_words(&string_match.string).any(|word| {
-                        word.chars().next().and_then(|c| c.to_lowercase().next())
-                            == Some(query_char)
+            // Snippets do their own first-letter matching logic elsewhere.
+            let is_snippet = completion.is_snippet_kind();
+            let query_start_doesnt_match_split_words = !is_snippet
+                && query_start_lower
+                    .map(|query_char| {
+                        !split_words(&string_match.string).any(|word| {
+                            word.chars().next().and_then(|c| c.to_lowercase().next())
+                                == Some(query_char)
+                        })
                     })
-                })
-                .unwrap_or(false);
+                    .unwrap_or(false);
 
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
@@ -1182,6 +1218,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::None => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
+                // This exact matching won't work for multi-word snippets, but it's fine
                 let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
                     1
                 } else {

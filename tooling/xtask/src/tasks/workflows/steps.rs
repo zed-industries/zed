@@ -1,11 +1,20 @@
 use gh_workflow::*;
 
+use crate::tasks::workflows::{runners::Platform, vars};
+
+pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+pub const PWSH_SHELL: &str = "pwsh";
+
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
         "actions",
         "checkout",
         "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
     )
+    // prevent checkout action from running `git clean -ffdx` which
+    // would delete the target directory
+    .add_with(("clean", false))
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -17,109 +26,263 @@ pub fn setup_pnpm() -> Step<Use> {
     .add_with(("version", "9"))
 }
 
-pub mod danger {
-    use super::*;
+pub fn setup_node() -> Step<Use> {
+    named::uses(
+        "actions",
+        "setup-node",
+        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+    )
+    .add_with(("node-version", "20"))
+}
 
-    pub fn setup_node() -> Step<Use> {
-        named::uses(
-            "actions",
-            "setup-node",
-            "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
-        )
-        .add_with(("node-version", "20"))
-        .add_with(("cache", "pnpm"))
-        .add_with(("cache-dependency-path", "script/danger/pnpm-lock.yaml"))
-    }
+pub fn setup_sentry() -> Step<Use> {
+    named::uses(
+        "matbour",
+        "setup-sentry-cli",
+        "3e938c54b3018bdd019973689ef984e033b0454b",
+    )
+    .add_with(("token", vars::SENTRY_AUTH_TOKEN))
+}
 
-    pub fn install_deps() -> Step<Run> {
-        named::run("pnpm install --dir script/danger")
-    }
+pub fn cargo_fmt() -> Step<Run> {
+    named::bash("cargo fmt --all -- --check")
+}
 
-    pub fn run() -> Step<Run> {
-        named::run("pnpm run --dir script/danger danger ci")
-            // This GitHub token is not used, but the value needs to be here to prevent
-            // Danger from throwing an error.
-            .add_env(("GITHUB_TOKEN", "not_a_real_token"))
-            // All requests are instead proxied through an instance of
-            // https://github.com/maxdeviant/danger-proxy that allows Danger to securely
-            // authenticate with GitHub while still being able to run on PRs from forks.
-            .add_env((
-                "DANGER_GITHUB_API_BASE_URL",
-                "https://danger-proxy.fly.dev/github",
-            ))
+pub fn cargo_install_nextest() -> Step<Use> {
+    named::uses("taiki-e", "install-action", "nextest")
+}
+
+pub fn cargo_nextest(platform: Platform) -> Step<Run> {
+    named::run(
+        platform,
+        "cargo nextest run --workspace --no-fail-fast --failure-output immediate-final",
+    )
+}
+
+pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            New-Item -ItemType Directory -Path "./../.cargo" -Force
+            Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+        "#}),
+
+        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+            mkdir -p ./../.cargo
+            cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+        "#}),
     }
 }
 
-pub mod nix {
-    use indoc::indoc;
+pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+        "#}),
+        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+            rm -rf ./../.cargo
+        "#}),
+    };
 
-    use crate::tasks::workflows::vars;
+    step.if_condition(Expression::new("always()"))
+}
 
-    use super::*;
-
-    // on our macs we manually install nix. for some reason the cachix action is running
-    // under a non-login /bin/bash shell which doesn't source the proper script to add the
-    // nix profile to PATH, so we manually add them here
-    pub fn set_path() -> Step<Run> {
-        named::run(indoc! {r#"
-            echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-            echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
-        "#})
+pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
+        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
     }
+}
 
-    pub fn install_nix() -> Step<Use> {
-        named::uses(
-            "cachix",
-            "install-nix-action",
-            "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
-        )
-        .add_with(("github_access_token", vars::GITHUB_TOKEN))
+pub(crate) fn clippy(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clippy.ps1"),
+        _ => named::bash("./script/clippy"),
     }
+}
 
-    pub fn cachix_action(cachix_filter: &str) -> Step<Use> {
-        named::uses(
-            "cachix",
-            "cachix-action",
-            "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
-        )
-        .add_with(("name", "zed"))
-        .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
-        .add_with(("pushFilter", cachix_filter))
-        .add_with(("cachixArgs", "-v"))
+pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
+}
+
+fn setup_linux() -> Step<Run> {
+    named::bash("./script/linux")
+}
+
+fn install_mold() -> Step<Run> {
+    named::bash("./script/install-mold")
+}
+
+fn download_wasi_sdk() -> Step<Run> {
+    named::bash("./script/download-wasi-sdk")
+}
+
+pub(crate) fn install_linux_dependencies(job: Job) -> Job {
+    job.add_step(setup_linux())
+        .add_step(install_mold())
+        .add_step(download_wasi_sdk())
+}
+
+pub fn script(name: &str) -> Step<Run> {
+    if name.ends_with(".ps1") {
+        Step::new(name).run(name).shell(PWSH_SHELL)
+    } else {
+        Step::new(name).run(name).shell(BASH_SHELL)
     }
+}
 
-    pub fn build(flake_output: &str) -> Step<Run> {
-        named::run(&format!(
-            "nix build .#{} -L --accept-flake-config",
-            flake_output
+pub(crate) struct NamedJob {
+    pub name: String,
+    pub job: Job,
+}
+
+// impl NamedJob {
+//     pub fn map(self, f: impl FnOnce(Job) -> Job) -> Self {
+//         NamedJob {
+//             name: self.name,
+//             job: f(self.job),
+//         }
+//     }
+// }
+
+pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
+    dependant_job(deps)
+        .cond(Expression::new(
+            "github.repository_owner == 'zed-industries'",
         ))
+        .timeout_minutes(60u32)
+}
+
+pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
+    let job = Job::default();
+    if deps.len() > 0 {
+        job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+    } else {
+        job
+    }
+}
+
+impl FluentBuilder for Job {}
+impl FluentBuilder for Workflow {}
+
+/// A helper trait for building complex objects with imperative conditionals in a fluent style.
+/// Copied from GPUI to avoid adding GPUI as dependency
+/// todo(ci) just put this in gh-workflow
+#[allow(unused)]
+pub(crate) trait FluentBuilder {
+    /// Imperatively modify self with the given closure.
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+    {
+        f(self)
     }
 
-    pub fn limit_store() -> Step<Run> {
-        named::run(indoc! {r#"
-            if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
-                nix-collect-garbage -d || true
-            fi"#
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { this })
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        else_fn: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { else_fn(this) })
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
         })
     }
+    /// Conditionally unwrap and modify self with the given closure, if the given option is None.
+    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if option.is_some() { this } else { then(this) })
+    }
 }
 
-// (janky) helpers to generate steps with a name that corresponds
+// (janky) helper to generate steps with a name that corresponds
 // to the name of the calling function.
-mod named {
-    use gh_workflow::*;
+pub(crate) mod named {
+    use super::*;
 
-    pub(super) fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
+    /// Returns a uses step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub(crate) fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
         Step::new(function_name(1)).uses(owner, repo, ref_)
     }
 
-    pub(super) fn run(script: &str) -> Step<Run> {
-        Step::new(function_name(1))
-            .run(script)
-            .shell("bash -euxo pipefail {0}")
+    /// Returns a bash-script step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub(crate) fn bash(script: &str) -> Step<Run> {
+        Step::new(function_name(1)).run(script).shell(BASH_SHELL)
     }
 
-    fn function_name(i: usize) -> String {
+    /// Returns a pwsh-script step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub(crate) fn pwsh(script: &str) -> Step<Run> {
+        Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
+    }
+
+    /// Runs the command in either powershell or bash, depending on platform.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub(crate) fn run(platform: Platform, script: &str) -> Step<Run> {
+        match platform {
+            Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
+            Platform::Linux | Platform::Mac => {
+                Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+            }
+        }
+    }
+
+    /// Returns a Workflow with the same name as the enclosing module.
+    pub(crate) fn workflow() -> Workflow {
+        Workflow::default().name(
+            named::function_name(1)
+                .split("::")
+                .next()
+                .unwrap()
+                .to_owned(),
+        )
+    }
+
+    /// Returns a Job with the same name as the enclosing function.
+    /// (note job names may not contain `::`)
+    pub(crate) fn job(job: Job) -> NamedJob {
+        NamedJob {
+            name: function_name(1).split("::").last().unwrap().to_owned(),
+            job,
+        }
+    }
+
+    /// Returns the function name N callers above in the stack
+    /// (typically 1).
+    /// This only works because xtask always runs debug builds.
+    pub(crate) fn function_name(i: usize) -> String {
         let mut name = "<unknown>".to_string();
         let mut count = 0;
         backtrace::trace(|frame| {
@@ -135,8 +298,15 @@ mod named {
             false
         });
         name.split("::")
-            .skip_while(|s| s != &"steps")
+            .skip_while(|s| s != &"workflows")
+            .skip(1)
             .collect::<Vec<_>>()
             .join("::")
     }
+}
+
+pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
+    named::bash(&format!(
+        "git fetch origin {ref_name} && git checkout {ref_name}"
+    ))
 }

@@ -40,7 +40,7 @@ objc.workspace = true
 cocoa = "0.26"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-notify = "8.0.0"
+notify = "8.2.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

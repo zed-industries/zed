@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
-use http_client::{HttpClient, Url};
+use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::Version;
 use serde::Deserialize;
@@ -13,6 +13,7 @@ use std::{
     env::{self, consts},
     ffi::OsString,
     io,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     process::Output,
     sync::Arc,
@@ -375,7 +376,7 @@ struct ManagedNodeRuntime {
 }
 
 impl ManagedNodeRuntime {
-    const VERSION: &str = "v22.5.1";
+    const VERSION: &str = "v24.11.0";
 
     #[cfg(not(windows))]
     const NODE_PATH: &str = "bin/node";
@@ -556,7 +557,6 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
             let mut command = util::command::new_smol_command(node_binary);
-            command.env_clear();
             command.env("PATH", env_path);
             command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
@@ -799,17 +799,18 @@ fn configure_npm_command(
         command.args(["--prefix".into(), directory.to_path_buf()]);
     }
 
-    if let Some(proxy) = proxy {
+    if let Some(mut proxy) = proxy.cloned() {
         // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
         // NodeRuntime without environment information can not parse `localhost`
         // correctly.
         // TODO: map to `[::1]` if we are using ipv6
-        let proxy = proxy
-            .to_string()
-            .to_ascii_lowercase()
-            .replace("localhost", "127.0.0.1");
+        if matches!(proxy.host(), Some(Host::Domain(domain)) if domain.eq_ignore_ascii_case("localhost"))
+        {
+            // When localhost is a valid Host, so is `127.0.0.1`
+            let _ = proxy.set_ip_host(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        }
 
-        command.args(["--proxy", &proxy]);
+        command.args(["--proxy", proxy.as_str()]);
     }
 
     #[cfg(windows)]
@@ -827,6 +828,49 @@ fn configure_npm_command(
             .log_err()
         {
             command.env("ComSpec", val);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http_client::Url;
+
+    use super::configure_npm_command;
+
+    // Map localhost to 127.0.0.1
+    // NodeRuntime without environment information can not parse `localhost` correctly.
+    #[test]
+    fn test_configure_npm_command_map_localhost_proxy() {
+        const CASES: [(&str, &str); 4] = [
+            // Map localhost to 127.0.0.1
+            ("http://localhost:9090/", "http://127.0.0.1:9090/"),
+            ("https://google.com/", "https://google.com/"),
+            (
+                "http://username:password@proxy.thing.com:8080/",
+                "http://username:password@proxy.thing.com:8080/",
+            ),
+            // Test when localhost is contained within a different part of the URL
+            (
+                "http://username:localhost@localhost:8080/",
+                "http://username:localhost@127.0.0.1:8080/",
+            ),
+        ];
+
+        for (proxy, mapped_proxy) in CASES {
+            let mut dummy = smol::process::Command::new("");
+            let proxy = Url::parse(proxy).unwrap();
+            configure_npm_command(&mut dummy, None, Some(&proxy));
+            let proxy = dummy
+                .get_args()
+                .skip_while(|&arg| arg != "--proxy")
+                .skip(1)
+                .next();
+            let proxy = proxy.expect("Proxy was not passed to Command correctly");
+            assert_eq!(
+                proxy, mapped_proxy,
+                "Incorrectly mapped localhost to 127.0.0.1"
+            );
         }
     }
 }

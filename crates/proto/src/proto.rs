@@ -51,6 +51,7 @@ messages!(
     (Commit, Background),
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
+    (CreateImageForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
     (CreateContext, Foreground),
@@ -179,9 +180,11 @@ messages!(
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
     (OpenBufferByPath, Background),
+    (OpenImageByPath, Background),
     (OpenBufferForSymbol, Background),
     (OpenBufferForSymbolResponse, Background),
     (OpenBufferResponse, Background),
+    (OpenImageResponse, Background),
     (OpenCommitMessageBuffer, Background),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
@@ -331,6 +334,9 @@ messages!(
     (ExternalAgentLoadingStatusUpdated, Background),
     (NewExternalAgentVersionAvailable, Background),
     (RemoteStarted, Background),
+    (GitGetWorktrees, Background),
+    (GitWorktreesResponse, Background),
+    (GitCreateWorktree, Background)
 );
 
 request_messages!(
@@ -394,6 +400,7 @@ request_messages!(
     (OnTypeFormatting, OnTypeFormattingResponse),
     (OpenBufferById, OpenBufferResponse),
     (OpenBufferByPath, OpenBufferResponse),
+    (OpenImageByPath, OpenImageResponse),
     (OpenBufferForSymbol, OpenBufferForSymbolResponse),
     (OpenCommitMessageBuffer, OpenBufferResponse),
     (OpenNewBuffer, OpenBufferResponse),
@@ -509,6 +516,8 @@ request_messages!(
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
+    (GitGetWorktrees, GitWorktreesResponse),
+    (GitCreateWorktree, Ack)
 );
 
 lsp_messages!(
@@ -540,6 +549,7 @@ entity_messages!(
     GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
+    CreateImageForPeer,
     CreateProjectEntry,
     GetDocumentColor,
     DeleteProjectEntry,
@@ -576,6 +586,7 @@ entity_messages!(
     OpenNewBuffer,
     OpenBufferById,
     OpenBufferByPath,
+    OpenImageByPath,
     OpenBufferForSymbol,
     OpenCommitMessageBuffer,
     PerformRename,
@@ -672,6 +683,8 @@ entity_messages!(
     ExternalAgentsUpdated,
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
+    GitGetWorktrees,
+    GitCreateWorktree
 );
 
 entity_messages!(

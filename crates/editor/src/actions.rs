@@ -213,15 +213,6 @@ pub struct ExpandExcerptsDown {
     pub(super) lines: u32,
 }
 
-/// Shows code completion suggestions at the cursor position.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct ShowCompletions {
-    #[serde(default)]
-    pub(super) trigger: Option<String>,
-}
-
 /// Handles text input in the editor.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -539,6 +530,10 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next reference to the symbol under the cursor.
+        GoToNextReference,
+        /// Goes to the previous reference to the symbol under the cursor.
+        GoToPreviousReference,
         /// Goes to the type definition of the symbol at cursor.
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
@@ -617,6 +612,8 @@ actions!(
         NextEditPrediction,
         /// Scrolls to the next screen.
         NextScreen,
+        /// Goes to the next snippet tabstop if one exists.
+        NextSnippetTabstop,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -650,6 +647,8 @@ actions!(
         Paste,
         /// Navigates to the previous edit prediction.
         PreviousEditPrediction,
+        /// Goes to the previous snippet tabstop if one exists.
+        PreviousSnippetTabstop,
         /// Redoes the last undone edit.
         Redo,
         /// Redoes the last selection change.
@@ -728,6 +727,8 @@ actions!(
         SelectToStartOfParagraph,
         /// Extends selection up.
         SelectUp,
+        /// Shows code completion suggestions at the cursor position.
+        ShowCompletions,
         /// Shows the system character palette.
         ShowCharacterPalette,
         /// Shows edit prediction at cursor.

@@ -1,8 +1,8 @@
 # Developing Extensions
 
-## Extension Capabilities
+## Extension Features
 
-Extensions can add the following capabilities to Zed:
+Extensions are able to provide the following features to Zed:
 
 - [Languages](./languages.md)
 - [Debuggers](./debugger-extensions.md)

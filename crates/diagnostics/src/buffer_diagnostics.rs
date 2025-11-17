@@ -1,5 +1,5 @@
 use crate::{
-    DIAGNOSTICS_UPDATE_DELAY, IncludeWarnings, ToggleWarnings, context_range_for_entry,
+    DIAGNOSTICS_UPDATE_DEBOUNCE, IncludeWarnings, ToggleWarnings, context_range_for_entry,
     diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
     toolbar_controls::DiagnosticsToolbarEditor,
 };
@@ -23,7 +23,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp::Ordering,
+    cmp::{self, Ordering},
     sync::Arc,
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
@@ -283,7 +283,7 @@ impl BufferDiagnosticsEditor {
 
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
-                .timer(DIAGNOSTICS_UPDATE_DELAY)
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
 
             if let Some(buffer) = buffer {
@@ -370,11 +370,16 @@ impl BufferDiagnosticsEditor {
                     continue;
                 }
 
+                let languages = buffer_diagnostics_editor
+                    .read_with(cx, |b, cx| b.project.read(cx).languages().clone())
+                    .ok();
+
                 let diagnostic_blocks = cx.update(|_window, cx| {
                     DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(Arc::new(buffer_diagnostics_editor.clone())),
+                        languages,
                         cx,
                     )
                 })?;
@@ -410,7 +415,7 @@ impl BufferDiagnosticsEditor {
             // in the editor.
             // This is done by iterating over the list of diagnostic blocks and
             // determine what range does the diagnostic block span.
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = Vec::new();
 
             for diagnostic_block in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
@@ -420,30 +425,43 @@ impl BufferDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+                let initial_range = buffer_snapshot
+                    .anchor_after(diagnostic_block.initial_range.start)
+                    ..buffer_snapshot.anchor_before(diagnostic_block.initial_range.end);
 
-                let index = excerpt_ranges
-                    .binary_search_by(|probe| {
+                let bin_search = |probe: &ExcerptRange<text::Anchor>| {
+                    let context_start = || {
                         probe
                             .context
                             .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(
-                                probe
-                                    .primary
-                                    .start
-                                    .cmp(&diagnostic_block.initial_range.start),
-                            )
-                            .then(probe.primary.end.cmp(&diagnostic_block.initial_range.end))
-                            .then(Ordering::Greater)
-                    })
-                    .unwrap_or_else(|index| index);
+                            .cmp(&excerpt_range.start, &buffer_snapshot)
+                    };
+                    let context_end =
+                        || probe.context.end.cmp(&excerpt_range.end, &buffer_snapshot);
+                    let primary_start = || {
+                        probe
+                            .primary
+                            .start
+                            .cmp(&initial_range.start, &buffer_snapshot)
+                    };
+                    let primary_end =
+                        || probe.primary.end.cmp(&initial_range.end, &buffer_snapshot);
+                    context_start()
+                        .then_with(context_end)
+                        .then_with(primary_start)
+                        .then_with(primary_end)
+                        .then(cmp::Ordering::Greater)
+                };
+
+                let index = excerpt_ranges
+                    .binary_search_by(bin_search)
+                    .unwrap_or_else(|i| i);
 
                 excerpt_ranges.insert(
                     index,
                     ExcerptRange {
                         context: excerpt_range,
-                        primary: diagnostic_block.initial_range.clone(),
+                        primary: initial_range,
                     },
                 )
             }
@@ -466,6 +484,13 @@ impl BufferDiagnosticsEditor {
                     buffer_diagnostics_editor
                         .multibuffer
                         .update(cx, |multibuffer, cx| {
+                            let excerpt_ranges = excerpt_ranges
+                                .into_iter()
+                                .map(|range| ExcerptRange {
+                                    context: range.context.to_point(&buffer_snapshot),
+                                    primary: range.primary.to_point(&buffer_snapshot),
+                                })
+                                .collect();
                             multibuffer.set_excerpt_ranges_for_path(
                                 PathKey::for_buffer(&buffer, cx),
                                 buffer.clone(),
@@ -936,10 +961,6 @@ impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
             buffer_diagnostics_editor.include_warnings
         })
         .unwrap_or(false)
-    }
-
-    fn has_stale_excerpts(&self, _cx: &App) -> bool {
-        false
     }
 
     fn is_updating(&self, cx: &App) -> bool {

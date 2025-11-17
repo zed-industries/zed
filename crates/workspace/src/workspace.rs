@@ -199,6 +199,8 @@ actions!(
         AddFolderToProject,
         /// Clears all notifications.
         ClearAllNotifications,
+        /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
+        ClearNavigationHistory,
         /// Closes the active dock.
         CloseActiveDock,
         /// Closes all docks.
@@ -527,14 +529,6 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    WorkspaceSettings::register(cx);
-    ItemSettings::register(cx);
-    PreviewTabsSettings::register(cx);
-    TabBarSettings::register(cx);
-    StatusBarSettings::register(cx);
-}
-
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
     let paths = cx.prompt_for_paths(options);
     cx.spawn(
@@ -568,7 +562,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    init_settings(cx);
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
@@ -987,7 +980,6 @@ impl AppState {
 
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
-        crate::init_settings(cx);
 
         Arc::new(Self {
             client,
@@ -1179,6 +1171,7 @@ pub struct Workspace {
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
+    removing: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1522,6 +1515,7 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
+            removing: false,
         }
     }
 
@@ -1923,6 +1917,12 @@ impl Workspace {
         self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
+    }
+
+    pub fn clear_navigation_history(&mut self, _window: &mut Window, cx: &mut Context<Workspace>) {
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        }
     }
 
     fn navigate_history(
@@ -2335,18 +2335,41 @@ impl Workspace {
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
 
-        // On Linux and Windows, closing the last window should restore the last workspace.
-        let save_last_workspace = cfg!(not(target_os = "macos"))
-            && close_intent != CloseIntent::ReplaceWindow
-            && cx.windows().len() == 1;
-
         cx.spawn_in(window, async move |this, cx| {
+            this.update(cx, |this, _| {
+                if close_intent == CloseIntent::CloseWindow {
+                    this.removing = true;
+                }
+            })?;
+
             let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
                     .count()
             })?;
+
+            #[cfg(target_os = "macos")]
+            let save_last_workspace = false;
+
+            // On Linux and Windows, closing the last window should restore the last workspace.
+            #[cfg(not(target_os = "macos"))]
+            let save_last_workspace = {
+                let remaining_workspaces = cx.update(|_window, cx| {
+                    cx.windows()
+                        .iter()
+                        .filter_map(|window| window.downcast::<Workspace>())
+                        .filter_map(|workspace| {
+                            workspace
+                                .update(cx, |workspace, _, _| workspace.removing)
+                                .ok()
+                        })
+                        .filter(|removing| !removing)
+                        .count()
+                })?;
+
+                close_intent != CloseIntent::ReplaceWindow && remaining_workspaces == 0
+            };
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
@@ -4300,6 +4323,10 @@ impl Workspace {
         cx.emit(Event::PaneRemoved);
     }
 
+    pub fn panes_mut(&mut self) -> &mut [Entity<Pane>] {
+        &mut self.panes
+    }
+
     pub fn panes(&self) -> &[Entity<Pane>] {
         &self.panes
     }
@@ -5840,6 +5867,11 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ClearNavigationHistory, window, cx| {
+                    workspace.clear_navigation_history(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
                     if let Some((notification_id, _)) = workspace.notifications.pop() {
                         workspace.suppress_notification(&notification_id, cx);
@@ -7088,6 +7120,9 @@ actions!(
     collab,
     [
         /// Opens the channel notes for the current call.
+        ///
+        /// Use `collab_panel::OpenSelectedChannelNotes` to open the channel notes for the selected
+        /// channel in the collab panel.
         ///
         /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
         /// can be copied via "Copy link to section" in the context menu of the channel notes
@@ -11309,9 +11344,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 

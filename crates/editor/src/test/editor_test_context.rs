@@ -6,6 +6,7 @@ use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
+use git::repository::RepoPath;
 use gpui::{
     AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
     VisualTestContext, Window, WindowHandle, prelude::*,
@@ -58,6 +59,17 @@ impl EditorTestContext {
             })
             .await
             .unwrap();
+
+        let language = project
+            .read_with(cx, |project, _cx| {
+                project.languages().language_for_name("Plain Text")
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language), cx);
+        });
+
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor_with_project(
                 project,
@@ -334,7 +346,10 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
-            found = git_state.index_contents.get(&path.into()).cloned();
+            found = git_state
+                .index_contents
+                .get(&RepoPath::from_rel_path(&path))
+                .cloned();
         })
         .unwrap();
         assert_eq!(expected, found.as_deref());

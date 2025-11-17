@@ -9,6 +9,13 @@ mod settings_store;
 mod vscode_import;
 
 pub use settings_content::*;
+pub use settings_macros::RegisterSetting;
+
+#[doc(hidden)]
+pub mod private {
+    pub use crate::settings_store::{RegisteredSetting, SettingValue};
+    pub use inventory;
+}
 
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
@@ -81,7 +88,6 @@ pub struct SettingsAssets;
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
-    BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 

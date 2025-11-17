@@ -658,7 +658,7 @@ impl WasmHost {
         };
         cx.spawn(async move |cx| {
             let (extension_task, manifest, work_dir, tx, zed_api_version) =
-                load_extension_task.await?;
+                cx.background_executor().spawn(load_extension_task).await?;
             // we need to run run the task in an extension context as wasmtime_wasi may
             // call into tokio, accessing its runtime handle
             let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
@@ -763,17 +763,17 @@ impl WasmExtension {
             .fs
             .open_sync(&path)
             .await
-            .context("failed to open wasm file")?;
+            .context(format!("opening wasm file, path: {path:?}"))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
             .read_to_end(&mut wasm_bytes)
-            .context("failed to read wasm")?;
+            .context(format!("reading wasm file, path: {path:?}"))?;
 
         wasm_host
             .load_extension(wasm_bytes, manifest, cx)
             .await
-            .with_context(|| format!("failed to load wasm extension {}", manifest.id))
+            .with_context(|| format!("loading wasm extension: {}", manifest.id))
     }
 
     pub async fn call<T, Fn>(&self, f: Fn) -> Result<T>

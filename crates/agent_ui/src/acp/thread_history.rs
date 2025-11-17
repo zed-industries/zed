@@ -450,31 +450,30 @@ impl Render for AcpThreadHistory {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
-            .when(!self.history_store.read(cx).is_empty(cx), |parent| {
-                parent.child(
-                    h_flex()
-                        .h(px(41.)) // Match the toolbar perfectly
-                        .w_full()
-                        .py_1()
-                        .px_2()
-                        .gap_2()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .color(Color::Muted)
-                                .size(IconSize::Small),
-                        )
-                        .child(self.search_editor.clone()),
-                )
-            })
+            .child(
+                h_flex()
+                    .h(px(41.)) // Match the toolbar perfectly
+                    .w_full()
+                    .py_1()
+                    .px_2()
+                    .gap_2()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(self.search_editor.clone()),
+            )
             .child({
                 let view = v_flex()
                     .id("list-container")
@@ -483,19 +482,15 @@ impl Render for AcpThreadHistory {
                     .flex_grow();
 
                 if self.history_store.read(cx).is_empty(cx) {
-                    view.justify_center()
-                        .child(
-                            h_flex().w_full().justify_center().child(
-                                Label::new("You don't have any past threads yet.")
-                                    .size(LabelSize::Small),
-                            ),
-                        )
-                } else if self.search_produced_no_matches() {
-                    view.justify_center().child(
-                        h_flex().w_full().justify_center().child(
-                            Label::new("No threads match your search.").size(LabelSize::Small),
-                        ),
+                    view.justify_center().items_center().child(
+                        Label::new("You don't have any past threads yet.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
+                } else if self.search_produced_no_matches() {
+                    view.justify_center()
+                        .items_center()
+                        .child(Label::new("No threads match your search.").size(LabelSize::Small))
                 } else {
                     view.child(
                         uniform_list(
@@ -672,7 +667,7 @@ impl EntryTimeFormat {
                 timezone,
                 time_format::TimestampFormat::EnhancedAbsolute,
             ),
-            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp.to_offset(timezone)),
         }
     }
 }

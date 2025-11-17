@@ -13,10 +13,11 @@ use futures::{
     future::{self, BoxFuture},
 };
 use parking_lot::Mutex;
+use serde::Serialize;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{any::type_name, sync::Arc};
-pub use url::Url;
+pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {
@@ -255,7 +256,7 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed Cloud URL using the given path.
-    pub fn build_zed_cloud_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
+    pub fn build_zed_cloud_url(&self, path: &str) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://cloud.zed.dev",
@@ -264,10 +265,20 @@ impl HttpClientWithUrl {
             other => other,
         };
 
-        Ok(Url::parse_with_params(
-            &format!("{}{}", base_api_url, path),
-            query,
-        )?)
+        Ok(Url::parse(&format!("{}{}", base_api_url, path))?)
+    }
+
+    /// Builds a Zed Cloud URL using the given path and query params.
+    pub fn build_zed_cloud_url_with_query(&self, path: &str, query: impl Serialize) -> Result<Url> {
+        let base_url = self.base_url();
+        let base_api_url = match base_url.as_ref() {
+            "https://zed.dev" => "https://cloud.zed.dev",
+            "https://staging.zed.dev" => "https://cloud.zed.dev",
+            "http://localhost:3000" => "http://localhost:8787",
+            other => other,
+        };
+        let query = serde_urlencoded::to_string(&query)?;
+        Ok(Url::parse(&format!("{}{}?{}", base_api_url, path, query))?)
     }
 
     /// Builds a Zed LLM URL using the given path.

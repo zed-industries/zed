@@ -1,5 +1,6 @@
-# generated `cargo xtask workflows`. Do not edit.
-name: Danger
+# Generated from xtask::workflows::danger
+# Rebuild with `cargo xtask workflows`.
+name: danger
 on:
   pull_request:
     types:
@@ -16,20 +17,22 @@ jobs:
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
         version: '9'
-    - name: steps::danger::setup_node
+    - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
         cache: pnpm
         cache-dependency-path: script/danger/pnpm-lock.yaml
-    - name: steps::danger::install_deps
+    - name: danger::danger_job::install_deps
       run: pnpm install --dir script/danger
       shell: bash -euxo pipefail {0}
-    - name: steps::danger::run
+    - name: danger::danger_job::run
       run: pnpm run --dir script/danger danger ci
       shell: bash -euxo pipefail {0}
       env:

@@ -720,7 +720,7 @@ impl EditPreview {
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
-        edits: &[(Range<Anchor>, String)],
+        edits: &[(Range<Anchor>, impl AsRef<str>)],
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedText {
@@ -747,7 +747,8 @@ impl EditPreview {
                 .end
                 .bias_right(&self.old_snapshot)
                 .to_offset(&self.applied_edits_snapshot);
-            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+            let edit_start_in_preview_snapshot =
+                edit_new_end_in_preview_snapshot - edit_text.as_ref().len();
 
             let unchanged_range_in_preview_snapshot =
                 offset_in_preview_snapshot..edit_start_in_preview_snapshot;
@@ -772,7 +773,7 @@ impl EditPreview {
                 );
             }
 
-            if !edit_text.is_empty() {
+            if !edit_text.as_ref().is_empty() {
                 highlighted_text.add_text_from_buffer_range(
                     edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
                     &self.applied_edits_snapshot,
@@ -796,7 +797,7 @@ impl EditPreview {
         highlighted_text.build()
     }
 
-    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+    fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -822,6 +823,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
+    pub depth: usize,
 }
 
 impl Buffer {
@@ -1130,7 +1132,7 @@ impl Buffer {
 
     pub fn preview_edits(
         &self,
-        edits: Arc<[(Range<Anchor>, String)]>,
+        edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cx: &App,
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
@@ -1573,21 +1575,24 @@ impl Buffer {
                 self.reparse = None;
             }
             Err(parse_task) => {
+                // todo(lw): hot foreground spawn
                 self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = parse_task.await;
+                    let new_syntax_map = cx.background_spawn(parse_task).await;
                     this.update(cx, move |this, cx| {
-                        let grammar_changed =
+                        let grammar_changed = || {
                             this.language.as_ref().is_none_or(|current_language| {
                                 !Arc::ptr_eq(&language, current_language)
-                            });
-                        let language_registry_changed = new_syntax_map
-                            .contains_unknown_injections()
-                            && language_registry.is_some_and(|registry| {
-                                registry.version() != new_syntax_map.language_registry_version()
-                            });
-                        let parse_again = language_registry_changed
-                            || grammar_changed
-                            || this.version.changed_since(&parsed_version);
+                            })
+                        };
+                        let language_registry_changed = || {
+                            new_syntax_map.contains_unknown_injections()
+                                && language_registry.is_some_and(|registry| {
+                                    registry.version() != new_syntax_map.language_registry_version()
+                                })
+                        };
+                        let parse_again = this.version.changed_since(&parsed_version)
+                            || language_registry_changed()
+                            || grammar_changed();
                         this.did_finish_parsing(new_syntax_map, cx);
                         this.reparse = None;
                         if parse_again {
@@ -1612,6 +1617,18 @@ impl Buffer {
 
     pub fn parse_status(&self) -> watch::Receiver<ParseStatus> {
         self.parse_status.1.clone()
+    }
+
+    /// Wait until the buffer is no longer parsing
+    pub fn parsing_idle(&self) -> impl Future<Output = ()> + use<> {
+        let mut parse_status = self.parse_status();
+        async move {
+            while *parse_status.borrow() != ParseStatus::Idle {
+                if parse_status.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
     }
 
     /// Assign to the buffer a set of diagnostics created by a given language server.
@@ -2037,6 +2054,11 @@ impl Buffer {
             }
             _ => self.has_unsaved_edits(),
         }
+    }
+
+    /// Marks the buffer as having a conflict regardless of current buffer state.
+    pub fn set_conflict(&mut self) {
+        self.has_conflict = true;
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -3363,7 +3385,19 @@ impl BufferSnapshot {
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
         self.syntax_layers_for_range(offset..offset, false)
-            .filter(|l| l.node().end_byte() > offset)
+            .filter(|l| {
+                if let Some(ranges) = l.included_sub_ranges {
+                    ranges.iter().any(|range| {
+                        let start = range.start.to_offset(self);
+                        start <= offset && {
+                            let end = range.end.to_offset(self);
+                            offset < end
+                        }
+                    })
+                } else {
+                    l.node().start_byte() <= offset && l.node().end_byte() > offset
+                }
+            })
             .last()
     }
 
@@ -4103,6 +4137,7 @@ impl BufferSnapshot {
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
+                let depth = mat.depth;
                 let config = &configs[mat.grammar_index];
                 let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
@@ -4128,6 +4163,7 @@ impl BufferSnapshot {
                     open_range,
                     close_range,
                     newline_only: pattern.newline_only,
+                    depth,
                 });
             }
             None
@@ -4287,8 +4323,12 @@ impl BufferSnapshot {
     ) -> impl Iterator<Item = BracketMatch> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        self.bracket_ranges(range.clone()).filter(move |pair| {
-            pair.open_range.start <= range.start && pair.close_range.end >= range.end
+        let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
+        let max_depth = result.iter().map(|mat| mat.depth).max().unwrap_or(0);
+        result.into_iter().filter(move |pair| {
+            pair.open_range.start <= range.start
+                && pair.close_range.end >= range.end
+                && pair.depth == max_depth
         })
     }
 

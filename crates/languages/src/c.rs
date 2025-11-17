@@ -98,7 +98,7 @@ impl LspInstaller for CLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
@@ -166,13 +166,24 @@ impl super::LspAdapter for CLspAdapter {
             None => "",
         };
 
-        let label = completion
+        let mut label = completion
             .label
             .strip_prefix('•')
             .unwrap_or(&completion.label)
             .trim()
-            .to_owned()
-            + label_detail;
+            .to_owned();
+
+        if !label_detail.is_empty() {
+            let should_add_space = match completion.kind {
+                Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD) => false,
+                _ => true,
+            };
+
+            if should_add_space && !label.ends_with(' ') && !label_detail.starts_with(' ') {
+                label.push(' ');
+            }
+            label.push_str(label_detail);
+        }
 
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
@@ -391,7 +402,6 @@ mod tests {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |s| {
                     s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);

@@ -314,7 +314,7 @@ impl<D: PickerDelegate> Picker<D> {
             confirm_on_update: None,
             width: None,
             widest_item: None,
-            max_height: Some(rems(18.).into()),
+            max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
         };
@@ -709,7 +709,7 @@ impl<D: PickerDelegate> Picker<D> {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
             ElementContainer::UniformList(scroll_handle) => {
-                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Nearest)
             }
         }
     }

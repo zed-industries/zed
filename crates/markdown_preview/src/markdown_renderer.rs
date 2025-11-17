@@ -233,10 +233,11 @@ fn render_markdown_list_item(
     cx: &mut RenderContext,
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
+    let depth = parsed.depth.saturating_sub(1) as usize;
 
     let bullet = match &parsed.item_type {
-        Ordered(order) => format!("{}.", order).into_any_element(),
-        Unordered => "•".into_any_element(),
+        Ordered(order) => list_item_prefix(*order as usize, true, depth).into_any_element(),
+        Unordered => list_item_prefix(1, false, depth).into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
             .mt(cx.scaled_rems(3.0 / 16.0))
@@ -292,10 +293,8 @@ fn render_markdown_list_item(
         .collect();
 
     let item = h_flex()
-        .when(!parsed.nested, |this| {
-            this.pl(cx.scaled_rems(parsed.depth.saturating_sub(1) as f32))
-        })
-        .when(parsed.nested && parsed.depth > 1, |this| this.ml_neg_1p5())
+        .when(!parsed.nested, |this| this.pl(cx.scaled_rems(depth as f32)))
+        .when(parsed.nested && depth > 0, |this| this.ml_neg_1p5())
         .items_start()
         .children(vec![
             bullet,
@@ -562,12 +561,17 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     }
 
     cx.with_common_p(div())
-        .grid()
-        .size_full()
-        .grid_cols(max_column_count as u16)
-        .border_1()
-        .border_color(cx.border_color)
-        .children(cells)
+        .when_some(parsed.caption.as_ref(), |this, caption| {
+            this.children(render_markdown_text(caption, cx))
+        })
+        .child(
+            div()
+                .grid()
+                .grid_cols(max_column_count as u16)
+                .border_1()
+                .border_color(cx.border_color)
+                .children(cells),
+        )
         .into_any()
 }
 
@@ -675,33 +679,31 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             .to_highlight_style(&syntax_theme)
                             .map(|style| (range.clone(), style))
                     }),
-                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
-                        |(region, range)| {
-                            if region.code {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else if region.link.is_some() {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        color: Some(link_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        },
-                    ),
+                    parsed.regions.iter().filter_map(|(range, region)| {
+                        if region.code {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    background_color: Some(code_span_bg_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else if region.link.is_some() {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    color: Some(link_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else {
+                            None
+                        }
+                    }),
                 );
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
-                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                for (range, region) in parsed.regions.iter() {
                     if let Some(link) = region.link.clone() {
                         links.push(link);
                         link_ranges.push(range.clone());
@@ -880,6 +882,38 @@ impl Render for InteractiveMarkdownElementTooltip {
     }
 }
 
+/// Returns the prefix for a list item.
+fn list_item_prefix(order: usize, ordered: bool, depth: usize) -> String {
+    let ix = order.saturating_sub(1);
+    const NUMBERED_PREFIXES_1: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const NUMBERED_PREFIXES_2: &str = "abcdefghijklmnopqrstuvwxyz";
+    const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
+
+    if ordered {
+        match depth {
+            0 => format!("{}. ", order),
+            1 => format!(
+                "{}. ",
+                NUMBERED_PREFIXES_1
+                    .chars()
+                    .nth(ix % NUMBERED_PREFIXES_1.len())
+                    .unwrap()
+            ),
+            _ => format!(
+                "{}. ",
+                NUMBERED_PREFIXES_2
+                    .chars()
+                    .nth(ix % NUMBERED_PREFIXES_2.len())
+                    .unwrap()
+            ),
+        }
+    } else {
+        let depth = depth.min(BULLETS.len() - 1);
+        let bullet = BULLETS[depth];
+        return format!("{} ", bullet);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -891,7 +925,6 @@ mod tests {
             source_range: 0..text.len(),
             contents: SharedString::new(text),
             highlights: Default::default(),
-            region_ranges: Default::default(),
             regions: Default::default(),
         })
     }
@@ -1019,5 +1052,26 @@ mod tests {
                 ])
             ])
         );
+    }
+
+    #[test]
+    fn test_list_item_prefix() {
+        assert_eq!(list_item_prefix(1, true, 0), "1. ");
+        assert_eq!(list_item_prefix(2, true, 0), "2. ");
+        assert_eq!(list_item_prefix(3, true, 0), "3. ");
+        assert_eq!(list_item_prefix(11, true, 0), "11. ");
+        assert_eq!(list_item_prefix(1, true, 1), "A. ");
+        assert_eq!(list_item_prefix(2, true, 1), "B. ");
+        assert_eq!(list_item_prefix(3, true, 1), "C. ");
+        assert_eq!(list_item_prefix(1, true, 2), "a. ");
+        assert_eq!(list_item_prefix(2, true, 2), "b. ");
+        assert_eq!(list_item_prefix(7, true, 2), "g. ");
+        assert_eq!(list_item_prefix(1, true, 1), "A. ");
+        assert_eq!(list_item_prefix(1, true, 2), "a. ");
+        assert_eq!(list_item_prefix(1, false, 0), "• ");
+        assert_eq!(list_item_prefix(1, false, 1), "◦ ");
+        assert_eq!(list_item_prefix(1, false, 2), "▪ ");
+        assert_eq!(list_item_prefix(1, false, 3), "‣ ");
+        assert_eq!(list_item_prefix(1, false, 4), "⁃ ");
     }
 }

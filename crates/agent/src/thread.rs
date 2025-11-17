@@ -30,16 +30,17 @@ use gpui::{
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
-    LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, update_settings_file};
+use settings::{LanguageModelSelection, Settings, update_settings_file};
 use smol::stream::StreamExt;
 use std::{
     collections::BTreeMap,
@@ -50,7 +51,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{fmt::Write, path::PathBuf};
-use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
+use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
@@ -798,7 +799,8 @@ impl Thread {
         let profile_id = db_thread
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
-        let model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+
+        let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
                 .model
                 .and_then(|model| {
@@ -811,6 +813,16 @@ impl Thread {
                 .or_else(|| registry.default_model())
                 .map(|model| model.model)
         });
+
+        if model.is_none() {
+            model = Self::resolve_profile_model(&profile_id, cx);
+        }
+        if model.is_none() {
+            model = LanguageModelRegistry::global(cx).update(cx, |registry, _cx| {
+                registry.default_model().map(|model| model.model)
+            });
+        }
+
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
@@ -1007,8 +1019,17 @@ impl Thread {
         &self.profile_id
     }
 
-    pub fn set_profile(&mut self, profile_id: AgentProfileId) {
+    pub fn set_profile(&mut self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
+        if self.profile_id == profile_id {
+            return;
+        }
+
         self.profile_id = profile_id;
+
+        // Swap to the profile's preferred model when available.
+        if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
+            self.set_model(model, cx);
+        }
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
@@ -1062,6 +1083,35 @@ impl Thread {
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
             used_tokens: usage.total_tokens(),
+        })
+    }
+
+    /// Look up the active profile and resolve its preferred model if one is configured.
+    fn resolve_profile_model(
+        profile_id: &AgentProfileId,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<dyn LanguageModel>> {
+        let selection = AgentSettings::get_global(cx)
+            .profiles
+            .get(profile_id)?
+            .default_model
+            .clone()?;
+        Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    /// Translate a stored model selection into the configured model from the registry.
+    fn resolve_model_from_selection(
+        selection: &LanguageModelSelection,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<dyn LanguageModel>> {
+        let selected = SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        };
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry
+                .select_model(&selected, cx)
+                .map(|configured| configured.model)
         })
     }
 
@@ -1816,9 +1866,15 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages(cx);
+        let available_tools: Vec<_> = self
+            .running_turn
+            .as_ref()
+            .map(|turn| turn.tools.keys().cloned().collect())
+            .unwrap_or_default();
+
+        log::debug!("Request includes {} tools", available_tools.len());
+        let messages = self.build_request_messages(available_tools, cx);
         log::debug!("Request will include {} messages", messages.len());
-        log::debug!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
@@ -1909,7 +1965,11 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
-    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(
+        &self,
+        available_tools: Vec<SharedString>,
+        cx: &App,
+    ) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
@@ -1917,7 +1977,8 @@ impl Thread {
 
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
-            available_tools: self.tools.keys().cloned().collect(),
+            available_tools,
+            model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -2128,7 +2189,7 @@ where
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(format: LanguageModelToolSchemaFormat) -> Schema {
-        crate::tool_schema::root_schema_for::<Self::Input>(format)
+        language_model::tool_schema::root_schema_for::<Self::Input>(format)
     }
 
     /// Some tools rely on a provider for the underlying billing or other reasons.
@@ -2215,7 +2276,7 @@ where
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         let mut json = serde_json::to_value(T::input_schema(format))?;
-        crate::tool_schema::adapt_schema_to_format(&mut json, format)?;
+        language_model::tool_schema::adapt_schema_to_format(&mut json, format)?;
         Ok(json)
     }
 
@@ -2538,8 +2599,8 @@ impl From<&str> for UserMessageContent {
     }
 }
 
-impl From<acp::ContentBlock> for UserMessageContent {
-    fn from(value: acp::ContentBlock) -> Self {
+impl UserMessageContent {
+    pub fn from_content_block(value: acp::ContentBlock, path_style: PathStyle) -> Self {
         match value {
             acp::ContentBlock::Text(text_content) => Self::Text(text_content.text),
             acp::ContentBlock::Image(image_content) => Self::Image(convert_image(image_content)),
@@ -2548,7 +2609,7 @@ impl From<acp::ContentBlock> for UserMessageContent {
                 Self::Text("[audio]".to_string())
             }
             acp::ContentBlock::ResourceLink(resource_link) => {
-                match MentionUri::parse(&resource_link.uri) {
+                match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
                         content: String::new(),
@@ -2561,7 +2622,7 @@ impl From<acp::ContentBlock> for UserMessageContent {
             }
             acp::ContentBlock::Resource(resource) => match resource.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(resource) => {
-                    match MentionUri::parse(&resource.uri) {
+                    match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
                             content: resource.text,

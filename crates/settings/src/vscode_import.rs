@@ -255,6 +255,7 @@ impl VsCodeSettings {
             excerpt_context_lines: None,
             expand_excerpt_lines: None,
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
+            sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
             gutter: self.gutter_content(),
             hide_mouse: None,
@@ -299,7 +300,14 @@ impl VsCodeSettings {
             toolbar: None,
             use_smartcase_search: self.read_bool("search.smartCase"),
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
+            completion_menu_scrollbar: None,
         }
+    }
+
+    fn sticky_scroll_content(&self) -> Option<StickyScrollContent> {
+        skip_default(StickyScrollContent {
+            enabled: self.read_bool("editor.stickyScroll.enabled"),
+        })
     }
 
     fn gutter_content(&self) -> Option<GutterContent> {
@@ -656,13 +664,13 @@ impl VsCodeSettings {
             hide_root: None,
             indent_guides: None,
             indent_size: None,
-            open_file_on_paste: None,
             scrollbar: None,
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
             starts_open: None,
             sticky_scroll: None,
+            auto_open: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -729,6 +737,7 @@ impl VsCodeSettings {
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
             scrollbar: None,
+            scroll_multiplier: None,
             toolbar: None,
         })
     }
@@ -745,7 +754,13 @@ impl VsCodeSettings {
         let env = self
             .read_value(&format!("terminal.integrated.env.{platform}"))
             .and_then(|v| v.as_object())
-            .map(|v| v.iter().map(|(k, v)| (k.clone(), v.to_string())).collect());
+            .map(|v| {
+                v.iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    // zed does not support substitutions, so this can break env vars
+                    .filter(|(_, v)| !v.contains('$'))
+                    .collect()
+            });
 
         ProjectTerminalSettingsContent {
             // TODO: handle arguments
@@ -855,6 +870,7 @@ impl VsCodeSettings {
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
             project_name: crate::Maybe::Unset,
+            prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())
@@ -874,6 +890,7 @@ impl VsCodeSettings {
                 })
                 .filter(|r| !r.is_empty()),
             private_files: None,
+            hidden_files: None,
         }
     }
 }

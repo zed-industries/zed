@@ -10,7 +10,7 @@ use language_model::LanguageModelToolResultContent;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
@@ -19,7 +19,7 @@ use language::{
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    Project,
+    ProgressToken, Project,
     agent_server_store::AgentServerCommand,
     search::{SearchQuery, SearchResult},
 };
@@ -710,7 +710,11 @@ async fn test_remote_cancel_language_server_work(
         cx.executor().run_until_parked();
 
         project.update(cx, |project, cx| {
-            project.cancel_language_server_work(server_id, Some(progress_token.into()), cx)
+            project.cancel_language_server_work(
+                server_id,
+                Some(ProgressToken::String(SharedString::from(progress_token))),
+                cx,
+            )
         });
 
         cx.executor().run_until_parked();
@@ -721,7 +725,7 @@ async fn test_remote_cancel_language_server_work(
             .await;
         assert_eq!(
             cancel_notification.token,
-            lsp::NumberOrString::String(progress_token.into())
+            lsp::NumberOrString::String(progress_token.to_owned())
         );
     }
 }
@@ -1489,10 +1493,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         .await
         .unwrap();
     let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
-    cx.update(|cx| {
-        workspace::init_settings(cx);
-        editor::init_settings(cx);
-    });
+
     let cx = cx.add_empty_window();
     let editor = cx.new_window_entity(|window, cx| {
         Editor::for_buffer(buffer, Some(project.clone()), window, cx)
@@ -1661,7 +1662,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     // Also try creating a new branch
     cx.update(|cx| {
         repository.update(cx, |repo, _cx| {
-            repo.create_branch("totally-new-branch".to_string())
+            repo.create_branch("totally-new-branch".to_string(), None)
         })
     })
     .await
@@ -1849,8 +1850,6 @@ pub async fn init_test(
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
-        client::init_settings(cx);
-
         HeadlessProject::new(
             crate::HeadlessAppState {
                 session: ssh_server_client,
@@ -1902,7 +1901,6 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
 
     cx.update(|cx| {
         Project::init(&client, cx);
-        language::init(cx);
     });
 
     cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))

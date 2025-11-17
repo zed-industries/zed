@@ -9,7 +9,7 @@ mod diagnostics_tests;
 
 use anyhow::Result;
 use buffer_diagnostics::BufferDiagnosticsEditor;
-use collections::{BTreeSet, HashMap};
+use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
@@ -17,10 +17,11 @@ use editor::{
     multibuffer_context_lines,
 };
 use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window, actions, div,
+    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, FocusOutEvent,
+    Focusable, Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
+use itertools::Itertools as _;
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, DiagnosticEntryRef, Point,
     ToTreeSitterPoint,
@@ -32,7 +33,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp::{self, Ordering},
+    cmp,
     ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
@@ -72,7 +73,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub(crate) struct ProjectDiagnosticsEditor {
-    project: Entity<Project>,
+    pub project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
@@ -89,8 +90,8 @@ pub(crate) struct ProjectDiagnosticsEditor {
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
-const DIAGNOSTICS_UPDATE_DELAY: Duration = Duration::from_millis(50);
-const DIAGNOSTICS_SUMMARY_UPDATE_DELAY: Duration = Duration::from_millis(30);
+const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+const DIAGNOSTICS_SUMMARY_UPDATE_DEBOUNCE: Duration = Duration::from_millis(30);
 
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -149,6 +150,12 @@ impl Render for ProjectDiagnosticsEditor {
     }
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+enum RetainExcerpts {
+    All,
+    Dirty,
+}
+
 impl ProjectDiagnosticsEditor {
     pub fn register(
         workspace: &mut Workspace,
@@ -165,14 +172,20 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let project_event_subscription =
-            cx.subscribe_in(&project_handle, window, |this, _project, event, window, cx| match event {
+        let project_event_subscription = cx.subscribe_in(
+            &project_handle,
+            window,
+            |this, _project, event, window, cx| match event {
                 project::Event::DiskBasedDiagnosticsStarted { .. } => {
                     cx.notify();
                 }
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
-                    this.update_stale_excerpts(window, cx);
+                    this.close_diagnosticless_buffers(
+                        cx,
+                        this.editor.focus_handle(cx).contains_focused(window, cx)
+                            || this.focus_handle.contains_focused(window, cx),
+                    );
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
@@ -181,34 +194,29 @@ impl ProjectDiagnosticsEditor {
                     this.paths_to_update.extend(paths.clone());
                     this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
                         cx.background_executor()
-                            .timer(DIAGNOSTICS_SUMMARY_UPDATE_DELAY)
+                            .timer(DIAGNOSTICS_SUMMARY_UPDATE_DEBOUNCE)
                             .await;
                         this.update(cx, |this, cx| {
                             this.update_diagnostic_summary(cx);
                         })
                         .log_err();
                     });
-                    cx.emit(EditorEvent::TitleChanged);
 
-                    if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. recording change");
-                    } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
-                        this.update_stale_excerpts(window, cx);
-                    }
+                    log::debug!(
+                        "diagnostics updated for server {language_server_id}, \
+                        paths {paths:?}. updating excerpts"
+                    );
+                    this.update_stale_excerpts(window, cx);
                 }
                 _ => {}
-            });
+            },
+        );
 
         let focus_handle = cx.focus_handle();
-        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
-            this.focus_in(window, cx)
-        })
-        .detach();
-        cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| {
-            this.focus_out(window, cx)
-        })
-        .detach();
+        cx.on_focus_in(&focus_handle, window, Self::focus_in)
+            .detach();
+        cx.on_focus_out(&focus_handle, window, Self::focus_out)
+            .detach();
 
         let excerpts = cx.new(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new(|cx| {
@@ -238,8 +246,11 @@ impl ProjectDiagnosticsEditor {
                             window.focus(&this.focus_handle);
                         }
                     }
-                    EditorEvent::Blurred => this.update_stale_excerpts(window, cx),
-                    EditorEvent::Saved => this.update_stale_excerpts(window, cx),
+                    EditorEvent::Blurred => this.close_diagnosticless_buffers(cx, false),
+                    EditorEvent::Saved => this.close_diagnosticless_buffers(cx, true),
+                    EditorEvent::SelectionsChanged { .. } => {
+                        this.close_diagnosticless_buffers(cx, true)
+                    }
                     _ => {}
                 }
             },
@@ -258,8 +269,7 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
             });
-            this.diagnostics.clear();
-            this.update_all_excerpts(window, cx);
+            this.refresh(window, cx);
         })
         .detach();
 
@@ -279,19 +289,62 @@ impl ProjectDiagnosticsEditor {
             diagnostic_summary_update: Task::ready(()),
             _subscription: project_event_subscription,
         };
-        this.update_all_excerpts(window, cx);
+        this.refresh(window, cx);
         this
     }
 
+    /// Closes all excerpts of buffers that:
+    ///  - have no diagnostics anymore
+    ///  - are saved (not dirty)
+    ///  - and, if `retain_selections` is true, do not have selections within them
+    fn close_diagnosticless_buffers(&mut self, cx: &mut Context<Self>, retain_selections: bool) {
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+        let buffer = self.multibuffer.read(cx);
+        let buffer_ids = buffer.all_buffer_ids();
+        let selected_buffers = self.editor.update(cx, |editor, _| {
+            editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .filter_map(|anchor| anchor.start.buffer_id)
+                .collect::<HashSet<_>>()
+        });
+        for buffer_id in buffer_ids {
+            if retain_selections && selected_buffers.contains(&buffer_id) {
+                continue;
+            }
+            let has_no_blocks = self
+                .blocks
+                .get(&buffer_id)
+                .is_none_or(|blocks| blocks.is_empty());
+            if !has_no_blocks {
+                continue;
+            }
+            let is_dirty = self
+                .multibuffer
+                .read(cx)
+                .buffer(buffer_id)
+                .is_none_or(|buffer| buffer.read(cx).is_dirty());
+            if is_dirty {
+                continue;
+            }
+            self.multibuffer.update(cx, |b, cx| {
+                b.remove_excerpts_for_buffer(buffer_id, cx);
+            });
+        }
+    }
+
     fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.update_excerpts_task.is_some() || self.multibuffer.read(cx).is_dirty(cx) {
+        if self.update_excerpts_task.is_some() {
             return;
         }
 
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
-                .timer(DIAGNOSTICS_UPDATE_DELAY)
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
             loop {
                 let Some(path) = this.update(cx, |this, cx| {
@@ -312,7 +365,14 @@ impl ProjectDiagnosticsEditor {
                     .log_err()
                 {
                     this.update_in(cx, |this, window, cx| {
-                        this.update_excerpts(buffer, window, cx)
+                        let focused = this.editor.focus_handle(cx).contains_focused(window, cx)
+                            || this.focus_handle.contains_focused(window, cx);
+                        let retain_excerpts = if focused {
+                            RetainExcerpts::All
+                        } else {
+                            RetainExcerpts::Dirty
+                        };
+                        this.update_excerpts(buffer, retain_excerpts, window, cx)
                     })?
                     .await?;
                 }
@@ -367,7 +427,7 @@ impl ProjectDiagnosticsEditor {
         if self.update_excerpts_task.is_some() {
             self.update_excerpts_task = None;
         } else {
-            self.update_all_excerpts(window, cx);
+            self.refresh(window, cx);
         }
         cx.notify();
     }
@@ -378,34 +438,29 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn focus_out(&mut self, _: FocusOutEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
-            self.update_stale_excerpts(window, cx);
+            self.close_diagnosticless_buffers(cx, false);
         }
     }
 
-    /// Enqueue an update of all excerpts. Updates all paths that either
-    /// currently have diagnostics or are currently present in this view.
-    fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Clears all diagnostics in this view, and refetches them from the project.
+    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.diagnostics.clear();
+        self.editor.update(cx, |editor, cx| {
+            for (_, block_ids) in self.blocks.drain() {
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_blocks(block_ids.into_iter().collect(), cx)
+                });
+            }
+        });
+        self.close_diagnosticless_buffers(cx, false);
         self.project.update(cx, |project, cx| {
-            let mut project_paths = project
+            self.paths_to_update = project
                 .diagnostic_summaries(false, cx)
                 .map(|(project_path, _, _)| project_path)
                 .collect::<BTreeSet<_>>();
-
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                for buffer in multibuffer.all_buffers() {
-                    if let Some(file) = buffer.read(cx).file() {
-                        project_paths.insert(ProjectPath {
-                            path: file.path().clone(),
-                            worktree_id: file.worktree_id(cx),
-                        });
-                    }
-                }
-            });
-
-            self.paths_to_update = project_paths;
         });
 
         self.update_stale_excerpts(window, cx);
@@ -431,11 +486,12 @@ impl ProjectDiagnosticsEditor {
     fn update_excerpts(
         &mut self,
         buffer: Entity<Buffer>,
+        retain_excerpts: RetainExcerpts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let was_empty = self.multibuffer.read(cx).is_empty();
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let mut buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
 
         let max_severity = if self.include_warnings {
@@ -483,38 +539,62 @@ impl ProjectDiagnosticsEditor {
             }
             let mut blocks: Vec<DiagnosticBlock> = Vec::new();
 
+            let diagnostics_toolbar_editor = Arc::new(this.clone());
             for (_, group) in grouped {
                 let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
                 if group_severity.is_none_or(|s| s > max_severity) {
                     continue;
                 }
+                let languages = this
+                    .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
+                    .ok();
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
-                        Some(Arc::new(this.clone())),
+                        Some(diagnostics_toolbar_editor.clone()),
+                        languages,
                         cx,
                     )
                 })?;
 
-                for item in more {
-                    let i = blocks
-                        .binary_search_by(|probe| {
-                            probe
-                                .initial_range
-                                .start
-                                .cmp(&item.initial_range.start)
-                                .then(probe.initial_range.end.cmp(&item.initial_range.end))
-                                .then(Ordering::Greater)
-                        })
-                        .unwrap_or_else(|i| i);
-                    blocks.insert(i, item);
-                }
+                blocks.extend(more);
             }
 
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let cmp_excerpts = |buffer_snapshot: &BufferSnapshot,
+                                a: &ExcerptRange<text::Anchor>,
+                                b: &ExcerptRange<text::Anchor>| {
+                let context_start = || a.context.start.cmp(&b.context.start, buffer_snapshot);
+                let context_end = || a.context.end.cmp(&b.context.end, buffer_snapshot);
+                let primary_start = || a.primary.start.cmp(&b.primary.start, buffer_snapshot);
+                let primary_end = || a.primary.end.cmp(&b.primary.end, buffer_snapshot);
+                context_start()
+                    .then_with(context_end)
+                    .then_with(primary_start)
+                    .then_with(primary_end)
+                    .then(cmp::Ordering::Greater)
+            };
+
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = this.update(cx, |this, cx| {
+                this.multibuffer.update(cx, |multi_buffer, cx| {
+                    let is_dirty = multi_buffer
+                        .buffer(buffer_id)
+                        .is_none_or(|buffer| buffer.read(cx).is_dirty());
+                    match retain_excerpts {
+                        RetainExcerpts::Dirty if !is_dirty => Vec::new(),
+                        RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
+                            .excerpts_for_buffer(buffer_id, cx)
+                            .into_iter()
+                            .map(|(_, range)| range)
+                            .sorted_by(|a, b| cmp_excerpts(&buffer_snapshot, a, b))
+                            .collect(),
+                    }
+                })
+            })?;
+
+            let mut result_blocks = vec![None; excerpt_ranges.len()];
             let context_lines = cx.update(|_, cx| multibuffer_context_lines(cx))?;
-            for b in blocks.iter() {
+            for b in blocks {
                 let excerpt_range = context_range_for_entry(
                     b.initial_range.clone(),
                     context_lines,
@@ -522,26 +602,18 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
                 .await;
-
+                buffer_snapshot = cx.update(|_, cx| buffer.read(cx).snapshot())?;
+                let initial_range = buffer_snapshot.anchor_after(b.initial_range.start)
+                    ..buffer_snapshot.anchor_before(b.initial_range.end);
+                let excerpt_range = ExcerptRange {
+                    context: excerpt_range,
+                    primary: initial_range,
+                };
                 let i = excerpt_ranges
-                    .binary_search_by(|probe| {
-                        probe
-                            .context
-                            .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(probe.primary.start.cmp(&b.initial_range.start))
-                            .then(probe.primary.end.cmp(&b.initial_range.end))
-                            .then(cmp::Ordering::Greater)
-                    })
+                    .binary_search_by(|probe| cmp_excerpts(&buffer_snapshot, probe, &excerpt_range))
                     .unwrap_or_else(|i| i);
-                excerpt_ranges.insert(
-                    i,
-                    ExcerptRange {
-                        context: excerpt_range,
-                        primary: b.initial_range.clone(),
-                    },
-                )
+                excerpt_ranges.insert(i, excerpt_range);
+                result_blocks.insert(i, Some(b));
             }
 
             this.update_in(cx, |this, window, cx| {
@@ -553,6 +625,13 @@ impl ProjectDiagnosticsEditor {
                     })
                 }
                 let (anchor_ranges, _) = this.multibuffer.update(cx, |multi_buffer, cx| {
+                    let excerpt_ranges = excerpt_ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange {
+                            context: range.context.to_point(&buffer_snapshot),
+                            primary: range.primary.to_point(&buffer_snapshot),
+                        })
+                        .collect();
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
@@ -562,7 +641,7 @@ impl ProjectDiagnosticsEditor {
                     )
                 });
                 #[cfg(test)]
-                let cloned_blocks = blocks.clone();
+                let cloned_blocks = result_blocks.clone();
 
                 if was_empty && let Some(anchor_range) = anchor_ranges.first() {
                     let range_to_select = anchor_range.start..anchor_range.start;
@@ -576,22 +655,20 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
 
-                let editor_blocks =
-                    anchor_ranges
-                        .into_iter()
-                        .zip(blocks.into_iter())
-                        .map(|(anchor, block)| {
-                            let editor = this.editor.downgrade();
-                            BlockProperties {
-                                placement: BlockPlacement::Near(anchor.start),
-                                height: Some(1),
-                                style: BlockStyle::Flex,
-                                render: Arc::new(move |bcx| {
-                                    block.render_block(editor.clone(), bcx)
-                                }),
-                                priority: 1,
-                            }
-                        });
+                let editor_blocks = anchor_ranges
+                    .into_iter()
+                    .zip_eq(result_blocks.into_iter())
+                    .filter_map(|(anchor, block)| {
+                        let block = block?;
+                        let editor = this.editor.downgrade();
+                        Some(BlockProperties {
+                            placement: BlockPlacement::Near(anchor.start),
+                            height: Some(1),
+                            style: BlockStyle::Flex,
+                            render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
+                            priority: 1,
+                        })
+                    });
 
                 let block_ids = this.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
@@ -601,7 +678,9 @@ impl ProjectDiagnosticsEditor {
 
                 #[cfg(test)]
                 {
-                    for (block_id, block) in block_ids.iter().zip(cloned_blocks.iter()) {
+                    for (block_id, block) in
+                        block_ids.iter().zip(cloned_blocks.into_iter().flatten())
+                    {
                         let markdown = block.markdown.clone();
                         editor::test::set_block_content_for_tests(
                             &this.editor,
@@ -626,6 +705,7 @@ impl ProjectDiagnosticsEditor {
 
     fn update_diagnostic_summary(&mut self, cx: &mut Context<Self>) {
         self.summary = self.project.read(cx).diagnostic_summary(false, cx);
+        cx.emit(EditorEvent::TitleChanged);
     }
 }
 
@@ -843,13 +923,6 @@ impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
         .unwrap_or(false)
     }
 
-    fn has_stale_excerpts(&self, cx: &App) -> bool {
-        self.read_with(cx, |project_diagnostics_editor, _cx| {
-            !project_diagnostics_editor.paths_to_update.is_empty()
-        })
-        .unwrap_or(false)
-    }
-
     fn is_updating(&self, cx: &App) -> bool {
         self.read_with(cx, |project_diagnostics_editor, cx| {
             project_diagnostics_editor.update_excerpts_task.is_some()
@@ -872,7 +945,7 @@ impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
 
     fn refresh_diagnostics(&self, window: &mut Window, cx: &mut App) {
         let _ = self.update(cx, |project_diagnostics_editor, cx| {
-            project_diagnostics_editor.update_all_excerpts(window, cx);
+            project_diagnostics_editor.refresh(window, cx);
         });
     }
 
@@ -904,8 +977,8 @@ async fn context_range_for_entry(
     context: u32,
     snapshot: BufferSnapshot,
     cx: &mut AsyncApp,
-) -> Range<Point> {
-    if let Some(rows) = heuristic_syntactic_expand(
+) -> Range<text::Anchor> {
+    let range = if let Some(rows) = heuristic_syntactic_expand(
         range.clone(),
         DIAGNOSTIC_EXPANSION_ROW_LIMIT,
         snapshot.clone(),
@@ -913,15 +986,17 @@ async fn context_range_for_entry(
     )
     .await
     {
-        return Range {
+        Range {
             start: Point::new(*rows.start(), 0),
             end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-        };
-    }
-    Range {
-        start: Point::new(range.start.row.saturating_sub(context), 0),
-        end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
-    }
+        }
+    } else {
+        Range {
+            start: Point::new(range.start.row.saturating_sub(context), 0),
+            end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
+        }
+    };
+    snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end)
 }
 
 /// Expands the input range using syntax information from TreeSitter. This expansion will be limited
@@ -1010,12 +1085,6 @@ async fn heuristic_syntactic_expand(
                                 return;
                             }
                         }
-
-                        log::info!(
-                            "Expanding to ancestor started on {} node\
-                            exceeding row limit of {max_row_count}.",
-                            node.grammar_name()
-                        );
                         *ancestor_range = Some(None);
                     }
                 })

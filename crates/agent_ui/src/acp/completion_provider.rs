@@ -109,6 +109,8 @@ impl ContextPickerCompletionProvider {
                 icon_path: Some(mode.icon().path().into()),
                 documentation: None,
                 source: project::CompletionSource::Custom,
+                match_start: None,
+                snippet_deduplication_key: None,
                 insert_text_mode: None,
                 // This ensures that when a user accepts this completion, the
                 // completion menu will still be shown after "@category " is
@@ -146,6 +148,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
                 thread_entry.title().clone(),
@@ -177,6 +181,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
             icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
                 rule.title,
@@ -233,6 +239,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 file_name,
@@ -253,17 +261,22 @@ impl ContextPickerCompletionProvider {
     ) -> Option<Completion> {
         let project = workspace.read(cx).project().clone();
 
-        let label = CodeLabel::plain(symbol.name.clone(), None);
-
-        let abs_path = match &symbol.path {
-            SymbolLocation::InProject(project_path) => {
-                project.read(cx).absolute_path(&project_path, cx)?
-            }
+        let (abs_path, file_name) = match &symbol.path {
+            SymbolLocation::InProject(project_path) => (
+                project.read(cx).absolute_path(&project_path, cx)?,
+                project_path.path.file_name()?.to_string().into(),
+            ),
             SymbolLocation::OutsideProject {
                 abs_path,
                 signature: _,
-            } => PathBuf::from(abs_path.as_ref()),
+            } => (
+                PathBuf::from(abs_path.as_ref()),
+                abs_path.file_name().map(|f| f.to_string_lossy())?,
+            ),
         };
+
+        let label = build_symbol_label(&symbol.name, &file_name, symbol.range.start.0.row + 1, cx);
+
         let uri = MentionUri::Symbol {
             abs_path,
             name: symbol.name.clone(),
@@ -279,6 +292,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 symbol.name.into(),
@@ -311,6 +326,8 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 url_to_fetch.to_string().into(),
@@ -379,6 +396,8 @@ impl ContextPickerCompletionProvider {
             icon_path: Some(action.icon().path().into()),
             documentation: None,
             source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             // This ensures that when a user accepts this completion, the
             // completion menu will still be shown after "@category " is
@@ -570,6 +589,7 @@ impl ContextPickerCompletionProvider {
             .unwrap_or_default();
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
+        let include_root_name = workspace.visible_worktrees(cx).count() > 1;
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
@@ -596,7 +616,11 @@ impl ContextPickerCompletionProvider {
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
                         .map(|worktree| {
-                            let path_prefix = worktree.read(cx).root_name().into();
+                            let path_prefix = if include_root_name {
+                                worktree.read(cx).root_name().into()
+                            } else {
+                                RelPath::empty().into()
+                            };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
                                     score: 1.,
@@ -636,16 +660,14 @@ impl ContextPickerCompletionProvider {
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
         let embedded_context = self.prompt_capabilities.borrow().embedded_context;
-        let mut entries = if embedded_context {
-            vec![
-                ContextPickerEntry::Mode(ContextPickerMode::File),
-                ContextPickerEntry::Mode(ContextPickerMode::Symbol),
-                ContextPickerEntry::Mode(ContextPickerMode::Thread),
-            ]
-        } else {
-            // File is always available, but we don't need a mode entry
-            vec![]
-        };
+        let mut entries = vec![
+            ContextPickerEntry::Mode(ContextPickerMode::File),
+            ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+        ];
+
+        if embedded_context {
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
+        }
 
         let has_selection = workspace
             .read(cx)
@@ -674,15 +696,30 @@ impl ContextPickerCompletionProvider {
     }
 }
 
-fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
+fn build_symbol_label(symbol_name: &str, file_name: &str, line: u32, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+    let mut label = CodeLabelBuilder::default();
+
+    label.push_str(symbol_name, None);
+    label.push_str(" ", None);
+    label.push_str(&format!("{} L{}", file_name, line), comment_id);
+
+    label.build()
+}
+
+fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
+    let path = cx
+        .theme()
+        .syntax()
+        .highlight_id("variable")
+        .map(HighlightId);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(directory, comment_id);
+        label.push_str(directory, path);
     }
 
     label.build()
@@ -751,6 +788,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 )),
                                 source: project::CompletionSource::Custom,
                                 icon_path: None,
+                                match_start: None,
+                                snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let editor = editor.clone();
@@ -812,9 +851,21 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                         path: mat.path.clone(),
                                     };
 
+                                    // If path is empty, this means we're matching with the root directory itself
+                                    // so we use the path_prefix as the name
+                                    let path_prefix = if mat.path.is_empty() {
+                                        project
+                                            .read(cx)
+                                            .worktree_for_id(project_path.worktree_id, cx)
+                                            .map(|wt| wt.read(cx).root_name().into())
+                                            .unwrap_or_else(|| mat.path_prefix.clone())
+                                    } else {
+                                        mat.path_prefix.clone()
+                                    };
+
                                     Self::completion_for_path(
                                         project_path,
-                                        &mat.path_prefix,
+                                        &path_prefix,
                                         is_recent,
                                         mat.is_dir,
                                         source_range.clone(),

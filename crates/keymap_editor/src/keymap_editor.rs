@@ -1,16 +1,17 @@
 use std::{
+    cell::RefCell,
     cmp::{self},
     ops::{Not as _, Range},
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod ui_components;
 
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, Editor, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, SizingBehavior};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -41,7 +42,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::OpenKeymap;
+use zed_actions::{ChangeKeybinding, OpenKeymap};
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -80,35 +81,75 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.on_action(|_: &OpenKeymap, cx| {
+    fn common(filter: Option<String>, cx: &mut App) {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
             workspace
-                .with_local_workspace(window, cx, |workspace, window, cx| {
+                .with_local_workspace(window, cx, move |workspace, window, cx| {
                     let existing = workspace
                         .active_pane()
                         .read(cx)
                         .items()
                         .find_map(|item| item.downcast::<KeymapEditor>());
 
-                    if let Some(existing) = existing {
+                    let keymap_editor = if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
+                        existing
                     } else {
                         let keymap_editor =
                             cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
                         workspace.add_item_to_active_pane(
-                            Box::new(keymap_editor),
+                            Box::new(keymap_editor.clone()),
                             None,
                             true,
                             window,
                             cx,
                         );
+                        keymap_editor
+                    };
+
+                    if let Some(filter) = filter {
+                        keymap_editor.update(cx, |editor, cx| {
+                            editor.filter_editor.update(cx, |editor, cx| {
+                                editor.clear(window, cx);
+                                editor.insert(&filter, window, cx);
+                            });
+                            if !editor.has_binding_for(&filter) {
+                                open_binding_modal_after_loading(cx)
+                            }
+                        })
                     }
                 })
                 .detach();
         })
-    });
+    }
+
+    cx.on_action(|_: &OpenKeymap, cx| common(None, cx));
+    cx.on_action(|action: &ChangeKeybinding, cx| common(Some(action.action.clone()), cx));
 
     register_serializable_item::<KeymapEditor>(cx);
+}
+
+fn open_binding_modal_after_loading(cx: &mut Context<KeymapEditor>) {
+    let started_at = Instant::now();
+    let observer = Rc::new(RefCell::new(None));
+    let handle = {
+        let observer = Rc::clone(&observer);
+        cx.observe(&cx.entity(), move |editor, _, cx| {
+            let subscription = observer.borrow_mut().take();
+
+            if started_at.elapsed().as_secs() > 10 {
+                return;
+            }
+            if !editor.matches.is_empty() {
+                editor.selected_index = Some(0);
+                cx.dispatch_action(&CreateBinding);
+                return;
+            }
+
+            *observer.borrow_mut() = subscription;
+        })
+    };
+    *observer.borrow_mut() = Some(handle);
 }
 
 pub struct KeymapEventChannel {}
@@ -1324,6 +1365,13 @@ impl KeymapEditor {
         self.keystroke_editor.update(cx, |editor, cx| {
             editor.set_keystrokes(keystrokes, cx);
         });
+    }
+
+    fn has_binding_for(&self, action_name: &str) -> bool {
+        self.keybindings
+            .iter()
+            .filter(|kb| kb.keystrokes().is_some())
+            .any(|kb| kb.action().name == action_name)
     }
 }
 
@@ -2740,10 +2788,10 @@ impl ActionArgumentsEditor {
                 let editor = cx.new_window_entity(|window, cx| {
                     let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
                     let mut editor = Editor::new(
-                        editor::EditorMode::Full {
+                        EditorMode::Full {
                             scale_ui_elements_with_buffer_font_size: true,
                             show_active_line_background: false,
-                            sized_by_content: true,
+                            sizing_behavior: SizingBehavior::SizeByContent,
                         },
                         multi_buffer,
                         project.upgrade(),
@@ -2945,6 +2993,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     documentation: None,
                     source: project::CompletionSource::Custom,
                     icon_path: None,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
                 })

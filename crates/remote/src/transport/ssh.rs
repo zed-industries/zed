@@ -39,6 +39,7 @@ pub(crate) struct SshRemoteConnection {
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
     ssh_shell: String,
+    ssh_shell_kind: ShellKind,
     ssh_default_system_shell: String,
     _temp_dir: TempDir,
 }
@@ -112,7 +113,7 @@ impl MasterProcess {
             .args(additional_args)
             .args(args);
 
-        master_process.arg(format!("ControlPath={}", socket_path.display()));
+        master_process.arg(format!("ControlPath='{}'", socket_path.display()));
 
         let process = master_process.arg(&url).spawn()?;
 
@@ -241,6 +242,7 @@ impl RemoteConnection for SshRemoteConnection {
         let Self {
             ssh_path_style,
             socket,
+            ssh_shell_kind,
             ssh_shell,
             ..
         } = self;
@@ -254,6 +256,7 @@ impl RemoteConnection for SshRemoteConnection {
             env,
             *ssh_path_style,
             ssh_shell,
+            *ssh_shell_kind,
             socket.ssh_args(),
         )
     }
@@ -303,7 +306,7 @@ impl RemoteConnection for SshRemoteConnection {
                     use futures::AsyncWriteExt;
                     let sftp_batch = format!("put -r {src_path_display} {dest_path_str}\n");
                     stdin.write_all(sftp_batch.as_bytes()).await?;
-                    drop(stdin);
+                    stdin.flush().await?;
                 }
 
                 let output = child.output().await?;
@@ -367,7 +370,7 @@ impl RemoteConnection for SshRemoteConnection {
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command("env", &proxy_args)
+            .ssh_command(self.ssh_shell_kind, "env", &proxy_args, false)
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -484,12 +487,21 @@ impl SshRemoteConnection {
         drop(askpass);
 
         let ssh_shell = socket.shell().await;
+        log::info!("Remote shell discovered: {}", ssh_shell);
         let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
+        log::info!("Remote platform discovered: {}", ssh_shell);
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,
         };
         let ssh_default_system_shell = String::from("/bin/sh");
+        let ssh_shell_kind = ShellKind::new(
+            &ssh_shell,
+            match ssh_platform.os {
+                "windows" => true,
+                _ => false,
+            },
+        );
 
         let mut this = Self {
             socket,
@@ -499,6 +511,7 @@ impl SshRemoteConnection {
             ssh_path_style,
             ssh_platform,
             ssh_shell,
+            ssh_shell_kind,
             ssh_default_system_shell,
         };
 
@@ -563,7 +576,12 @@ impl SshRemoteConnection {
 
         if self
             .socket
-            .run_command(&dst_path.display(self.path_style()), &["version"])
+            .run_command(
+                self.ssh_shell_kind,
+                &dst_path.display(self.path_style()),
+                &["version"],
+                true,
+            )
             .await
             .is_ok()
         {
@@ -590,23 +608,23 @@ impl SshRemoteConnection {
             .unwrap(),
         );
         if !self.socket.connection_options.upload_binary_over_ssh
-            && let Some((url, body)) = delegate
-                .get_download_params(self.ssh_platform, release_channel, wanted_version, cx)
+            && let Some(url) = delegate
+                .get_download_url(self.ssh_platform, release_channel, wanted_version, cx)
                 .await?
         {
             match self
-                .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
+                .download_binary_on_server(&url, &tmp_path_gz, delegate, cx)
                 .await
             {
                 Ok(_) => {
                     self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                        .await?;
+                        .await
+                        .context("extracting server binary")?;
                     return Ok(dst_path);
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to download binary on server, attempting to upload server: {}",
-                        e
+                        "Failed to download binary on server, attempting to download locally and then upload it the server: {e:#}",
                     )
                 }
             }
@@ -614,25 +632,32 @@ impl SshRemoteConnection {
 
         let src_path = delegate
             .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)
-            .await?;
+            .await
+            .context("downloading server binary locally")?;
         self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
-            .await?;
+            .await
+            .context("uploading server binary")?;
         self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-            .await?;
+            .await
+            .context("extracting server binary")?;
         Ok(dst_path)
     }
 
     async fn download_binary_on_server(
         &self,
         url: &str,
-        body: &str,
         tmp_path_gz: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
+                .run_command(
+                    self.ssh_shell_kind,
+                    "mkdir",
+                    &["-p", parent.display(self.path_style()).as_ref()],
+                    true,
+                )
                 .await?;
         }
 
@@ -641,47 +666,49 @@ impl SshRemoteConnection {
         match self
             .socket
             .run_command(
+                self.ssh_shell_kind,
                 "curl",
                 &[
                     "-f",
                     "-L",
-                    "-X",
-                    "GET",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    body,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
                 ],
+                true,
             )
             .await
         {
             Ok(_) => {}
             Err(e) => {
-                if self.socket.run_command("which", &["curl"]).await.is_ok() {
+                if self
+                    .socket
+                    .run_command(self.ssh_shell_kind, "which", &["curl"], true)
+                    .await
+                    .is_ok()
+                {
                     return Err(e);
                 }
 
+                log::info!("curl is not available, trying wget");
                 match self
                     .socket
                     .run_command(
+                        self.ssh_shell_kind,
                         "wget",
-                        &[
-                            "--header=Content-Type: application/json",
-                            "--body-data",
-                            body,
-                            url,
-                            "-O",
-                            &tmp_path_gz.display(self.path_style()),
-                        ],
+                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
+                        true,
                     )
                     .await
                 {
                     Ok(_) => {}
                     Err(e) => {
-                        if self.socket.run_command("which", &["wget"]).await.is_ok() {
+                        if self
+                            .socket
+                            .run_command(self.ssh_shell_kind, "which", &["wget"], true)
+                            .await
+                            .is_ok()
+                        {
                             return Err(e);
                         } else {
                             anyhow::bail!("Neither curl nor wget is available");
@@ -703,7 +730,12 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
+                .run_command(
+                    self.ssh_shell_kind,
+                    "mkdir",
+                    &["-p", parent.display(self.path_style()).as_ref()],
+                    true,
+                )
                 .await?;
         }
 
@@ -743,14 +775,23 @@ impl SshRemoteConnection {
         let dst_path = dst_path.display(self.path_style());
         let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            let tmp_path = shell_kind.try_quote(&tmp_path).context("shell quoting")?;
             format!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
             )
         } else {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
             format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
         let args = shell_kind.args_for_shell(false, script.to_string());
-        self.socket.run_command("sh", &args).await?;
+        self.socket
+            .run_command(shell_kind, "sh", &args, true)
+            .await?;
         Ok(())
     }
 
@@ -815,7 +856,7 @@ impl SshRemoteConnection {
             if let Some(mut stdin) = child.stdin.take() {
                 use futures::AsyncWriteExt;
                 stdin.write_all(sftp_batch.as_bytes()).await?;
-                drop(stdin);
+                stdin.flush().await?;
             }
 
             let output = child.output().await?;
@@ -894,11 +935,17 @@ impl SshSocket {
     // Furthermore, some setups (e.g. Coder) will change directory when SSH'ing
     // into a machine. You must use `cd` to get back to $HOME.
     // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
-    fn ssh_command(&self, program: &str, args: &[impl AsRef<str>]) -> process::Command {
-        let shell_kind = ShellKind::Posix;
+    fn ssh_command(
+        &self,
+        shell_kind: ShellKind,
+        program: &str,
+        args: &[impl AsRef<str>],
+        allow_pseudo_tty: bool,
+    ) -> process::Command {
         let mut command = util::command::new_smol_command("ssh");
+        let program = shell_kind.prepend_command_prefix(program);
         let mut to_run = shell_kind
-            .try_quote(program)
+            .try_quote_prefix_aware(&program)
             .expect("shell quoting")
             .into_owned();
         for arg in args {
@@ -913,18 +960,27 @@ impl SshSocket {
         let separator = shell_kind.sequential_commands_separator();
         let to_run = format!("cd{separator} {to_run}");
         self.ssh_options(&mut command, true)
-            .arg(self.connection_options.ssh_url())
-            .arg("-T")
-            .arg(to_run);
+            .arg(self.connection_options.ssh_url());
+        if !allow_pseudo_tty {
+            command.arg("-T");
+        }
+        command.arg(to_run);
         log::debug!("ssh {:?}", command);
         command
     }
 
-    async fn run_command(&self, program: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let output = self.ssh_command(program, args).output().await?;
+    async fn run_command(
+        &self,
+        shell_kind: ShellKind,
+        program: &str,
+        args: &[impl AsRef<str>],
+        allow_pseudo_tty: bool,
+    ) -> Result<String> {
+        let mut command = self.ssh_command(shell_kind, program, args, allow_pseudo_tty);
+        let output = command.output().await?;
         anyhow::ensure!(
             output.status.success(),
-            "failed to run command: {}",
+            "failed to run command {command:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -994,12 +1050,7 @@ impl SshSocket {
     }
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
-        let program = if shell == ShellKind::Nushell {
-            "^uname"
-        } else {
-            "uname"
-        };
-        let uname = self.run_command(program, &["-sm"]).await?;
+        let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
@@ -1030,11 +1081,21 @@ impl SshSocket {
     }
 
     async fn shell(&self) -> String {
-        match self.run_command("sh", &["-c", "echo $SHELL"]).await {
-            Ok(shell) => shell.trim().to_owned(),
+        let default_shell = "sh";
+        match self
+            .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
+            .await
+        {
+            Ok(shell) => match shell.trim() {
+                "" => {
+                    log::error!("$SHELL is not set, falling back to {default_shell}");
+                    default_shell.to_owned()
+                }
+                shell => shell.to_owned(),
+            },
             Err(e) => {
                 log::error!("Failed to get shell: {e}");
-                "sh".to_owned()
+                default_shell.to_owned()
             }
         }
     }
@@ -1256,11 +1317,11 @@ fn build_command(
     ssh_env: HashMap<String, String>,
     ssh_path_style: PathStyle,
     ssh_shell: &str,
+    ssh_shell_kind: ShellKind,
     ssh_args: Vec<String>,
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
-    let shell_kind = ShellKind::new(ssh_shell, false);
     let mut exec = String::new();
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
@@ -1270,12 +1331,24 @@ fn build_command(
         const TILDE_PREFIX: &'static str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
             let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(exec, "cd \"$HOME/{working_dir}\" && ",)?;
+            write!(
+                exec,
+                "cd \"$HOME/{working_dir}\" {} ",
+                ssh_shell_kind.sequential_and_commands_separator()
+            )?;
         } else {
-            write!(exec, "cd \"{working_dir}\" && ",)?;
+            write!(
+                exec,
+                "cd \"{working_dir}\" {} ",
+                ssh_shell_kind.sequential_and_commands_separator()
+            )?;
         }
     } else {
-        write!(exec, "cd && ")?;
+        write!(
+            exec,
+            "cd {} ",
+            ssh_shell_kind.sequential_and_commands_separator()
+        )?;
     };
     write!(exec, "exec env ")?;
 
@@ -1284,7 +1357,7 @@ fn build_command(
             exec,
             "{}={} ",
             k,
-            shell_kind.try_quote(v).context("shell quoting")?
+            ssh_shell_kind.try_quote(v).context("shell quoting")?
         )?;
     }
 
@@ -1292,12 +1365,12 @@ fn build_command(
         write!(
             exec,
             "{}",
-            shell_kind
-                .try_quote(&input_program)
+            ssh_shell_kind
+                .try_quote_prefix_aware(&input_program)
                 .context("shell quoting")?
         )?;
         for arg in input_args {
-            let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
+            let arg = ssh_shell_kind.try_quote(&arg).context("shell quoting")?;
             write!(exec, " {}", &arg)?;
         }
     } else {
@@ -1341,6 +1414,7 @@ mod tests {
             env.clone(),
             PathStyle::Posix,
             "/bin/fish",
+            ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
         )?;
 
@@ -1370,6 +1444,7 @@ mod tests {
             env.clone(),
             PathStyle::Posix,
             "/bin/fish",
+            ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
         )?;
 

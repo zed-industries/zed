@@ -1148,9 +1148,9 @@ impl MultiBuffer {
         let mut counts: Vec<usize> = Vec::new();
         for range in expanded_ranges {
             if let Some(last_range) = merged_ranges.last_mut() {
-                debug_assert!(
+                assert!(
                     last_range.context.start <= range.context.start,
-                    "Last range: {last_range:?} Range: {range:?}"
+                    "ranges must be sorted: {last_range:?} <= {range:?}"
                 );
                 if last_range.context.end >= range.context.start
                     || last_range.context.end.row + 1 == range.context.start.row
@@ -1539,6 +1539,24 @@ impl MultiBuffer {
             let text_anchor = snapshot.anchor_after(point);
             Anchor::in_buffer(excerpt_id, snapshot.remote_id(), text_anchor)
         })
+    }
+
+    pub fn buffer_anchor_to_anchor(
+        &self,
+        buffer: &Entity<Buffer>,
+        anchor: text::Anchor,
+        cx: &App,
+    ) -> Option<Anchor> {
+        let snapshot = buffer.read(cx).snapshot();
+        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+            if range.context.start.cmp(&anchor, &snapshot).is_le()
+                && range.context.end.cmp(&anchor, &snapshot).is_ge()
+            {
+                return Some(Anchor::in_buffer(excerpt_id, snapshot.remote_id(), anchor));
+            }
+        }
+
+        None
     }
 
     pub fn remove_excerpts(
