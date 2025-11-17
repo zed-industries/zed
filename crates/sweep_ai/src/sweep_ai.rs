@@ -230,8 +230,7 @@ impl SweepAi {
         let project_state = self.get_or_init_sweep_ai_project(project, cx);
         let events = project_state.events.clone();
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
-        let tokio_handle = reqwest_client::runtime().handle().clone();
+        let http_client = cx.http_client();
 
         let result = cx.background_spawn({
             let full_path = full_path.clone();
@@ -246,84 +245,57 @@ impl SweepAi {
 
                 let request_body = AutocompleteRequest {
                     debug_info: "Zed".into(),
-                    device_id: "todo".into(),
                     repo_name,
-                    branch: None,
                     file_path: full_path.clone(),
                     file_contents: text.clone(),
                     original_file_contents: text,
                     cursor_position: offset,
                     recent_changes: recent_changes.clone(),
-                    // todo! what's the difference?
-                    recent_changes_high_res: recent_changes,
+                    changes_above_cursor: true,
+                    multiple_suggestions: false,
                     // todo! rest
-                    changes_above_cursor: false,
+                    branch: None,
                     file_chunks: vec![],
                     retrieval_chunks: vec![],
                     recent_user_actions: vec![],
-                    multiple_suggestions: false,
                     privacy_mode_enabled: false,
-                    client_ip: None,
-                    ping: false,
                 };
 
                 let mut buf: Vec<u8> = Vec::new();
                 let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
                 serde_json::to_writer(writer, &request_body)?;
-
-                // let body: AsyncBody = buf.into();
+                let body: AsyncBody = buf.into();
 
                 const SWEEP_API_URL: &str =
                     "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
-                // let request = http_client::Request::builder()
-                //     .uri(SWEEP_API_URL)
-                //     .header("Content-Type", "application/json")
-                //     .header(
-                //         "Authorization",
-                //         // todo!
-                //         format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
-                //     )
-                //     // .header("Connection", "keep-alive")
-                //     .header("Content-Encoding", "br")
-                //     .method(Method::POST)
-                //     .body(body)?;
-
-                let request = client
-                    .post(SWEEP_API_URL)
+                let request = http_client::Request::builder()
+                    .uri(SWEEP_API_URL)
                     .header("Content-Type", "application/json")
                     .header(
                         "Authorization",
                         // todo!
                         format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
                     )
-                    // .header("Connection", "keep-alive")
+                    .header("Connection", "keep-alive")
                     .header("Content-Encoding", "br")
-                    .body(buf);
+                    .method(Method::POST)
+                    .body(body)?;
 
-                let response = tokio_handle
-                    .spawn(async move { request.send().await })
-                    .await??;
-                // let mut response = http_client.send(request).await?;
+                let mut response = http_client.send(request).await?;
 
-                dbg!(response.headers());
-                dbg!(response.status());
+                let mut body: Vec<u8> = Vec::new();
+                response.body_mut().read_to_end(&mut body).await?;
 
-                // let mut body: Vec<u8> = Vec::new();
-                let body = response.bytes().await?;
-                // let body = response.body_mut().collect().await;
-                eprintln!("{body:?}");
-
-                // if !response.status().is_success() {
-                //     anyhow::bail!(
-                //         "Request failed with status: {:?}\nBody: {}",
-                //         response.status(),
-                //         String::from_utf8_lossy(&body),
-                //     );
-                // };
+                if !response.status().is_success() {
+                    anyhow::bail!(
+                        "Request failed with status: {:?}\nBody: {}",
+                        response.status(),
+                        String::from_utf8_lossy(&body),
+                    );
+                };
 
                 let response: AutocompleteResponse = serde_json::from_slice(&body)?;
-                dbg!(&response);
 
                 let old_text = snapshot
                     .text_for_range(response.start_index..response.end_index)

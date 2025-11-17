@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize)]
 pub struct AutocompleteRequest {
     pub debug_info: String,
-    pub device_id: String,
     pub repo_name: String,
     pub branch: Option<String>,
     pub file_path: Arc<Path>,
@@ -18,10 +17,7 @@ pub struct AutocompleteRequest {
     pub recent_user_actions: Vec<UserAction>,
     pub multiple_suggestions: bool,
     pub privacy_mode_enabled: bool,
-    pub client_ip: Option<String>,
-    pub recent_changes_high_res: String,
     pub changes_above_cursor: bool,
-    pub ping: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

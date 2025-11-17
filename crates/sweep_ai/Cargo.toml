@@ -34,9 +34,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
-reqwest.workspace = true
-reqwest_client.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

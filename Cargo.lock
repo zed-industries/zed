@@ -16608,13 +16608,11 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "tokio",
  "tree-sitter-rust",
  "util",
  "uuid",
  "workspace",
  "worktree",
- "zed-reqwest",
  "zlog",
 ]
 
