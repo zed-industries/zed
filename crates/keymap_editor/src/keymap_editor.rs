@@ -958,12 +958,14 @@ impl KeymapEditor {
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.context(self.focus_handle.clone())
+                    .when(selected_binding_is_unbound, |this| {
+                        this.action("Create", Box::new(CreateBinding))
+                    })
                     .action_disabled_when(
                         selected_binding_is_unbound,
                         "Edit",
                         Box::new(EditBinding),
                     )
-                    .action("Create", Box::new(CreateBinding))
                     .action_disabled_when(
                         selected_binding_is_unbound,
                         "Delete",
