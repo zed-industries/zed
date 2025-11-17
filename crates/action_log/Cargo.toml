@@ -20,10 +20,10 @@ futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 project.workspace = true
+telemetry.workspace = true
 text.workspace = true
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
 
 
 [dev-dependencies]

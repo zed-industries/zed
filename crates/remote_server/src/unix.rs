@@ -103,7 +103,9 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         buffer: Vec::new(),
     });
 
-    env_logger::Builder::from_default_env()
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
         .target(env_logger::Target::Pipe(target))
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
@@ -319,6 +321,7 @@ fn init_paths() -> anyhow::Result<()> {
         paths::languages_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
         paths::remote_extensions_dir(),
         paths::remote_extensions_uploads_dir(),
     ]
@@ -368,6 +371,13 @@ pub fn execute_run(
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .stack_size(10 * 1024 * 1024)
+        .thread_name(|ix| format!("RayonWorker{}", ix))
+        .build_global()
+        .unwrap();
+
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     app.background_executor()
         .spawn(async {
@@ -387,8 +397,6 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
-
-        client::init_settings(cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);

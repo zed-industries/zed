@@ -15,7 +15,7 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::rel_path::RelPath;
+use crate::{rel_path::RelPath, shell::ShellKind};
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -84,9 +84,7 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    ///
-    /// For Unix, the path is escaped to be safe for POSIX shells
-    fn try_shell_safe(&self) -> anyhow::Result<String>;
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -164,24 +162,16 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self) -> anyhow::Result<String> {
-        #[cfg(target_os = "windows")]
-        {
-            Ok(self.as_ref().to_string_lossy().to_string())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let path_str = self
-                .as_ref()
-                .to_str()
-                .with_context(|| "Path contains invalid UTF-8")?;
-
-            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-            // errors are introduced in the future :(
-            Ok(shlex::try_quote(path_str)?.into_owned())
-        }
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
+        let path_str = self
+            .as_ref()
+            .to_str()
+            .with_context(|| "Path contains invalid UTF-8")?;
+        shell_kind
+            .try_quote(path_str)
+            .as_deref()
+            .map(ToOwned::to_owned)
+            .context("Failed to quote path")
     }
 }
 
@@ -810,22 +800,6 @@ impl Default for PathMatcher {
     }
 }
 
-/// Custom character comparison that prioritizes lowercase for same letters
-fn compare_chars(a: char, b: char) -> Ordering {
-    // First compare case-insensitive
-    match a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()) {
-        Ordering::Equal => {
-            // If same letter, prioritize lowercase (lowercase < uppercase)
-            match (a.is_ascii_lowercase(), b.is_ascii_lowercase()) {
-                (true, false) => Ordering::Less,    // lowercase comes first
-                (false, true) => Ordering::Greater, // uppercase comes after
-                _ => Ordering::Equal,               // both same case or both non-ascii
-            }
-        }
-        other => other,
-    }
-}
-
 /// Compares two sequences of consecutive digits for natural sorting.
 ///
 /// This function is a core component of natural sorting that handles numeric comparison
@@ -926,21 +900,25 @@ where
 /// * Numbers are compared by numeric value, not character by character
 /// * Leading zeros affect ordering when numeric values are equal
 /// * Can handle numbers larger than u128::MAX (falls back to string comparison)
+/// * When strings are equal case-insensitively, lowercase is prioritized (lowercase < uppercase)
 ///
 /// # Algorithm
 ///
 /// The function works by:
-/// 1. Processing strings character by character
+/// 1. Processing strings character by character in a case-insensitive manner
 /// 2. When encountering digits, treating consecutive digits as a single number
 /// 3. Comparing numbers by their numeric value rather than lexicographically
-/// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
-fn natural_sort(a: &str, b: &str) -> Ordering {
+/// 4. For non-numeric characters, using case-insensitive comparison
+/// 5. If everything is equal case-insensitively, using case-sensitive comparison as final tie-breaker
+pub fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
     loop {
         match (a_iter.peek(), b_iter.peek()) {
-            (None, None) => return Ordering::Equal,
+            (None, None) => {
+                return b.cmp(a);
+            }
             (None, _) => return Ordering::Less,
             (_, None) => return Ordering::Greater,
             (Some(&a_char), Some(&b_char)) => {
@@ -950,7 +928,10 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
                         ordering => return ordering,
                     }
                 } else {
-                    match compare_chars(a_char, b_char) {
+                    match a_char
+                        .to_ascii_lowercase()
+                        .cmp(&b_char.to_ascii_lowercase())
+                    {
                         Ordering::Equal => {
                             a_iter.next();
                             b_iter.next();
@@ -962,6 +943,7 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
         }
     }
 }
+
 pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
@@ -1097,6 +1079,68 @@ pub fn compare_paths(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslPath {
+    pub distro: String,
+
+    // the reason this is an OsString and not any of the path types is that it needs to
+    // represent a unix path (with '/' separators) on windows. `from_path` does this by
+    // manually constructing it from the path components of a given windows path.
+    pub path: std::ffi::OsString,
+}
+
+impl WslPath {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Option<WslPath> {
+        if cfg!(not(target_os = "windows")) {
+            return None;
+        }
+        use std::{
+            ffi::OsString,
+            path::{Component, Prefix},
+        };
+
+        let mut components = path.as_ref().components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let (server, distro) = match prefix.kind() {
+            Prefix::UNC(server, distro) => (server, distro),
+            Prefix::VerbatimUNC(server, distro) => (server, distro),
+            _ => return None,
+        };
+        let Some(Component::RootDir) = components.next() else {
+            return None;
+        };
+
+        let server_str = server.to_string_lossy();
+        if server_str == "wsl.localhost" || server_str == "wsl$" {
+            let mut result = OsString::from("");
+            for c in components {
+                use Component::*;
+                match c {
+                    Prefix(p) => unreachable!("got {p:?}, but already stripped prefix"),
+                    RootDir => unreachable!("got root dir, but already stripped root"),
+                    CurDir => continue,
+                    ParentDir => result.push("/.."),
+                    Normal(s) => {
+                        result.push("/");
+                        result.push(s);
+                    }
+                }
+            }
+            if result.is_empty() {
+                result.push("/");
+            }
+            Some(WslPath {
+                distro: distro.to_string_lossy().to_string(),
+                path: result,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1190,6 +1234,33 @@ mod tests {
                 (Path::new("test_DIRS/BAR"), true),
                 (Path::new("test_DIRS/foo_1"), true),
                 (Path::new("test_DIRS/foo_2"), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_paths_mixed_case_numeric_ordering() {
+        let mut entries = [
+            (Path::new(".config"), false),
+            (Path::new("Dir1"), false),
+            (Path::new("dir01"), false),
+            (Path::new("dir2"), false),
+            (Path::new("Dir02"), false),
+            (Path::new("dir10"), false),
+            (Path::new("Dir10"), false),
+        ];
+
+        entries.sort_by(|&a, &b| compare_paths(a, b));
+
+        let ordered: Vec<&str> = entries
+            .iter()
+            .map(|(path, _)| path.to_str().unwrap())
+            .collect();
+
+        assert_eq!(
+            ordered,
+            vec![
+                ".config", "Dir1", "dir01", "dir2", "Dir02", "dir10", "Dir10"
             ]
         );
     }
@@ -1522,6 +1593,21 @@ mod tests {
     }
 
     #[perf]
+    fn file_in_dirs() {
+        let path = Path::new("/work/.env");
+        let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
+        assert!(
+            path_matcher.is_match(path),
+            "Path matcher should match {path:?}"
+        );
+        let path = Path::new("/work/package.json");
+        assert!(
+            !path_matcher.is_match(path),
+            "Path matcher should not match {path:?}"
+        );
+    }
+
+    #[perf]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher =
@@ -1850,10 +1936,25 @@ mod tests {
             ),
             Ordering::Less
         );
+    }
 
-        // Mixed case with numbers
-        assert_eq!(natural_sort("File1", "file2"), Ordering::Greater);
+    #[perf]
+    fn test_natural_sort_case_sensitive() {
+        // Numerically smaller values come first.
+        assert_eq!(natural_sort("File1", "file2"), Ordering::Less);
         assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
+
+        // Numerically equal values: the case-insensitive comparison decides first.
+        // Case-sensitive comparison only occurs when both are equal case-insensitively.
+        assert_eq!(natural_sort("Dir1", "dir01"), Ordering::Less);
+        assert_eq!(natural_sort("dir2", "Dir02"), Ordering::Less);
+        assert_eq!(natural_sort("dir2", "dir02"), Ordering::Less);
+
+        // Numerically equal and case-insensitively equal:
+        // the lexicographically smaller (case-sensitive) one wins.
+        assert_eq!(natural_sort("dir1", "Dir1"), Ordering::Less);
+        assert_eq!(natural_sort("dir02", "Dir02"), Ordering::Less);
+        assert_eq!(natural_sort("dir10", "Dir10"), Ordering::Less);
     }
 
     #[perf]
@@ -1930,5 +2031,46 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_wsl_path() {
+        use super::WslPath;
+        let path = "/a/b/c";
+        assert_eq!(WslPath::from_path(&path), None);
+
+        let path = r"\\wsl.localhost";
+        assert_eq!(WslPath::from_path(&path), None);
+
+        let path = r"\\wsl.localhost\Distro";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/".into(),
+            })
+        );
+
+        let path = r"\\wsl.localhost\Distro\blue";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/blue".into()
+            })
+        );
+
+        let path = r"\\wsl$\archlinux\tomato\.\paprika\..\aubergine.txt";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "archlinux".to_owned(),
+                path: "/tomato/paprika/../aubergine.txt".into()
+            })
+        );
+
+        let path = r"\\windows.localhost\Distro\foo";
+        assert_eq!(WslPath::from_path(&path), None);
     }
 }

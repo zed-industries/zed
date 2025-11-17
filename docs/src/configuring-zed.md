@@ -4,7 +4,14 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings files
+## Settings Editor
+
+You can browse through many of the supported settings via the Settings Editor, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette. Through it, you can customize your local, user settings as well as project settings.
+
+> Note that not all settings that Zed supports are available through the Settings Editor yet.
+> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb zed::OpenSettingsFile}.
+
+## User Settings File
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -13,21 +20,56 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+Your settings JSON file can be opened with {#kb zed::OpenSettingsFile}.
+By default it is located at `~/.config/zed/settings.json`, though if you have `XDG_CONFIG_HOME` in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+Whatever you have added to your user settings file gets merged with any local configuration inside your projects.
 
-Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+### Default Settings
 
-The syntax for configuration files is a super-set of JSON that allows `//` comments.
-
-## Default settings
-
-You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
+In the Settings Editor, the values you see set are the default ones.
+You can also verify them in JSON by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
+## Project Settings File
+
+Similarly to user files, you can open your project settings file by running {#action zed::OpenProjectSettings} from the command palette.
+This will create a `.zed` directory containing`.zed/settings.json`.
+
+Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed.
+Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling.
+For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+
+The syntax for configuration files is a super-set of JSON that allows `//` comments.
+
+## Per-release Channel Overrides
+
+Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly).
+However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects.
+They are merged into the base configuration with settings from these keys taking precedence upon launching the specified build. For example:
+
+```json [settings]
+{
+  "theme": "sunset",
+  "vim_mode": false,
+  "nightly": {
+    "theme": "cave-light",
+    "vim_mode": true
+  },
+  "preview": {
+    "theme": "zed-dark"
+  }
+}
+```
+
+With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
+
+Changing settings in the Settings Editorwill always apply the change across all channels.
+
 # Settings
+
+Find below an extensive run-through of many supported settings by Zed.
 
 ## Active Pane Modifiers
 
@@ -171,7 +213,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
+- Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
 **Options**
@@ -887,6 +929,8 @@ List of `string` values
 - Setting: `cursors`
 - Default: `true`
 
+Cursor indicators appear as small marks on the scrollbar showing where other collaborators' cursors are positioned in the file.
+
 **Options**
 
 `boolean` values
@@ -896,6 +940,8 @@ List of `string` values
 - Description: Whether to show git diff indicators in the scrollbar.
 - Setting: `git_diff`
 - Default: `true`
+
+Git diff indicators appear as colored marks showing lines that have been added, modified, or deleted compared to the git HEAD.
 
 **Options**
 
@@ -907,6 +953,8 @@ List of `string` values
 - Setting: `search_results`
 - Default: `true`
 
+Search result indicators appear as marks showing all locations in the file where your current search query matches.
+
 **Options**
 
 `boolean` values
@@ -916,6 +964,8 @@ List of `string` values
 - Description: Whether to show selected text occurrences in the scrollbar.
 - Setting: `selected_text`
 - Default: `true`
+
+Selected text indicators appear as marks showing all occurrences of the currently selected text throughout the file.
 
 **Options**
 
@@ -927,6 +977,8 @@ List of `string` values
 - Setting: `selected_symbol`
 - Default: `true`
 
+Selected symbol indicators appear as marks showing all occurrences of the currently selected symbol (like a function or variable name) throughout the file.
+
 **Options**
 
 `boolean` values
@@ -936,6 +988,8 @@ List of `string` values
 - Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
 - Default: `all`
+
+Diagnostic indicators appear as colored marks showing errors, warnings, and other language server diagnostics at their corresponding line positions in the file.
 
 **Options**
 
@@ -1498,7 +1552,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```json [settings]
 "status_bar": {
   "active_language_button": true,
-  "cursor_position_button": true
+  "cursor_position_button": true,
+  "line_endings_button": false
 },
 ```
 
@@ -2464,11 +2519,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
@@ -2951,11 +3007,33 @@ List of `string` glob patterns
 
 - Description: Whether to show relative line numbers in the gutter
 - Setting: `relative_line_numbers`
-- Default: `false`
+- Default: `"disabled"`
 
 **Options**
 
-`boolean` values
+1. Show relative line numbers in the gutter whilst counting wrapped lines as one line:
+
+```json [settings]
+{
+  "relative_line_numbers": "enabled"
+}
+```
+
+2. Show relative line numbers in the gutter, including wrapped lines in the counting:
+
+```json [settings]
+{
+  "relative_line_numbers": "wrapped"
+}
+```
+
+2. Do not use relative line numbers:
+
+```json [settings]
+{
+  "relative_line_numbers": "disabled"
+}
+```
 
 ## Remove Trailing Whitespace On Save
 
@@ -3107,18 +3185,64 @@ Non-negative `integer` values
 
 ```json [settings]
 "search": {
+  "button": true,
   "whole_word": false,
   "case_sensitive": false,
   "include_ignored": false,
-  "regex": false
+  "regex": false,
+  "center_on_match": false
 },
 ```
+
+### Button
+
+- Description: Whether to show the project search button in the status bar.
+- Setting: `button`
+- Default: `true`
+
+### Whole Word
+
+- Description: Whether to only match on whole words.
+- Setting: `whole_word`
+- Default: `false`
+
+### Case Sensitive
+
+- Description: Whether to match case sensitively. This setting affects both
+  searches and editor actions like "Select Next Occurrence", "Select Previous
+  Occurrence", and "Select All Occurrences".
+- Setting: `case_sensitive`
+- Default: `false`
+
+### Include Ignore
+
+- Description: Whether to include gitignored files in search results.
+- Setting: `include_ignored`
+- Default: `false`
+
+### Regex
+
+- Description: Whether to interpret the search query as a regular expression.
+- Setting: `regex`
+- Default: `false`
+
+### Center On Match
+
+- Description: Whether to center the cursor on each search match when navigating.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Search Wrap
 
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
+
+## Center on Match
+
+- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Seed Search Query From Cursor
 
@@ -3326,7 +3450,7 @@ Positive integer values
 
 ## Use Auto Surround
 
-- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type (, Zed will surround the text with ().
+- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
 - Setting: `use_auto_surround`
 - Default: `true`
 
@@ -3462,6 +3586,7 @@ List of `integer` column numbers
     "option_as_meta": false,
     "button": true,
     "shell": "system",
+    "scroll_multiplier": 3.0,
     "toolbar": {
       "breadcrumbs": false
     },
@@ -3874,6 +3999,26 @@ Disable with:
 }
 ```
 
+### Terminal: Scroll Multiplier
+
+- Description: The multiplier for scrolling speed in the terminal when using mouse wheel or trackpad.
+- Setting: `scroll_multiplier`
+- Default: `1.0`
+
+**Options**
+
+Positive floating point values. Values less than or equal to 0 will be clamped to a minimum of 0.01.
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "scroll_multiplier": 5.0
+  }
+}
+```
+
 ## Terminal: Toolbar
 
 - Description: Whether or not to show various elements in the terminal toolbar.
@@ -4155,7 +4300,12 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     },
     "hide_root": false,
     "hide_hidden": false,
-    "starts_open": true
+    "starts_open": true,
+    "auto_open": {
+      "on_create": true,
+      "on_paste": true,
+      "on_drop": true
+    }
   }
 }
 ```
@@ -4363,6 +4513,26 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   }
 }
 ```
+
+### Auto Open
+
+- Description: Control whether files are opened automatically after different creation flows in the project panel.
+- Setting: `auto_open`
+- Default:
+
+```json [settings]
+"auto_open": {
+  "on_create": true,
+  "on_paste": true,
+  "on_drop": true
+}
+```
+
+**Options**
+
+- `on_create`: Whether to automatically open newly created files in the editor.
+- `on_paste`: Whether to automatically open files after pasting or duplicating them.
+- `on_drop`: Whether to automatically open files dropped from external sources.
 
 ## Agent
 
@@ -4589,6 +4759,44 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 **Options**
 
 `integer` values between `100` and `900`
+
+## Settings Profiles
+
+- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Setting: `profiles`
+- Default: `{}`
+
+In your `settings.json` file, add the `profiles` object.
+Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
+
+Example:
+
+```json [settings]
+"profiles": {
+  "Presenting (Dark)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Dark",
+    "ui_font_size": 18.0
+  },
+  "Presenting (Light)": {
+    "agent_buffer_font_size": 18.0,
+    "buffer_font_size": 18.0,
+    "theme": "One Light",
+    "ui_font_size": 18.0
+  },
+  "Writing": {
+    "agent_buffer_font_size": 15.0,
+    "buffer_font_size": 15.0,
+    "theme": "Catppuccin Frappé - No Italics",
+    "ui_font_size": 15.0,
+    "tab_bar": { "show": false },
+    "toolbar": { "breadcrumbs": false }
+  }
+}
+```
+
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
 
 ## An example configuration:
 

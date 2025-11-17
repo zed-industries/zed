@@ -20,11 +20,15 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             "Reset Zoom",
             zed_actions::ResetBufferFontSize { persist: false },
         ),
+        MenuItem::action(
+            "Reset All Zoom",
+            zed_actions::ResetAllZoom { persist: false },
+        ),
         MenuItem::separator(),
         MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
         MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
         MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
-        MenuItem::action("Close All Docks", workspace::CloseAllDocks),
+        MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
         MenuItem::submenu(Menu {
             name: "Editor Layout".into(),
             items: vec![
@@ -65,7 +69,11 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     items: vec![
                         MenuItem::action("Open Settings", zed_actions::OpenSettings),
                         MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
+                        MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
+                        MenuItem::action(
+                            "Open Project Settings File",
+                            super::OpenProjectSettingsFile,
+                        ),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::separator(),
                         MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
@@ -185,8 +193,18 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     editor::actions::SelectPreviousSyntaxNode,
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
-                MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
+                MenuItem::action(
+                    "Add Cursor Above",
+                    editor::actions::AddSelectionAbove {
+                        skip_soft_wrap: true,
+                    },
+                ),
+                MenuItem::action(
+                    "Add Cursor Below",
+                    editor::actions::AddSelectionBelow {
+                        skip_soft_wrap: true,
+                    },
+                ),
                 MenuItem::action(
                     "Select Next Occurrence",
                     editor::actions::SelectNext {

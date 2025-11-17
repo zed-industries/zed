@@ -4,7 +4,7 @@
 
 For costs and more information on pricing, visit [Zed’s pricing page](https://zed.dev/pricing).
 
-Please note that if you’re interested in just using Zed as the world’s fastest editor, with no AI or subscription features, you can always do so for free, without [authentication](../accounts.md).
+Please note that if you’re interested in just using Zed as the world’s fastest editor, with no AI or subscription features, you can always do so for free, without [authentication](../authentication.md).
 
 ## Usage {#usage}
 

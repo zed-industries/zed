@@ -27,8 +27,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    #[serde(default)]
-    pub file_types: HashMap<Arc<str>, ExtendingVec<String>>,
+    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
@@ -143,11 +142,27 @@ pub struct CodestralSettingsContent {
     /// Default: 150
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "https://codestral.mistral.ai"
+    #[serde(default)]
+    pub api_url: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.
 #[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
@@ -297,12 +312,12 @@ pub struct LanguageSettingsContent {
     /// Inlay hint related settings.
     pub inlay_hints: Option<InlayHintSettingsContent>,
     /// Whether to automatically type closing characters for you. For example,
-    /// when you type (, Zed will automatically add a closing ) at the correct position.
+    /// when you type '(', Zed will automatically add a closing ')' at the correct position.
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
     /// Whether to automatically surround text with characters for you. For example,
-    /// when you select text and type (, Zed will automatically surround text with ().
+    /// when you select text and type '(', Zed will automatically surround text with ().
     ///
     /// Default: true
     pub use_auto_surround: Option<bool>,
@@ -319,6 +334,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
+    /// Which code actions to run on save before the formatter.
+    /// These are not run if formatting is off.
+    ///
+    /// Default: {} (or {"source.organizeImports": true} for Go).
+    pub code_actions_on_format: Option<HashMap<String, bool>>,
     /// Whether to perform linked edits of associated ranges, if the language server supports it.
     /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
     ///

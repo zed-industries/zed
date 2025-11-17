@@ -6,6 +6,7 @@ use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
+use git::repository::RepoPath;
 use gpui::{
     AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
     VisualTestContext, Window, WindowHandle, prelude::*,
@@ -58,6 +59,17 @@ impl EditorTestContext {
             })
             .await
             .unwrap();
+
+        let language = project
+            .read_with(cx, |project, _cx| {
+                project.languages().language_for_name("Plain Text")
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language), cx);
+        });
+
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor_with_project(
                 project,
@@ -265,7 +277,10 @@ impl EditorTestContext {
 
     pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
         self.update_editor(|editor, window, cx| {
-            let newest_point = editor.selections.newest_display(cx).head();
+            let newest_point = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx))
+                .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
                 .style()
@@ -331,7 +346,10 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
-            found = git_state.index_contents.get(&path.into()).cloned();
+            found = git_state
+                .index_contents
+                .get(&RepoPath::from_rel_path(&path))
+                .cloned();
         })
         .unwrap();
         assert_eq!(expected, found.as_deref());
@@ -590,7 +608,7 @@ impl EditorTestContext {
     fn editor_selections(&mut self) -> Vec<Range<usize>> {
         self.editor
             .update(&mut self.cx, |editor, cx| {
-                editor.selections.all::<usize>(cx)
+                editor.selections.all::<usize>(&editor.display_snapshot(cx))
             })
             .into_iter()
             .map(|s| {
@@ -688,9 +706,12 @@ pub fn assert_state_with_diff(
     expected_diff_text: &str,
 ) {
     let (snapshot, selections) = editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
         (
-            editor.snapshot(window, cx).buffer_snapshot().clone(),
-            editor.selections.ranges::<usize>(cx),
+            snapshot.buffer_snapshot().clone(),
+            editor
+                .selections
+                .ranges::<usize>(&snapshot.display_snapshot),
         )
     });
 

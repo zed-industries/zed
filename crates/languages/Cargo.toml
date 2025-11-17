@@ -69,6 +69,7 @@ settings.workspace = true
 smol.workspace = true
 url.workspace = true
 task.workspace = true
+terminal.workspace = true
 theme.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
@@ -90,7 +91,6 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
@@ -98,6 +98,7 @@ text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true

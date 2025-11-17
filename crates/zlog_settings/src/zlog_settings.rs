@@ -2,11 +2,9 @@
 use collections::HashMap;
 
 use gpui::App;
-use settings::{Settings, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsStore};
 
 pub fn init(cx: &mut App) {
-    ZlogSettings::register(cx);
-
     cx.observe_global::<SettingsStore>(|cx| {
         let zlog_settings = ZlogSettings::get_global(cx);
         zlog::filter::refresh_from_settings(&zlog_settings.scopes);
@@ -14,7 +12,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct ZlogSettings {
     /// A map of log scopes to the desired log level.
     /// Useful for filtering out noisy logs or enabling more verbose logging.
@@ -29,6 +27,4 @@ impl Settings for ZlogSettings {
             scopes: content.log.clone().unwrap(),
         }
     }
-
-    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut settings::SettingsContent) {}
 }

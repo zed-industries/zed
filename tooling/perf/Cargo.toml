@@ -30,4 +30,3 @@ disallowed_methods = { level = "allow", priority = 1}
 collections.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-workspace-hack.workspace = true

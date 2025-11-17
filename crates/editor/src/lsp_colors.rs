@@ -2,19 +2,19 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{Hsla, Rgba};
+use gpui::{Hsla, Rgba, Task};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::{DocumentColor, lsp_store::LspFetchStrategy};
+use project::{DocumentColor, InlayId};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT, InlayId,
-    InlaySplice, RangeToAnchorExt, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT,
+    InlaySplice, RangeToAnchorExt, editor_settings::DocumentColorsRenderMode, inlays::Inlay,
 };
 
 #[derive(Debug)]
@@ -143,14 +143,13 @@ impl LspColorData {
 }
 
 impl Editor {
-    pub(super) fn refresh_colors(
+    pub(super) fn refresh_colors_for_visible_range(
         &mut self,
-        ignore_cache: bool,
         buffer_id: Option<BufferId>,
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if self.ignore_lsp_data() {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -165,11 +164,13 @@ impl Editor {
         }
 
         let visible_buffers = self
-            .visible_excerpts(None, cx)
+            .visible_excerpts(cx)
             .into_values()
             .map(|(buffer, ..)| buffer)
             .filter(|editor_buffer| {
-                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer.read(cx).remote_id())
+                let editor_buffer_id = editor_buffer.read(cx).remote_id();
+                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
+                    && self.registered_buffers.contains_key(&editor_buffer_id)
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
@@ -179,20 +180,19 @@ impl Editor {
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
-                    let fetch_strategy = if ignore_cache {
-                        LspFetchStrategy::IgnoreCache
-                    } else {
-                        LspFetchStrategy::UseCache {
-                            known_cache_version: self.colors.as_ref().and_then(|colors| {
-                                Some(colors.buffer_colors.get(&buffer_id)?.cache_version_used)
-                            }),
-                        }
-                    };
-                    let colors_task = lsp_store.document_colors(fetch_strategy, buffer, cx)?;
+                    let known_cache_version = self.colors.as_ref().and_then(|colors| {
+                        Some(colors.buffer_colors.get(&buffer_id)?.cache_version_used)
+                    });
+                    let colors_task = lsp_store.document_colors(known_cache_version, buffer, cx)?;
                     Some(async move { (buffer_id, colors_task.await) })
                 })
                 .collect::<Vec<_>>()
         });
+
+        if all_colors_task.is_empty() {
+            self.refresh_colors_task = Task::ready(());
+            return;
+        }
 
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
@@ -251,25 +251,14 @@ impl Editor {
                                     {
                                         continue;
                                     }
-                                    let Some(color_start_anchor) = multi_buffer_snapshot
-                                        .anchor_in_excerpt(
-                                            *excerpt_id,
-                                            buffer_snapshot.anchor_before(
-                                                buffer_snapshot
-                                                    .clip_point_utf16(color_start, Bias::Left),
-                                            ),
-                                        )
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(color_end_anchor) = multi_buffer_snapshot
-                                        .anchor_in_excerpt(
-                                            *excerpt_id,
-                                            buffer_snapshot.anchor_after(
-                                                buffer_snapshot
-                                                    .clip_point_utf16(color_end, Bias::Right),
-                                            ),
-                                        )
+                                    let start = buffer_snapshot.anchor_before(
+                                        buffer_snapshot.clip_point_utf16(color_start, Bias::Left),
+                                    );
+                                    let end = buffer_snapshot.anchor_after(
+                                        buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
+                                    );
+                                    let Some(range) = multi_buffer_snapshot
+                                        .anchor_range_in_excerpt(*excerpt_id, start..end)
                                     else {
                                         continue;
                                     };
@@ -285,16 +274,14 @@ impl Editor {
                                         new_buffer_colors.binary_search_by(|(probe, _)| {
                                             probe
                                                 .start
-                                                .cmp(&color_start_anchor, &multi_buffer_snapshot)
+                                                .cmp(&range.start, &multi_buffer_snapshot)
                                                 .then_with(|| {
-                                                    probe.end.cmp(
-                                                        &color_end_anchor,
-                                                        &multi_buffer_snapshot,
-                                                    )
+                                                    probe
+                                                        .end
+                                                        .cmp(&range.end, &multi_buffer_snapshot)
                                                 })
                                         });
-                                    new_buffer_colors
-                                        .insert(i, (color_start_anchor..color_end_anchor, color));
+                                    new_buffer_colors.insert(i, (range, color));
                                     break;
                                 }
                             }
@@ -413,8 +400,7 @@ impl Editor {
                     }
 
                     if colors.render_mode == DocumentColorsRenderMode::Inlay
-                        && (!colors_splice.to_insert.is_empty()
-                            || !colors_splice.to_remove.is_empty())
+                        && !colors_splice.is_empty()
                     {
                         editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);
                         updated = true;

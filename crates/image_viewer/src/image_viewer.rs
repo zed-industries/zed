@@ -1,6 +1,8 @@
 mod image_info;
 mod image_viewer_settings;
 
+use std::path::Path;
+
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
@@ -13,11 +15,12 @@ use language::{DiskState, File as _};
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    invalid_item_view::InvalidItemView,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
@@ -162,11 +165,17 @@ impl Item for ImageView {
 
     fn breadcrumbs(&self, _theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
+        let settings = ThemeSettings::get_global(cx);
+
         Some(vec![BreadcrumbText {
             text,
             highlights: None,
-            font: None,
+            font: Some(settings.buffer_font.clone()),
         }])
+    }
+
+    fn can_split(&self) -> bool {
+        true
     }
 
     fn clone_on_split(
@@ -174,15 +183,15 @@ impl Item for ImageView {
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self {
+        Task::ready(Some(cx.new(|cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
-        }))
+        })))
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
@@ -387,10 +396,22 @@ impl ProjectItem for ImageView {
     {
         Self::new(item, project, window, cx)
     }
+
+    fn for_broken_project_item(
+        abs_path: &Path,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InvalidItemView>
+    where
+        Self: Sized,
+    {
+        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+    }
 }
 
 pub fn init(cx: &mut App) {
-    ImageViewerSettings::register(cx);
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
 }

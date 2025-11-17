@@ -128,9 +128,11 @@ You can use the following configuration:
   "lsp": {
     "basedpyright": {
       "settings": {
-        "analysis": {
+        "basedpyright.analysis": {
           "diagnosticMode": "workspace",
-          "inlayHints.callArgumentNames": false
+          "inlayHints": {
+            "callArgumentNames": false
+          }
         }
       }
     }
@@ -274,6 +276,8 @@ Zed uses `debugpy` under the hood, but no manual adapter configuration is requir
 ### Define Custom Debug Configurations
 
 For reusable setups, create a `.zed/debug.json` file in your project root. This gives you more control over how Zed runs and debugs your code.
+
+- [debugpy configuration documentation](https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings#launchattach-settings)
 
 #### Debug Active File
 
