@@ -491,7 +491,7 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let was_empty = self.multibuffer.read(cx).is_empty();
-        let mut buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
 
         let max_severity = if self.include_warnings {
@@ -598,7 +598,6 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
                 .await;
-                buffer_snapshot = cx.update(|_, cx| buffer.read(cx).snapshot())?;
                 let initial_range = buffer_snapshot.anchor_after(b.initial_range.start)
                     ..buffer_snapshot.anchor_before(b.initial_range.end);
                 let excerpt_range = ExcerptRange {
@@ -1006,11 +1005,14 @@ async fn heuristic_syntactic_expand(
     snapshot: BufferSnapshot,
     cx: &mut AsyncApp,
 ) -> Option<RangeInclusive<BufferRow>> {
+    let start = snapshot.clip_point(input_range.start, Bias::Right);
+    let end = snapshot.clip_point(input_range.end, Bias::Left);
     let input_row_count = input_range.end.row - input_range.start.row;
     if input_row_count > max_row_count {
         return None;
     }
 
+    let input_range = start..end;
     // If the outline node contains the diagnostic and is small enough, just use that.
     let outline_range = snapshot.outline_range_containing(input_range.clone());
     if let Some(outline_range) = outline_range.clone() {
