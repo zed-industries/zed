@@ -223,12 +223,28 @@ pub struct SplitLeft {
     pub behavior: SplitBehavior,
 }
 
+impl SplitLeft {
+    pub fn and_move() -> Self {
+        Self {
+            behavior: SplitBehavior::Move,
+        }
+    }
+}
+
 /// Splits the pane to the right.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitRight {
     pub behavior: SplitBehavior,
+}
+
+impl SplitRight {
+    pub fn and_move() -> Self {
+        Self {
+            behavior: SplitBehavior::Move,
+        }
+    }
 }
 
 /// Splits the pane upward.
@@ -239,12 +255,28 @@ pub struct SplitUp {
     pub behavior: SplitBehavior,
 }
 
+impl SplitUp {
+    pub fn and_move() -> Self {
+        Self {
+            behavior: SplitBehavior::Move,
+        }
+    }
+}
+
 /// Splits the pane downward.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitDown {
     pub behavior: SplitBehavior,
+}
+
+impl SplitDown {
+    pub fn and_move() -> Self {
+        Self {
+            behavior: SplitBehavior::Move,
+        }
+    }
 }
 
 /// Splits the pane horizontally.
@@ -284,7 +316,14 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
-        // TODO can we remove old bindings SplitAndMoveLeft...?
+        /// Splits the pane to the left, moving the current item.
+        SplitAndMoveLeft,
+        /// Splits the pane upward, moving the current item.
+        SplitAndMoveUp,
+        /// Splits the pane to the right, moving the current item.
+        SplitAndMoveRight,
+        /// Splits the pane downward, moving the current item.
+        SplitAndMoveDown,
         /// Swaps the current item with the one to the left.
         SwapItemLeft,
         /// Swaps the current item with the one to the right.
@@ -3697,10 +3736,10 @@ fn default_render_tab_bar_buttons(
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         if can_split_move {
-                            menu.action("Split Right", SplitAndMoveRight.boxed_clone())
-                                .action("Split Left", SplitAndMoveLeft.boxed_clone())
-                                .action("Split Up", SplitAndMoveUp.boxed_clone())
-                                .action("Split Down", SplitAndMoveDown.boxed_clone())
+                            menu.action("Split Right", SplitRight::and_move().boxed_clone())
+                                .action("Split Left", SplitLeft::and_move().boxed_clone())
+                                .action("Split Up", SplitUp::and_move().boxed_clone())
+                                .action("Split Down", SplitDown::and_move().boxed_clone())
                         } else {
                             menu.action("Split Right", SplitRight::default().boxed_clone())
                                 .action("Split Left", SplitLeft::default().boxed_clone())
@@ -3781,6 +3820,18 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane, split: &SplitDown, _, cx| {
                 pane.split(SplitDirection::Down, &split.behavior, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
+                pane.split(SplitDirection::Up, &SplitBehavior::Move, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
+                pane.split(SplitDirection::Down, &SplitBehavior::Move, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
+                pane.split(SplitDirection::Left, &SplitBehavior::Move, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
+                pane.split(SplitDirection::Right, &SplitBehavior::Move, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
