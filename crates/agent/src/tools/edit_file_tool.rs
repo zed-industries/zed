@@ -318,6 +318,16 @@ impl AgentTool for EditFileTool {
                     (last_read, current, dirty)
                 })?;
 
+                // Check for unsaved changes first - these indicate modifications we don't know about
+                if is_dirty {
+                    anyhow::bail!(
+                        "The file {} has unsaved changes. \
+                         Please read the file again to get the current state before editing it.",
+                        input.path.display()
+                    );
+                }
+
+                // Check if the file was modified on disk since we last read it
                 if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
                     // MTime can be unreliable for comparisons, so our newtype intentionally
                     // doesn't support comparing them. If the mtime at all different
@@ -330,13 +340,6 @@ impl AgentTool for EditFileTool {
                             input.path.display()
                         );
                     }
-                } else if is_dirty {
-                    // If the buffer has unsaved changes, that also means it was modified.
-                    anyhow::bail!(
-                        "The file {} has unsaved changes. \
-                         Please read the file again to get the current state before editing it.",
-                        input.path.display()
-                    );
                 }
             }
 
