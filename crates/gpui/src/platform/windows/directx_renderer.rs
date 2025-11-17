@@ -1024,7 +1024,6 @@ impl<T> PipelineState<T> {
         naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default())
             .write(&module, &module_info, None)
             .unwrap();
-        println!("{hlsl}");
 
         let vertex = {
             let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Vertex).unwrap();
@@ -1119,8 +1118,8 @@ impl<T> PipelineState<T> {
         );
         unsafe {
             device_context.PSSetSamplers(0, Some(sampler));
-            device_context.VSSetShaderResources(0, Some(texture));
-            device_context.PSSetShaderResources(0, Some(texture));
+            device_context.VSSetShaderResources(1, Some(texture));
+            device_context.PSSetShaderResources(1, Some(texture));
 
             device_context.DrawInstanced(4, instance_count, 0, 0);
         }
@@ -1494,8 +1493,8 @@ fn set_pipeline_state(
     blend_state: &ID3D11BlendState,
 ) {
     unsafe {
-        device_context.VSSetShaderResources(1, Some(buffer_view));
-        device_context.PSSetShaderResources(1, Some(buffer_view));
+        device_context.VSSetShaderResources(0, Some(buffer_view));
+        device_context.PSSetShaderResources(0, Some(buffer_view));
         device_context.IASetPrimitiveTopology(topology);
         device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(vertex_shader, None);
