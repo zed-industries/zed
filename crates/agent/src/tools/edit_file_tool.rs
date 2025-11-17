@@ -1962,7 +1962,8 @@ mod tests {
 
             cx.executor().run_until_parked();
             model.send_last_completion_stream_text_chunk(
-                "<old_text>original content</old_text><new_text>modified content</new_text>".to_string(),
+                "<old_text>original content</old_text><new_text>modified content</new_text>"
+                    .to_string(),
             );
             model.end_last_completion_stream();
 
@@ -2084,7 +2085,7 @@ mod tests {
             .update(cx, |buffer, cx| buffer.reload(cx))
             .await
             .unwrap();
-        
+
         cx.executor().run_until_parked();
 
         // Try to edit - should fail because file was modified externally
