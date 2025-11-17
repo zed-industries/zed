@@ -1890,3 +1890,314 @@ mod tests {
         });
     }
 }
+
+    #[gpui::test]
+    async fn test_consecutive_edits_work(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "test.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+        let edit_tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            languages,
+            Templates::new(),
+        ));
+
+        // Read the file first
+        cx.update(|cx| {
+            read_tool.clone().run(
+                crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // First edit should work
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                edit_tool.clone().run(
+                    EditFileToolInput {
+                        display_description: "First edit".into(),
+                        path: "root/test.txt".into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            });
+
+            cx.executor().run_until_parked();
+            model.send_last_completion_stream_text_chunk("<old_text>original</old_text><new_text>modified</new_text>".to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok(), "First edit should succeed");
+
+        // Second edit should also work because the edit updated the recorded read time
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                edit_tool.clone().run(
+                    EditFileToolInput {
+                        display_description: "Second edit".into(),
+                        path: "root/test.txt".into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            });
+
+            cx.executor().run_until_parked();
+            model.send_last_completion_stream_text_chunk("<old_text>modified</old_text><new_text>further modified</new_text>".to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok(), "Second consecutive edit should succeed");
+    }
+
+    #[gpui::test]
+    async fn test_external_modification_detected(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "test.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+        let edit_tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            languages,
+            Templates::new(),
+        ));
+
+        // Read the file first
+        cx.update(|cx| {
+            read_tool.clone().run(
+                crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // Simulate external modification - advance time and save file
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(2));
+        fs.save(
+            path!("/root/test.txt").as_ref(),
+            &"externally modified content".into(),
+            language::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        // Reload the buffer to pick up the new mtime
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer
+            .update(cx, |buffer, cx| buffer.reload(cx))
+            .await
+            .unwrap();
+
+        // Try to edit - should fail because file was modified externally
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    EditFileToolInput {
+                        display_description: "Edit after external change".into(),
+                        path: "root/test.txt".into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Edit should fail after external modification"
+        );
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("has been modified since you last read it"),
+            "Error should mention file modification, got: {}",
+            error_msg
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dirty_buffer_detected(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "test.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+        let edit_tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            languages,
+            Templates::new(),
+        ));
+
+        // Read the file first
+        cx.update(|cx| {
+            read_tool.clone().run(
+                crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // Open the buffer and make it dirty by editing without saving
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+
+        // Make an in-memory edit to the buffer (making it dirty)
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " added text")], None, cx);
+        });
+
+        // Verify buffer is dirty
+        let is_dirty = buffer.read_with(cx, |buffer, _| buffer.is_dirty());
+        assert!(is_dirty, "Buffer should be dirty after in-memory edit");
+
+        // Try to edit - should fail because buffer has unsaved changes
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    EditFileToolInput {
+                        display_description: "Edit with dirty buffer".into(),
+                        path: "root/test.txt".into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(result.is_err(), "Edit should fail when buffer is dirty");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("has unsaved changes"),
+            "Error should mention unsaved changes, got: {}",
+            error_msg
+        );
+    }
