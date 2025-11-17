@@ -26,7 +26,7 @@ pub struct FileChunk {
     pub start_line: usize,
     pub end_line: usize,
     pub content: String,
-    pub timestamp: u64,
+    pub timestamp: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

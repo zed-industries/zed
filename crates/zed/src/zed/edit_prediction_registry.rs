@@ -203,7 +203,9 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         EditPredictionProvider::Sweep => {
-            if let Some(project) = editor.project() {
+            if let Some(project) = editor.project()
+                && let Some(workspace) = editor.workspace()
+            {
                 let sweep_ai = sweep_ai::SweepAi::register(cx);
 
                 if let Some(buffer) = &singleton_buffer
@@ -217,6 +219,7 @@ fn assign_edit_prediction_provider(
                 let provider = cx.new(|_| {
                     sweep_ai::SweepAiEditPredictionProvider::new(
                         sweep_ai,
+                        workspace.downgrade(),
                         project.clone(),
                         singleton_buffer,
                     )

@@ -3,8 +3,8 @@ mod api;
 use anyhow::{Context as _, Result};
 use arrayvec::ArrayVec;
 use collections::HashMap;
-use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task};
+use futures::{AsyncReadExt as _, future};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task, WeakEntity};
 use http_client::{AsyncBody, Method};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint, text_diff};
 use project::Project;
@@ -22,8 +22,9 @@ use std::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use uuid::Uuid;
+use workspace::Workspace;
 
-use crate::api::{ActionType, AutocompleteRequest, AutocompleteResponse, UserAction};
+use crate::api::{ActionType, AutocompleteRequest, AutocompleteResponse, FileChunk, UserAction};
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_EVENT_COUNT: usize = 16;
@@ -208,12 +209,13 @@ impl SweepAi {
 
     pub fn request_completion(
         &mut self,
+        workspace: &WeakEntity<Workspace>,
         project: &Entity<Project>,
-        buffer: &Entity<Buffer>,
+        active_buffer: &Entity<Buffer>,
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        let snapshot = buffer.read(cx).snapshot();
+        let snapshot = active_buffer.read(cx).snapshot();
         let full_path: Arc<Path> = snapshot
             .file()
             .map(|file| file.full_path(cx))
@@ -229,8 +231,28 @@ impl SweepAi {
 
         let project_state = self.get_or_init_sweep_ai_project(project, cx);
         let events = project_state.events.clone();
-
         let http_client = cx.http_client();
+
+        let Some(recent_buffers) = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .recent_navigation_history_iter(cx)
+                    .filter_map(|(project_path, _)| {
+                        let buffer = project.read(cx).get_open_buffer(&project_path, cx)?;
+
+                        if active_buffer == &buffer {
+                            None
+                        } else {
+                            Some(buffer.read(cx).snapshot())
+                        }
+                    })
+                    .take(3)
+                    .collect::<Vec<_>>()
+            })
+            .log_err()
+        else {
+            return Task::ready(Ok(None));
+        };
 
         let result = cx.background_spawn({
             let full_path = full_path.clone();
@@ -243,6 +265,33 @@ impl SweepAi {
                     writeln!(&mut recent_changes, "{event}")?;
                 }
 
+                let file_chunks = recent_buffers
+                    .into_iter()
+                    .map(|snapshot| {
+                        let end_point = language::Point::new(30, 0).min(snapshot.max_point());
+                        FileChunk {
+                            content: snapshot
+                                .text_for_range(language::Point::zero()..end_point)
+                                .collect(),
+                            file_path: snapshot
+                                .file()
+                                .map(|f| f.path().as_unix_str())
+                                .unwrap_or("untitled")
+                                .to_string(),
+                            start_line: 0,
+                            end_line: end_point.row as usize,
+                            timestamp: snapshot.file().and_then(|file| {
+                                Some(
+                                    file.disk_state()
+                                        .mtime()?
+                                        .to_seconds_and_nanos_for_persistence()?
+                                        .0,
+                                )
+                            }),
+                        }
+                    })
+                    .collect();
+
                 let request_body = AutocompleteRequest {
                     debug_info: "Zed".into(),
                     repo_name,
@@ -253,9 +302,8 @@ impl SweepAi {
                     recent_changes: recent_changes.clone(),
                     changes_above_cursor: true,
                     multiple_suggestions: false,
-                    // todo! rest
                     branch: None,
-                    file_chunks: vec![],
+                    file_chunks,
                     retrieval_chunks: vec![],
                     recent_user_actions: vec![],
                     privacy_mode_enabled: false,
@@ -315,7 +363,7 @@ impl SweepAi {
             }
         });
 
-        let buffer = buffer.clone();
+        let buffer = active_buffer.clone();
 
         cx.spawn(async move |_, cx| {
             let (id, edits, old_snapshot) = result.await?;
@@ -463,6 +511,7 @@ struct PendingCompletion {
 }
 
 pub struct SweepAiEditPredictionProvider {
+    workspace: WeakEntity<Workspace>,
     sweep_ai: Entity<SweepAi>,
     singleton_buffer: Option<Entity<Buffer>>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
@@ -477,6 +526,7 @@ impl SweepAiEditPredictionProvider {
 
     pub fn new(
         sweep_ai: Entity<SweepAi>,
+        workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         singleton_buffer: Option<Entity<Buffer>>,
     ) -> Self {
@@ -488,6 +538,7 @@ impl SweepAiEditPredictionProvider {
             current_completion: None,
             last_request_timestamp: Instant::now(),
             project,
+            workspace,
         }
     }
 }
@@ -546,6 +597,7 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
         let last_request_timestamp = self.last_request_timestamp;
 
         let project = self.project.clone();
+        let workspace = self.workspace.clone();
         let task = cx.spawn(async move |this, cx| {
             if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
                 .checked_duration_since(Instant::now())
@@ -556,7 +608,7 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
             let completion_request = this.update(cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.sweep_ai.update(cx, |sweep_ai, cx| {
-                    sweep_ai.request_completion(&project, &buffer, position, cx)
+                    sweep_ai.request_completion(&workspace, &project, &buffer, position, cx)
                 })
             });
 
