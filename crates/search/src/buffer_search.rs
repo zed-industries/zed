@@ -1030,6 +1030,7 @@ impl BufferSearchBar {
                 .match_index_for_direction(matches, index, direction, count, window, cx);
 
             searchable_item.update_matches(matches, window, cx);
+            dbg!("activate_match");
             searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }

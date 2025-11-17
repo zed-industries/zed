@@ -212,6 +212,7 @@ impl Vim {
     }
 
     pub fn search_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        dbg!("here!");
         self.store_visual_marks(window, cx);
         let Some(pane) = self.pane(window, cx) else {
             return;
@@ -219,7 +220,7 @@ impl Vim {
         let new_selections = self.editor_selections(window, cx);
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
-            if self.search.helix_select {
+            if dbg!(self.search.helix_select) {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.select_all_matches(&Default::default(), window, cx)
                 });
@@ -276,6 +277,7 @@ impl Vim {
         if let Some(operator) = prior_operator {
             self.push_operator(operator, window, cx);
         };
+        dbg!(&new_selections);
         self.search_motion(
             Motion::ZedSearchResult {
                 prior_selections,

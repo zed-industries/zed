@@ -691,7 +691,6 @@ impl Vim {
                         return;
                     }
                 }
-
                 Mode::HelixNormal | Mode::HelixSelect => {}
             }
         }
