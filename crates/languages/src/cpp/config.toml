@@ -4,7 +4,7 @@ path_suffixes = ["cc", "hh", "cpp", "h", "hpp", "cxx", "hxx", "c++", "ipp", "inl
 line_comments = ["// ", "/// ", "//! "]
 decrease_indent_patterns = [
   { pattern = "^\\s*\\{.*\\}?\\s*$", valid_after = ["if", "for", "while", "do", "switch", "else"] },
-  { pattern = "^\\s*else\\s*$", valid_after = ["if"] }
+  { pattern = "^\\s*else\\b", valid_after = ["if"] }
 ]
 autoclose_before = ";:.,=}])>"
 brackets = [
