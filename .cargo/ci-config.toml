@@ -16,9 +16,7 @@ rustflags = ["-D", "warnings"]
 debug = "limited"
 
 # Use Mold on Linux, because it's faster than GNU ld and LLD.
-#
-# We no longer set this in the default `config.toml` so that developers can opt in to Wild, which
-# is faster than Mold, in their own ~/.cargo/config.toml.
+# We dont use wild in CI as its not production ready.
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]

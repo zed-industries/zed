@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -261,7 +259,7 @@ impl BranchDiff {
         self.repo.as_ref()
     }
 
-    pub async fn load_buffers(&mut self, cx: &mut Context<'_, Self>) -> Vec<DiffBufferGroup> {
+    pub fn load_buffers(&mut self, cx: &mut Context<'_, Self>) -> Vec<DiffBufferGroup> {
         let mut output = Vec::new();
         let Some(repo) = self.repo.clone() else {
             return output;
@@ -283,10 +281,6 @@ impl BranchDiff {
             let mut file_statussus = Vec::new();
 
             for item in items {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-
                 seen.insert(item.repo_path.clone());
                 let branch_diff = self
                     .tree_diff
@@ -339,10 +333,6 @@ impl BranchDiff {
             let mut file_statussus = Vec::new();
 
             for (path, branch_diff) in chunk {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-
                 if seen.contains(&path) {
                     continue;
                 }

@@ -902,9 +902,12 @@ impl WaylandWindowStatePtr {
 
     pub fn handle_input(&self, input: PlatformInput) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input
-            && !fun(input.clone()).propagate
+        // && !fun(input.clone()).propagate
         {
-            return;
+            let res = fun(input.clone());
+            if res.propagate {
+                return;
+            }
         }
         if let PlatformInput::KeyDown(event) = input
             && event.keystroke.modifiers.is_subset_of(&Modifiers::shift())

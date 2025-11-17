@@ -556,11 +556,10 @@ impl ProjectDiff {
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
-            let (repo, buffers_to_load) =
-                this.branch_diff.update(cx, async move |branch_diff, cx| {
-                    let load_buffers = branch_diff.load_buffers(cx).await;
-                    (branch_diff.repo().cloned(), load_buffers)
-                });
+            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+                let load_buffers = branch_diff.load_buffers(cx);
+                (branch_diff.repo().cloned(), load_buffers)
+            });
             let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
@@ -598,7 +597,6 @@ impl ProjectDiff {
                 for (res, file_status) in buffer_and_diffs.into_iter().zip(group.file_statussus) {
                     let (buffer, diff) = res?;
 
-                    cx.background_executor().timer(Duration::from_secs(5)).await;
                     cx.update(|window, cx| {
                         this2.update(cx, |this2, cx| {
                             this2.register_buffer(

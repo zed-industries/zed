@@ -487,12 +487,15 @@ impl WaylandClient {
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
-        let handle = event_loop.handle();
+        let handle = event_loop.handle(); // CHECK that wayland sources get higher prio
         handle
+            // these are all tasks spawned on the foreground executor.
+            // There is no concept of priority, they are all equal.
             .insert_source(main_receiver, {
                 let handle = handle.clone();
                 move |event, _, _: &mut WaylandClientStatePtr| {
                     if let calloop::channel::Event::Msg(runnable) = event {
+                        // will only be called when the event loop has finished processing all pending events from the sources
                         handle.insert_idle(|_| {
                             runnable.run();
                         });
@@ -620,6 +623,7 @@ impl WaylandClient {
             event_loop: Some(event_loop),
         }));
 
+        // MAGIC HERE IT IS
         WaylandSource::new(conn, event_queue)
             .insert(handle)
             .unwrap();
@@ -1544,6 +1548,7 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
     })
 }
 
+// how is this being called inside calloop
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -1634,7 +1639,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         modifiers: state.modifiers,
                     });
                     drop(state);
-                    window.handle_input(input);
+                    window.handle_input(input); // How does this get into the event loop?
                 }
             }
             wl_pointer::Event::Button {
