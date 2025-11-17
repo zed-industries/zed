@@ -321,9 +321,9 @@ impl AgentTool for EditFileTool {
                 // Check for unsaved changes first - these indicate modifications we don't know about
                 if is_dirty {
                     anyhow::bail!(
-                        "The file {} has unsaved changes. \
-                         Please read the file again to get the current state before editing it.",
-                        input.path.display()
+                        "This file cannot be written to because it has unsaved changes. \
+                         Please end the current conversation immediately by telling the user you want to write to this file (mention its path explicitly) but you can't write to it because it has unsaved changes. \
+                         Ask the user to save that buffer's changes and to inform you when it's ok to proceed."
                     );
                 }
 
@@ -2210,7 +2210,7 @@ mod tests {
         assert!(result.is_err(), "Edit should fail when buffer is dirty");
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("has unsaved changes"),
+            error_msg.contains("cannot be written to because it has unsaved changes"),
             "Error should mention unsaved changes, got: {}",
             error_msg
         );
