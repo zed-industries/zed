@@ -31,13 +31,13 @@ use project::{
     search_history::SearchHistoryCursor,
 };
 use settings::Settings;
-use std::time::Duration;
 use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
     pin::pin,
     sync::Arc,
+    time::Duration,
 };
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
