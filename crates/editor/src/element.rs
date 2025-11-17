@@ -74,6 +74,7 @@ use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::Cell,
     cmp::{self, Ordering},
     fmt::{self, Write},
     iter, mem,
@@ -8783,31 +8784,34 @@ impl EditorElement {
 }
 
 #[derive(Default)]
-struct EditorRequestLayoutState {
-    prepaint_depth: usize,
+pub struct EditorRequestLayoutState {
+    prepaint_depth: Rc<Cell<usize>>,
 }
 
 impl EditorRequestLayoutState {
     const MAX_PREPAINT_DEPTH: usize = 2;
 
-    fn increment_prepaint_depth(&mut self) -> EditorPrepaintGuard<'_> {
-        debug_assert!(self.prepaint_depth < Self::MAX_PREPAINT_DEPTH);
-        self.prepaint_depth += 1;
-        EditorPrepaintGuard { state: self }
+    fn increment_prepaint_depth(&self) -> EditorPrepaintGuard {
+        let depth = self.prepaint_depth.get();
+        self.prepaint_depth.set(depth + 1);
+        EditorPrepaintGuard {
+            prepaint_depth: self.prepaint_depth.clone(),
+        }
     }
 
     fn can_prepaint(&self) -> bool {
-        self.prepaint_depth < Self::MAX_PREPAINT_DEPTH
+        self.prepaint_depth.get() < Self::MAX_PREPAINT_DEPTH
     }
 }
 
-struct EditorPrepaintGuard<'a> {
-    state: &'a mut EditorRequestLayoutState,
+struct EditorPrepaintGuard {
+    prepaint_depth: Rc<Cell<usize>>,
 }
 
-impl Drop for EditorPrepaintGuard<'_> {
+impl Drop for EditorPrepaintGuard {
     fn drop(&mut self) {
-        self.state.prepaint_depth = self.state.prepaint_depth.saturating_sub(1);
+        let depth = self.prepaint_depth.get();
+        self.prepaint_depth.set(depth.saturating_sub(1));
     }
 }
 
