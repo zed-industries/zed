@@ -631,6 +631,7 @@ scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
@@ -724,6 +725,7 @@ yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
 
+
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
@@ -792,6 +794,19 @@ codegen-units = 16
 codegen-units = 16
 
 [profile.dev.package]
+# proc-macros start
+gpui_macros = { opt-level = 3 }
+derive_refineable = { opt-level = 3 }
+settings_macros = { opt-level = 3 }
+sqlez_macros = { opt-level = 3, codegen-units = 1 }
+ui_macros = { opt-level = 3 }
+util_macros = { opt-level = 3 }
+serde_derive = { opt-level = 3 }
+quote = { opt-level = 3 }
+syn = { opt-level = 3 }
+proc-macro2 = { opt-level = 3 }
+# proc-macros end
+
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 cranelift-codegen-meta = { opt-level = 3 }
@@ -833,7 +848,6 @@ semantic_version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
-sqlez_macros = { codegen-units = 1 }
 story = { codegen-units = 1 }
 supermaven_api = { codegen-units = 1 }
 telemetry_events = { codegen-units = 1 }

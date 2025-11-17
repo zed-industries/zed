@@ -609,6 +609,10 @@ pub struct ProjectPanelSettingsContent {
     pub drag_and_drop: Option<bool>,
     /// Settings for automatically opening files.
     pub auto_open: Option<ProjectPanelAutoOpenSettings>,
+    /// How to order sibling entries in the project panel.
+    ///
+    /// Default: directories_first
+    pub sort_mode: Option<ProjectPanelSortMode>,
 }
 
 #[derive(
@@ -632,6 +636,31 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortMode {
+    /// Show directories first, then files
+    #[default]
+    DirectoriesFirst,
+    /// Mix directories and files together
+    Mixed,
+    /// Show files first, then directories
+    FilesFirst,
 }
 
 #[skip_serializing_none]

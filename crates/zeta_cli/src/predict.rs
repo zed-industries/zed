@@ -179,13 +179,12 @@ pub async fn zeta2_predict(
                     zeta2::ZetaDebugInfo::EditPredictionRequested(request) => {
                         let prediction_started_at = Instant::now();
                         start_time.get_or_insert(prediction_started_at);
-                        fs::write(
-                            example_run_dir.join("prediction_prompt.md"),
-                            &request.local_prompt.unwrap_or_default(),
-                        )?;
+                        let prompt = request.local_prompt.unwrap_or_default();
+                        fs::write(example_run_dir.join("prediction_prompt.md"), &prompt)?;
 
                         {
                             let mut result = result.lock().unwrap();
+                            result.prompt_len = prompt.chars().count();
 
                             for included_file in request.request.included_files {
                                 let insertions =
@@ -217,6 +216,7 @@ pub async fn zeta2_predict(
                         fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 
                         let mut result = result.lock().unwrap();
+                        result.generated_len = response.chars().count();
 
                         if !use_expected_context {
                             result.planning_search_time =
@@ -411,6 +411,8 @@ pub struct PredictionDetails {
     pub prediction_time: Duration,
     pub total_time: Duration,
     pub run_example_dir: PathBuf,
+    pub prompt_len: usize,
+    pub generated_len: usize,
 }
 
 impl PredictionDetails {
@@ -424,6 +426,8 @@ impl PredictionDetails {
             prediction_time: Default::default(),
             total_time: Default::default(),
             run_example_dir,
+            prompt_len: 0,
+            generated_len: 0,
         }
     }
 
