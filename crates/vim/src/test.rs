@@ -1151,12 +1151,9 @@ async fn test_go_to_definition(cx: &mut gpui::TestAppContext) {
                 lsp::Location::new(url.clone(), def_range),
             )))
         });
-    dbg!("typing");
 
     cx.simulate_keystrokes("g d");
-    dbg!("typed");
     go_to_request.next().await.unwrap();
-    dbg!("requested");
     cx.run_until_parked();
 
     cx.assert_state("const ˇbefore = 2; console.log(before)", Mode::Normal);
