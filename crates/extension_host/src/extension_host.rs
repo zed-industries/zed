@@ -11,7 +11,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
-use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -43,7 +43,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::{RemoteClient, RemoteConnectionOptions};
+use remote::RemoteClient;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -123,7 +123,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub remote_clients: HashMap<RemoteConnectionOptions, WeakEntity<RemoteClient>>,
+    pub remote_clients: Vec<WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -274,7 +274,7 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            remote_clients: HashMap::default(),
+            remote_clients: Default::default(),
             ssh_registered_tx: connection_registered_tx,
         };
 
@@ -348,7 +348,7 @@ impl ExtensionStore {
                                 index_changed = false;
                             }
 
-                            Self::update_ssh_clients(&this, cx).await?;
+                            Self::update_remote_clients(&this, cx).await?;
                         }
                         _ = connection_registered_rx.next() => {
                             debounce_timer = cx
@@ -1726,7 +1726,7 @@ impl ExtensionStore {
         })
     }
 
-    async fn sync_extensions_over_ssh(
+    async fn sync_extensions_to_remotes(
         this: &WeakEntity<Self>,
         client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
@@ -1779,7 +1779,7 @@ impl ExtensionStore {
                     })?,
                 path_style,
             );
-            log::info!("Uploading extension {}", missing_extension.clone().id);
+            log::info!("Uploading extension {} to {:?}", missing_extension.clone().id, dest_dir);
 
             client
                 .update(cx, |client, cx| {
@@ -1792,27 +1792,31 @@ impl ExtensionStore {
                 missing_extension.clone().id
             );
 
-            client
+            let result = client
                 .update(cx, |client, _cx| {
                     client.proto_client().request(proto::InstallExtension {
                         tmp_dir: dest_dir.to_proto(),
-                        extension: Some(missing_extension),
+                        extension: Some(missing_extension.clone()),
                     })
                 })?
-                .await?;
+                .await;
+
+            if let Err(e) = result {
+                log::error!("Failed to install extension {}: {}", missing_extension.id, e);
+            }
         }
 
         anyhow::Ok(())
     }
 
-    pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+    pub async fn update_remote_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
-            this.remote_clients.retain(|_k, v| v.upgrade().is_some());
-            this.remote_clients.values().cloned().collect::<Vec<_>>()
+            this.remote_clients.retain(|v| v.upgrade().is_some());
+            this.remote_clients.clone()
         })?;
 
         for client in clients {
-            Self::sync_extensions_over_ssh(this, client, cx)
+            Self::sync_extensions_to_remotes(this, client, cx)
                 .await
                 .log_err();
         }
@@ -1820,16 +1824,8 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
-        let options = client.read(cx).connection_options();
-
-        if let Some(existing_client) = self.remote_clients.get(&options)
-            && existing_client.upgrade().is_some()
-        {
-            return;
-        }
-
-        self.remote_clients.insert(options, client.downgrade());
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, _cx: &mut Context<Self>) {
+        self.remote_clients.push(client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }
