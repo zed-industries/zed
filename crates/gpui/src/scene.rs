@@ -718,6 +718,7 @@ pub(crate) struct CustomShaderInstance {
     pub content_mask: ContentMask<ScaledPixels>,
 }
 
+// The wgsl implementation uses vec2<f32>, which has an alignment of 8, not 4
 pub(crate) const CUSTOM_SHADER_INSTANCE_ALIGN: usize = 8;
 
 #[derive(Clone, Debug)]

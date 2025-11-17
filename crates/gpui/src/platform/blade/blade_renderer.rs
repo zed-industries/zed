@@ -3,10 +3,10 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    Background, Bounds, CUSTOM_SHADER_INSTANCE_ALIGN, CustomShader, CustomShaderGlobalParams,
-    CustomShaderId, CustomShaderInstance, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, ShaderPrimitive, Shadow, Size,
-    Underline, get_gamma_correction_ratios,
+    Background, Bounds, CUSTOM_SHADER_INSTANCE_ALIGN, CustomShaderGlobalParams, CustomShaderId,
+    CustomShaderInstance, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    get_gamma_correction_ratios,
 };
 use blade_graphics::{self as gpu, ShaderData};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
@@ -104,7 +104,7 @@ struct ShaderPolySpritesData {
 #[derive(blade_macros::ShaderData)]
 struct ShaderCustomShaderData {
     globals: CustomShaderGlobalParams,
-    b_shaders: gpu::BufferPiece,
+    b_instances: gpu::BufferPiece,
 }
 
 #[derive(blade_macros::ShaderData)]
@@ -142,7 +142,7 @@ struct BladePipelines {
     surfaces: gpu::RenderPipeline,
 
     custom: Vec<(gpu::RenderPipeline, usize, usize)>,
-    custom_ids: HashMap<CustomShader, CustomShaderId>,
+    custom_ids: HashMap<String, CustomShaderId>,
 }
 
 impl BladePipelines {
@@ -321,24 +321,27 @@ impl BladePipelines {
         &mut self,
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
-        custom_shader: &CustomShader,
+        source: &str,
+        user_data_size: usize,
+        user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
-        if let Some(id) = self.custom_ids.get(custom_shader).cloned() {
+        if let Some(id) = self.custom_ids.get(source).cloned() {
             return Ok(id);
         }
 
         let id = CustomShaderId(self.custom.len() as u32);
-        let shader = gpu.try_create_shader(gpu::ShaderDesc {
-            source: &custom_shader.source,
-        })?;
+        let shader = gpu.try_create_shader(gpu::ShaderDesc { source })?;
         shader.check_struct_size::<GlobalParams>();
 
-        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(custom_shader.user_data_align);
-        println!("{instance_align}");
         assert_eq!(
-            shader.get_struct_size("PaintShader") as usize,
-            (size_of::<CustomShaderInstance>().next_multiple_of(custom_shader.user_data_align)
-                + custom_shader.user_data_size)
+            shader.get_struct_size("UserData") as usize,
+            user_data_size.next_multiple_of(user_data_align)
+        );
+
+        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(user_data_align);
+        assert_eq!(
+            shader.get_struct_size("Instance") as usize,
+            (size_of::<CustomShaderInstance>().next_multiple_of(user_data_align) + user_data_size)
                 .next_multiple_of(instance_align)
         );
 
@@ -368,10 +371,10 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
-            custom_shader.user_data_size,
-            custom_shader.user_data_align,
+            user_data_size,
+            user_data_align,
         ));
-        self.custom_ids.insert(custom_shader.clone(), id);
+        self.custom_ids.insert(source.to_string(), id);
         Ok(id)
     }
 
@@ -937,7 +940,7 @@ impl BladeRenderer {
                                 pad1: 0,
                                 pad2: 0,
                             },
-                            b_shaders: instance_buf,
+                            b_instances: instance_buf,
                         },
                     );
                     encoder.draw(0, 4, 0, shaders.len() as u32);
@@ -1048,10 +1051,17 @@ impl BladeRenderer {
 
     pub fn register_custom_shader(
         &mut self,
-        shader: &CustomShader,
+        source: &str,
+        user_data_size: usize,
+        user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
-        self.pipelines
-            .register_custom_shader(&self.gpu, self.surface.info(), shader)
+        self.pipelines.register_custom_shader(
+            &self.gpu,
+            self.surface.info(),
+            source,
+            user_data_size,
+            user_data_align,
+        )
     }
 }
 

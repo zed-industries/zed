@@ -1,3 +1,6 @@
+use std::marker::PhantomData;
+
+use bytemuck::Pod;
 use refineable::Refineable;
 
 use crate::{
@@ -6,18 +9,22 @@ use crate::{
 };
 
 /// An element for custom rendering.
-pub struct FragmentShader {
+pub struct ShaderElement<T: Pod> {
     style: StyleRefinement,
+    shader: CustomShader<T>,
+    user_data: T,
 }
 
-/// Create a new shader element.
-pub fn shader() -> FragmentShader {
-    FragmentShader {
+/// Create a new shader element with `T` user-data.
+pub fn custom_shader<T: Pod>(shader: CustomShader<T>, user_data: T) -> ShaderElement<T> {
+    ShaderElement {
         style: Default::default(),
+        shader,
+        user_data,
     }
 }
 
-impl IntoElement for FragmentShader {
+impl<T: Pod> IntoElement for ShaderElement<T> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -25,7 +32,7 @@ impl IntoElement for FragmentShader {
     }
 }
 
-impl Element for FragmentShader {
+impl<T: Pod> Element for ShaderElement<T> {
     type RequestLayoutState = ();
 
     type PrepaintState = ();
@@ -73,123 +80,115 @@ impl Element for FragmentShader {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        let shader = CustomShader::new::<UserData>(
-            r#"
-            struct GlobalParams {
-                viewport_size: vec2<f32>,
-                pad1: u32,
-                pad2: u32,
-            }
-
-            var<uniform> globals: GlobalParams;
-
-            fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
-                let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
-                return vec4<f32>(device_position, 0.0, 1.0);
-            }
-
-            fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
-                let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-                return to_device_position_impl(position);
-            }
-
-            fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {
-                let tl = position - clip_bounds.origin;
-                let br = clip_bounds.origin + clip_bounds.size - position;
-                return vec4<f32>(tl.x, br.x, tl.y, br.y);
-            }
-
-            fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {
-                let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-                return distance_from_clip_rect_impl(position, clip_bounds);
-            }
-
-            struct Bounds {
-                origin: vec2<f32>,
-                size: vec2<f32>,
-            }
-
-            struct PaintShaderUserData {
-                blue: f32
-            }
-
-            struct PaintShader {
-                bounds: Bounds,
-                content_mask: Bounds,
-                user: PaintShaderUserData
-            }
-            struct PaintShaderBuf {
-                shaders: array<PaintShader>,
-            }
-
-            var<storage, read> b_shaders: PaintShaderBuf;
-
-            struct PaintShaderVarying {
-                @builtin(position) position: vec4<f32>,
-                @location(0) clip_distances: vec4<f32>,
-                @location(1) origin: vec2<f32>,
-                @location(2) size: vec2<f32>,
-                @location(3) blue: f32,
-            }
-
-            @vertex
-            fn vs(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PaintShaderVarying {
-                let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-                let view = b_shaders.shaders[instance_id];
-
-                var out = PaintShaderVarying();
-                out.position = to_device_position(unit_vertex, view.bounds);
-                out.clip_distances = distance_from_clip_rect(unit_vertex, view.bounds, view.content_mask);
-                out.origin = view.bounds.origin;
-                out.size = view.bounds.size;
-                out.blue = view.user.blue;
-                return out;
-            }
-
-            @fragment
-            fn fs(input: PaintShaderVarying) -> @location(0) vec4<f32> {
-                if (any(input.clip_distances < vec4<f32>(0.0))) {
-                    return vec4<f32>(0.0);
-                }
-
-                return vec4<f32>((input.position.x - input.origin.x) / input.size.x, (input.position.y - input.origin.y) / input.size.y, input.blue, 1.0);
-            }
-            "#.to_string());
-
-        // TODO: Better error type
         window
-            .paint_shader(bounds, &shader, UserData { blue: 1.0 })
+            .paint_shader(bounds, &self.shader, &self.user_data)
             .unwrap();
     }
 }
 
-impl Styled for FragmentShader {
+impl<T: Pod> Styled for ShaderElement<T> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
 }
 
-#[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-struct UserData {
-    blue: f32,
-}
-
-/// A custom rendering pipeline which can be executed as a primitive.
+/// An a shader which can be rendered by `shader`
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CustomShader {
+pub struct CustomShader<T: Pod> {
     pub(crate) source: String,
-    pub(crate) user_data_size: usize,
-    pub(crate) user_data_align: usize,
+    _marker: PhantomData<T>,
 }
 
-impl CustomShader {
-    /// Create a new custom shader. `source` is the WGSL source code of the shader and `T` is additional user-data to pass to each instance.
-    pub fn new<T>(source: String) -> Self {
+impl<T: Pod> CustomShader<T> {
+    /// Create a new fragment shader with per-instance user-data
+    pub fn new_fragment(fragment_body: &str, user_data_definition: &str) -> Self {
         Self {
-            source,
-            user_data_size: size_of::<T>(),
-            user_data_align: align_of::<T>(),
+            source: format!(
+                r#"
+                struct GlobalParams {{
+                    viewport_size: vec2<f32>,
+                    pad1: u32,
+                    pad2: u32,
+                }}
+
+                var<uniform> globals: GlobalParams;
+
+                fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {{
+                    let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
+                    return vec4<f32>(device_position, 0.0, 1.0);
+                }}
+
+                fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {{
+                    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+                    return to_device_position_impl(position);
+                }}
+
+                fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {{
+                    let tl = position - clip_bounds.origin;
+                    let br = clip_bounds.origin + clip_bounds.size - position;
+                    return vec4<f32>(tl.x, br.x, tl.y, br.y);
+                }}
+
+                fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {{
+                    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+                    return distance_from_clip_rect_impl(position, clip_bounds);
+                }}
+
+                struct Bounds {{
+                    origin: vec2<f32>,
+                    size: vec2<f32>,
+                }}
+
+                struct UserData {{
+                    {user_data_definition}
+                }}
+
+                struct Instance {{
+                    bounds: Bounds,
+                    content_mask: Bounds,
+                    user_data: UserData,
+                }}
+
+                struct Instances {{
+                    instances: array<Instance>,
+                }}
+
+                var<storage, read> b_instances: Instances;
+
+                struct VertexOut {{
+                    @builtin(position) position: vec4<f32>,
+                    @location(0) clip_distances: vec4<f32>,
+                    @location(1) origin: vec2<f32>,
+                    @location(2) size: vec2<f32>,
+                    @location(3) instance_id: u32,
+                }}
+
+                @vertex
+                fn vs(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> VertexOut {{
+                    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+                    let instance = b_instances.instances[instance_id];
+
+                    var out = VertexOut();
+                    out.position = to_device_position(unit_vertex, instance.bounds);
+                    out.clip_distances = distance_from_clip_rect(unit_vertex, instance.bounds, instance.content_mask);
+                    out.origin = instance.bounds.origin;
+                    out.size = instance.bounds.size;
+                    out.instance_id = instance_id;
+                    return out;
+                }}
+
+                @fragment
+                fn fs(input: VertexOut) -> @location(0) vec4<f32> {{
+                    if (any(input.clip_distances < vec4<f32>(0.0))) {{
+                        return vec4<f32>(0.0);
+                    }}
+
+                    let user_data = b_instances.instances[input.instance_id].user_data;
+                    {fragment_body}
+                }}
+                "#
+            ),
+            _marker: PhantomData,
         }
     }
 }

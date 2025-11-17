@@ -1,12 +1,23 @@
 use gpui::{
-    App, AppContext, Application, Bounds, Context, ParentElement, Render, Styled, Window,
-    WindowBounds, WindowOptions, div, px, rgb, shader, size,
+    App, AppContext, Application, Bounds, Context, CustomShader, ParentElement, Render, Styled,
+    Window, WindowBounds, WindowOptions, custom_shader, div, px, rgb, size,
 };
+
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct UserData {
+    pub blue: f32,
+}
 
 struct ShaderExample {}
 
 impl Render for ShaderExample {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let fs = CustomShader::new_fragment(
+            "return vec4<f32>((input.position.x - input.origin.x) / input.size.x, (input.position.y - input.origin.y) / input.size.y, user_data.blue, 1.0);",
+            "blue: f32",
+        );
+
         div()
             .flex()
             .size_full()
@@ -14,8 +25,8 @@ impl Render for ShaderExample {
             .justify_center()
             .bg(rgb(0x202060))
             .gap_2()
-            .child(shader().size_full())
-            .child(shader().size_full())
+            .child(custom_shader(fs.clone(), UserData { blue: 0.0 }).size_full())
+            .child(custom_shader(fs, UserData { blue: 1.0 }).size_full())
     }
 }
 

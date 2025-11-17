@@ -36,7 +36,7 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, CustomShader,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
@@ -503,7 +503,12 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
-    fn register_shader(&self, shader: &CustomShader) -> Result<CustomShaderId, &'static str>;
+    fn register_shader(
+        &self,
+        source: &str,
+        user_data_size: usize,
+        user_data_align: usize,
+    ) -> Result<CustomShaderId, &'static str>;
 
     // macOS specific methods
     fn get_title(&self) -> String {

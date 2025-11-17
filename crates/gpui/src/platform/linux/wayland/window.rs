@@ -26,11 +26,11 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::{
-    AnyWindowHandle, Bounds, CustomShader, CustomShaderId, Decorations, Globals, GpuSpecs,
-    Modifiers, Output, Pixels, PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowParams, layer_shell::LayerShellNotSupportedError, px, size,
+    AnyWindowHandle, Bounds, CustomShaderId, Decorations, Globals, GpuSpecs, Modifiers, Output,
+    Pixels, PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams,
+    layer_shell::LayerShellNotSupportedError, px, size,
 };
 use crate::{
     Capslock,
@@ -1216,9 +1216,16 @@ impl PlatformWindow for WaylandWindow {
         state.renderer.draw(scene);
     }
 
-    fn register_shader(&self, shader: &CustomShader) -> Result<CustomShaderId, &'static str> {
+    fn register_shader(
+        &self,
+        source: &str,
+        user_data_size: usize,
+        user_data_align: usize,
+    ) -> Result<CustomShaderId, &'static str> {
         let mut state = self.borrow_mut();
-        state.renderer.register_custom_shader(shader)
+        state
+            .renderer
+            .register_custom_shader(source, user_data_size, user_data_align)
     }
 
     fn completed_frame(&self) {

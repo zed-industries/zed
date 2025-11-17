@@ -270,7 +270,9 @@ impl PlatformWindow for TestWindow {
 
     fn register_shader(
         &self,
-        _shader: &crate::CustomShader,
+        _source: &str,
+        _user_data_size: usize,
+        _user_data_align: usize,
     ) -> Result<crate::CustomShaderId, &'static str> {
         unimplemented!()
     }

@@ -3273,15 +3273,19 @@ impl Window {
     pub fn paint_shader<T: bytemuck::Pod>(
         &mut self,
         bounds: Bounds<Pixels>,
-        shader: &CustomShader,
-        user_data: T,
+        shader: &CustomShader<T>,
+        user_data: &T,
     ) -> Result<(), &'static str> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        let shader_id = self.platform_window.register_shader(shader)?;
+        let shader_id = self.platform_window.register_shader(
+            &shader.source,
+            size_of::<T>(),
+            align_of::<T>(),
+        )?;
 
         self.next_frame.scene.insert_primitive(ShaderPrimitive {
             order: 0,
@@ -3290,7 +3294,7 @@ impl Window {
                 .map_origin(|origin| origin.floor())
                 .map_size(|size| size.ceil()),
             content_mask,
-            user_data: bytemuck::bytes_of(&user_data).to_vec(),
+            user_data: bytemuck::bytes_of(user_data).to_vec(),
         });
         Ok(())
     }
