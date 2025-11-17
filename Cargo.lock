@@ -9682,6 +9682,7 @@ dependencies = [
  "collections",
  "editor",
  "fs",
+ "futures 0.3.31",
  "gpui",
  "html5ever 0.27.0",
  "language",

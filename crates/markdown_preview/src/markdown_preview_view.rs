@@ -1,3 +1,4 @@
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
@@ -27,6 +28,7 @@ use crate::{
 };
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
+const MAX_MERMAID_CACHE_SIZE: usize = 50;
 
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
@@ -37,6 +39,8 @@ pub struct MarkdownPreviewView {
     selected_block: usize,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
+    mermaid_cache: HashMap<u64, PathBuf>,
+    mermaid_cache_lru: VecDeque<u64>,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
 }
@@ -212,6 +216,8 @@ impl MarkdownPreviewView {
                 contents: None,
                 list_state,
                 language_registry,
+                mermaid_cache: HashMap::new(),
+                mermaid_cache_lru: VecDeque::new(),
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
@@ -360,8 +366,22 @@ impl MarkdownPreviewView {
             });
 
             if let Some(node_runtime) = node_runtime {
-                MarkdownPreviewView::render_mermaid_diagrams(&mut contents, node_runtime, &cx)
-                    .await;
+                let cache = view
+                    .update(cx, |view, _cx| {
+                        (view.mermaid_cache.clone(), view.mermaid_cache_lru.clone())
+                    })
+                    .ok()
+                    .unwrap_or_default();
+
+                let (updated_cache, updated_lru) =
+                    MarkdownPreviewView::render_mermaid_diagrams(&mut contents, cache, node_runtime, &cx)
+                        .await;
+
+                view.update(cx, |view, _cx| {
+                    view.mermaid_cache = updated_cache;
+                    view.mermaid_cache_lru = updated_lru;
+                })
+                .ok();
             }
 
             view.update(cx, move |view, cx| {
@@ -441,40 +461,93 @@ impl MarkdownPreviewView {
 
     async fn render_mermaid_diagrams(
         parsed: &mut ParsedMarkdown,
+        cache: (HashMap<u64, PathBuf>, VecDeque<u64>),
         node_runtime: Arc<node_runtime::NodeRuntime>,
         cx: &gpui::AsyncApp,
-    ) {
+    ) -> (HashMap<u64, PathBuf>, VecDeque<u64>) {
         use crate::markdown_elements::ParsedMarkdownElement;
 
-        for (index, element) in parsed.children.iter_mut().enumerate() {
-            if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
-                let contents = mermaid.contents.clone();
-                let node_runtime = node_runtime.clone();
-                let diagram_id = index;
+        let (mut mermaid_cache, mut cache_lru) = cache;
+        let mut render_tasks = Vec::new();
 
-                match cx
-                    .background_executor()
-                    .spawn(async move {
-                        crate::mermaid_renderer::render_mermaid_diagram(
-                            node_runtime,
-                            contents,
-                            diagram_id,
-                        )
-                        .await
-                    })
-                    .await
-                {
-                    Ok(svg_path) => {
-                        mermaid.svg_path = Some(svg_path);
+        for element in parsed.children.iter_mut() {
+            if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
+                let Some(content_hash) = mermaid.content_hash else {
+                    continue;
+                };
+
+                if let Some(cached_path) = mermaid_cache.get(&content_hash) {
+                    if cached_path.exists() {
+                        mermaid.image_path = Some(cached_path.clone());
                         mermaid.error = None;
+
+                        if let Some(pos) = cache_lru.iter().position(|&h| h == content_hash) {
+                            cache_lru.remove(pos);
+                        }
+                        cache_lru.push_back(content_hash);
+                        continue;
                     }
-                    Err(err) => {
-                        mermaid.svg_path = None;
-                        mermaid.error = Some(err.to_string().into());
+                }
+
+                let contents = mermaid.contents.clone();
+                let scale = mermaid.scale;
+                let node_runtime = node_runtime.clone();
+
+                let task = cx.background_executor().spawn(async move {
+                    let result = crate::mermaid_renderer::render_mermaid_diagram(
+                        node_runtime,
+                        contents,
+                        content_hash,
+                        scale,
+                    )
+                    .await;
+                    (content_hash, result)
+                });
+
+                render_tasks.push(task);
+            }
+        }
+
+        let render_results = futures::future::join_all(render_tasks).await;
+
+        for (content_hash, result) in render_results {
+            for element in parsed.children.iter_mut() {
+                if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
+                    if mermaid.content_hash == Some(content_hash) {
+                        match result {
+                            Ok(ref image_path) => {
+                                mermaid.image_path = Some(image_path.clone());
+                                mermaid.error = None;
+
+                                mermaid_cache.insert(content_hash, image_path.clone());
+
+                                if let Some(pos) = cache_lru.iter().position(|&h| h == content_hash)
+                                {
+                                    cache_lru.remove(pos);
+                                }
+                                cache_lru.push_back(content_hash);
+
+                                while cache_lru.len() > MAX_MERMAID_CACHE_SIZE {
+                                    if let Some(evicted_hash) = cache_lru.pop_front() {
+                                        if let Some(evicted_path) = mermaid_cache.remove(&evicted_hash)
+                                        {
+                                            smol::fs::remove_file(evicted_path).await.ok();
+                                        }
+                                    }
+                                }
+                            }
+                            Err(ref err) => {
+                                mermaid.image_path = None;
+                                mermaid.error = Some(err.to_string().into());
+                            }
+                        }
+                        break;
                     }
                 }
             }
         }
+
+        (mermaid_cache, cache_lru)
     }
 
     fn should_apply_padding_between(

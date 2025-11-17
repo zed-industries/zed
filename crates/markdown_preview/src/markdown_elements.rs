@@ -93,7 +93,9 @@ pub struct ParsedMarkdownCodeBlock {
 pub struct ParsedMarkdownMermaidDiagram {
     pub source_range: Range<usize>,
     pub contents: SharedString,
-    pub svg_path: Option<PathBuf>,
+    pub scale: u32,
+    pub content_hash: Option<u64>,
+    pub image_path: Option<PathBuf>,
     pub error: Option<SharedString>,
 }
 

@@ -10,7 +10,15 @@ use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{
-    cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
+    cell::RefCell,
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    mem,
+    ops::Range,
+    path::PathBuf,
+    rc::Rc,
+    sync::Arc,
+    vec,
 };
 use ui::SharedString;
 
@@ -196,13 +204,16 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::BlockQuote(block_quote)])
                 }
                 Tag::CodeBlock(kind) => {
-                    let language = match kind {
-                        pulldown_cmark::CodeBlockKind::Indented => None,
+                    let (language, scale) = match kind {
+                        pulldown_cmark::CodeBlockKind::Indented => (None, None),
                         pulldown_cmark::CodeBlockKind::Fenced(language) => {
                             if language.is_empty() {
-                                None
+                                (None, None)
                             } else {
-                                Some(language.to_string())
+                                let parts: Vec<&str> = language.split_whitespace().collect();
+                                let lang = parts.first().map(|s| s.to_string());
+                                let scale = parts.get(1).and_then(|s| s.parse::<u32>().ok());
+                                (lang, scale)
                             }
                         }
                     };
@@ -210,7 +221,7 @@ impl<'a> MarkdownParser<'a> {
                     self.cursor += 1;
 
                     if language.as_deref() == Some("mermaid") {
-                        let mermaid_diagram = self.parse_mermaid_diagram().await?;
+                        let mermaid_diagram = self.parse_mermaid_diagram(scale).await?;
                         Some(vec![ParsedMarkdownElement::MermaidDiagram(mermaid_diagram)])
                     } else {
                         let code_block = self.parse_code_block(language).await?;
@@ -811,7 +822,10 @@ impl<'a> MarkdownParser<'a> {
         })
     }
 
-    async fn parse_mermaid_diagram(&mut self) -> Option<ParsedMarkdownMermaidDiagram> {
+    async fn parse_mermaid_diagram(
+        &mut self,
+        scale: Option<u32>,
+    ) -> Option<ParsedMarkdownMermaidDiagram> {
         let Some((_event, source_range)) = self.previous() else {
             return None;
         };
@@ -841,10 +855,21 @@ impl<'a> MarkdownParser<'a> {
 
         code = code.strip_suffix('\n').unwrap_or(&code).to_string();
 
+        let scale = scale.unwrap_or(100).clamp(10, 500);
+
+        let content_hash = {
+            let mut hasher = collections::FxHasher::default();
+            code.hash(&mut hasher);
+            scale.hash(&mut hasher);
+            hasher.finish()
+        };
+
         Some(ParsedMarkdownMermaidDiagram {
             source_range,
             contents: code.into(),
-            svg_path: None,
+            scale,
+            content_hash: Some(content_hash),
+            image_path: None,
             error: None,
         })
     }

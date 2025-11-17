@@ -669,8 +669,8 @@ fn render_mermaid_diagram(
                     .child(div().mt_2().child(StyledText::new(error.clone()))),
             )
             .into_any()
-    } else if let Some(svg_path) = &parsed.svg_path {
-        let image_resource = Resource::Path(Arc::from(svg_path.as_path()));
+    } else if let Some(image_path) = &parsed.image_path {
+        let image_resource = Resource::Path(Arc::from(image_path.as_path()));
 
         cx.with_common_p(div())
             .px_3()

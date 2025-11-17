@@ -56,7 +56,12 @@ impl MermaidRenderer {
         Ok(())
     }
 
-    pub async fn render_to_svg(&self, mermaid_source: &str, diagram_id: usize) -> Result<PathBuf> {
+    pub async fn render_to_png(
+        &self,
+        mermaid_source: &str,
+        diagram_id: u64,
+        scale: u32,
+    ) -> Result<PathBuf> {
         self.ensure_mermaid_installed().await?;
 
         let node_path = self
@@ -84,6 +89,8 @@ impl MermaidRenderer {
             .join(".bin")
             .join(if cfg!(windows) { "mmdc.cmd" } else { "mmdc" });
 
+        let scale_value = ((scale as f32 / 100.0) * 2.0).max(1.0).min(10.0) as u32;
+
         let output = util::command::new_smol_command(&node_path)
             .arg(&mmdc_path)
             .arg("-i")
@@ -95,7 +102,7 @@ impl MermaidRenderer {
             .arg("--backgroundColor")
             .arg("transparent")
             .arg("--scale")
-            .arg("2")
+            .arg(scale_value.to_string())
             .arg("--quiet")
             .current_dir(&self.mermaid_dir)
             .output()
@@ -120,9 +127,10 @@ impl MermaidRenderer {
 pub async fn render_mermaid_diagram(
     node_runtime: Arc<NodeRuntime>,
     contents: SharedString,
-    diagram_id: usize,
+    diagram_id: u64,
+    scale: u32,
 ) -> Result<PathBuf> {
     let renderer = MermaidRenderer::new(node_runtime);
-    let svg_path = renderer.render_to_svg(&contents, diagram_id).await?;
-    Ok(svg_path)
+    let png_path = renderer.render_to_png(&contents, diagram_id, scale).await?;
+    Ok(png_path)
 }
