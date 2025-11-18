@@ -502,6 +502,16 @@ impl LocalLspStore {
 
                 match result {
                     Ok(server) => {
+                        // Register virtual document handlers before marking server as Running
+                        // This prevents race conditions where "Go to Definition" happens before handlers are ready
+                        let _ = LspStore::register_virtual_document_handlers(
+                            lsp_store.clone(),
+                            adapter.clone(),
+                            key.clone(),
+                            cx,
+                        )
+                        .await;
+
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 lsp_store.insert_newly_running_language_server(
@@ -8504,6 +8514,47 @@ impl LspStore {
                                 }]
                             });
                     }
+
+                    // Set up cleanup when the virtual buffer is released
+                    let lsp_store_handle = cx.entity().downgrade();
+                    let uri_for_cleanup = uri.clone();
+                    buffer.update(cx, move |_, cx| {
+                        cx.on_release(move |buffer, cx| {
+                            let buffer_id = buffer.remote_id();
+                            lsp_store_handle
+                                .update(cx, |lsp_store, _cx| {
+                                    // Send textDocument/didClose to the language server
+                                    if let Some(language_server) =
+                                        lsp_store.language_server_for_id(language_server_id)
+                                    {
+                                        language_server.unregister_buffer(uri_for_cleanup.clone());
+                                    }
+
+                                    // Clean up tracking maps
+                                    if let Some(local) = lsp_store.as_local_mut() {
+                                        if let Some(servers) =
+                                            local.buffers_opened_in_servers.get_mut(&buffer_id)
+                                        {
+                                            servers.remove(&language_server_id);
+                                            if servers.is_empty() {
+                                                local.buffers_opened_in_servers.remove(&buffer_id);
+                                            }
+                                        }
+
+                                        if let Some(snapshots) =
+                                            local.buffer_snapshots.get_mut(&buffer_id)
+                                        {
+                                            snapshots.remove(&language_server_id);
+                                            if snapshots.is_empty() {
+                                                local.buffer_snapshots.remove(&buffer_id);
+                                            }
+                                        }
+                                    }
+                                })
+                                .ok();
+                        })
+                        .detach()
+                    });
                 }
 
                 // Emit buffer added event
@@ -11153,6 +11204,50 @@ impl LspStore {
         }
     }
 
+    async fn register_virtual_document_handlers(
+        lsp_store: WeakEntity<LspStore>,
+        adapter: Arc<CachedLspAdapter>,
+        key: LanguageServerSeed,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        let (_worktree, delegate, virtual_docs) = lsp_store.update(cx, |lsp_store, cx| {
+            let local = lsp_store.as_local().context("not a local lsp store")?;
+            let worktree = local
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(key.worktree_id, cx)
+                .context("worktree not found")?;
+
+            let delegate: Arc<dyn LspAdapterDelegate> = LocalLspAdapterDelegate::new(
+                local.languages.clone(),
+                &local.environment,
+                local.weak.clone(),
+                &worktree,
+                local.http_client.clone(),
+                local.fs.clone(),
+                cx,
+            );
+
+            let virtual_docs = local.virtual_docs.clone();
+            anyhow::Ok((worktree, delegate, virtual_docs))
+        })??;
+
+        let lsp_adapter = adapter.adapter.clone();
+        if let Ok(configs) = lsp_adapter.virtual_document_configs(&delegate).await {
+            virtual_docs.update(cx, |store, _cx| {
+                for config in configs {
+                    log::info!(
+                        "Registering virtual document handler for scheme '{}' from extension",
+                        config.scheme
+                    );
+                    store.register_handler(config);
+                }
+            })?;
+        }
+
+        anyhow::Ok(())
+    }
+
     fn insert_newly_running_language_server(
         &mut self,
         adapter: Arc<CachedLspAdapter>,
@@ -11212,40 +11307,8 @@ impl LspStore {
             .languages
             .update_lsp_binary_status(adapter.name(), BinaryStatus::None);
 
-        // Register virtual document handlers from the extension
-        let worktree = local
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(key.worktree_id, cx);
-        if let Some(worktree) = worktree {
-            let lsp_adapter = adapter.adapter.clone();
-            let delegate: Arc<dyn LspAdapterDelegate> = LocalLspAdapterDelegate::new(
-                local.languages.clone(),
-                &local.environment,
-                local.weak.clone(),
-                &worktree,
-                local.http_client.clone(),
-                local.fs.clone(),
-                cx,
-            );
-            let virtual_docs = local.virtual_docs.clone();
-            cx.spawn(async move |_lsp_store, cx| {
-                if let Ok(configs) = lsp_adapter.virtual_document_configs(&delegate).await {
-                    // Register all configs at once
-                    let _: anyhow::Result<()> = virtual_docs.update(cx, |store, _cx| {
-                        for config in configs {
-                            log::info!(
-                                "Registering virtual document handler for scheme '{}' from extension",
-                                config.scheme
-                            );
-                            store.register_handler(config);
-                        }
-                    });
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-        }
+        // Note: Virtual document handlers are now registered before this function is called,
+        // in the startup sequence, to prevent race conditions.
 
         if let Some(file_ops_caps) = language_server
             .capabilities()
