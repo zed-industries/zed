@@ -501,6 +501,9 @@ pub struct LanguageModelToolUse {
     pub raw_input: String,
     pub input: serde_json::Value,
     pub is_input_complete: bool,
+    /// Thought signature the model sent us. Some models require that this
+    /// signature be preserved and sent back in conversation history for validation.
+    pub thought_signature: Option<String>,
 }
 
 pub struct LanguageModelTextStream {
@@ -906,5 +909,86 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[test]
+    fn test_language_model_tool_use_serializes_with_signature() {
+        use serde_json::json;
+
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("test_id"),
+            name: "test_tool".into(),
+            raw_input: json!({"arg": "value"}).to_string(),
+            input: json!({"arg": "value"}),
+            is_input_complete: true,
+            thought_signature: Some("test_signature".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&tool_use).unwrap();
+
+        assert_eq!(serialized["id"], "test_id");
+        assert_eq!(serialized["name"], "test_tool");
+        assert_eq!(serialized["thought_signature"], "test_signature");
+    }
+
+    #[test]
+    fn test_language_model_tool_use_deserializes_with_missing_signature() {
+        use serde_json::json;
+
+        let json = json!({
+            "id": "test_id",
+            "name": "test_tool",
+            "raw_input": "{\"arg\":\"value\"}",
+            "input": {"arg": "value"},
+            "is_input_complete": true
+        });
+
+        let tool_use: LanguageModelToolUse = serde_json::from_value(json).unwrap();
+
+        assert_eq!(tool_use.id, LanguageModelToolUseId::from("test_id"));
+        assert_eq!(tool_use.name.as_ref(), "test_tool");
+        assert_eq!(tool_use.thought_signature, None);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_round_trip_with_signature() {
+        use serde_json::json;
+
+        let original = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("round_trip_id"),
+            name: "round_trip_tool".into(),
+            raw_input: json!({"key": "value"}).to_string(),
+            input: json!({"key": "value"}),
+            is_input_complete: true,
+            thought_signature: Some("round_trip_sig".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&original).unwrap();
+        let deserialized: LanguageModelToolUse = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(deserialized.id, original.id);
+        assert_eq!(deserialized.name, original.name);
+        assert_eq!(deserialized.thought_signature, original.thought_signature);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_round_trip_without_signature() {
+        use serde_json::json;
+
+        let original = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("no_sig_id"),
+            name: "no_sig_tool".into(),
+            raw_input: json!({"key": "value"}).to_string(),
+            input: json!({"key": "value"}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let serialized = serde_json::to_value(&original).unwrap();
+        let deserialized: LanguageModelToolUse = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(deserialized.id, original.id);
+        assert_eq!(deserialized.name, original.name);
+        assert_eq!(deserialized.thought_signature, None);
     }
 }
