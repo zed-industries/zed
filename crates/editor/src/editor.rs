@@ -6722,6 +6722,9 @@ impl Editor {
             return;
         };
 
+        if self.blame.is_none() {
+            self.start_git_blame(true, window, cx);
+        }
         let Some(blame) = self.blame.as_ref() else {
             return;
         };
