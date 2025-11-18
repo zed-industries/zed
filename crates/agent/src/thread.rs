@@ -1464,9 +1464,11 @@ impl Thread {
             StatusUpdate(CompletionRequestStatus::ToolUseLimitReached) => {
                 self.tool_use_limit_reached = true;
             }
-            Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
-            Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
-            Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
+            Stop(StopReason::Refusal) => return Err(LanguageModelCompletionError::Refusal),
+            Stop(StopReason::MaxTokens) => return Err(LanguageModelCompletionError::MaxTokens),
+            Stop(StopReason::ToolUse | StopReason::EndTurn) => {
+                // Tool use will be handled separately, and ending the turn needs no action
+            }
         }
 
         Ok(None)
