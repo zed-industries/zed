@@ -501,7 +501,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if self.delegate.should_dismiss() && window.is_window_active() {
+        if self.delegate.should_dismiss() {
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
@@ -598,7 +598,7 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                if self.is_modal {
+                if self.is_modal && window.is_window_active() {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
@@ -610,7 +610,9 @@ impl<D: PickerDelegate> Picker<D> {
         let Head::Empty(_) = &self.head else {
             panic!("unexpected call");
         };
-        self.cancel(&menu::Cancel, window, cx);
+        if window.is_window_active() {
+            self.cancel(&menu::Cancel, window, cx);
+        }
     }
 
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut App) {
