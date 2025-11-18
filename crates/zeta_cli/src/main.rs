@@ -176,6 +176,7 @@ enum PromptFormat {
     NumberedLines,
     OldTextNewText,
     Minimal,
+    MinimalQwen,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -187,6 +188,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::NumberedLines => predict_edits_v3::PromptFormat::NumLinesUniDiff,
             Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
             Self::Minimal => predict_edits_v3::PromptFormat::Minimal,
+            Self::MinimalQwen => predict_edits_v3::PromptFormat::MinimalQwen,
         }
     }
 }

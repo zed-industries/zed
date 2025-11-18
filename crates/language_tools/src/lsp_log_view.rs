@@ -812,13 +812,11 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |e, cx| {
-            e.activate_match(index, matches, collapse, window, cx)
-        })
+        self.editor
+            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
     }
 
     fn select_matches(

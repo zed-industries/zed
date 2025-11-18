@@ -386,8 +386,6 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let temp_mode_motion = motion.clone();
-
         match operator {
             None => self.move_cursor(motion, times, window, cx),
             Some(Operator::Change) => self.change_motion(motion, times, forced_motion, window, cx),
@@ -477,7 +475,7 @@ impl Vim {
             }
         }
         // Exit temporary normal mode (if active).
-        self.exit_temporary_normal(Some(&temp_mode_motion), window, cx);
+        self.exit_temporary_normal(window, cx);
     }
 
     pub fn normal_object(
@@ -580,8 +578,21 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
+
+            // If vim is in temporary mode and the motion being used is
+            // `EndOfLine` ($), we'll want to disable clipping at line ends so
+            // that the newline character can be selected so that, when moving
+            // back to visual mode, the cursor will be placed after the last
+            // character and not before it.
+            let clip_at_line_ends = editor.clip_at_line_ends(cx);
+            let should_disable_clip = matches!(motion, Motion::EndOfLine { .. }) && vim.temp_mode;
+
+            if should_disable_clip {
+                editor.set_clip_at_line_ends(false, cx)
+            };
+
             editor.change_selections(
                 SelectionEffects::default().nav_history(motion.push_to_jump_list()),
                 window,
@@ -593,7 +604,11 @@ impl Vim {
                             .unwrap_or((cursor, goal))
                     })
                 },
-            )
+            );
+
+            if should_disable_clip {
+                editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+            };
         });
     }
 
@@ -1054,25 +1069,9 @@ impl Vim {
         });
     }
 
-    /// If temporary mode is enabled, switches back to insert mode, using the
-    /// provided `motion` to determine whether to move the cursor before
-    /// re-enabling insert mode, for example, when `EndOfLine` ($) is used.
-    fn exit_temporary_normal(
-        &mut self,
-        motion: Option<&Motion>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.temp_mode {
             self.switch_mode(Mode::Insert, true, window, cx);
-
-            // Since we're switching from `Normal` mode to `Insert` mode, we'll
-            // move the cursor one position to the right, to ensure that, for
-            // motions like `EndOfLine` ($), the cursor is actually at the end
-            // of line and not on the last character.
-            if matches!(motion, Some(Motion::EndOfLine { .. })) {
-                self.move_cursor(Motion::Right, Some(1), window, cx);
-            }
         }
     }
 }

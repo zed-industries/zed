@@ -2,11 +2,12 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
+use agent::{AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::LanguageModelToolResultContent;
+use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
+use prompt_store::ProjectContext;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -397,12 +398,17 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         json!({
             "settings.json": r#"
           {
-            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "languages": {"Rust":{"language_servers":["rust-analyzer", "fake-analyzer"]}},
             "lsp": {
               "rust-analyzer": {
                 "binary": {
                   "path": "~/.cargo/bin/rust-analyzer"
                 }
+              },
+              "fake-analyzer": {
+               "binary": {
+                "path": "~/.cargo/bin/rust-analyzer"
+               }
               }
             }
           }"#
@@ -430,12 +436,48 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
                 },
                 ..FakeLspAdapter::default()
             },
+        );
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    rename_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
         )
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
         headless.read(cx).languages.register_fake_language_server(
             LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                rename_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            None,
+        )
+    });
+
+    let mut fake_second_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    rename_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("fake-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
                 rename_provider: Some(lsp::OneOf::Left(true)),
@@ -468,12 +510,13 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.run_until_parked();
 
     let fake_lsp = fake_lsp.next().await.unwrap();
+    let fake_second_lsp = fake_second_lsp.next().await.unwrap();
 
     cx.read(|cx| {
         let file = buffer.read(cx).file();
         assert_eq!(
             language_settings(Some("Rust".into()), file, cx).language_servers,
-            ["rust-analyzer".to_string()]
+            ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });
 
@@ -496,12 +539,19 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     server_cx.read(|cx| {
         let lsp_store = headless.read(cx).lsp_store.read(cx);
-        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
+        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 2);
     });
 
     fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
+            ..Default::default()
+        }])))
+    });
+
+    fake_second_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+            label: "beep".to_string(),
             ..Default::default()
         }])))
     });
@@ -527,7 +577,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
-        vec!["boop".to_string()]
+        vec!["boop".to_string(), "beep".to_string()]
     );
 
     fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
@@ -1722,12 +1772,27 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
 
     let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
 
+    // Create a minimal thread for the ReadFileTool
+    let context_server_registry =
+        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            cx.new(|_cx| ProjectContext::default()),
+            context_server_registry,
+            Templates::new(),
+            Some(model),
+            cx,
+        )
+    });
+
     let input = ReadFileToolInput {
         path: "project/b.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let read_tool = Arc::new(ReadFileTool::new(project, action_log));
+    let read_tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
     let (event_stream, _) = ToolCallEventStream::test();
 
     let exists_result = cx.update(|cx| read_tool.clone().run(input, event_stream.clone(), cx));

@@ -143,9 +143,11 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         };
 
         let Some(copilot) = Copilot::global(cx) else {
-            return Task::ready( Err(anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ).into()));
+            return Task::ready(Err(anyhow!(concat!(
+                "Copilot must be enabled for Copilot Chat to work. ",
+                "Please enable Copilot and try again."
+            ))
+            .into()));
         };
 
         let err = match copilot.read(cx).status() {

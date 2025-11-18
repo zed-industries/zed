@@ -218,6 +218,7 @@ pub(crate) struct GetHover {
 pub(crate) struct GetCompletions {
     pub position: PointUtf16,
     pub context: CompletionContext,
+    pub server_id: Option<lsp::LanguageServerId>,
 }
 
 #[derive(Clone, Debug)]
@@ -2395,6 +2396,7 @@ impl LspCommand for GetCompletions {
             buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(&anchor)),
             version: serialize_version(&buffer.version()),
+            server_id: self.server_id.map(|id| id.to_proto()),
         }
     }
 
@@ -2423,6 +2425,9 @@ impl LspCommand for GetCompletions {
                 trigger_kind: CompletionTriggerKind::INVOKED,
                 trigger_character: None,
             },
+            server_id: message
+                .server_id
+                .map(|id| lsp::LanguageServerId::from_proto(id)),
         })
     }
 

@@ -251,17 +251,17 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .inset(true)
                                 .spacing(ListItemSpacing::Sparse)
                                 .toggle_state(selected)
-                                .start_slot::<Icon>(model_info.icon.map(|icon| {
-                                    Icon::new(icon)
-                                        .color(model_icon_color)
-                                        .size(IconSize::Small)
-                                }))
                                 .child(
                                     h_flex()
                                         .w_full()
-                                        .pl_0p5()
                                         .gap_1p5()
-                                        .w(px(240.))
+                                        .when_some(model_info.icon, |this, icon| {
+                                            this.child(
+                                                Icon::new(icon)
+                                                    .color(model_icon_color)
+                                                    .size(IconSize::Small)
+                                            )
+                                        })
                                         .child(Label::new(model_info.name.clone()).truncate()),
                                 )
                                 .end_slot(div().pr_3().when(is_selected, |this| {

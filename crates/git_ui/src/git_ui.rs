@@ -708,6 +708,11 @@ impl RenderOnce for GitStatusIcon {
                 IconName::SquareMinus,
                 cx.theme().colors().version_control_deleted,
             )
+        } else if status.is_renamed() {
+            (
+                IconName::ArrowRight,
+                cx.theme().colors().version_control_modified,
+            )
         } else if status.is_modified() {
             (
                 IconName::SquareDot,

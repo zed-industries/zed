@@ -98,6 +98,8 @@ util.workspace = true
 watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+image.workspace = true
+async-fs.workspace = true
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }

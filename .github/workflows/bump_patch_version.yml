@@ -42,7 +42,7 @@ jobs:
               exit 1
               ;;
           esac
-          which cargo-set-version > /dev/null || cargo install cargo-edit
+          which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
           output="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
           export GIT_COMMITTER_NAME="Zed Bot"
           export GIT_COMMITTER_EMAIL="hi@zed.dev"

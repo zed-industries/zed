@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map,
     ops::{ControlFlow, Range},
     time::Duration,
 };
@@ -778,6 +779,7 @@ impl Editor {
         }
 
         let excerpts = self.buffer.read(cx).excerpt_ids();
+        let mut inserted_hint_text = HashMap::default();
         let hints_to_insert = new_hints
             .into_iter()
             .filter_map(|(chunk_range, hints_result)| {
@@ -804,8 +806,35 @@ impl Editor {
                     }
                 }
             })
-            .flat_map(|hints| hints.into_values())
-            .flatten()
+            .flat_map(|new_hints| {
+                let mut hints_deduplicated = Vec::new();
+
+                if new_hints.len() > 1 {
+                    for (server_id, new_hints) in new_hints {
+                        for (new_id, new_hint) in new_hints {
+                            let hints_text_for_position = inserted_hint_text
+                                .entry(new_hint.position)
+                                .or_insert_with(HashMap::default);
+                            let insert =
+                                match hints_text_for_position.entry(new_hint.text().to_string()) {
+                                    hash_map::Entry::Occupied(o) => o.get() == &server_id,
+                                    hash_map::Entry::Vacant(v) => {
+                                        v.insert(server_id);
+                                        true
+                                    }
+                                };
+
+                            if insert {
+                                hints_deduplicated.push((new_id, new_hint));
+                            }
+                        }
+                    }
+                } else {
+                    hints_deduplicated.extend(new_hints.into_values().flatten());
+                }
+
+                hints_deduplicated
+            })
             .filter_map(|(hint_id, lsp_hint)| {
                 if inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
                     && inlay_hints
@@ -3732,6 +3761,7 @@ let c = 3;"#
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
+                name: "rust-analyzer",
                 capabilities: lsp::ServerCapabilities {
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                     ..lsp::ServerCapabilities::default()
@@ -3804,6 +3834,78 @@ let c = 3;"#
             },
         );
 
+        // Add another server that does send the same, duplicate hints back
+        let mut fake_servers_2 = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "CrabLang-ls",
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |params, _| async move {
+                            if params.text_document.uri
+                                == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
+                            {
+                                Ok(Some(vec![
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(1, 9),
+                                        label: lsp::InlayHintLabel::String(": i32".to_owned()),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(19, 9),
+                                        label: lsp::InlayHintLabel::String(": i33".to_owned()),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                ]))
+                            } else if params.text_document.uri
+                                == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                            {
+                                Ok(Some(vec![
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(1, 10),
+                                        label: lsp::InlayHintLabel::String(": i34".to_owned()),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(29, 10),
+                                        label: lsp::InlayHintLabel::String(": i35".to_owned()),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                ]))
+                            } else {
+                                panic!("Unexpected file path {:?}", params.text_document.uri);
+                            }
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
         let (buffer_1, _handle_1) = project
             .update(cx, |project, cx| {
                 project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
@@ -3847,6 +3949,7 @@ let c = 3;"#
         });
 
         let fake_server = fake_servers.next().await.unwrap();
+        let _fake_server_2 = fake_servers_2.next().await.unwrap();
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
@@ -3855,11 +3958,16 @@ let c = 3;"#
                 assert_eq!(
                     vec![
                         ": i32".to_string(),
+                        ": i32".to_string(),
+                        ": i33".to_string(),
                         ": i33".to_string(),
                         ": i34".to_string(),
+                        ": i34".to_string(),
+                        ": i35".to_string(),
                         ": i35".to_string(),
                     ],
                     sorted_cached_hint_labels(editor, cx),
+                    "We receive duplicate hints from 2 servers and cache them all"
                 );
                 assert_eq!(
                     vec![
@@ -3869,7 +3977,7 @@ let c = 3;"#
                         ": i33".to_string(),
                     ],
                     visible_hint_labels(editor, cx),
-                    "lib.rs is added before main.rs , so its excerpts should be visible first"
+                    "lib.rs is added before main.rs , so its excerpts should be visible first; hints should be deduplicated per label"
                 );
             })
             .unwrap();
@@ -3919,8 +4027,12 @@ let c = 3;"#
                 assert_eq!(
                     vec![
                         ": i32".to_string(),
+                        ": i32".to_string(),
+                        ": i33".to_string(),
                         ": i33".to_string(),
                         ": i34".to_string(),
+                        ": i34".to_string(),
+                        ": i35".to_string(),
                         ": i35".to_string(),
                     ],
                     sorted_cached_hint_labels(editor, cx),

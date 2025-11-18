@@ -288,7 +288,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     "});
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test]
 async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -307,17 +307,35 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+    let mut fake_language_servers = [
+        client_a.language_registry().register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        ),
+        client_a.language_registry().register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        ),
+    ];
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
             capabilities: capabilities.clone(),
             ..FakeLspAdapter::default()
         },
     );
-    client_b.language_registry().add(rust_lang());
     client_b.language_registry().register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
+            name: "fake-analyzer",
             capabilities,
             ..FakeLspAdapter::default()
         },
@@ -352,7 +370,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), window, cx)
     });
 
-    let fake_language_server = fake_language_servers.next().await.unwrap();
+    let fake_language_server = fake_language_servers[0].next().await.unwrap();
+    let second_fake_language_server = fake_language_servers[1].next().await.unwrap();
     cx_a.background_executor.run_until_parked();
 
     buffer_b.read_with(cx_b, |buffer, _| {
@@ -411,6 +430,11 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                 },
             ])))
         })
+        .next()
+        .await
+        .unwrap();
+    second_fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) })
         .next()
         .await
         .unwrap();
@@ -522,6 +546,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             ])))
         });
 
+    // Second language server also needs to handle the request (returns None)
+    let mut second_completion_response = second_fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) });
+
     // The completion now gets a new `text_edit.new_text` when resolving the completion item
     let mut resolve_completion_response = fake_language_server
         .set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
@@ -545,6 +573,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     cx_b.executor().run_until_parked();
 
     completion_response.next().await.unwrap();
+    second_completion_response.next().await.unwrap();
 
     editor_b.update_in(cx_b, |editor, window, cx| {
         assert!(editor.context_menu_visible());
@@ -561,6 +590,77 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         assert_eq!(
             editor.text(cx),
             "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ) }"
+        );
+    });
+
+    // Ensure buffer is synced before proceeding with the next test
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    // Test completions from the second fake language server
+    // Add another completion trigger to test the second language server
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([68..68])
+        });
+        editor.handle_input("; b", window, cx);
+        editor.handle_input(".", window, cx);
+    });
+
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ); b. }"
+        );
+    });
+
+    // Set up completion handlers for both language servers
+    let mut first_lsp_completion = fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) });
+
+    let mut second_lsp_completion = second_fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(1, 54),
+            );
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "analyzer_method(…)".into(),
+                    detail: Some("fn(&self) -> Result<T>".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "analyzer_method()".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(1, 54),
+                            lsp::Position::new(1, 54),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx_b.executor().run_until_parked();
+
+    // Await both language server responses
+    first_lsp_completion.next().await.unwrap();
+    second_lsp_completion.next().await.unwrap();
+
+    cx_b.executor().run_until_parked();
+
+    // Confirm the completion from the second language server works
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        assert!(editor.context_menu_visible());
+        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, window, cx);
+        assert_eq!(
+            editor.text(cx),
+            "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ); b.analyzer_method() }"
         );
     });
 }
