@@ -44,7 +44,7 @@ use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use remote::RemoteClient;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::ops::RangeInclusive;
@@ -98,7 +98,7 @@ pub fn is_version_compatible(
         .manifest
         .wasm_api_version
         .as_ref()
-        .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
+        .and_then(|wasm_api_version| Version::from_str(wasm_api_version).ok())
         && !is_supported_wasm_api_version(release_channel, wasm_api_version)
     {
         return false;
@@ -639,9 +639,8 @@ impl ExtensionStore {
                     this.extension_index.extensions.get(&extension.id)
                 {
                     let installed_version =
-                        SemanticVersion::from_str(&installed_extension.manifest.version).ok()?;
-                    let latest_version =
-                        SemanticVersion::from_str(&extension.manifest.version).ok()?;
+                        Version::from_str(&installed_extension.manifest.version).ok()?;
+                    let latest_version = Version::from_str(&extension.manifest.version).ok()?;
 
                     if installed_version >= latest_version {
                         return None;

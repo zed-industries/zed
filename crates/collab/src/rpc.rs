@@ -50,7 +50,7 @@ use rpc::{
         RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
     },
 };
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,

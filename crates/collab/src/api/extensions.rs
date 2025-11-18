@@ -11,7 +11,7 @@ use axum::{
 };
 use collections::{BTreeSet, HashMap};
 use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
-use semantic_version::SemanticVersion;
+use semver::Version as SemanticVersion;
 use serde::Deserialize;
 use std::str::FromStr;
 use std::{sync::Arc, time::Duration};

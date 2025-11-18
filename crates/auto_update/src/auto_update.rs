@@ -2,12 +2,13 @@ use anyhow::{Context as _, Result};
 use client::Client;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, SemanticVersion,
-    Task, Window, actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
+    actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
@@ -44,7 +45,7 @@ actions!(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionCheckType {
     Sha(AppCommitSha),
-    Semantic(SemanticVersion),
+    Semantic(Version),
 }
 
 #[derive(Serialize, Debug)]
@@ -100,7 +101,7 @@ impl AutoUpdateStatus {
 
 pub struct AutoUpdater {
     status: AutoUpdateStatus,
-    current_version: SemanticVersion,
+    current_version: Version,
     client: Arc<Client>,
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
@@ -256,7 +257,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
     match release_channel {
         ReleaseChannel::Stable | ReleaseChannel::Preview => {
             let auto_updater = auto_updater.read(cx);
-            let current_version = auto_updater.current_version;
+            let current_version = auto_updater.current_version.clone();
             let release_channel = release_channel.dev_name();
             let path = format!("/releases/{release_channel}/{current_version}");
             let url = &auto_updater.client.http_client().build_url(&path);
@@ -322,7 +323,7 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(current_version: SemanticVersion, client: Arc<Client>, cx: &mut Context<Self>) -> Self {
+    fn new(current_version: Version, client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         // On windows, executable files cannot be overwritten while they are
         // running, so we must wait to overwrite the application until quitting
         // or restarting. When quitting the app, we spawn the auto update helper
@@ -400,8 +401,8 @@ impl AutoUpdater {
         }));
     }
 
-    pub fn current_version(&self) -> SemanticVersion {
-        self.current_version
+    pub fn current_version(&self) -> Version {
+        self.current_version.clone()
     }
 
     pub fn status(&self) -> AutoUpdateStatus {
@@ -422,7 +423,7 @@ impl AutoUpdater {
     // Ok(None).
     pub async fn download_remote_server_release(
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         os: &str,
         arch: &str,
         set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
@@ -469,7 +470,7 @@ impl AutoUpdater {
 
     pub async fn get_remote_server_release_url(
         channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         os: &str,
         arch: &str,
         cx: &mut AsyncApp,
@@ -491,7 +492,7 @@ impl AutoUpdater {
     async fn get_release_asset(
         this: &Entity<Self>,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         asset: &str,
         os: &str,
         arch: &str,
@@ -554,7 +555,7 @@ impl AutoUpdater {
             this.read_with(cx, |this, cx| {
                 (
                     this.client.http_client(),
-                    this.current_version,
+                    this.current_version.clone(),
                     this.status.clone(),
                     ReleaseChannel::try_global(cx).unwrap_or(ReleaseChannel::Stable),
                 )
@@ -627,11 +628,11 @@ impl AutoUpdater {
     fn check_if_fetched_version_is_newer(
         release_channel: ReleaseChannel,
         app_commit_sha: Result<Option<String>>,
-        installed_version: SemanticVersion,
+        installed_version: Version,
         fetched_version: String,
         status: AutoUpdateStatus,
     ) -> Result<Option<VersionCheckType>> {
-        let parsed_fetched_version = fetched_version.parse::<SemanticVersion>();
+        let parsed_fetched_version = fetched_version.parse::<Version>();
 
         if let AutoUpdateStatus::Updated { version, .. } = status {
             match version {
@@ -708,8 +709,8 @@ impl AutoUpdater {
     }
 
     fn check_if_fetched_version_is_newer_non_nightly(
-        installed_version: SemanticVersion,
-        fetched_version: SemanticVersion,
+        installed_version: Version,
+        fetched_version: Version,
     ) -> Result<Option<VersionCheckType>> {
         let should_download = fetched_version > installed_version;
         let newer_version = should_download.then(|| VersionCheckType::Semantic(fetched_version));

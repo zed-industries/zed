@@ -2,7 +2,7 @@ use crate::db::{ChannelId, ChannelRole, UserId};
 use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::Serialize;
 use std::fmt;
 use tracing::instrument;

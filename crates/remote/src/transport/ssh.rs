@@ -10,11 +10,12 @@ use futures::{
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
     select_biased,
 };
-use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
+use gpui::{App, AppContext as _, AsyncApp, Task};
 use parking_lot::Mutex;
 use paths::remote_server_dir_relative;
-use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
+use semver::Version;
 pub use settings::SshPortForwardOption;
 use smol::{
     fs,
@@ -515,15 +516,10 @@ impl SshRemoteConnection {
             ssh_default_system_shell,
         };
 
-        let (release_channel, version, commit) = cx.update(|cx| {
-            (
-                ReleaseChannel::global(cx),
-                AppVersion::global(cx),
-                AppCommitSha::try_global(cx),
-            )
-        })?;
+        let (release_channel, version) =
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
         this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await?,
         );
 
@@ -534,15 +530,10 @@ impl SshRemoteConnection {
         &self,
         delegate: &Arc<dyn RemoteClientDelegate>,
         release_channel: ReleaseChannel,
-        version: SemanticVersion,
-        commit: Option<AppCommitSha>,
+        version: Version,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
-            ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.full()).unwrap_or_default();
-                format!("{}-{}", version, commit)
-            }
             ReleaseChannel::Dev => "build".to_string(),
             _ => version.to_string(),
         };
@@ -609,7 +600,12 @@ impl SshRemoteConnection {
         );
         if !self.socket.connection_options.upload_binary_over_ssh
             && let Some(url) = delegate
-                .get_download_url(self.ssh_platform, release_channel, wanted_version, cx)
+                .get_download_url(
+                    self.ssh_platform,
+                    release_channel,
+                    wanted_version.clone(),
+                    cx,
+                )
                 .await?
         {
             match self
@@ -631,7 +627,12 @@ impl SshRemoteConnection {
         }
 
         let src_path = delegate
-            .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)
+            .download_server_binary_locally(
+                self.ssh_platform,
+                release_channel,
+                wanted_version.clone(),
+                cx,
+            )
             .await
             .context("downloading server binary locally")?;
         self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)

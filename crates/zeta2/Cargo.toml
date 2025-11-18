@@ -34,6 +34,7 @@ log.workspace = true
 open_ai.workspace = true
 project.workspace = true
 release_channel.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true

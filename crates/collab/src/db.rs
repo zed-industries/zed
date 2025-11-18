@@ -22,7 +22,7 @@ use sea_orm::{
     entity::prelude::*,
     sea_query::{Alias, Expr, OnConflict},
 };
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 use std::{
