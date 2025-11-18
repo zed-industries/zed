@@ -84,6 +84,7 @@ impl Display for EditPredictionId {
 pub struct SweepAi {
     projects: HashMap<EntityId, SweepAiProject>,
     debug_info: Arc<str>,
+    api_token: Option<String>,
 }
 
 struct SweepAiProject {
@@ -113,6 +114,7 @@ impl SweepAi {
 
     fn new(cx: &mut Context<Self>) -> Self {
         Self {
+            api_token: std::env::var("SWEEP_AI_TOKEN").ok(),
             projects: HashMap::default(),
             debug_info: format!(
                 "Zed v{version} ({sha}) - OS: {os} - Zed v{version}",
@@ -237,6 +239,9 @@ impl SweepAi {
     ) -> Task<Result<Option<EditPrediction>>> {
         let snapshot = active_buffer.read(cx).snapshot();
         let debug_info = self.debug_info.clone();
+        let Some(api_token) = self.api_token.clone() else {
+            return Task::ready(Ok(None));
+        };
         let full_path: Arc<Path> = snapshot
             .file()
             .map(|file| file.full_path(cx))
@@ -339,10 +344,7 @@ impl SweepAi {
                 let request = http_client::Request::builder()
                     .uri(SWEEP_API_URL)
                     .header("Content-Type", "application/json")
-                    .header(
-                        "Authorization",
-                        format!("Bearer {}", std::env::var("SWEEP_TOKEN").unwrap()),
-                    )
+                    .header("Authorization", format!("Bearer {}", api_token))
                     .header("Connection", "keep-alive")
                     .header("Content-Encoding", "br")
                     .method(Method::POST)
@@ -579,9 +581,9 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
         &self,
         _buffer: &Entity<Buffer>,
         _cursor_position: language::Anchor,
-        _cx: &App,
+        cx: &App,
     ) -> bool {
-        true
+        self.sweep_ai.read(cx).api_token.is_some()
     }
 
     fn is_refreshing(&self) -> bool {
