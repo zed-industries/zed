@@ -2407,9 +2407,6 @@ impl LocalLspStore {
                     .insert(abs_path, result_id);
             }
 
-            println!("Registration ID:");
-            dbg!(&registration_id);
-
             buffer.update_diagnostics(server_id, set, cx)
         });
 
@@ -11982,8 +11979,7 @@ impl LspStore {
                 server_id,
                 registration_id,
             );
-        let mut unchanged_buffers = HashSet::default();
-        let mut changed_buffers = HashSet::default();
+        let mut unchanged_buffers = HashMap::default();
         let workspace_diagnostics_updates = workspace_diagnostics
             .into_iter()
             .filter_map(
@@ -12005,19 +12001,19 @@ impl LspStore {
             )
             .fold(
                 HashMap::default(),
-                |mut acc, (server_id, uri, diagnostics, version, registration_id)| {
+                |mut acc, (server_id, uri, diagnostics, version, new_registration_id)| {
                     let (result_id, diagnostics) = match diagnostics {
                         PulledDiagnostics::Unchanged { result_id } => {
-                            unchanged_buffers.insert(uri.clone());
+                            unchanged_buffers
+                                .entry(new_registration_id.clone())
+                                .or_insert_with(HashSet::default)
+                                .insert(uri.clone());
                             (Some(result_id), Vec::new())
                         }
                         PulledDiagnostics::Changed {
                             result_id,
                             diagnostics,
-                        } => {
-                            changed_buffers.insert(uri.clone());
-                            (result_id, diagnostics)
-                        }
+                        } => (result_id, diagnostics),
                     };
                     let disk_based_sources = Cow::Owned(
                         self.language_server_adapter_for_id(server_id)
@@ -12027,6 +12023,8 @@ impl LspStore {
                             .to_vec(),
                     );
                     acc.entry(server_id)
+                        .or_insert_with(HashMap::default)
+                        .entry(new_registration_id.clone())
                         .or_insert_with(Vec::new)
                         .push(DocumentDiagnosticsUpdate {
                             server_id,
@@ -12037,37 +12035,39 @@ impl LspStore {
                             },
                             result_id,
                             disk_based_sources,
-                            registration_id,
+                            registration_id: new_registration_id,
                         });
                     acc
                 },
             );
 
         for diagnostic_updates in workspace_diagnostics_updates.into_values() {
-            self.merge_lsp_diagnostics(
-                DiagnosticSourceKind::Pulled,
-                diagnostic_updates,
-                |buffer, old_diagnostic, cx| {
-                    File::from_dyn(buffer.file())
-                        .and_then(|file| {
-                            let abs_path = file.as_local()?.abs_path(cx);
-                            lsp::Uri::from_file_path(abs_path).ok()
-                        })
-                        .is_none_or(|buffer_uri| {
-                            unchanged_buffers.contains(&buffer_uri)
-                                || match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => {
-                                        !changed_buffers.contains(&buffer_uri)
-                                    }
-                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        true
-                                    }
+            for (registration_id, diagnostic_updates) in diagnostic_updates {
+                self.merge_lsp_diagnostics(
+                    DiagnosticSourceKind::Pulled,
+                    diagnostic_updates,
+                    |buffer, old_diagnostic, cx| {
+                        File::from_dyn(buffer.file())
+                            .and_then(|file| {
+                                let abs_path = file.as_local()?.abs_path(cx);
+                                lsp::Uri::from_file_path(abs_path).ok()
+                            })
+                            .is_none_or(|buffer_uri| match old_diagnostic.source_kind {
+                                DiagnosticSourceKind::Pulled => {
+                                    old_diagnostic.registration_id != registration_id
+                                        || unchanged_buffers
+                                            .get(&old_diagnostic.registration_id)
+                                            .is_some_and(|unchanged_buffers| {
+                                                unchanged_buffers.contains(&buffer_uri)
+                                            })
                                 }
-                        })
-                },
-                cx,
-            )
-            .log_err();
+                                DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
+                            })
+                    },
+                    cx,
+                )
+                .log_err();
+            }
         }
     }
 
