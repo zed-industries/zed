@@ -1445,7 +1445,9 @@ impl Thread {
             }
             StatusUpdate(
                 CompletionRequestStatus::Started | CompletionRequestStatus::Queued { .. },
-            ) => {}
+            ) => {
+                // No action needed for starting or queueing
+            }
             StatusUpdate(CompletionRequestStatus::Failed {
                 code,
                 message,
