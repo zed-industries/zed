@@ -672,40 +672,31 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
-        let Motion::ZedSearchResult {
-            prior_selections,
-            new_selections,
+        if let Motion::ZedSearchResult {
+            prior_selections, ..
         } = &m
-        else {
-            return;
-        };
-
-        match self.mode {
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                if !prior_selections.is_empty() {
-                    self.update_editor(cx, |_, editor, cx| {
-                        editor.change_selections(Default::default(), window, cx, |s| {
-                            s.select_ranges(prior_selections.iter().cloned());
+        {
+            match self.mode {
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                    if !prior_selections.is_empty() {
+                        self.update_editor(cx, |_, editor, cx| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
+                                s.select_ranges(prior_selections.iter().cloned())
+                            })
                         });
-                    });
+                    }
                 }
-                self.motion(m, window, cx);
-            }
-            Mode::Normal | Mode::Replace | Mode::Insert => {
-                if self.active_operator().is_some() {
-                    self.motion(m, window, cx);
+                Mode::Normal | Mode::Replace | Mode::Insert => {
+                    if self.active_operator().is_none() {
+                        return;
+                    }
                 }
-            }
 
-            Mode::HelixNormal => {}
-            Mode::HelixSelect => {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.select_ranges(prior_selections.iter().chain(new_selections).cloned());
-                    });
-                });
+                Mode::HelixNormal | Mode::HelixSelect => {}
             }
         }
+
+        self.motion(m, window, cx)
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {
@@ -3096,7 +3087,6 @@ mod test {
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
-    use text::Rope;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3311,6 +3301,96 @@ mod test {
         cx.set_shared_state("(\n    {()} ˇ\n)").await;
         cx.simulate_shared_keystrokes("[ (").await;
         cx.shared_state().await.assert_eq("ˇ(\n    {()} \n)");
+    }
+
+    #[gpui::test]
+    async fn test_unmatched_forward_markdown(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_markdown_with_rust(cx).await;
+
+        cx.neovim.exec("set filetype=markdown").await;
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+            ˇ    }
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                ˇ}
+            }
+            ```
+        "});
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }   ˇ
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }  •
+            ˇ}
+            ```
+        "});
+    }
+
+    #[gpui::test]
+    async fn test_unmatched_backward_markdown(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_markdown_with_rust(cx).await;
+
+        cx.neovim.exec("set filetype=markdown").await;
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+            ˇ    }
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{
+                }
+            }
+            ```
+        "});
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }   ˇ
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree ˇ{
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }  •
+            }
+            ```
+        "});
     }
 
     #[gpui::test]
@@ -3823,7 +3903,7 @@ mod test {
         cx.update_editor(|editor, _window, cx| {
             let range = editor.selections.newest_anchor().range();
             let inlay_text = "  field: int,\n  field2: string\n  field3: float";
-            let inlay = Inlay::edit_prediction(1, range.start, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(1, range.start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 
@@ -3855,7 +3935,7 @@ mod test {
             let end_of_line =
                 snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
             let inlay_text = " hint";
-            let inlay = Inlay::edit_prediction(1, end_of_line, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(1, end_of_line, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
         cx.simulate_keystrokes("$");
@@ -3894,7 +3974,7 @@ mod test {
             // The empty line is at line 3 (0-indexed)
             let line_start = snapshot.anchor_after(Point::new(3, 0));
             let inlay_text = ": Vec<u32>";
-            let inlay = Inlay::edit_prediction(1, line_start, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(1, line_start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 
@@ -3938,8 +4018,7 @@ mod test {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let empty_line_start = snapshot.anchor_after(Point::new(2, 0));
             let inlay_text = ": i32";
-            let inlay =
-                Inlay::edit_prediction(2, empty_line_start, Rope::from_str_small(inlay_text));
+            let inlay = Inlay::edit_prediction(2, empty_line_start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 

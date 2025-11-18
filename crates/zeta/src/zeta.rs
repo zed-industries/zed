@@ -8,7 +8,9 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use db::smol::stream::StreamExt as _;
 use edit_prediction::DataCollectionState;
+use futures::channel::mpsc;
 pub use init::*;
 use license_detection::LicenseDetectionWatcher;
 pub use rate_completion_modal::*;
@@ -17,8 +19,10 @@ use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
-    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
+    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejection,
+    MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, RejectEditPredictionsBody,
+    ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
@@ -133,7 +137,7 @@ pub struct EditPrediction {
     path: Arc<Path>,
     excerpt_range: Range<usize>,
     cursor_offset: usize,
-    edits: Arc<[(Range<Anchor>, String)]>,
+    edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     snapshot: BufferSnapshot,
     edit_preview: EditPreview,
     input_outline: Arc<str>,
@@ -150,7 +154,7 @@ impl EditPrediction {
             .duration_since(self.buffer_snapshotted_at)
     }
 
-    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
@@ -171,12 +175,15 @@ pub struct Zeta {
     shown_completions: VecDeque<EditPrediction>,
     rated_completions: HashSet<EditPredictionId>,
     data_collection_choice: DataCollectionChoice,
+    discarded_completions: Vec<EditPredictionRejection>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
     user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
+    discard_completions_debounce_task: Option<Task<()>>,
+    discard_completions_tx: mpsc::UnboundedSender<()>,
 }
 
 struct ZetaProject {
@@ -226,11 +233,25 @@ impl Zeta {
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
         let data_collection_choice = Self::load_data_collection_choice();
+        let (reject_tx, mut reject_rx) = mpsc::unbounded();
+        cx.spawn(async move |this, cx| {
+            while let Some(()) = reject_rx.next().await {
+                this.update(cx, |this, cx| this.reject_edit_predictions(cx))?
+                    .await
+                    .log_err();
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+
         Self {
             projects: HashMap::default(),
             client,
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
+            discarded_completions: Vec::new(),
+            discard_completions_debounce_task: None,
+            discard_completions_tx: reject_tx,
             data_collection_choice,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
@@ -652,7 +673,7 @@ impl Zeta {
                     .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                     .body(
                         serde_json::to_string(&AcceptEditPredictionBody {
-                            request_id: request_id.0,
+                            request_id: request_id.0.to_string(),
                         })?
                         .into(),
                     )?)
@@ -692,6 +713,75 @@ impl Zeta {
         })
     }
 
+    fn reject_edit_predictions(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let app_version = AppVersion::global(cx);
+        let last_rejection = self.discarded_completions.last().cloned();
+        let body = serde_json::to_string(&RejectEditPredictionsBody {
+            rejections: self.discarded_completions.clone(),
+        })
+        .ok();
+
+        let Some(last_rejection) = last_rejection else {
+            return Task::ready(anyhow::Ok(()));
+        };
+
+        cx.spawn(async move |this, cx| {
+            let http_client = client.http_client();
+            let mut response = llm_token_retry(&llm_token, &client, |token| {
+                let request_builder = http_client::Request::builder().method(Method::POST);
+                let request_builder = request_builder.uri(
+                    http_client
+                        .build_zed_llm_url("/predict_edits/reject", &[])?
+                        .as_ref(),
+                );
+                Ok(request_builder
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                    .body(
+                        body.as_ref()
+                            .context("failed to serialize body")?
+                            .clone()
+                            .into(),
+                    )?)
+            })
+            .await?;
+
+            if let Some(minimum_required_version) = response
+                .headers()
+                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                && app_version < minimum_required_version
+            {
+                return Err(anyhow!(ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }));
+            }
+
+            if response.status().is_success() {
+                this.update(cx, |this, _| {
+                    if let Some(ix) = this
+                        .discarded_completions
+                        .iter()
+                        .position(|rejection| rejection.request_id == last_rejection.request_id)
+                    {
+                        this.discarded_completions.drain(..ix + 1);
+                    }
+                })
+            } else {
+                let mut body = String::new();
+                response.body_mut().read_to_string(&mut body).await?;
+                Err(anyhow!(
+                    "error rejecting edit predictions.\nStatus: {:?}\nBody: {}",
+                    response.status(),
+                    body
+                ))
+            }
+        })
+    }
+
     fn process_completion_response(
         prediction_response: PredictEditsResponse,
         buffer: Entity<Buffer>,
@@ -711,7 +801,7 @@ impl Zeta {
         cx.spawn(async move |cx| {
             let output_excerpt: Arc<str> = output_excerpt.into();
 
-            let edits: Arc<[(Range<Anchor>, String)]> = cx
+            let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx
                 .background_spawn({
                     let output_excerpt = output_excerpt.clone();
                     let editable_range = editable_range.clone();
@@ -725,7 +815,7 @@ impl Zeta {
                 let edits = edits.clone();
                 move |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
-                    let edits: Arc<[(Range<Anchor>, String)]> =
+                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
                         edit_prediction::interpolate_edits(&snapshot, &new_snapshot, &edits)?
                             .into();
                     Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
@@ -734,6 +824,8 @@ impl Zeta {
             else {
                 return anyhow::Ok(None);
             };
+
+            let request_id = Uuid::from_str(&request_id).context("failed to parse request id")?;
 
             let edit_preview = edit_preview.await;
 
@@ -759,7 +851,7 @@ impl Zeta {
         output_excerpt: Arc<str>,
         editable_range: Range<usize>,
         snapshot: &BufferSnapshot,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
+    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let content = output_excerpt.replace(CURSOR_MARKER, "");
 
         let start_markers = content
@@ -817,7 +909,7 @@ impl Zeta {
         new_text: &str,
         offset: usize,
         snapshot: &BufferSnapshot,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
@@ -836,7 +928,7 @@ impl Zeta {
                 );
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
-                let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
+                let new_text = new_text[prefix_len..new_text.len() - suffix_len].into();
                 let range = if old_range.is_empty() {
                     let anchor = snapshot.anchor_after(old_range.start);
                     anchor..anchor
@@ -992,6 +1084,31 @@ impl Zeta {
                 new_choice.is_enabled().to_string(),
             )
         });
+    }
+
+    fn discard_completion(
+        &mut self,
+        completion_id: EditPredictionId,
+        was_shown: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.discarded_completions.push(EditPredictionRejection {
+            request_id: completion_id.to_string(),
+            was_shown,
+        });
+
+        let reached_request_limit =
+            self.discarded_completions.len() >= MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST;
+        let discard_completions_tx = self.discard_completions_tx.clone();
+        self.discard_completions_debounce_task = Some(cx.spawn(async move |_this, cx| {
+            const DISCARD_COMPLETIONS_DEBOUNCE: Duration = Duration::from_secs(15);
+            if !reached_request_limit {
+                cx.background_executor()
+                    .timer(DISCARD_COMPLETIONS_DEBOUNCE)
+                    .await;
+            }
+            discard_completions_tx.unbounded_send(()).log_err();
+        }));
     }
 }
 
@@ -1165,6 +1282,8 @@ impl Event {
 struct CurrentEditPrediction {
     buffer_id: EntityId,
     completion: EditPrediction,
+    was_shown: bool,
+    was_accepted: bool,
 }
 
 impl CurrentEditPrediction {
@@ -1183,7 +1302,7 @@ impl CurrentEditPrediction {
         if old_edits.len() == 1 && new_edits.len() == 1 {
             let (old_range, old_text) = &old_edits[0];
             let (new_range, new_text) = &new_edits[0];
-            new_range == old_range && new_text.starts_with(old_text)
+            new_range == old_range && new_text.starts_with(old_text.as_ref())
         } else {
             true
         }
@@ -1192,7 +1311,7 @@ impl CurrentEditPrediction {
 
 struct PendingCompletion {
     id: usize,
-    _task: Task<()>,
+    task: Task<()>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1268,6 +1387,7 @@ pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
     singleton_buffer: Option<Entity<Buffer>>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
+    canceled_completions: HashMap<usize, Task<()>>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentEditPrediction>,
     last_request_timestamp: Instant,
@@ -1281,15 +1401,32 @@ impl ZetaEditPredictionProvider {
         zeta: Entity<Zeta>,
         project: Entity<Project>,
         singleton_buffer: Option<Entity<Buffer>>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|this, cx| {
+            this.take_current_edit_prediction(cx);
+        })
+        .detach();
+
         Self {
             zeta,
             singleton_buffer,
             pending_completions: ArrayVec::new(),
+            canceled_completions: HashMap::default(),
             next_pending_completion_id: 0,
             current_completion: None,
             last_request_timestamp: Instant::now(),
             project,
+        }
+    }
+
+    fn take_current_edit_prediction(&mut self, cx: &mut App) {
+        if let Some(completion) = self.current_completion.take() {
+            if !completion.was_accepted {
+                self.zeta.update(cx, |zeta, cx| {
+                    zeta.discard_completion(completion.completion.id, completion.was_shown, cx);
+                });
+            }
         }
     }
 }
@@ -1412,42 +1549,66 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
                         c.map(|completion| CurrentEditPrediction {
                             buffer_id: buffer.entity_id(),
                             completion,
+                            was_shown: false,
+                            was_accepted: false,
                         })
                     })
                 }
                 Err(error) => Err(error),
             };
+
+            let discarded = this
+                .update(cx, |this, cx| {
+                    if this
+                        .pending_completions
+                        .first()
+                        .is_some_and(|completion| completion.id == pending_completion_id)
+                    {
+                        this.pending_completions.remove(0);
+                    } else {
+                        if let Some(discarded) = this.pending_completions.drain(..).next() {
+                            this.canceled_completions
+                                .insert(discarded.id, discarded.task);
+                        }
+                    }
+
+                    let canceled = this.canceled_completions.remove(&pending_completion_id);
+
+                    if canceled.is_some()
+                        && let Ok(Some(new_completion)) = &completion
+                    {
+                        this.zeta.update(cx, |zeta, cx| {
+                            zeta.discard_completion(new_completion.completion.id, false, cx);
+                        });
+                        return true;
+                    }
+
+                    cx.notify();
+                    false
+                })
+                .ok()
+                .unwrap_or(true);
+
+            if discarded {
+                return;
+            }
+
             let Some(new_completion) = completion
                 .context("edit prediction failed")
                 .log_err()
                 .flatten()
             else {
-                this.update(cx, |this, cx| {
-                    if this.pending_completions[0].id == pending_completion_id {
-                        this.pending_completions.remove(0);
-                    } else {
-                        this.pending_completions.clear();
-                    }
-
-                    cx.notify();
-                })
-                .ok();
                 return;
             };
 
             this.update(cx, |this, cx| {
-                if this.pending_completions[0].id == pending_completion_id {
-                    this.pending_completions.remove(0);
-                } else {
-                    this.pending_completions.clear();
-                }
-
                 if let Some(old_completion) = this.current_completion.as_ref() {
                     let snapshot = buffer.read(cx).snapshot();
                     if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
+                        this.take_current_edit_prediction(cx);
                         this.current_completion = Some(new_completion);
                     }
                 } else {
@@ -1467,13 +1628,16 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         if self.pending_completions.len() <= 1 {
             self.pending_completions.push(PendingCompletion {
                 id: pending_completion_id,
-                _task: task,
+                task,
             });
         } else if self.pending_completions.len() == 2 {
-            self.pending_completions.pop();
+            if let Some(discarded) = self.pending_completions.pop() {
+                self.canceled_completions
+                    .insert(discarded.id, discarded.task);
+            }
             self.pending_completions.push(PendingCompletion {
                 id: pending_completion_id,
-                _task: task,
+                task,
             });
         }
     }
@@ -1489,23 +1653,27 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
-        let completion_id = self
-            .current_completion
-            .as_ref()
-            .map(|completion| completion.completion.id);
-        if let Some(completion_id) = completion_id {
+        let completion = self.current_completion.as_mut();
+        if let Some(completion) = completion {
+            completion.was_accepted = true;
             self.zeta
                 .update(cx, |zeta, cx| {
-                    zeta.accept_edit_prediction(completion_id, cx)
+                    zeta.accept_edit_prediction(completion.completion.id, cx)
                 })
                 .detach();
         }
         self.pending_completions.clear();
     }
 
-    fn discard(&mut self, _cx: &mut Context<Self>) {
+    fn discard(&mut self, cx: &mut Context<Self>) {
         self.pending_completions.clear();
-        self.current_completion.take();
+        self.take_current_edit_prediction(cx);
+    }
+
+    fn did_show(&mut self, _cx: &mut Context<Self>) {
+        if let Some(current_completion) = self.current_completion.as_mut() {
+            current_completion.was_shown = true;
+        }
     }
 
     fn suggest(
@@ -1522,13 +1690,13 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
         // Invalidate previous completion if it was generated for a different buffer.
         if *buffer_id != buffer.entity_id() {
-            self.current_completion.take();
+            self.take_current_edit_prediction(cx);
             return None;
         }
 
         let buffer = buffer.read(cx);
         let Some(edits) = completion.interpolate(&buffer.snapshot()) else {
-            self.current_completion.take();
+            self.take_current_edit_prediction(cx);
             return None;
         };
 
@@ -1599,13 +1767,8 @@ mod tests {
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
-        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
-            to_completion_edits(
-                [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                &buffer,
-                cx,
-            )
-            .into()
+        let edits: Arc<[(Range<Anchor>, Arc<str>)]> = cx.update(|cx| {
+            to_completion_edits([(2..5, "REM".into()), (9..11, "".into())], &buffer, cx).into()
         });
 
         let edit_preview = cx
@@ -1635,7 +1798,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
@@ -1645,7 +1808,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+                vec![(2..2, "REM".into()), (6..8, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.undo(cx));
@@ -1655,7 +1818,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
@@ -1665,7 +1828,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+                vec![(3..3, "EM".into()), (7..9, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
@@ -1675,7 +1838,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
@@ -1685,7 +1848,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(9..11, "".to_string())]
+                vec![(9..11, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
@@ -1695,7 +1858,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+                vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
@@ -1705,7 +1868,7 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(4..4, "M".to_string())]
+                vec![(4..4, "M".into())]
             );
 
             buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
@@ -1836,13 +1999,12 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let buffer = cx.new(|cx| {
+        let buffer = cx.new(|_cx| {
             Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 ReplicaId::new(1),
                 language::Capability::ReadWrite,
                 "fn main() {\n    println!(\"Hello\");\n}",
-                cx.background_executor(),
             )
         });
 
@@ -2085,9 +2247,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            client::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -2171,7 +2330,7 @@ mod tests {
                                 .status(200)
                                 .body(
                                     serde_json::to_string(&PredictEditsResponse {
-                                        request_id: Uuid::new_v4(),
+                                        request_id: Uuid::new_v4().to_string(),
                                         output_excerpt: completion_response.lock().clone(),
                                     })
                                     .unwrap()
@@ -2212,10 +2371,10 @@ mod tests {
     }
 
     fn to_completion_edits(
-        iterator: impl IntoIterator<Item = (Range<usize>, String)>,
+        iterator: impl IntoIterator<Item = (Range<usize>, Arc<str>)>,
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<(Range<Anchor>, Arc<str>)> {
         let buffer = buffer.read(cx);
         iterator
             .into_iter()
@@ -2229,10 +2388,10 @@ mod tests {
     }
 
     fn from_completion_edits(
-        editor_edits: &[(Range<Anchor>, String)],
+        editor_edits: &[(Range<Anchor>, Arc<str>)],
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<usize>, String)> {
+    ) -> Vec<(Range<usize>, Arc<str>)> {
         let buffer = buffer.read(cx);
         editor_edits
             .iter()

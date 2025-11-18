@@ -918,26 +918,85 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels> {
-    const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
+    #[cfg(target_os = "macos")]
+    {
+        const CASCADE_OFFSET: f32 = 25.0;
 
-    // TODO, BUG: if you open a window with the currently active window
-    // on the stack, this will erroneously select the 'unwrap_or_else'
-    // code path
-    cx.active_window()
-        .and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok())
-        .map(|mut bounds| {
-            bounds.origin += DEFAULT_WINDOW_OFFSET;
-            bounds
-        })
-        .unwrap_or_else(|| {
-            let display = display_id
-                .map(|id| cx.find_display(id))
-                .unwrap_or_else(|| cx.primary_display());
+        let display = display_id
+            .map(|id| cx.find_display(id))
+            .unwrap_or_else(|| cx.primary_display());
 
-            display
-                .map(|display| display.default_bounds())
-                .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
-        })
+        let display_bounds = display
+            .as_ref()
+            .map(|d| d.bounds())
+            .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE));
+
+        // TODO, BUG: if you open a window with the currently active window
+        // on the stack, this will erroneously select the 'unwrap_or_else'
+        // code path
+        let (base_origin, base_size) = cx
+            .active_window()
+            .and_then(|w| {
+                w.update(cx, |_, window, _| {
+                    let bounds = window.bounds();
+                    (bounds.origin, bounds.size)
+                })
+                .ok()
+            })
+            .unwrap_or_else(|| {
+                let default_bounds = display
+                    .as_ref()
+                    .map(|d| d.default_bounds())
+                    .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE));
+                (default_bounds.origin, default_bounds.size)
+            });
+
+        let cascade_offset = point(px(CASCADE_OFFSET), px(CASCADE_OFFSET));
+        let proposed_origin = base_origin + cascade_offset;
+        let proposed_bounds = Bounds::new(proposed_origin, base_size);
+
+        let display_right = display_bounds.origin.x + display_bounds.size.width;
+        let display_bottom = display_bounds.origin.y + display_bounds.size.height;
+        let window_right = proposed_bounds.origin.x + proposed_bounds.size.width;
+        let window_bottom = proposed_bounds.origin.y + proposed_bounds.size.height;
+
+        let fits_horizontally = window_right <= display_right;
+        let fits_vertically = window_bottom <= display_bottom;
+
+        let final_origin = match (fits_horizontally, fits_vertically) {
+            (true, true) => proposed_origin,
+            (false, true) => point(display_bounds.origin.x, base_origin.y),
+            (true, false) => point(base_origin.x, display_bounds.origin.y),
+            (false, false) => display_bounds.origin,
+        };
+
+        Bounds::new(final_origin, base_size)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
+
+        // TODO, BUG: if you open a window with the currently active window
+        // on the stack, this will erroneously select the 'unwrap_or_else'
+        // code path
+        cx.active_window()
+            .and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok())
+            .map(|mut bounds| {
+                bounds.origin += DEFAULT_WINDOW_OFFSET;
+                bounds
+            })
+            .unwrap_or_else(|| {
+                let display = display_id
+                    .map(|id| cx.find_display(id))
+                    .unwrap_or_else(|| cx.primary_display());
+
+                display
+                    .as_ref()
+                    .map(|display| display.default_bounds())
+                    .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
+            })
+    }
 }
 
 impl Window {
@@ -1760,6 +1819,7 @@ impl Window {
         self.platform_window.show_window_menu(position)
     }
 
+    /// Handle window movement for Linux and macOS.
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
@@ -1862,6 +1922,9 @@ impl Window {
     /// Executes the provided function with the specified rem size.
     ///
     /// This method must only be called as part of element drawing.
+    // This function is called in a highly recursive manner in editor
+    // prepainting, make sure its inlined to reduce the stack burden
+    #[inline]
     pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -2351,6 +2414,9 @@ impl Window {
     /// Push a text style onto the stack, and call a function with that style active.
     /// Use [`Window::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
+    // This function is called in a highly recursive manner in editor
+    // prepainting, make sure its inlined to reduce the stack burden
+    #[inline]
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -2401,6 +2467,9 @@ impl Window {
 
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask. This method should only be called during element drawing.
+    // This function is called in a highly recursive manner in editor
+    // prepainting, make sure its inlined to reduce the stack burden
+    #[inline]
     pub fn with_content_mask<R>(
         &mut self,
         mask: Option<ContentMask<Pixels>>,
@@ -3084,6 +3153,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
+        mut data: Option<&[u8]>,
         transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
@@ -3104,7 +3174,8 @@ impl Window {
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params)? else {
+                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
+                    else {
                         return Ok(None);
                     };
                     Ok(Some((size, Cow::Owned(bytes))))
@@ -3435,25 +3506,25 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
-        mut handler: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
+        mut listener: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
 
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref() {
-                    handler(event, phase, window, cx)
+                    listener(event, phase, window, cx)
                 }
             },
         )));
     }
 
-    /// Register a key event listener on the window for the next frame. The type of event
+    /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
-    /// a specific need to register a global listener.
+    /// a specific need to register a listener yourself.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_key_event<Event: KeyEvent>(
@@ -3558,6 +3629,7 @@ impl Window {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: keystroke.clone(),
                 is_held: false,
+                prefer_character_input: false,
             }),
             cx,
         );
@@ -3856,17 +3928,35 @@ impl Window {
             return;
         }
 
-        for binding in match_result.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
-            if !cx.propagate_event {
-                self.dispatch_keystroke_observers(
-                    event,
-                    Some(binding.action),
-                    match_result.context_stack,
-                    cx,
-                );
-                self.pending_input_changed(cx);
-                return;
+        let skip_bindings = event
+            .downcast_ref::<KeyDownEvent>()
+            .filter(|key_down_event| key_down_event.prefer_character_input)
+            .map(|_| {
+                self.platform_window
+                    .take_input_handler()
+                    .map_or(false, |mut input_handler| {
+                        let accepts = input_handler.accepts_text_input(self, cx);
+                        self.platform_window.set_input_handler(input_handler);
+                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
+                        // we prefer the text input over bindings.
+                        accepts
+                    })
+            })
+            .unwrap_or(false);
+
+        if !skip_bindings {
+            for binding in match_result.bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !cx.propagate_event {
+                    self.dispatch_keystroke_observers(
+                        event,
+                        Some(binding.action),
+                        match_result.context_stack,
+                        cx,
+                    );
+                    self.pending_input_changed(cx);
+                    return;
+                }
             }
         }
 
@@ -3975,6 +4065,7 @@ impl Window {
             let event = KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
+                prefer_character_input: true,
             };
 
             cx.propagate_event = true;
@@ -4362,34 +4453,42 @@ impl Window {
         }))
     }
 
-    /// Register an action listener on the window for the next frame. The type of action
+    /// Register an action listener on this node for the next frame. The type of action
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
     /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
-    /// a specific need to register a global listener.
+    /// a specific need to register a listener yourself.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_action(
         &mut self,
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
+        self.invalidator.debug_assert_paint();
+
         self.next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
     }
 
-    /// Register an action listener on the window for the next frame if the condition is true.
-    /// The type of action is determined by the first parameter of the given listener.
-    /// When the next frame is rendered the listener will be cleared.
+    /// Register a capturing action listener on this node for the next frame if the condition is true.
+    /// The type of action is determined by the first parameter of the given listener. When the next
+    /// frame is rendered the listener will be cleared.
     ///
     /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
-    /// a specific need to register a global listener.
+    /// a specific need to register a listener yourself.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_action_when(
         &mut self,
         condition: bool,
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
+        self.invalidator.debug_assert_paint();
+
         if condition {
             self.next_frame
                 .dispatch_tree

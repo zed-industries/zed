@@ -13,9 +13,7 @@ use futures::{
     future::{self, Shared},
     stream::FuturesUnordered,
 };
-use gpui::{
-    AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task, WeakEntity,
-};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     Buffer, LanguageRegistry, LocalFile,
     language_settings::{Formatter, LanguageSettings},
@@ -560,137 +558,99 @@ impl PrettierStore {
         let plugins_to_install = new_plugins.clone();
         let fs = Arc::clone(&self.fs);
         let new_installation_task = cx
-            .spawn(async move |prettier_store, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(30))
-                    .await;
+            .spawn(async move  |prettier_store, cx| {
+                cx.background_executor().timer(Duration::from_millis(30)).await;
                 let location_data = prettier_store.update(cx, |prettier_store, cx| {
-                    worktree
-                        .and_then(|worktree_id| {
-                            prettier_store
-                                .worktree_store
-                                .read(cx)
-                                .worktree_for_id(worktree_id, cx)
-                                .map(|worktree| worktree.read(cx).abs_path())
-                        })
-                        .map(|locate_from| {
-                            let installed_prettiers =
-                                prettier_store.prettier_instances.keys().cloned().collect();
-                            (locate_from, installed_prettiers)
-                        })
+                    worktree.and_then(|worktree_id| {
+                        prettier_store.worktree_store
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)
+                            .map(|worktree| worktree.read(cx).abs_path())
+                    }).map(|locate_from| {
+                        let installed_prettiers = prettier_store.prettier_instances.keys().cloned().collect();
+                        (locate_from, installed_prettiers)
+                    })
                 })?;
                 let locate_prettier_installation = match location_data {
-                    Some((locate_from, installed_prettiers)) => {
-                        Prettier::locate_prettier_installation(
-                            fs.as_ref(),
-                            &installed_prettiers,
-                            locate_from.as_ref(),
-                        )
-                        .await
-                        .context("locate prettier installation")
-                        .map_err(Arc::new)?
-                    }
+                    Some((locate_from, installed_prettiers)) => Prettier::locate_prettier_installation(
+                        fs.as_ref(),
+                        &installed_prettiers,
+                        locate_from.as_ref(),
+                    )
+                    .await
+                    .context("locate prettier installation").map_err(Arc::new)?,
                     None => ControlFlow::Continue(None),
                 };
 
-                match locate_prettier_installation {
+                match locate_prettier_installation
+                {
                     ControlFlow::Break(()) => return Ok(()),
                     ControlFlow::Continue(prettier_path) => {
                         if prettier_path.is_some() {
                             new_plugins.clear();
                         }
-                        let mut needs_install =
-                            should_write_prettier_server_file(fs.as_ref()).await;
+                        let mut needs_install = should_write_prettier_server_file(fs.as_ref()).await;
                         if let Some(previous_installation_task) = previous_installation_task
-                            && let Err(e) = previous_installation_task.await
-                        {
-                            log::error!("Failed to install default prettier: {e:#}");
-                            prettier_store.update(cx, |prettier_store, _| {
-                                if let PrettierInstallation::NotInstalled {
-                                    attempts,
-                                    not_installed_plugins,
-                                    ..
-                                } = &mut prettier_store.default_prettier.prettier
-                                {
-                                    *attempts += 1;
-                                    new_plugins.extend(not_installed_plugins.iter().cloned());
-                                    installation_attempt = *attempts;
-                                    needs_install = true;
-                                };
-                            })?;
-                        };
+                            && let Err(e) = previous_installation_task.await {
+                                log::error!("Failed to install default prettier: {e:#}");
+                                prettier_store.update(cx, |prettier_store, _| {
+                                    if let PrettierInstallation::NotInstalled { attempts, not_installed_plugins, .. } = &mut prettier_store.default_prettier.prettier {
+                                        *attempts += 1;
+                                        new_plugins.extend(not_installed_plugins.iter().cloned());
+                                        installation_attempt = *attempts;
+                                        needs_install = true;
+                                    };
+                                })?;
+                            };
                         if installation_attempt > prettier::FAIL_THRESHOLD {
                             prettier_store.update(cx, |prettier_store, _| {
-                                if let PrettierInstallation::NotInstalled {
-                                    installation_task,
-                                    ..
-                                } = &mut prettier_store.default_prettier.prettier
-                                {
+                                if let PrettierInstallation::NotInstalled { installation_task, .. } = &mut prettier_store.default_prettier.prettier {
                                     *installation_task = None;
                                 };
                             })?;
                             log::warn!(
-                                "Default prettier installation had failed {installation_attempt} \
-                                times, not attempting again",
+                                "Default prettier installation had failed {installation_attempt} times, not attempting again",
                             );
                             return Ok(());
                         }
                         prettier_store.update(cx, |prettier_store, _| {
                             new_plugins.retain(|plugin| {
-                                !prettier_store
-                                    .default_prettier
-                                    .installed_plugins
-                                    .contains(plugin)
+                                !prettier_store.default_prettier.installed_plugins.contains(plugin)
                             });
-                            if let PrettierInstallation::NotInstalled {
-                                not_installed_plugins,
-                                ..
-                            } = &mut prettier_store.default_prettier.prettier
-                            {
+                            if let PrettierInstallation::NotInstalled { not_installed_plugins, .. } = &mut prettier_store.default_prettier.prettier {
                                 not_installed_plugins.retain(|plugin| {
-                                    !prettier_store
-                                        .default_prettier
-                                        .installed_plugins
-                                        .contains(plugin)
+                                    !prettier_store.default_prettier.installed_plugins.contains(plugin)
                                 });
                                 not_installed_plugins.extend(new_plugins.iter().cloned());
                             }
                             needs_install |= !new_plugins.is_empty();
                         })?;
                         if needs_install {
-                            log::info!(
-                                "Initializing default prettier with plugins {new_plugins:?}"
-                            );
+                            log::info!("Initializing default prettier with plugins {new_plugins:?}");
                             let installed_plugins = new_plugins.clone();
-                            let executor = cx.background_executor().clone();
                             cx.background_spawn(async move {
                                 install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
                                 // Save the server file last, so the reinstall need could be determined by the absence of the file.
-                                save_prettier_server_file(fs.as_ref(), &executor).await?;
+                                save_prettier_server_file(fs.as_ref()).await?;
                                 anyhow::Ok(())
                             })
-                            .await
-                            .context("prettier & plugins install")
-                            .map_err(Arc::new)?;
-                            log::info!(
-                                "Initialized default prettier with plugins: {installed_plugins:?}"
-                            );
+                                .await
+                                .context("prettier & plugins install")
+                                .map_err(Arc::new)?;
+                            log::info!("Initialized default prettier with plugins: {installed_plugins:?}");
                             prettier_store.update(cx, |prettier_store, _| {
                                 prettier_store.default_prettier.prettier =
                                     PrettierInstallation::Installed(PrettierInstance {
                                         attempt: 0,
                                         prettier: None,
                                     });
-                                prettier_store
-                                    .default_prettier
+                                prettier_store.default_prettier
                                     .installed_plugins
                                     .extend(installed_plugins);
                             })?;
                         } else {
                             prettier_store.update(cx, |prettier_store, _| {
-                                if let PrettierInstallation::NotInstalled { .. } =
-                                    &mut prettier_store.default_prettier.prettier
-                                {
+                                if let PrettierInstallation::NotInstalled { .. } = &mut prettier_store.default_prettier.prettier {
                                     prettier_store.default_prettier.prettier =
                                         PrettierInstallation::Installed(PrettierInstance {
                                             attempt: 0,
@@ -976,14 +936,11 @@ async fn install_prettier_packages(
     anyhow::Ok(())
 }
 
-async fn save_prettier_server_file(
-    fs: &dyn Fs,
-    executor: &BackgroundExecutor,
-) -> anyhow::Result<()> {
+async fn save_prettier_server_file(fs: &dyn Fs) -> anyhow::Result<()> {
     let prettier_wrapper_path = default_prettier_dir().join(prettier::PRETTIER_SERVER_FILE);
     fs.save(
         &prettier_wrapper_path,
-        &text::Rope::from_str(prettier::PRETTIER_SERVER_JS, executor),
+        &text::Rope::from(prettier::PRETTIER_SERVER_JS),
         text::LineEnding::Unix,
     )
     .await

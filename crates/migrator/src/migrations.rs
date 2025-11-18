@@ -129,3 +129,15 @@ pub(crate) mod m_2025_10_17 {
 
     pub(crate) use settings::make_file_finder_include_ignored_an_enum;
 }
+
+pub(crate) mod m_2025_10_21 {
+    mod settings;
+
+    pub(crate) use settings::make_relative_line_numbers_an_enum;
+}
+
+pub(crate) mod m_2025_11_12 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}

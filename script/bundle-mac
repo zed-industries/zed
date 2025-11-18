@@ -22,7 +22,7 @@ Build the application bundle for macOS.
 Options:
   -d    Compile in debug mode
   -o    Open dir with the resulting DMG or launch the app itself in local mode.
-  -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
+  -i    Install the resulting DMG into /Applications.
   -h    Display this help and exit.
   "
 }
@@ -70,12 +70,12 @@ target_triple=${host_line#*: }
 if [[ $# -gt 0 && -n "$1" ]]; then
     target_triple="$1"
 fi
-remote_server_arch=""
+arch_suffix=""
 
 if [[ "$target_triple" = "x86_64-apple-darwin" ]]; then
-    remote_server_arch="x86_64"
+    arch_suffix="x86_64"
 elif [[ "$target_triple" = "aarch64-apple-darwin" ]]; then
-    remote_server_arch="aarch64"
+    arch_suffix="aarch64"
 else
     echo "Unsupported architecture $target_triple"
     exit 1
@@ -209,16 +209,6 @@ function sign_app_binaries() {
         codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
     fi
 
-    if [[ "$target_dir" = "debug" ]]; then
-        if [ "$open_result" = true ]; then
-            open "$app_path"
-        else
-            echo "Created application bundle:"
-            echo "$app_path"
-        fi
-        exit 0
-    fi
-
     bundle_name=$(basename "$app_path")
 
     if [ "$local_install" = true ]; then
@@ -229,10 +219,20 @@ function sign_app_binaries() {
             echo "Opening /Applications/$bundle_name"
             open "/Applications/$bundle_name"
         fi
+    elif [ "$open_result" = true ]; then
+        open "$app_path"
+    fi
+
+    if [[ "$target_dir" = "debug" ]]; then
+        echo "Debug build detected - skipping DMG creation and signing"
+        if [ "$local_install" = false ]; then
+            echo "Created application bundle:"
+            echo "$app_path"
+        fi
     else
         dmg_target_directory="target/${target_triple}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
-        dmg_file_path="${dmg_target_directory}/Zed.dmg"
+        dmg_file_path="${dmg_target_directory}/Zed-${arch_suffix}.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
         rm -rf ${dmg_source_directory}
@@ -280,7 +280,9 @@ function sign_binary() {
 }
 
 function upload_debug_symbols() {
-    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+    if [ "$local_install" = true ]; then
+        echo "local install; skipping sentry upload."
+    elif [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
         echo "Uploading zed debug symbols to sentry..."
         exe_path="target/${target_triple}/release/Zed"
         if ! dsymutil --flat "target/${target_triple}/${target_dir}/zed" 2> target/dsymutil.log; then
@@ -310,4 +312,4 @@ cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"
-gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$remote_server_arch.gz
+gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$arch_suffix.gz

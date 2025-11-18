@@ -169,6 +169,13 @@ impl Application {
         self
     }
 
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn with_quit_mode(self, mode: QuitMode) -> Self {
+        self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -237,6 +244,18 @@ type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'st
 type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+
+/// Defines when the application should automatically quit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuitMode {
+    /// Use [`QuitMode::Explicit`] on macOS and [`QuitMode::LastWindowClosed`] on other platforms.
+    #[default]
+    Default,
+    /// Quit automatically when the last window is closed.
+    LastWindowClosed,
+    /// Quit only when requested via [`App::quit`].
+    Explicit,
+}
 
 #[doc(hidden)]
 #[derive(Clone, PartialEq, Eq)]
@@ -588,6 +607,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    quit_mode: QuitMode,
     quitting: bool,
 }
 
@@ -659,6 +679,7 @@ impl App {
                 inspector_renderer: None,
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
+                quit_mode: QuitMode::default(),
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1172,6 +1193,12 @@ impl App {
         self.http_client = new_client;
     }
 
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn set_quit_mode(&mut self, mode: QuitMode) {
+        self.quit_mode = mode;
+    }
+
     /// Returns the SVG renderer used by the application.
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
@@ -1379,6 +1406,16 @@ impl App {
                     callback(cx);
                     true
                 });
+
+                let quit_on_empty = match cx.quit_mode {
+                    QuitMode::Explicit => false,
+                    QuitMode::LastWindowClosed => true,
+                    QuitMode::Default => !cfg!(macos),
+                };
+
+                if quit_on_empty && cx.windows.is_empty() {
+                    cx.quit();
+                }
             } else {
                 cx.windows.get_mut(id)?.replace(window);
             }
@@ -2362,10 +2399,6 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 

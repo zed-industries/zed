@@ -43,7 +43,8 @@
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
-      "ctrl-alt-l": "lsp_tool::ToggleMenu"
+      "ctrl-alt-l": "lsp_tool::ToggleMenu",
+      "ctrl-alt-.": "project_panel::ToggleHideHidden"
     }
   },
   {
@@ -235,12 +236,13 @@
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenSettings",
-      "ctrl-alt-p": "agent::OpenRulesLibrary",
+      "ctrl-alt-p": "agent::ManageProfiles",
+      "ctrl-alt-l": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
-      "ctrl-shift-i": "agent::ToggleOptionsMenu",
+      "ctrl-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "agent::AddSelectionToThread",
@@ -407,6 +409,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "shift-find": "search::FocusSearch",
+      "shift-enter": "project_search::ToggleAllSearchResults",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ToggleRegex",
@@ -479,6 +482,7 @@
       "alt-w": "search::ToggleWholeWord",
       "alt-find": "project_search::ToggleFilters",
       "alt-ctrl-f": "project_search::ToggleFilters",
+      "shift-enter": "project_search::ToggleAllSearchResults",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
@@ -732,11 +736,17 @@
     }
   },
   {
-    "context": "Editor && in_snippet",
+    "context": "Editor && in_snippet && has_next_tabstop && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-right": "editor::NextSnippetTabstop",
-      "alt-left": "editor::PreviousSnippetTabstop"
+      "tab": "editor::NextSnippetTabstop"
+    }
+  },
+  {
+    "context": "Editor && in_snippet && has_previous_tabstop && !showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-tab": "editor::PreviousSnippetTabstop"
     }
   },
   // Bindings for accepting edit predictions
@@ -941,6 +951,7 @@
       "ctrl-g ctrl-g": "git::Fetch",
       "ctrl-g up": "git::Push",
       "ctrl-g down": "git::Pull",
+      "ctrl-g shift-down": "git::PullRebase",
       "ctrl-g shift-up": "git::ForcePush",
       "ctrl-g d": "git::Diff",
       "ctrl-g backspace": "git::RestoreTrackedFiles",
@@ -1250,6 +1261,14 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem"
+    }
+  },
+  {
+    "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
+      "ctrl-space": "git::WorktreeFromDefault"
     }
   },
   {

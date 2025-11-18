@@ -1,7 +1,4 @@
-use crate::{
-    Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle,
-    worktree_settings::WorktreeSettings,
-};
+use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
@@ -12,7 +9,7 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::{
     env,
     fmt::Write,
@@ -20,7 +17,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::Rope;
 use util::{
     ResultExt, path,
     rel_path::{RelPath, rel_path},
@@ -647,13 +643,9 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     // Update the gitignore so that node_modules is no longer ignored,
     // but a subdirectory is ignored
-    fs.save(
-        "/root/.gitignore".as_ref(),
-        &Rope::from_str("e", cx.background_executor()),
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    fs.save("/root/.gitignore".as_ref(), &"e".into(), Default::default())
+        .await
+        .unwrap();
     cx.executor().run_until_parked();
 
     // All of the directories that are no longer ignored are now loaded.
@@ -721,7 +713,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.write_file(
                 rel_path("tracked-dir/file.txt").into(),
-                Rope::from_str("hello", cx.background_executor()),
+                "hello".into(),
                 Default::default(),
                 cx,
             )
@@ -732,7 +724,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.write_file(
                 rel_path("ignored-dir/file.txt").into(),
-                Rope::from_str("world", cx.background_executor()),
+                "world".into(),
                 Default::default(),
                 cx,
             )
@@ -765,6 +757,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
             "prettier": {
                 "package.json": "{}",
             },
+            "package.json": "//package.json"
         },
         "src": {
             ".DS_Store": "",
@@ -1058,6 +1051,92 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
             ],
             &[],
         )
+    });
+}
+
+#[gpui::test]
+async fn test_hidden_files(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = TempTree::new(json!({
+        ".gitignore": "**/target\n",
+        ".hidden_file": "content",
+        ".hidden_dir": {
+            "nested.rs": "code",
+        },
+        "src": {
+            "visible.rs": "code",
+        },
+        "logs": {
+            "app.log": "logs",
+            "debug.log": "logs",
+        },
+        "visible.txt": "content",
+    }));
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_hidden))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), true),
+                (rel_path(".hidden_dir"), true),
+                (rel_path(".hidden_dir/nested.rs"), true),
+                (rel_path(".hidden_file"), true),
+                (rel_path("logs"), false),
+                (rel_path("logs/app.log"), false),
+                (rel_path("logs/debug.log"), false),
+                (rel_path("src"), false),
+                (rel_path("src/visible.rs"), false),
+                (rel_path("visible.txt"), false),
+            ]
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.hidden_files = Some(vec!["**/*.log".to_string()]);
+            });
+        });
+    });
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_hidden))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), false),
+                (rel_path(".hidden_dir"), false),
+                (rel_path(".hidden_dir/nested.rs"), false),
+                (rel_path(".hidden_file"), false),
+                (rel_path("logs"), false),
+                (rel_path("logs/app.log"), true),
+                (rel_path("logs/debug.log"), true),
+                (rel_path("src"), false),
+                (rel_path("src/visible.rs"), false),
+                (rel_path("visible.txt"), false),
+            ]
+        );
     });
 }
 
@@ -1470,7 +1549,7 @@ async fn test_random_worktree_operations_during_initial_scan(
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
-        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng, cx.background_executor()).await;
+        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
     }
     log::info!("generated initial tree");
 
@@ -1560,7 +1639,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
-        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng, cx.background_executor()).await;
+        randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
     }
     log::info!("generated initial tree");
 
@@ -1603,7 +1682,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
                 .await
                 .log_err();
         } else {
-            randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng, cx.background_executor()).await;
+            randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
         }
 
         let buffered_event_count = fs.as_fake().buffered_event_count();
@@ -1612,7 +1691,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             log::info!("flushing {} events", len);
             fs.as_fake().flush_events(len);
         } else {
-            randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng, cx.background_executor()).await;
+            randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng).await;
             mutations_len -= 1;
         }
 
@@ -1764,12 +1843,8 @@ fn randomly_mutate_worktree(
                 })
             } else {
                 log::info!("overwriting file {:?} ({})", &entry.path, entry.id.0);
-                let task = worktree.write_file(
-                    entry.path.clone(),
-                    Rope::default(),
-                    Default::default(),
-                    cx,
-                );
+                let task =
+                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -1784,7 +1859,6 @@ async fn randomly_mutate_fs(
     root_path: &Path,
     insertion_probability: f64,
     rng: &mut impl Rng,
-    executor: &BackgroundExecutor,
 ) {
     log::info!("mutating fs");
     let mut files = Vec::new();
@@ -1859,7 +1933,7 @@ async fn randomly_mutate_fs(
         );
         fs.save(
             &ignore_path,
-            &Rope::from_str(ignore_contents.as_str(), executor),
+            &ignore_contents.as_str().into(),
             Default::default(),
         )
         .await
@@ -2192,6 +2266,5 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        WorktreeSettings::register(cx);
     });
 }

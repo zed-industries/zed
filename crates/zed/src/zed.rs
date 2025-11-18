@@ -28,10 +28,10 @@ use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element, Entity, Focusable,
-    KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled,
-    Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache,
-    point, px, retain_all,
+    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -107,8 +107,8 @@ actions!(
         Minimize,
         /// Opens the default settings file.
         OpenDefaultSettings,
-        /// Opens project-specific settings.
-        OpenProjectSettings,
+        /// Opens project-specific settings file.
+        OpenProjectSettingsFile,
         /// Opens the project tasks configuration.
         OpenProjectTasks,
         /// Opens the tasks panel.
@@ -201,12 +201,7 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
-                |cx| {
-                    Rope::from_str(
-                        settings::initial_keymap_content().as_ref(),
-                        cx.background_executor(),
-                    )
-                },
+                || settings::initial_keymap_content().as_ref().into(),
                 window,
                 cx,
             );
@@ -216,12 +211,7 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
-                |cx| {
-                    Rope::from_str(
-                        settings::initial_user_settings_content().as_ref(),
-                        cx.background_executor(),
-                    )
-                },
+                || settings::initial_user_settings_content().as_ref().into(),
                 window,
                 cx,
             );
@@ -236,12 +226,7 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::tasks_file(),
-                |cx| {
-                    Rope::from_str(
-                        settings::initial_tasks_content().as_ref(),
-                        cx.background_executor(),
-                    )
-                },
+                || settings::initial_tasks_content().as_ref().into(),
                 window,
                 cx,
             );
@@ -251,12 +236,7 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::debug_scenarios_file(),
-                |cx| {
-                    Rope::from_str(
-                        settings::initial_debug_tasks_content().as_ref(),
-                        cx.background_executor(),
-                    )
-                },
+                || settings::initial_debug_tasks_content().as_ref().into(),
                 window,
                 cx,
             );
@@ -294,16 +274,27 @@ pub fn init(cx: &mut App) {
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
-    WorkspaceSettings::get_global(cx)
-        .on_last_window_closed
-        .is_quit_app()
-        .then(|| {
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
+    #[cfg(target_os = "macos")]
+    {
+        WorkspaceSettings::get_global(cx)
+            .on_last_window_closed
+            .is_quit_app()
+            .then(|| {
+                cx.on_window_closed(|cx| {
+                    if cx.windows().is_empty() {
+                        cx.quit();
+                    }
+                })
             })
-        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        }))
+    }
 }
 
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
@@ -402,6 +393,9 @@ pub fn initialize_workspace(
             }
         }
 
+        #[cfg(target_os = "windows")]
+        unstable_version_notification(cx);
+
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
             edit_prediction_button::EditPredictionButton::new(
@@ -478,6 +472,53 @@ pub fn initialize_workspace(
         workspace.focus_handle(cx).focus(window);
     })
     .detach();
+}
+
+#[cfg(target_os = "windows")]
+fn unstable_version_notification(cx: &mut App) {
+    if !matches!(
+        ReleaseChannel::try_global(cx),
+        Some(ReleaseChannel::Nightly)
+    ) {
+        return;
+    }
+    let db_key = "zed_windows_nightly_notif_shown_at".to_owned();
+    let time = chrono::Utc::now();
+    if let Some(last_shown) = db::kvp::KEY_VALUE_STORE
+        .read_kvp(&db_key)
+        .log_err()
+        .flatten()
+        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
+    {
+        if time.fixed_offset() - last_shown < chrono::Duration::days(7) {
+            return;
+        }
+    }
+    cx.spawn(async move |_| {
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(db_key, time.to_rfc3339())
+            .await
+    })
+    .detach_and_log_err(cx);
+    struct WindowsNightly;
+    show_app_notification(NotificationId::unique::<WindowsNightly>(), cx, |cx| {
+        cx.new(|cx| {
+            MessageNotification::new("You're using an unstable version of Zed (Nightly)", cx)
+                .primary_message("Download Stable")
+                .primary_icon_color(Color::Accent)
+                .primary_icon(IconName::Download)
+                .primary_on_click(|window, cx| {
+                    window.dispatch_action(
+                        zed_actions::OpenBrowser {
+                            url: "https://zed.dev/download".to_string(),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                    cx.emit(DismissEvent);
+                })
+        })
+    });
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -735,7 +776,24 @@ fn register_actions(
                 ..Default::default()
             })
         })
-        .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
+        .register_action(|workspace, action: &OpenBrowser, _window, cx| {
+            // Parse and validate the URL to ensure it's properly formatted
+            match url::Url::parse(&action.url) {
+                Ok(parsed_url) => {
+                    // Use the parsed URL's string representation which is properly escaped
+                    cx.open_url(parsed_url.as_str());
+                }
+                Err(e) => {
+                    workspace.show_error(
+                        &anyhow::anyhow!(
+                            "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
+                            action.url
+                        ),
+                        cx,
+                    );
+                }
+            }
+        })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
@@ -1428,9 +1486,6 @@ pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
 ) {
-    BaseKeymap::register(cx);
-    vim_mode_setting::init(cx);
-
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
@@ -1728,7 +1783,7 @@ pub fn open_new_ssh_project_from_project(
 
 fn open_project_settings_file(
     workspace: &mut Workspace,
-    _: &OpenProjectSettings,
+    _: &OpenProjectSettingsFile,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -1863,53 +1918,67 @@ fn open_telemetry_log_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
-        let app_state = workspace.app_state().clone();
-        cx.spawn_in(window, async move |workspace, cx| {
-            async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                let path = client::telemetry::Telemetry::log_file_path();
-                app_state.fs.load(&path).await.log_err()
-            }
+    const HEADER: &str = concat!(
+        "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
+        "// Telemetry can be disabled via the `settings.json` file.\n",
+        "// Here is the data that has been reported for the current session:\n",
+    );
+    workspace
+        .with_local_workspace(window, cx, move |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            cx.spawn_in(window, async move |workspace, cx| {
+                async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
+                    let path = client::telemetry::Telemetry::log_file_path();
+                    app_state.fs.load(&path).await.log_err()
+                }
 
-            let log = fetch_log_string(&app_state).await.unwrap_or_else(|| "// No data has been collected yet".to_string());
+                let log = fetch_log_string(&app_state)
+                    .await
+                    .unwrap_or_else(|| "// No data has been collected yet".to_string());
 
-            const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
-            let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
-            if let Some(newline_offset) = log[start_offset..].find('\n') {
-                start_offset += newline_offset + 1;
-            }
-            let log_suffix = &log[start_offset..];
-            let header = concat!(
-                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-                "// Telemetry can be disabled via the `settings.json` file.\n",
-                "// Here is the data that has been reported for the current session:\n",
-            );
-            let content = format!("{}\n{}", header, log_suffix);
-            let json = app_state.languages.language_for_name("JSON").await.log_err();
+                const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
+                let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
+                if let Some(newline_offset) = log[start_offset..].find('\n') {
+                    start_offset += newline_offset + 1;
+                }
+                let log_suffix = &log[start_offset..];
+                let content = format!("{}\n{}", HEADER, log_suffix);
+                let json = app_state
+                    .languages
+                    .language_for_name("JSON")
+                    .await
+                    .log_err();
 
-            workspace.update_in( cx, |workspace, window, cx| {
-                let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json,false, cx));
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
-                });
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor = Editor::for_multibuffer(buffer, Some(project), window, cx);
-                        editor.set_read_only(true);
-                        editor.set_breadcrumb_header("Telemetry Log".into());
-                        editor
-                    })),
-                    None,
-                    true,
-                    window, cx,
-                );
-            }).log_err()?;
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer(&content, json, false, cx)
+                        });
+                        let buffer = cx.new(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
+                        });
+                        workspace.add_item_to_active_pane(
+                            Box::new(cx.new(|cx| {
+                                let mut editor =
+                                    Editor::for_multibuffer(buffer, Some(project), window, cx);
+                                editor.set_read_only(true);
+                                editor.set_breadcrumb_header("Telemetry Log".into());
+                                editor
+                            })),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err()?;
 
-            Some(())
+                Some(())
+            })
+            .detach();
         })
         .detach();
-    }).detach();
 }
 
 fn open_bundled_file(
@@ -1942,6 +2011,7 @@ fn open_bundled_file(
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_read_only(true);
+                            editor.set_should_serialize(false, cx);
                             editor.set_breadcrumb_header(title.into());
                             editor
                         })),
@@ -1959,7 +2029,7 @@ fn open_bundled_file(
 
 fn open_settings_file(
     abs_path: &'static Path,
-    default_content: impl FnOnce(&mut AsyncApp) -> Rope + Send + 'static,
+    default_content: impl FnOnce() -> Rope + Send + 'static,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -4091,7 +4161,9 @@ mod tests {
                     let editor = item.downcast::<Editor>().unwrap();
                     let (selections, scroll_position) = editor.update(cx, |editor, cx| {
                         (
-                            editor.selections.display_ranges(cx),
+                            editor
+                                .selections
+                                .display_ranges(&editor.display_snapshot(cx)),
                             editor.scroll_position(cx),
                         )
                     });
@@ -4348,10 +4420,8 @@ mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
-            language::init(cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
-            Project::init_settings(cx);
             app_state
         })
     }
@@ -4375,7 +4445,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &Rope::from_str_small(r#"{"base_keymap": "Atom"}"#),
+                &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
             .await
@@ -4385,7 +4455,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#),
+                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4433,7 +4503,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#),
+                &r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4453,7 +4523,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &Rope::from_str_small(r#"{"base_keymap": "JetBrains"}"#),
+                &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
             .await
@@ -4493,7 +4563,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &Rope::from_str_small(r#"{"base_keymap": "Atom"}"#),
+                &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
             .await
@@ -4502,7 +4572,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &Rope::from_str_small(r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#),
+                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4545,7 +4615,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &Rope::from_str_small(r#"[{"bindings": {"backspace": null}}]"#),
+                &r#"[{"bindings": {"backspace": null}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4565,7 +4635,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &Rope::from_str_small(r#"{"base_keymap": "JetBrains"}"#),
+                &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
             .await
@@ -4632,6 +4702,7 @@ mod tests {
                 "assistant",
                 "assistant2",
                 "auto_update",
+                "bedrock",
                 "branches",
                 "buffer_search",
                 "channel_modal",
@@ -4814,21 +4885,17 @@ mod tests {
 
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
-
             app_state.languages.add(markdown_language());
 
             gpui_tokio::init(cx);
-            vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
-            language::init(cx);
             editor::init(cx);
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);
@@ -5015,7 +5082,7 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 // Call the exact function that contains the bug
                 eprintln!("About to call open_project_settings_file");
-                open_project_settings_file(workspace, &OpenProjectSettings, window, cx);
+                open_project_settings_file(workspace, &OpenProjectSettingsFile, window, cx);
             })
             .unwrap();
 

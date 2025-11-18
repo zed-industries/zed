@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
+use language::File;
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
@@ -15,6 +16,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
+    image_store::ImageId,
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
@@ -26,11 +28,15 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::{Settings as _, initial_server_settings_content};
+use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
+    num::NonZeroU64,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -68,9 +74,6 @@ pub struct HeadlessAppState {
 impl HeadlessProject {
     pub fn init(cx: &mut App) {
         settings::init(cx);
-        language::init(cx);
-        project::Project::init_settings(cx);
-        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 
@@ -94,7 +97,8 @@ impl HeadlessProject {
             store
         });
 
-        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
+        let environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -259,6 +263,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_server_settings);
         session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
+        session.add_entity_request_handler(Self::handle_open_image_by_path);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -524,6 +529,71 @@ impl HeadlessProject {
         })
     }
 
+    pub async fn handle_open_image_by_path(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::OpenImageByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenImageResponse> {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
+        let project_id = message.payload.project_id;
+        use proto::create_image_for_peer::Variant;
+
+        let (worktree_store, session) = this.read_with(&cx, |this, _| {
+            (this.worktree_store.clone(), this.session.clone())
+        })?;
+
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))?
+            .context("worktree not found")?;
+
+        let load_task = worktree.update(&mut cx, |worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        })?;
+
+        let loaded_file = load_task.await?;
+        let content = loaded_file.content;
+        let file = loaded_file.file;
+
+        let proto_file = worktree.read_with(&cx, |_worktree, cx| file.to_proto(cx))?;
+        let image_id =
+            ImageId::from(NonZeroU64::new(NEXT_ID.fetch_add(1, Ordering::Relaxed)).unwrap());
+
+        let format = image::guess_format(&content)
+            .map(|f| format!("{:?}", f).to_lowercase())
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        let state = proto::ImageState {
+            id: image_id.to_proto(),
+            file: Some(proto_file),
+            content_size: content.len() as u64,
+            format,
+        };
+
+        session.send(proto::CreateImageForPeer {
+            project_id,
+            peer_id: Some(REMOTE_SERVER_PEER_ID),
+            variant: Some(Variant::State(state)),
+        })?;
+
+        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+        for chunk in content.chunks(CHUNK_SIZE) {
+            session.send(proto::CreateImageForPeer {
+                project_id,
+                peer_id: Some(REMOTE_SERVER_PEER_ID),
+                variant: Some(Variant::Chunk(proto::ImageChunk {
+                    image_id: image_id.to_proto(),
+                    data: chunk.to_vec(),
+                })),
+            })?;
+        }
+
+        Ok(proto::OpenImageResponse {
+            image_id: image_id.to_proto(),
+        })
+    }
+
     pub async fn handle_open_new_buffer(
         this: Entity<Self>,
         _message: TypedEnvelope<proto::OpenNewBuffer>,
@@ -640,9 +710,15 @@ impl HeadlessProject {
             PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
-            })
+            project::Search::local(
+                this.fs.clone(),
+                this.buffer_store.clone(),
+                this.worktree_store.clone(),
+                message.limit as _,
+                cx,
+            )
+            .into_handle(query, cx)
+            .matching_buffers(cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {
@@ -786,7 +862,7 @@ impl HeadlessProject {
         let environment = this
             .update(&mut cx, |this, cx| {
                 this.environment.update(cx, |environment, cx| {
-                    environment.get_local_directory_environment(&shell, directory.into(), cx)
+                    environment.local_directory_environment(&shell, directory.into(), cx)
                 })
             })?
             .await

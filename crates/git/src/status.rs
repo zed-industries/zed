@@ -64,23 +64,23 @@ pub enum StageStatus {
 }
 
 impl StageStatus {
-    pub fn is_fully_staged(&self) -> bool {
+    pub const fn is_fully_staged(&self) -> bool {
         matches!(self, StageStatus::Staged)
     }
 
-    pub fn is_fully_unstaged(&self) -> bool {
+    pub const fn is_fully_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged)
     }
 
-    pub fn has_staged(&self) -> bool {
+    pub const fn has_staged(&self) -> bool {
         matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
     }
 
-    pub fn has_unstaged(&self) -> bool {
+    pub const fn has_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
     }
 
-    pub fn as_bool(self) -> Option<bool> {
+    pub const fn as_bool(self) -> Option<bool> {
         match self {
             StageStatus::Staged => Some(true),
             StageStatus::Unstaged => Some(false),
@@ -201,6 +201,14 @@ impl FileStatus {
 
     pub fn is_untracked(self) -> bool {
         matches!(self, FileStatus::Untracked)
+    }
+
+    pub fn is_renamed(self) -> bool {
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Renamed
+            || tracked.worktree_status == StatusCode::Renamed
     }
 
     pub fn summary(self) -> GitSummary {
@@ -430,34 +438,79 @@ impl std::ops::Sub for GitSummary {
 #[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
 }
 
 impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
-                let sep = entry.get(2..3)?;
-                if sep != " " {
-                    return None;
+        let mut parts = s.split('\0').peekable();
+        let mut entries = Vec::new();
+        let mut renamed_paths = HashMap::default();
+
+        while let Some(entry) = parts.next() {
+            if entry.is_empty() {
+                continue;
+            }
+
+            if !matches!(entry.get(2..3), Some(" ")) {
+                continue;
+            }
+
+            let path_or_old_path = &entry[3..];
+
+            if path_or_old_path.ends_with('/') {
+                continue;
+            }
+
+            let status = match entry.as_bytes()[0..2].try_into() {
+                Ok(bytes) => match FileStatus::from_bytes(bytes).log_err() {
+                    Some(s) => s,
+                    None => continue,
+                },
+                Err(_) => continue,
+            };
+
+            let is_rename = matches!(
+                status,
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                }) | FileStatus::Tracked(TrackedStatus {
+                    worktree_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                })
+            );
+
+            let (old_path_str, new_path_str) = if is_rename {
+                let new_path = match parts.next() {
+                    Some(new_path) if !new_path.is_empty() => new_path,
+                    _ => continue,
                 };
-                let path = &entry[3..];
-                // The git status output includes untracked directories as well as untracked files.
-                // We do our own processing to compute the "summary" status of each directory,
-                // so just skip any directories in the output, since they'll otherwise interfere
-                // with our handling of nested repositories.
-                if path.ends_with('/') {
-                    return None;
+                (path_or_old_path, new_path)
+            } else {
+                (path_or_old_path, path_or_old_path)
+            };
+
+            if new_path_str.ends_with('/') {
+                continue;
+            }
+
+            let new_path = match RelPath::unix(new_path_str).log_err() {
+                Some(p) => RepoPath::from_rel_path(p),
+                None => continue,
+            };
+
+            if is_rename {
+                if let Some(old_path_rel) = RelPath::unix(old_path_str).log_err() {
+                    let old_path_repo = RepoPath::from_rel_path(old_path_rel);
+                    renamed_paths.insert(new_path.clone(), old_path_repo);
                 }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
-                let status = FileStatus::from_bytes(status).log_err()?;
-                // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath(RelPath::unix(path).log_err()?.into());
-                Some((path, status))
-            })
-            .collect::<Vec<_>>();
+            }
+
+            entries.push((new_path, status));
+        }
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
@@ -481,6 +534,7 @@ impl FromStr for GitStatus {
         });
         Ok(Self {
             entries: entries.into(),
+            renamed_paths,
         })
     }
 }
@@ -489,6 +543,7 @@ impl Default for GitStatus {
     fn default() -> Self {
         Self {
             entries: Arc::new([]),
+            renamed_paths: HashMap::default(),
         }
     }
 }
@@ -539,7 +594,7 @@ impl FromStr for TreeDiff {
         let mut fields = s.split('\0');
         let mut parsed = HashMap::default();
         while let Some((status, path)) = fields.next().zip(fields.next()) {
-            let path = RepoPath(RelPath::unix(path)?.into());
+            let path = RepoPath::from_rel_path(RelPath::unix(path)?);
 
             let mut fields = status.split(" ").skip(2);
             let old_sha = fields

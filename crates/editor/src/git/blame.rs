@@ -764,11 +764,6 @@ mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
-            language::init(cx);
-            client::init_settings(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
-
             crate::init(cx);
         });
     }
@@ -1115,19 +1110,18 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let buffer_initial_text_len = rng.random_range(5..15);
-        let mut buffer_initial_text = Rope::from_str(
+        let mut buffer_initial_text = Rope::from(
             RandomCharIter::new(&mut rng)
                 .take(buffer_initial_text_len)
                 .collect::<String>()
                 .as_str(),
-            cx.background_executor(),
         );
 
         let mut newline_ixs = (0..buffer_initial_text_len).choose_multiple(&mut rng, 5);
         newline_ixs.sort_unstable();
         for newline_ix in newline_ixs.into_iter().rev() {
             let newline_ix = buffer_initial_text.clip_offset(newline_ix, Bias::Right);
-            buffer_initial_text.replace(newline_ix..newline_ix, "\n", cx.background_executor());
+            buffer_initial_text.replace(newline_ix..newline_ix, "\n");
         }
         log::info!("initial buffer text: {:?}", buffer_initial_text);
 

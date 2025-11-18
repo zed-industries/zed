@@ -48,8 +48,8 @@ pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
-pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
-    named::run(platform, "cargo install cargo-nextest --locked")
+pub fn cargo_install_nextest() -> Step<Use> {
+    named::uses("taiki-e", "install-action", "nextest")
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
@@ -86,22 +86,10 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
     step.if_condition(Expression::new("always()"))
 }
 
-pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
-    Step::new(format!("@actions/upload-artifact {}", name))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", name))
-        .add_with(("path", path))
-        .add_with(("if-no-files-found", "error"))
-}
-
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 100"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
         Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
     }
 }
@@ -113,13 +101,8 @@ pub(crate) fn clippy(platform: Platform) -> Step<Run> {
     }
 }
 
-pub(crate) fn cache_rust_dependencies() -> Step<Use> {
-    named::uses(
-        "swatinem",
-        "rust-cache",
-        "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
-    )
-    .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
 fn setup_linux() -> Step<Run> {
@@ -130,8 +113,14 @@ fn install_mold() -> Step<Run> {
     named::bash("./script/install-mold")
 }
 
+fn download_wasi_sdk() -> Step<Run> {
+    named::bash("./script/download-wasi-sdk")
+}
+
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux()).add_step(install_mold())
+    job.add_step(setup_linux())
+        .add_step(install_mold())
+        .add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -314,4 +303,10 @@ pub(crate) mod named {
             .collect::<Vec<_>>()
             .join("::")
     }
+}
+
+pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
+    named::bash(&format!(
+        "git fetch origin {ref_name} && git checkout {ref_name}"
+    ))
 }

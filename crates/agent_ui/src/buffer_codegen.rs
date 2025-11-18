@@ -487,10 +487,9 @@ impl CodegenAlternative {
     ) {
         let start_time = Instant::now();
         let snapshot = self.snapshot.clone();
-        let selected_text = Rope::from_iter(
-            snapshot.text_for_range(self.range.start..self.range.end),
-            cx.background_executor(),
-        );
+        let selected_text = snapshot
+            .text_for_range(self.range.start..self.range.end)
+            .collect::<Rope>();
 
         let selection_start = self.range.start.to_point(&snapshot);
 
@@ -1083,10 +1082,7 @@ mod tests {
     };
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::{
-        Buffer, Language, LanguageConfig, LanguageMatcher, Point, language_settings,
-        tree_sitter_rust,
-    };
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, Point, tree_sitter_rust};
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1466,8 +1462,6 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) {
         cx.update(LanguageModelRegistry::test);
         cx.set_global(cx.update(SettingsStore::test));
-        cx.update(Project::init_settings);
-        cx.update(language_settings::init);
     }
 
     fn simulate_response_stream(

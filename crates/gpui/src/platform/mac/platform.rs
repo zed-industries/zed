@@ -19,7 +19,7 @@ use cocoa::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -315,6 +315,7 @@ impl MacPlatform {
                     name,
                     action,
                     os_action,
+                    checked,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -407,6 +408,10 @@ impl MacPlatform {
                                 ns_string(""),
                             )
                             .autorelease();
+                    }
+
+                    if *checked {
+                        item.setState_(NSVisualEffectState::Active);
                     }
 
                     let tag = actions.len() as NSInteger;
@@ -646,9 +651,12 @@ impl Platform for MacPlatform {
 
     fn open_url(&self, url: &str) {
         unsafe {
-            let url = NSURL::alloc(nil)
-                .initWithString_(ns_string(url))
-                .autorelease();
+            let ns_url = NSURL::alloc(nil).initWithString_(ns_string(url));
+            if ns_url.is_null() {
+                log::error!("Failed to create NSURL from string: {}", url);
+                return;
+            }
+            let url = ns_url.autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
@@ -1038,6 +1046,7 @@ impl Platform for MacPlatform {
                         ClipboardEntry::Image(image) => {
                             self.write_image_to_clipboard(image);
                         }
+                        ClipboardEntry::ExternalPaths(_) => {}
                     },
                     None => {
                         // Writing an empty list of entries just clears the clipboard.
@@ -1124,7 +1133,32 @@ impl Platform for MacPlatform {
                 }
             }
 
-            // If it wasn't a string, try the various supported image types.
+            // Next, check for URL flavors (including file URLs). Some tools only provide a URL
+            // with no plain text entry.
+            {
+                // Try the modern UTType identifiers first.
+                let file_url_type: id = ns_string("public.file-url");
+                let url_type: id = ns_string("public.url");
+
+                let url_data = if msg_send![types, containsObject: file_url_type] {
+                    pasteboard.dataForType(file_url_type)
+                } else if msg_send![types, containsObject: url_type] {
+                    pasteboard.dataForType(url_type)
+                } else {
+                    nil
+                };
+
+                if url_data != nil && !url_data.bytes().is_null() {
+                    let bytes = slice::from_raw_parts(
+                        url_data.bytes() as *mut u8,
+                        url_data.length() as usize,
+                    );
+
+                    return Some(self.read_string_from_clipboard(&state, bytes));
+                }
+            }
+
+            // If it wasn't a string or URL, try the various supported image types.
             for format in ImageFormat::iter() {
                 if let Some(item) = try_clipboard_image(pasteboard, format) {
                     return Some(item);
@@ -1132,7 +1166,7 @@ impl Platform for MacPlatform {
             }
         }
 
-        // If it wasn't a string or a supported image type, give up.
+        // If it wasn't a string, URL, or a supported image type, give up.
         None
     }
 
@@ -1704,6 +1738,40 @@ mod tests {
         assert_eq!(
             platform.read_from_clipboard(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
+        );
+    }
+
+    #[test]
+    fn test_file_url_reads_as_url_string() {
+        let platform = build_platform();
+
+        // Create a file URL for an arbitrary test path and write it to the pasteboard.
+        // This path does not need to exist; we only validate URL→path conversion.
+        let mock_path = "/tmp/zed-clipboard-file-url-test";
+        unsafe {
+            // Build an NSURL from the file path
+            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(mock_path)];
+            let abs: id = msg_send![url, absoluteString];
+
+            // Encode the URL string as UTF-8 bytes
+            let len: usize = msg_send![abs, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+            let bytes_ptr = abs.UTF8String() as *const u8;
+            let data = NSData::dataWithBytes_length_(nil, bytes_ptr as *const c_void, len as u64);
+
+            // Write as public.file-url to the unique pasteboard
+            let file_url_type: id = ns_string("public.file-url");
+            platform
+                .0
+                .lock()
+                .pasteboard
+                .setData_forType(data, file_url_type);
+        }
+
+        // Ensure the clipboard read returns the URL string, not a converted path
+        let expected_url = format!("file://{}", mock_path);
+        assert_eq!(
+            platform.read_from_clipboard(),
+            Some(ClipboardItem::new_string(expected_url))
         );
     }
 

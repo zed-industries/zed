@@ -110,6 +110,7 @@ members = [
     "crates/menu",
     "crates/migrator",
     "crates/mistral",
+    "crates/miniprofiler_ui",
     "crates/multi_buffer",
     "crates/nc",
     "crates/net",
@@ -126,6 +127,7 @@ members = [
     "crates/picker",
     "crates/prettier",
     "crates/project",
+    "crates/project_benchmarks",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/prompt_store",
@@ -163,6 +165,7 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
+    "crates/sweep_ai",
     "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
@@ -341,6 +344,7 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+miniprofiler_ui = { path = "crates/miniprofiler_ui" }
 nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
@@ -395,6 +399,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
+sweep_ai = { path = "crates/sweep_ai" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
@@ -475,6 +480,7 @@ bitflags = "2.6.0"
 blade-graphics = { version = "0.7.0" }
 blade-macros = { version = "0.3.0" }
 blade-util = { version = "0.3.0" }
+brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
@@ -482,7 +488,7 @@ cfg-if = "1.0.3"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "wrap_help"] }
 cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 convert_case = "0.8.0"
@@ -504,11 +510,11 @@ emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
 fancy-regex = "0.14.0"
-fork = "0.2.0"
+fork = "0.4.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "0090c6b6ef82fff02bc8616645953e778d1acc08" }
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "3eaa84abca0778eb54272f45a312cb24f9a0b435" }
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
@@ -531,8 +537,8 @@ itertools = "0.14.0"
 json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
-jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
-jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-protocol = "0.10.0"
+jupyter-websocket-client = "0.15.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -545,7 +551,7 @@ minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+nbformat = "0.15.0"
 nix = "0.29"
 num-format = "0.4.4"
 num-traits = "0.2"
@@ -616,8 +622,8 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662
     "stream",
 ], package = "zed-reqwest", version = "0.12.15-zed" }
 rsa = "0.9.6"
-runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
-    "async-dispatcher-runtime",
+runtimelib = { version = "0.30.0", default-features = false, features = [
+    "async-dispatcher-runtime", "aws-lc-rs"
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
@@ -628,6 +634,7 @@ scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
@@ -663,6 +670,7 @@ time = { version = "0.3", features = [
     "serde",
     "serde-well-known",
     "formatting",
+    "local-offset",
 ] }
 tiny_http = "0.8"
 tokio = { version = "1" }
@@ -680,7 +688,7 @@ tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
 tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
 tree-sitter-go = "0.23"
-tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
+tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-html = "0.23"
@@ -719,6 +727,7 @@ wit-component = "0.221"
 yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
+
 
 [workspace.dependencies.windows]
 version = "0.61"
@@ -772,8 +781,8 @@ features = [
 ]
 
 [patch.crates-io]
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 
 [profile.dev]
@@ -788,6 +797,19 @@ codegen-units = 16
 codegen-units = 16
 
 [profile.dev.package]
+# proc-macros start
+gpui_macros = { opt-level = 3 }
+derive_refineable = { opt-level = 3 }
+settings_macros = { opt-level = 3 }
+sqlez_macros = { opt-level = 3, codegen-units = 1 }
+ui_macros = { opt-level = 3 }
+util_macros = { opt-level = 3 }
+serde_derive = { opt-level = 3 }
+quote = { opt-level = 3 }
+syn = { opt-level = 3 }
+proc-macro2 = { opt-level = 3 }
+# proc-macros end
+
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 cranelift-codegen-meta = { opt-level = 3 }
@@ -829,7 +851,6 @@ semantic_version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
-sqlez_macros = { codegen-units = 1 }
 story = { codegen-units = 1 }
 supermaven_api = { codegen-units = 1 }
 telemetry_events = { codegen-units = 1 }

@@ -9,6 +9,7 @@ import "channel.proto";
 import "core.proto";
 import "debugger.proto";
 import "git.proto";
+import "image.proto";
 import "lsp.proto";
 import "notification.proto";
 import "task.proto";
@@ -409,7 +410,6 @@ message Envelope {
         AgentServerCommand agent_server_command = 374;
 
         ExternalAgentsUpdated external_agents_updated = 375;
-
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
         NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
@@ -427,7 +427,17 @@ message Envelope {
         GetTreeDiffResponse get_tree_diff_response = 385;
 
         GetBlobContent get_blob_content = 386;
-        GetBlobContentResponse get_blob_content_response = 387; // current max
+        GetBlobContentResponse get_blob_content_response = 387;
+
+        GitWorktreesResponse git_worktrees_response = 388;
+        GitGetWorktrees git_get_worktrees = 389;
+        GitCreateWorktree git_create_worktree = 390;
+
+        OpenImageByPath open_image_by_path = 391;
+        OpenImageResponse open_image_response = 392;
+        CreateImageForPeer create_image_for_peer = 393;
+
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 394; // current max
     }
 
     reserved 87 to 88;

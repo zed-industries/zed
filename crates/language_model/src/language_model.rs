@@ -4,6 +4,7 @@ mod registry;
 mod request;
 mod role;
 mod telemetry;
+pub mod tool_schema;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
@@ -35,6 +36,7 @@ pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
+pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
@@ -136,7 +138,7 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         message: String,
     },
-    #[error("permission error with {provider}'s API: {message}")]
+    #[error("Permission error with {provider}'s API: {message}")]
     PermissionError {
         provider: LanguageModelProviderName,
         message: String,
@@ -343,6 +345,27 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
     }
 }
 
+impl From<open_ai::RequestError> for LanguageModelCompletionError {
+    fn from(error: open_ai::RequestError) -> Self {
+        match error {
+            open_ai::RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                let retry_after = headers
+                    .get(http::header::RETRY_AFTER)
+                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
+                    .map(Duration::from_secs);
+
+                Self::from_http_status(provider.into(), status_code, body, retry_after)
+            }
+            open_ai::RequestError::Other(e) => Self::Other(e),
+        }
+    }
+}
+
 impl From<OpenRouterError> for LanguageModelCompletionError {
     fn from(error: OpenRouterError) -> Self {
         let provider = LanguageModelProviderName::new("OpenRouter");
@@ -407,15 +430,6 @@ impl From<open_router::ApiError> for LanguageModelCompletionError {
             },
         }
     }
-}
-
-/// Indicates the format used to define the input schema for a language model tool.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum LanguageModelToolSchemaFormat {
-    /// A JSON schema, see https://json-schema.org
-    JsonSchema,
-    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
-    JsonSchemaSubset,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]

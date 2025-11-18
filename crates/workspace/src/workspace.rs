@@ -199,6 +199,8 @@ actions!(
         AddFolderToProject,
         /// Clears all notifications.
         ClearAllNotifications,
+        /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
+        ClearNavigationHistory,
         /// Closes the active dock.
         CloseActiveDock,
         /// Closes all docks.
@@ -527,14 +529,6 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    WorkspaceSettings::register(cx);
-    ItemSettings::register(cx);
-    PreviewTabsSettings::register(cx);
-    TabBarSettings::register(cx);
-    StatusBarSettings::register(cx);
-}
-
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
     let paths = cx.prompt_for_paths(options);
     cx.spawn(
@@ -568,7 +562,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    init_settings(cx);
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
@@ -987,7 +980,6 @@ impl AppState {
 
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
-        crate::init_settings(cx);
 
         Arc::new(Self {
             client,
@@ -1179,6 +1171,7 @@ pub struct Workspace {
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
+    removing: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1522,6 +1515,7 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
+            removing: false,
         }
     }
 
@@ -1923,6 +1917,12 @@ impl Workspace {
         self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
+    }
+
+    pub fn clear_navigation_history(&mut self, _window: &mut Window, cx: &mut Context<Workspace>) {
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        }
     }
 
     fn navigate_history(
@@ -2335,18 +2335,41 @@ impl Workspace {
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
 
-        // On Linux and Windows, closing the last window should restore the last workspace.
-        let save_last_workspace = cfg!(not(target_os = "macos"))
-            && close_intent != CloseIntent::ReplaceWindow
-            && cx.windows().len() == 1;
-
         cx.spawn_in(window, async move |this, cx| {
+            this.update(cx, |this, _| {
+                if close_intent == CloseIntent::CloseWindow {
+                    this.removing = true;
+                }
+            })?;
+
             let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
                     .count()
             })?;
+
+            #[cfg(target_os = "macos")]
+            let save_last_workspace = false;
+
+            // On Linux and Windows, closing the last window should restore the last workspace.
+            #[cfg(not(target_os = "macos"))]
+            let save_last_workspace = {
+                let remaining_workspaces = cx.update(|_window, cx| {
+                    cx.windows()
+                        .iter()
+                        .filter_map(|window| window.downcast::<Workspace>())
+                        .filter_map(|workspace| {
+                            workspace
+                                .update(cx, |workspace, _, _| workspace.removing)
+                                .ok()
+                        })
+                        .filter(|removing| !removing)
+                        .count()
+                })?;
+
+                close_intent != CloseIntent::ReplaceWindow && remaining_workspaces == 0
+            };
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
@@ -4300,6 +4323,10 @@ impl Workspace {
         cx.emit(Event::PaneRemoved);
     }
 
+    pub fn panes_mut(&mut self) -> &mut [Entity<Pane>] {
+        &mut self.panes
+    }
+
     pub fn panes(&self) -> &[Entity<Pane>] {
         &self.panes
     }
@@ -5840,6 +5867,11 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ClearNavigationHistory, window, cx| {
+                    workspace.clear_navigation_history(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
                     if let Some((notification_id, _)) = workspace.notifications.pop() {
                         workspace.suppress_notification(&notification_id, cx);
@@ -7274,14 +7306,9 @@ pub fn join_channel(
 ) -> Task<Result<()>> {
     let active_call = ActiveCall::global(cx);
     cx.spawn(async move |cx| {
-        let result = join_channel_internal(
-            channel_id,
-            &app_state,
-            requesting_window,
-            &active_call,
-             cx,
-        )
-            .await;
+        let result =
+            join_channel_internal(channel_id, &app_state, requesting_window, &active_call, cx)
+                .await;
 
         // join channel succeeded, and opened a window
         if matches!(result, Ok(true)) {
@@ -7289,8 +7316,7 @@ pub fn join_channel(
         }
 
         // find an existing workspace to focus and show call controls
-        let mut active_window =
-            requesting_window.or_else(|| activate_any_workspace_window( cx));
+        let mut active_window = requesting_window.or_else(|| activate_any_workspace_window(cx));
         if active_window.is_none() {
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
@@ -7302,7 +7328,8 @@ pub fn join_channel(
             if result.is_ok() {
                 cx.update(|cx| {
                     cx.dispatch_action(&OpenChannelNotes);
-                }).log_err();
+                })
+                .log_err();
             }
 
             active_window = Some(window_handle);
@@ -7314,19 +7341,25 @@ pub fn join_channel(
                 active_window
                     .update(cx, |_, window, cx| {
                         let detail: SharedString = match err.error_code() {
-                            ErrorCode::SignedOut => {
-                                "Please sign in to continue.".into()
+                            ErrorCode::SignedOut => "Please sign in to continue.".into(),
+                            ErrorCode::UpgradeRequired => concat!(
+                                "Your are running an unsupported version of Zed. ",
+                                "Please update to continue."
+                            )
+                            .into(),
+                            ErrorCode::NoSuchChannel => concat!(
+                                "No matching channel was found. ",
+                                "Please check the link and try again."
+                            )
+                            .into(),
+                            ErrorCode::Forbidden => concat!(
+                                "This channel is private, and you do not have access. ",
+                                "Please ask someone to add you and try again."
+                            )
+                            .into(),
+                            ErrorCode::Disconnected => {
+                                "Please check your internet connection and try again.".into()
                             }
-                            ErrorCode::UpgradeRequired => {
-                                "Your are running an unsupported version of Zed. Please update to continue.".into()
-                            }
-                            ErrorCode::NoSuchChannel => {
-                                "No matching channel was found. Please check the link and try again.".into()
-                            }
-                            ErrorCode::Forbidden => {
-                                "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
-                            }
-                            ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };
                         window.prompt(
@@ -7334,7 +7367,8 @@ pub fn join_channel(
                             "Failed to join channel",
                             Some(&detail),
                             &["Ok"],
-                        cx)
+                            cx,
+                        )
                     })?
                     .await
                     .ok();
@@ -7580,13 +7614,13 @@ pub fn create_and_open_local_file(
     path: &'static Path,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-    default_content: impl 'static + Send + FnOnce(&mut AsyncApp) -> Rope,
+    default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn_in(window, async move |workspace, cx| {
         let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
-            fs.save(path, &default_content(cx), Default::default())
+            fs.save(path, &default_content(), Default::default())
                 .await?;
         }
 
@@ -11312,9 +11346,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 

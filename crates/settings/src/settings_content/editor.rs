@@ -96,10 +96,16 @@ pub struct EditorSettingsContent {
     /// Default: 4.0
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub fast_scroll_sensitivity: Option<f32>,
-    /// Whether the line numbers on editors gutter are relative or not.
+    /// Settings for sticking scopes to the top of the editor.
     ///
-    /// Default: false
-    pub relative_line_numbers: Option<bool>,
+    /// Default: sticky scroll is disabled
+    pub sticky_scroll: Option<StickyScrollContent>,
+    /// Whether the line numbers on editors gutter are relative or not.
+    /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
+    /// relative number of display lines.
+    ///
+    /// Default: "disabled"
+    pub relative_line_numbers: Option<RelativeLineNumbers>,
     /// When to populate a new search's query based on the text under the cursor.
     ///
     /// Default: always
@@ -197,6 +203,54 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// When to show the scrollbar in the completion menu.
+    /// This setting can take four values:
+    ///
+    /// 1. Show the scrollbar if there's important information or
+    ///    follow the system's configured behavior
+    ///   "auto"
+    /// 2. Match the system's configured behavior:
+    ///    "system"
+    /// 3. Always show the scrollbar:
+    ///    "always"
+    /// 4. Never show the scrollbar:
+    ///    "never" (default)
+    pub completion_menu_scrollbar: Option<ShowScrollbar>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RelativeLineNumbers {
+    Disabled,
+    Enabled,
+    Wrapped,
+}
+
+impl RelativeLineNumbers {
+    pub fn enabled(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Wrapped => true,
+            RelativeLineNumbers::Disabled => false,
+        }
+    }
+    pub fn wrapped(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Disabled => false,
+            RelativeLineNumbers::Wrapped => true,
+        }
+    }
 }
 
 // Toolbar related settings
@@ -260,6 +314,16 @@ pub struct ScrollbarContent {
     pub cursors: Option<bool>,
     /// Forcefully enable or disable the scrollbar for each axis
     pub axes: Option<ScrollbarAxesContent>,
+}
+
+/// Sticky scroll related settings
+#[skip_serializing_none]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct StickyScrollContent {
+    /// Whether sticky scroll is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 /// Minimap related settings
@@ -695,10 +759,16 @@ pub enum SnippetSortOrder {
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
     pub button: Option<bool>,
+    /// Whether to only match on whole words.
     pub whole_word: Option<bool>,
+    /// Whether to match case sensitively.
     pub case_sensitive: Option<bool>,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: Option<bool>,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: Option<bool>,
+    /// Whether to center the cursor on each search match when navigating.
+    pub center_on_match: Option<bool>,
 }
 
 #[skip_serializing_none]

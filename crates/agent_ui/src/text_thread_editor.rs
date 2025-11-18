@@ -314,6 +314,7 @@ impl TextThreadEditor {
                             )
                         });
                     },
+                    true, // Use popover styles for picker
                     window,
                     cx,
                 )
@@ -477,7 +478,7 @@ impl TextThreadEditor {
                     editor.insert(&format!("/{name}"), window, cx);
                     if command.accepts_arguments() {
                         editor.insert(" ", window, cx);
-                        editor.show_completions(&ShowCompletions::default(), window, cx);
+                        editor.show_completions(&ShowCompletions, window, cx);
                     }
                 });
             });
@@ -1678,7 +1679,7 @@ impl TextThreadEditor {
     ) {
         cx.stop_propagation();
 
-        let images = if let Some(item) = cx.read_from_clipboard() {
+        let mut images = if let Some(item) = cx.read_from_clipboard() {
             item.into_entries()
                 .filter_map(|entry| {
                     if let ClipboardEntry::Image(image) = entry {
@@ -1691,6 +1692,40 @@ impl TextThreadEditor {
         } else {
             Vec::new()
         };
+
+        if let Some(paths) = cx.read_from_clipboard() {
+            for path in paths
+                .into_entries()
+                .filter_map(|entry| {
+                    if let ClipboardEntry::ExternalPaths(paths) = entry {
+                        Some(paths.paths().to_owned())
+                    } else {
+                        None
+                    }
+                })
+                .flatten()
+            {
+                let Ok(content) = std::fs::read(path) else {
+                    continue;
+                };
+                let Ok(format) = image::guess_format(&content) else {
+                    continue;
+                };
+                images.push(gpui::Image::from_bytes(
+                    match format {
+                        image::ImageFormat::Png => gpui::ImageFormat::Png,
+                        image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                        image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                        image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                        image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                        image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                        image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                        _ => continue,
+                    },
+                    content,
+                ));
+            }
+        }
 
         let metadata = if let Some(item) = cx.read_from_clipboard() {
             item.entries().first().and_then(|entry| {
@@ -2591,12 +2626,11 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.activate_match(index, matches, collapse, window, cx);
+            editor.activate_match(index, matches, window, cx);
         });
     }
 
@@ -3223,11 +3257,7 @@ mod tests {
         prompt_store::init(cx);
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
-        language::init(cx);
-        agent_settings::init(cx);
-        Project::init_settings(cx);
+
         theme::init(theme::LoadThemes::JustBase, cx);
-        workspace::init_settings(cx);
-        editor::init_settings(cx);
     }
 }

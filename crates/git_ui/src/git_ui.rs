@@ -1,6 +1,5 @@
 use std::any::Any;
 
-use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
@@ -15,7 +14,6 @@ use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
-use git_panel_settings::GitPanelSettings;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     Window, actions,
@@ -46,6 +44,7 @@ pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod stash_picker;
 pub mod text_diff_view;
+pub mod worktree_picker;
 
 actions!(
     git,
@@ -56,8 +55,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    GitPanelSettings::register(cx);
-
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
 
@@ -72,6 +69,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         branch_picker::register(workspace);
+        worktree_picker::register(workspace);
         stash_picker::register(workspace);
 
         let project = workspace.project().read(cx);
@@ -124,7 +122,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.pull(window, cx);
+                    panel.pull(false, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::PullRebase, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.pull(true, window, cx);
                 });
             });
         }
@@ -595,6 +601,7 @@ mod remote_button {
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Fetch From", git::FetchFrom.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
+                        .action("Pull (Rebase)", git::PullRebase.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())
                         .action("Push To", git::PushTo.boxed_clone())
@@ -700,6 +707,11 @@ impl RenderOnce for GitStatusIcon {
             (
                 IconName::SquareMinus,
                 cx.theme().colors().version_control_deleted,
+            )
+        } else if status.is_renamed() {
+            (
+                IconName::ArrowRight,
+                cx.theme().colors().version_control_modified,
             )
         } else if status.is_modified() {
             (

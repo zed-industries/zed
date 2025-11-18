@@ -10,7 +10,9 @@ use crate::{
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
 use rand::{SeedableRng, rngs::StdRng};
-use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -331,6 +333,13 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Returns true if there's an alert dialog open.
+    pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.test_platform.expect_restart.borrow_mut().replace(tx);
+        rx
+    }
+
     /// Causes the given sources to be returned if the application queries for screen
     /// capture sources.
     pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
@@ -391,11 +400,6 @@ impl TestAppContext {
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
-    }
-
-    /// Returns the background executor for this context.
-    pub fn background_executor(&self) -> &BackgroundExecutor {
-        &self.background_executor
     }
 
     /// Wait until there are no more pending tasks.

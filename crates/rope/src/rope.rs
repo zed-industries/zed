@@ -5,7 +5,7 @@ mod point_utf16;
 mod unclipped;
 
 use arrayvec::ArrayVec;
-use gpui::BackgroundExecutor;
+use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use std::{
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
@@ -29,41 +29,6 @@ pub struct Rope {
 impl Rope {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Create a new rope from a string without trying to parallelize the construction for large strings.
-    pub fn from_str_small(text: &str) -> Self {
-        let mut rope = Self::new();
-        rope.push_small(text);
-        rope
-    }
-
-    /// Create a new rope from a string.
-    pub fn from_str(text: &str, executor: &BackgroundExecutor) -> Self {
-        let mut rope = Self::new();
-        rope.push(text, executor);
-        rope
-    }
-
-    /// Create a new rope from a string without trying to parallelize the construction for large strings.
-    pub fn from_iter_small<'a, T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        let mut rope = Rope::new();
-        for chunk in iter {
-            rope.push_small(chunk);
-        }
-        rope
-    }
-
-    /// Create a new rope from a string.
-    pub fn from_iter<'a, T: IntoIterator<Item = &'a str>>(
-        iter: T,
-        executor: &BackgroundExecutor,
-    ) -> Self {
-        let mut rope = Rope::new();
-        for chunk in iter {
-            rope.push(chunk, executor);
-        }
-        rope
     }
 
     /// Checks that `index`-th byte is the first byte in a UTF-8 code point
@@ -109,29 +74,9 @@ impl Rope {
         if index >= self.len() {
             self.len()
         } else {
-            #[inline]
-            pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-                // This is bit magic equivalent to: b < 128 || b >= 192
-                (u8 as i8) >= -0x40
-            }
-
             let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
             let chunk_offset = index - start;
-            let lower_idx = item.map(|chunk| {
-                let lower_bound = chunk_offset.saturating_sub(3);
-                chunk
-                    .text
-                    .as_bytes()
-                    .get(lower_bound..=chunk_offset)
-                    .map(|it| {
-                        let new_idx = it
-                            .iter()
-                            .rposition(|&b| is_utf8_char_boundary(b))
-                            .unwrap_or(0);
-                        lower_bound + new_idx
-                    })
-                    .unwrap_or(chunk.text.len())
-            });
+            let lower_idx = item.map(|chunk| chunk.text.floor_char_boundary(chunk_offset));
             lower_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
@@ -140,22 +85,9 @@ impl Rope {
         if index > self.len() {
             self.len()
         } else {
-            #[inline]
-            pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-                // This is bit magic equivalent to: b < 128 || b >= 192
-                (u8 as i8) >= -0x40
-            }
-
             let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
             let chunk_offset = index - start;
-            let upper_idx = item.map(|chunk| {
-                let upper_bound = Ord::min(chunk_offset + 4, chunk.text.len());
-                chunk.text.as_bytes()[chunk_offset..upper_bound]
-                    .iter()
-                    .position(|&b| is_utf8_char_boundary(b))
-                    .map_or(upper_bound, |pos| pos + chunk_offset)
-            });
-
+            let upper_idx = item.map(|chunk| chunk.text.ceil_char_boundary(chunk_offset));
             upper_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
@@ -180,12 +112,12 @@ impl Rope {
         self.check_invariants();
     }
 
-    pub fn replace(&mut self, range: Range<usize>, text: &str, executor: &BackgroundExecutor) {
+    pub fn replace(&mut self, range: Range<usize>, text: &str) {
         let mut new_rope = Rope::new();
         let mut cursor = self.cursor(0);
         new_rope.append(cursor.slice(range.start));
         cursor.seek_forward(range.end);
-        new_rope.push(text, executor);
+        new_rope.push(text);
         new_rope.append(cursor.suffix());
         *self = new_rope;
     }
@@ -203,12 +135,28 @@ impl Rope {
         self.slice(start..end)
     }
 
-    pub fn push(&mut self, mut text: &str, executor: &BackgroundExecutor) {
-        self.fill_last_chunk(&mut text);
+    pub fn push(&mut self, mut text: &str) {
+        self.chunks.update_last(
+            |last_chunk| {
+                let split_ix = if last_chunk.text.len() + text.len() <= chunk::MAX_BASE {
+                    text.len()
+                } else {
+                    let mut split_ix = cmp::min(
+                        chunk::MIN_BASE.saturating_sub(last_chunk.text.len()),
+                        text.len(),
+                    );
+                    while !text.is_char_boundary(split_ix) {
+                        split_ix += 1;
+                    }
+                    split_ix
+                };
 
-        if text.is_empty() {
-            return;
-        }
+                let (suffix, remainder) = text.split_at(split_ix);
+                last_chunk.push_str(suffix);
+                text = remainder;
+            },
+            (),
+        );
 
         #[cfg(all(test, not(rust_analyzer)))]
         const NUM_CHUNKS: usize = 16;
@@ -219,8 +167,7 @@ impl Rope {
         // but given the chunk boundary can land within a character
         // we need to accommodate for the worst case where every chunk gets cut short by up to 4 bytes
         if text.len() > NUM_CHUNKS * chunk::MAX_BASE - NUM_CHUNKS * 4 {
-            let future = self.push_large(text, executor.clone());
-            return executor.block(future);
+            return self.push_large(text);
         }
         // 16 is enough as otherwise we will hit the branch above
         let mut new_chunks = ArrayVec::<_, NUM_CHUNKS>::new();
@@ -240,57 +187,8 @@ impl Rope {
         self.check_invariants();
     }
 
-    /// Pushes a string into the rope. Unlike [`push`], this method does not parallelize the construction on large strings.
-    pub fn push_small(&mut self, mut text: &str) {
-        self.fill_last_chunk(&mut text);
-        if text.is_empty() {
-            return;
-        }
-
-        // 16 is enough as otherwise we will hit the branch above
-        let mut new_chunks = Vec::new();
-
-        while !text.is_empty() {
-            let mut split_ix = cmp::min(chunk::MAX_BASE, text.len());
-            while !text.is_char_boundary(split_ix) {
-                split_ix -= 1;
-            }
-            let (chunk, remainder) = text.split_at(split_ix);
-            new_chunks.push(chunk);
-            text = remainder;
-        }
-        self.chunks
-            .extend(new_chunks.into_iter().map(Chunk::new), ());
-
-        self.check_invariants();
-    }
-
-    fn fill_last_chunk(&mut self, text: &mut &str) {
-        self.chunks.update_last(
-            |last_chunk| {
-                let split_ix = if last_chunk.text.len() + text.len() <= chunk::MAX_BASE {
-                    text.len()
-                } else {
-                    let mut split_ix = cmp::min(
-                        chunk::MIN_BASE.saturating_sub(last_chunk.text.len()),
-                        text.len(),
-                    );
-                    while !text.is_char_boundary(split_ix) {
-                        split_ix += 1;
-                    }
-                    split_ix
-                };
-
-                let (suffix, remainder) = text.split_at(split_ix);
-                last_chunk.push_str(suffix);
-                *text = remainder;
-            },
-            (),
-        );
-    }
-
     /// A copy of `push` specialized for working with large quantities of text.
-    async fn push_large(&mut self, mut text: &str, executor: BackgroundExecutor) {
+    fn push_large(&mut self, mut text: &str) {
         // To avoid frequent reallocs when loading large swaths of file contents,
         // we estimate worst-case `new_chunks` capacity;
         // Chunk is a fixed-capacity buffer. If a character falls on
@@ -323,22 +221,8 @@ impl Rope {
         const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
-            let cx2 = executor.clone();
-            executor
-                .scoped(|scope| {
-                    // SAFETY: transmuting to 'static is safe because the future is scoped
-                    // and the underlying string data cannot go out of scope because dropping the scope
-                    // will wait for the task to finish
-                    let new_chunks =
-                        unsafe { std::mem::transmute::<Vec<&str>, Vec<&'static str>>(new_chunks) };
-
-                    let async_extend = self
-                        .chunks
-                        .async_extend(new_chunks.into_iter().map(Chunk::new), cx2);
-
-                    scope.spawn(async_extend);
-                })
-                .await;
+            self.chunks
+                .par_extend(new_chunks.into_par_iter().map(Chunk::new), ());
         } else {
             self.chunks
                 .extend(new_chunks.into_iter().map(Chunk::new), ());
@@ -375,13 +259,8 @@ impl Rope {
         }
     }
 
-    pub fn push_front(&mut self, text: &str, cx: &BackgroundExecutor) {
-        let suffix = mem::replace(self, Rope::from_str(text, cx));
-        self.append(suffix);
-    }
-
-    pub fn push_front_small(&mut self, text: &str) {
-        let suffix = mem::replace(self, Rope::from_str_small(text));
+    pub fn push_front(&mut self, text: &str) {
+        let suffix = mem::replace(self, Rope::from(text));
         self.append(suffix);
     }
 
@@ -665,19 +544,37 @@ impl Rope {
     }
 }
 
-// impl From<String> for Rope {
-//     #[inline(always)]
-//     fn from(text: String) -> Self {
-//         Rope::from(text.as_str())
-//     }
-// }
+impl<'a> From<&'a str> for Rope {
+    fn from(text: &'a str) -> Self {
+        let mut rope = Self::new();
+        rope.push(text);
+        rope
+    }
+}
 
-// impl From<&String> for Rope {
-//     #[inline(always)]
-//     fn from(text: &String) -> Self {
-//         Rope::from(text.as_str())
-//     }
-// }
+impl<'a> FromIterator<&'a str> for Rope {
+    fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
+        let mut rope = Rope::new();
+        for chunk in iter {
+            rope.push(chunk);
+        }
+        rope
+    }
+}
+
+impl From<String> for Rope {
+    #[inline(always)]
+    fn from(text: String) -> Self {
+        Rope::from(text.as_str())
+    }
+}
+
+impl From<&String> for Rope {
+    #[inline(always)]
+    fn from(text: &String) -> Self {
+        Rope::from(text.as_str())
+    }
+}
 
 impl fmt::Display for Rope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1709,7 +1606,6 @@ where
 mod tests {
     use super::*;
     use Bias::{Left, Right};
-    use gpui::TestAppContext;
     use rand::prelude::*;
     use std::{cmp::Ordering, env, io::Read};
     use util::RandomCharIter;
@@ -1719,17 +1615,17 @@ mod tests {
         zlog::init_test();
     }
 
-    #[gpui::test]
-    async fn test_all_4_byte_chars(cx: &mut TestAppContext) {
+    #[test]
+    fn test_all_4_byte_chars() {
         let mut rope = Rope::new();
         let text = "🏀".repeat(256);
-        rope.push(&text, cx.background_executor());
+        rope.push(&text);
         assert_eq!(rope.text(), text);
     }
 
-    #[gpui::test]
-    fn test_clip(cx: &mut TestAppContext) {
-        let rope = Rope::from_str("🧘", cx.background_executor());
+    #[test]
+    fn test_clip() {
+        let rope = Rope::from("🧘");
 
         assert_eq!(rope.clip_offset(1, Bias::Left), 0);
         assert_eq!(rope.clip_offset(1, Bias::Right), 4);
@@ -1775,9 +1671,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_prev_next_line(cx: &mut TestAppContext) {
-        let rope = Rope::from_str("abc\ndef\nghi\njkl", cx.background_executor());
+    #[test]
+    fn test_prev_next_line() {
+        let rope = Rope::from("abc\ndef\nghi\njkl");
 
         let mut chunks = rope.chunks();
         assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
@@ -1819,16 +1715,16 @@ mod tests {
         assert_eq!(chunks.peek(), None);
     }
 
-    #[gpui::test]
-    fn test_lines(cx: &mut TestAppContext) {
-        let rope = Rope::from_str("abc\ndefg\nhi", cx.background_executor());
+    #[test]
+    fn test_lines() {
+        let rope = Rope::from("abc\ndefg\nhi");
         let mut lines = rope.chunks().lines();
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), Some("defg"));
         assert_eq!(lines.next(), Some("hi"));
         assert_eq!(lines.next(), None);
 
-        let rope = Rope::from_str("abc\ndefg\nhi\n", cx.background_executor());
+        let rope = Rope::from("abc\ndefg\nhi\n");
         let mut lines = rope.chunks().lines();
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), Some("defg"));
@@ -1836,14 +1732,14 @@ mod tests {
         assert_eq!(lines.next(), Some(""));
         assert_eq!(lines.next(), None);
 
-        let rope = Rope::from_str("abc\ndefg\nhi", cx.background_executor());
+        let rope = Rope::from("abc\ndefg\nhi");
         let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
         assert_eq!(lines.next(), Some("hi"));
         assert_eq!(lines.next(), Some("defg"));
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), None);
 
-        let rope = Rope::from_str("abc\ndefg\nhi\n", cx.background_executor());
+        let rope = Rope::from("abc\ndefg\nhi\n");
         let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
         assert_eq!(lines.next(), Some(""));
         assert_eq!(lines.next(), Some("hi"));
@@ -1851,14 +1747,14 @@ mod tests {
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), None);
 
-        let rope = Rope::from_str("abc\nlonger line test\nhi", cx.background_executor());
+        let rope = Rope::from("abc\nlonger line test\nhi");
         let mut lines = rope.chunks().lines();
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), Some("longer line test"));
         assert_eq!(lines.next(), Some("hi"));
         assert_eq!(lines.next(), None);
 
-        let rope = Rope::from_str("abc\nlonger line test\nhi", cx.background_executor());
+        let rope = Rope::from("abc\nlonger line test\nhi");
         let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
         assert_eq!(lines.next(), Some("hi"));
         assert_eq!(lines.next(), Some("longer line test"));
@@ -1867,7 +1763,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    async fn test_random_rope(cx: &mut TestAppContext, mut rng: StdRng) {
+    fn test_random_rope(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -1883,7 +1779,7 @@ mod tests {
             let mut new_actual = Rope::new();
             let mut cursor = actual.cursor(0);
             new_actual.append(cursor.slice(start_ix));
-            new_actual.push(&new_text, cx.background_executor());
+            new_actual.push(&new_text);
             cursor.seek_forward(end_ix);
             new_actual.append(cursor.suffix());
             actual = new_actual;
@@ -2183,10 +2079,10 @@ mod tests {
         }
     }
 
-    #[gpui::test]
-    fn test_chunks_equals_str(cx: &mut TestAppContext) {
+    #[test]
+    fn test_chunks_equals_str() {
         let text = "This is a multi-chunk\n& multi-line test string!";
-        let rope = Rope::from_str(text, cx.background_executor());
+        let rope = Rope::from(text);
         for start in 0..text.len() {
             for end in start..text.len() {
                 let range = start..end;
@@ -2229,116 +2125,71 @@ mod tests {
             }
         }
 
-        let rope = Rope::from_str("", cx.background_executor());
+        let rope = Rope::from("");
         assert!(rope.chunks_in_range(0..0).equals_str(""));
         assert!(rope.reversed_chunks_in_range(0..0).equals_str(""));
         assert!(!rope.chunks_in_range(0..0).equals_str("foo"));
         assert!(!rope.reversed_chunks_in_range(0..0).equals_str("foo"));
     }
 
-    #[gpui::test]
-    fn test_is_char_boundary(cx: &mut TestAppContext) {
+    #[test]
+    fn test_is_char_boundary() {
         let fixture = "地";
-        let rope = Rope::from_str("地", cx.background_executor());
+        let rope = Rope::from("地");
         for b in 0..=fixture.len() {
             assert_eq!(rope.is_char_boundary(b), fixture.is_char_boundary(b));
         }
         let fixture = "";
-        let rope = Rope::from_str("", cx.background_executor());
+        let rope = Rope::from("");
         for b in 0..=fixture.len() {
             assert_eq!(rope.is_char_boundary(b), fixture.is_char_boundary(b));
         }
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
-        let rope = Rope::from_str(
-            "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩",
-            cx.background_executor(),
-        );
+        let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
             assert_eq!(rope.is_char_boundary(b), fixture.is_char_boundary(b));
         }
     }
 
-    #[gpui::test]
-    fn test_floor_char_boundary(cx: &mut TestAppContext) {
-        // polyfill of str::floor_char_boundary
-        fn floor_char_boundary(str: &str, index: usize) -> usize {
-            if index >= str.len() {
-                str.len()
-            } else {
-                let lower_bound = index.saturating_sub(3);
-                let new_index = str.as_bytes()[lower_bound..=index]
-                    .iter()
-                    .rposition(|b| (*b as i8) >= -0x40);
-
-                lower_bound + new_index.unwrap()
-            }
-        }
-
+    #[test]
+    fn test_floor_char_boundary() {
         let fixture = "地";
-        let rope = Rope::from_str("地", cx.background_executor());
+        let rope = Rope::from("地");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
 
         let fixture = "";
-        let rope = Rope::from_str("", cx.background_executor());
+        let rope = Rope::from("");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
 
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
-        let rope = Rope::from_str(
-            "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩",
-            cx.background_executor(),
-        );
+        let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
     }
 
-    #[gpui::test]
-    fn test_ceil_char_boundary(cx: &mut TestAppContext) {
-        // polyfill of str::ceil_char_boundary
-        fn ceil_char_boundary(str: &str, index: usize) -> usize {
-            if index > str.len() {
-                str.len()
-            } else {
-                let upper_bound = Ord::min(index + 4, str.len());
-                str.as_bytes()[index..upper_bound]
-                    .iter()
-                    .position(|b| (*b as i8) >= -0x40)
-                    .map_or(upper_bound, |pos| pos + index)
-            }
-        }
-
+    #[test]
+    fn test_ceil_char_boundary() {
         let fixture = "地";
-        let rope = Rope::from_str("地", cx.background_executor());
+        let rope = Rope::from("地");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
 
         let fixture = "";
-        let rope = Rope::from_str("", cx.background_executor());
+        let rope = Rope::from("");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
 
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
-        let rope = Rope::from_str(
-            "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩",
-            cx.background_executor(),
-        );
+        let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
     }
 

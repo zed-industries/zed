@@ -11,7 +11,7 @@ mod ui_components;
 
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, Editor, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, SizingBehavior};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -22,7 +22,7 @@ use gpui::{
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
-use language::{Language, LanguageConfig, Rope, ToOffset as _};
+use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{
@@ -184,7 +184,7 @@ enum SearchMode {
 impl SearchMode {
     fn invert(&self) -> Self {
         match self {
-            SearchMode::Normal => SearchMode::KeyStroke { exact_match: false },
+            SearchMode::Normal => SearchMode::KeyStroke { exact_match: true },
             SearchMode::KeyStroke { .. } => SearchMode::Normal,
         }
     }
@@ -958,12 +958,14 @@ impl KeymapEditor {
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.context(self.focus_handle.clone())
+                    .when(selected_binding_is_unbound, |this| {
+                        this.action("Create", Box::new(CreateBinding))
+                    })
                     .action_disabled_when(
                         selected_binding_is_unbound,
                         "Edit",
                         Box::new(EditBinding),
                     )
-                    .action("Create", Box::new(CreateBinding))
                     .action_disabled_when(
                         selected_binding_is_unbound,
                         "Delete",
@@ -1598,9 +1600,33 @@ impl Item for KeymapEditor {
 
 impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
+        if let SearchMode::KeyStroke { exact_match } = self.search_mode {
+            let button = IconButton::new("keystrokes-exact-match", IconName::CaseSensitive)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action(
+                        "Toggle Exact Match Mode",
+                        &ToggleExactKeystrokeMatching,
+                        cx,
+                    )
+                })
+                .shape(IconButtonShape::Square)
+                .toggle_state(exact_match)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    window.dispatch_action(ToggleExactKeystrokeMatching.boxed_clone(), cx);
+                }));
+
+            self.keystroke_editor.update(cx, |editor, _| {
+                editor.actions_slot = Some(button.into_any_element());
+            });
+        } else {
+            self.keystroke_editor.update(cx, |editor, _| {
+                editor.actions_slot = None;
+            });
+        }
+
         let row_count = self.matches.len();
-        let theme = cx.theme();
         let focus_handle = &self.focus_handle;
+        let theme = cx.theme();
 
         v_flex()
             .id("keymap-editor")
@@ -1784,49 +1810,14 @@ impl Render for KeymapEditor {
                                     )
                             ),
                     )
-                    .when_some(
-                        match self.search_mode {
-                            SearchMode::Normal => None,
-                            SearchMode::KeyStroke { exact_match } => Some(exact_match),
-                        },
-                        |this, exact_match| {
+                    .when(
+                        matches!(self.search_mode, SearchMode::KeyStroke { .. }),
+                        |this| {
                             this.child(
                                 h_flex()
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
-                                    .child(
-                                        h_flex()
-                                            .min_w_64()
-                                            .child(
-                                                IconButton::new(
-                                                    "keystrokes-exact-match",
-                                                    IconName::CaseSensitive,
-                                                )
-                                                .tooltip({
-                                                    let keystroke_focus_handle =
-                                                        self.keystroke_editor.read(cx).focus_handle(cx);
-
-                                                    move |_window, cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Toggle Exact Match Mode",
-                                                            &ToggleExactKeystrokeMatching,
-                                                            &keystroke_focus_handle,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                                .shape(IconButtonShape::Square)
-                                                .toggle_state(exact_match)
-                                                .on_click(
-                                                    cx.listener(|_, _, window, cx| {
-                                                        window.dispatch_action(
-                                                            ToggleExactKeystrokeMatching.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                    }),
-                                                ),
-                                            ),
-                                    )
+                                    .child(div().min_w_64()), // Spacer div to align with the search input
                             )
                         },
                     ),
@@ -2119,7 +2110,7 @@ impl RenderOnce for SyntaxHighlightedText {
 
         let highlights = self
             .language
-            .highlight_text(&Rope::from_str_small(text.as_ref()), 0..text.len());
+            .highlight_text(&text.as_ref().into(), 0..text.len());
         let mut runs = Vec::with_capacity(highlights.len());
         let mut offset = 0;
 
@@ -2788,10 +2779,10 @@ impl ActionArgumentsEditor {
                 let editor = cx.new_window_entity(|window, cx| {
                     let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
                     let mut editor = Editor::new(
-                        editor::EditorMode::Full {
+                        EditorMode::Full {
                             scale_ui_elements_with_buffer_font_size: true,
                             show_active_line_background: false,
-                            sized_by_content: true,
+                            sizing_behavior: SizingBehavior::SizeByContent,
                         },
                         multi_buffer,
                         project.upgrade(),
@@ -2993,6 +2984,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     documentation: None,
                     source: project::CompletionSource::Custom,
                     icon_path: None,
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
                 })

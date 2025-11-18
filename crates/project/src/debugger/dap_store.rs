@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, Shell, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
 use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -261,14 +261,17 @@ impl DapStore {
                     .get(&adapter.name());
                 let user_installed_path = dap_settings.and_then(|s| match &s.binary {
                     DapBinary::Default => None,
-                    DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
+                    DapBinary::Custom(binary) => {
+                        let path = PathBuf::from(binary);
+                        Some(worktree.read(cx).resolve_executable_path(path))
+                    }
                 });
                 let user_args = dap_settings.map(|s| s.args.clone());
                 let user_env = dap_settings.map(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
-                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
+                let worktree = worktree.clone();
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
                         .get_binary(
@@ -287,11 +290,7 @@ impl DapStore {
                                 .unwrap()
                                 .environment
                                 .update(cx, |environment, cx| {
-                                    environment.get_local_directory_environment(
-                                        &Shell::System,
-                                        cwd,
-                                        cx,
-                                    )
+                                    environment.worktree_environment(worktree, cx)
                                 })
                         })?
                         .await;
@@ -607,9 +606,9 @@ impl DapStore {
             local_store.node_runtime.clone(),
             local_store.http_client.clone(),
             local_store.toolchain_store.clone(),
-            local_store.environment.update(cx, |env, cx| {
-                env.get_worktree_environment(worktree.clone(), cx)
-            }),
+            local_store
+                .environment
+                .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
             local_store.is_headless,
         ))
     }

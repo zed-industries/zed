@@ -24,8 +24,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    App, AppContext as _, BackgroundExecutor, Context, Entity, EventEmitter, HighlightStyle,
-    SharedString, StyledText, Task, TaskLabel, TextStyle,
+    App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
+    Task, TaskLabel, TextStyle,
 };
 
 use lsp::{LanguageServerId, NumberOrString};
@@ -720,7 +720,7 @@ impl EditPreview {
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
-        edits: &[(Range<Anchor>, String)],
+        edits: &[(Range<Anchor>, impl AsRef<str>)],
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedText {
@@ -747,7 +747,8 @@ impl EditPreview {
                 .end
                 .bias_right(&self.old_snapshot)
                 .to_offset(&self.applied_edits_snapshot);
-            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+            let edit_start_in_preview_snapshot =
+                edit_new_end_in_preview_snapshot - edit_text.as_ref().len();
 
             let unchanged_range_in_preview_snapshot =
                 offset_in_preview_snapshot..edit_start_in_preview_snapshot;
@@ -772,7 +773,7 @@ impl EditPreview {
                 );
             }
 
-            if !edit_text.is_empty() {
+            if !edit_text.as_ref().is_empty() {
                 highlighted_text.add_text_from_buffer_range(
                     edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
                     &self.applied_edits_snapshot,
@@ -796,7 +797,7 @@ impl EditPreview {
         highlighted_text.build()
     }
 
-    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+    fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -822,6 +823,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
+    pub depth: usize,
 }
 
 impl Buffer {
@@ -832,7 +834,6 @@ impl Buffer {
                 ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 base_text.into(),
-                &cx.background_executor(),
             ),
             None,
             Capability::ReadWrite,
@@ -863,10 +864,9 @@ impl Buffer {
         replica_id: ReplicaId,
         capability: Capability,
         base_text: impl Into<String>,
-        cx: &BackgroundExecutor,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, remote_id, base_text.into(), cx),
+            TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
             capability,
         )
@@ -879,10 +879,9 @@ impl Buffer {
         capability: Capability,
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
-        cx: &BackgroundExecutor,
     ) -> Result<Self> {
         let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
-        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text, cx);
+        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
@@ -1133,7 +1132,7 @@ impl Buffer {
 
     pub fn preview_edits(
         &self,
-        edits: Arc<[(Range<Anchor>, String)]>,
+        edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cx: &App,
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
@@ -1141,14 +1140,13 @@ impl Buffer {
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
-        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
                 }
 
-                branch_buffer.edit(edits.iter().cloned(), &executor);
+                branch_buffer.edit(edits.iter().cloned());
                 let snapshot = branch_buffer.snapshot();
                 syntax_snapshot.interpolate(&snapshot);
 
@@ -1621,6 +1619,18 @@ impl Buffer {
         self.parse_status.1.clone()
     }
 
+    /// Wait until the buffer is no longer parsing
+    pub fn parsing_idle(&self) -> impl Future<Output = ()> + use<> {
+        let mut parse_status = self.parse_status();
+        async move {
+            while *parse_status.borrow() != ParseStatus::Idle {
+                if parse_status.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Assign to the buffer a set of diagnostics created by a given language server.
     pub fn update_diagnostics(
         &mut self,
@@ -2046,6 +2056,11 @@ impl Buffer {
         }
     }
 
+    /// Marks the buffer as having a conflict regardless of current buffer state.
+    pub fn set_conflict(&mut self) {
+        self.has_conflict = true;
+    }
+
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
@@ -2365,9 +2380,7 @@ impl Buffer {
         let autoindent_request = autoindent_mode
             .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
 
-        let edit_operation = self
-            .text
-            .edit(edits.iter().cloned(), cx.background_executor());
+        let edit_operation = self.text.edit(edits.iter().cloned());
         let edit_id = edit_operation.timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
@@ -2598,8 +2611,7 @@ impl Buffer {
         for operation in buffer_ops.iter() {
             self.send_operation(Operation::Buffer(operation.clone()), false, cx);
         }
-        self.text
-            .apply_ops(buffer_ops, Some(cx.background_executor()));
+        self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
@@ -3373,7 +3385,19 @@ impl BufferSnapshot {
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
         self.syntax_layers_for_range(offset..offset, false)
-            .filter(|l| l.node().end_byte() > offset)
+            .filter(|l| {
+                if let Some(ranges) = l.included_sub_ranges {
+                    ranges.iter().any(|range| {
+                        let start = range.start.to_offset(self);
+                        start <= offset && {
+                            let end = range.end.to_offset(self);
+                            offset < end
+                        }
+                    })
+                } else {
+                    l.node().start_byte() <= offset && l.node().end_byte() > offset
+                }
+            })
             .last()
     }
 
@@ -4113,6 +4137,7 @@ impl BufferSnapshot {
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
+                let depth = mat.depth;
                 let config = &configs[mat.grammar_index];
                 let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
@@ -4138,6 +4163,7 @@ impl BufferSnapshot {
                     open_range,
                     close_range,
                     newline_only: pattern.newline_only,
+                    depth,
                 });
             }
             None
@@ -4297,8 +4323,12 @@ impl BufferSnapshot {
     ) -> impl Iterator<Item = BracketMatch> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        self.bracket_ranges(range.clone()).filter(move |pair| {
-            pair.open_range.start <= range.start && pair.close_range.end >= range.end
+        let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
+        let max_depth = result.iter().map(|mat| mat.depth).max().unwrap_or(0);
+        result.into_iter().filter(move |pair| {
+            pair.open_range.start <= range.start
+                && pair.close_range.end >= range.end
+                && pair.depth == max_depth
         })
     }
 

@@ -255,6 +255,19 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // When to show the scrollbar in the completion menu.
+  // This setting can take four values:
+  //
+  // 1. Show the scrollbar if there's important information or
+  //    follow the system's configured behavior
+  //   "auto"
+  // 2. Match the system's configured behavior:
+  //    "system"
+  // 3. Always show the scrollbar:
+  //    "always"
+  // 4. Never show the scrollbar:
+  //    "never" (default)
+  "completion_menu_scrollbar": "never",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -592,17 +605,27 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  "relative_line_numbers": false,
+  "sticky_scroll": {
+    // Whether to stick scopes to the top of the editor.
+    "enabled": false
+  },
+  "relative_line_numbers": "disabled",
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
   "search": {
     // Whether to show the project search button in the status bar.
     "button": true,
+    // Whether to only match on whole words.
     "whole_word": false,
+    // Whether to match case sensitively.
     "case_sensitive": false,
+    // Whether to include gitignored files in search results.
     "include_ignored": false,
-    "regex": false
+    // Whether to interpret the search query as a regular expression.
+    "regex": false,
+    // Whether to center the cursor on each search match when navigating.
+    "center_on_match": false
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -719,14 +742,31 @@
       //    "never"
       "show": "always"
     },
+    // Sort order for entries in the project panel.
+    // This setting can take three values:
+    //
+    // 1. Show directories first, then files:
+    //    "directories_first"
+    // 2. Mix directories and files together:
+    //    "mixed"
+    // 3. Show files first, then directories:
+    //    "files_first"
+    "sort_mode": "directories_first",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
-    // Whether to automatically open files when pasting them in the project panel.
-    "open_file_on_paste": true
+    // Settings for automatically opening files.
+    "auto_open": {
+      // Whether to automatically open newly created files in the editor.
+      "on_create": true,
+      // Whether to automatically open files after pasting or duplicating them.
+      "on_paste": true,
+      // Whether to automatically open files dropped from external sources.
+      "on_drop": true
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -1232,6 +1272,9 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Globs to match files that will be considered "hidden". These files can be hidden from the
+  // project panel by toggling the "hide_hidden" setting.
+  "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -1469,7 +1512,11 @@
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
         // Can also be `csh`, `fish`, `nushell` and `power_shell`
-        "activate_script": "default"
+        "activate_script": "default",
+        // Preferred Conda manager to use when activating Conda environments.
+        // Values: "auto", "conda", "mamba", "micromamba"
+        // Default: "auto"
+        "conda_manager": "auto"
       }
     },
     "toolbar": {
@@ -1513,6 +1560,8 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     "max_scroll_history_lines": 10000,
+    // The multiplier for scrolling speed in the terminal.
+    "scroll_multiplier": 1.0,
     // The minimum APCA perceptual contrast between foreground and background colors.
     // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     // especially for dark mode. Values range from 0 to 106.
@@ -1719,6 +1768,9 @@
         "allowed": true
       }
     },
+    "HTML+ERB": {
+      "language_servers": ["herb", "!ruby-lsp", "..."]
+    },
     "Java": {
       "prettier": {
         "allowed": true,
@@ -1741,6 +1793,9 @@
         "allowed": true
       }
     },
+    "JS+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
+    },
     "Kotlin": {
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
     },
@@ -1755,6 +1810,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
       "prettier": {
@@ -1844,6 +1900,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "YAML+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Zig": {
       "language_servers": ["zls", "..."]

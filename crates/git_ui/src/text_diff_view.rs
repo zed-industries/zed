@@ -458,10 +458,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }

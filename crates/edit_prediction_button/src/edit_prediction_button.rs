@@ -13,17 +13,20 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    EditPredictionsMode, File, Language, Rope,
+    EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use project::DisableAiSettings;
 use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{
+    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
+};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use supermaven::{AccountStatus, Supermaven};
+use sweep_ai::SweepFeatureFlag;
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
     IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -43,7 +46,8 @@ actions!(
     ]
 );
 
-const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
+const COPILOT_SETTINGS_PATH: &str = "/settings/copilot";
+const COPILOT_SETTINGS_URL: &str = concat!("https://github.com", "/settings/copilot");
 const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
@@ -77,7 +81,7 @@ impl Render for EditPredictionButton {
 
         let all_language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.edit_predictions.provider {
+        match &all_language_settings.edit_predictions.provider {
             EditPredictionProvider::None => div().hidden(),
 
             EditPredictionProvider::Copilot => {
@@ -128,20 +132,21 @@ impl Render for EditPredictionButton {
                             }),
                     );
                 }
-                let this = cx.entity();
+                let this = cx.weak_entity();
 
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
                             let current_status = Copilot::global(cx)?.read(cx).status();
-                            Some(match current_status {
+                            match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
                                 }),
                                 _ => this.update(cx, |this, cx| {
                                     this.build_copilot_start_menu(window, cx)
                                 }),
-                            })
+                            }
+                            .ok()
                         })
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
@@ -182,7 +187,7 @@ impl Render for EditPredictionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.entity();
+                let this = cx.weak_entity();
                 let fs = self.fs.clone();
 
                 div().child(
@@ -209,9 +214,11 @@ impl Render for EditPredictionButton {
                                     )
                                 }))
                             }
-                            SupermavenButtonStatus::Ready => Some(this.update(cx, |this, cx| {
-                                this.build_supermaven_context_menu(window, cx)
-                            })),
+                            SupermavenButtonStatus::Ready => this
+                                .update(cx, |this, cx| {
+                                    this.build_supermaven_context_menu(window, cx)
+                                })
+                                .ok(),
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
@@ -233,15 +240,16 @@ impl Render for EditPredictionButton {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let has_api_key = CodestralCompletionProvider::has_api_key(cx);
                 let fs = self.fs.clone();
-                let this = cx.entity();
+                let this = cx.weak_entity();
 
                 div().child(
                     PopoverMenu::new("codestral")
                         .menu(move |window, cx| {
                             if has_api_key {
-                                Some(this.update(cx, |this, cx| {
+                                this.update(cx, |this, cx| {
                                     this.build_codestral_context_menu(window, cx)
-                                }))
+                                })
+                                .ok()
                             } else {
                                 Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     let fs = fs.clone();
@@ -291,6 +299,15 @@ impl Render for EditPredictionButton {
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
+            }
+            EditPredictionProvider::Experimental(provider_name) => {
+                if *provider_name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                    && cx.has_flag::<SweepFeatureFlag>()
+                {
+                    div().child(Icon::new(IconName::SweepAi))
+                } else {
+                    div()
+                }
             }
 
             EditPredictionProvider::Zed => {
@@ -379,11 +396,12 @@ impl Render for EditPredictionButton {
                         })
                     });
 
-                let this = cx.entity();
+                let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
-                        Some(this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx)))
+                        this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx))
+                            .ok()
                     })
                     .anchor(Corner::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
@@ -519,7 +537,7 @@ impl EditPredictionButton {
                             set_completion_provider(fs.clone(), cx, provider);
                         })
                     }
-                    EditPredictionProvider::None => continue,
+                    EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => continue,
                 };
             }
         }
@@ -831,6 +849,16 @@ impl EditPredictionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
+        let all_language_settings = all_language_settings(None, cx);
+        let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
+            enterprise_uri: all_language_settings
+                .edit_predictions
+                .copilot
+                .enterprise_uri
+                .clone(),
+        };
+        let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
+
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
@@ -839,10 +867,7 @@ impl EditPredictionButton {
             menu.separator()
                 .link(
                     "Go to Copilot Settings",
-                    OpenBrowser {
-                        url: COPILOT_SETTINGS_URL.to_string(),
-                    }
-                    .boxed_clone(),
+                    OpenBrowser { url: settings_url }.boxed_clone(),
                 )
                 .action("Sign Out", copilot::SignOut.boxed_clone())
         })
@@ -1056,11 +1081,8 @@ async fn open_disabled_globs_setting_in_editor(
 ) -> Result<()> {
     let settings_editor = workspace
         .update_in(cx, |_, window, cx| {
-            create_and_open_local_file(paths::settings_file(), window, cx, |cx| {
-                Rope::from_str(
-                    settings::initial_user_settings_content().as_ref(),
-                    cx.background_executor(),
-                )
+            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                settings::initial_user_settings_content().as_ref().into()
             })
         })?
         .await?
@@ -1172,5 +1194,101 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                     });
             }
         });
+    }
+}
+
+fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
+    match enterprise_uri {
+        Some(uri) => {
+            format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH)
+        }
+        None => COPILOT_SETTINGS_URL.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_copilot_settings_url_with_enterprise_uri(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_user_settings(
+                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com"}}}"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let url = cx.update(|cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            )
+        });
+
+        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    async fn test_copilot_settings_url_with_enterprise_uri_trailing_slash(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_user_settings(
+                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com/"}}}"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let url = cx.update(|cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            )
+        });
+
+        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    async fn test_copilot_settings_url_without_enterprise_uri(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let url = cx.update(|cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            )
+        });
+
+        assert_eq!(url, "https://github.com/settings/copilot");
     }
 }

@@ -124,6 +124,7 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
+    map<string, string> renamed_paths = 14;
 }
 
 message RemoveRepository {
@@ -347,6 +348,7 @@ message Commit {
     string message = 6;
     optional CommitOptions options = 7;
     reserved 8;
+    uint64 askpass_id = 9;
 
     message CommitOptions {
         bool amend = 1;
@@ -403,8 +405,9 @@ message Pull {
     reserved 2;
     uint64 repository_id = 3;
     string remote_name = 4;
-    string branch_name = 5;
+    optional string branch_name = 5;
     uint64 askpass_id = 6;
+    bool rebase = 7;
 }
 
 message RemoteMessageResponse {
@@ -505,4 +508,27 @@ message GetBlobContent {
 
 message GetBlobContentResponse {
     string content = 1;
+}
+
+message GitGetWorktrees {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
+message GitWorktreesResponse {
+    repeated Worktree worktrees = 1;
+}
+
+message Worktree {
+    string path = 1;
+    string ref_name = 2;
+    string sha = 3;
+}
+
+message GitCreateWorktree {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string name = 3;
+    string directory = 4;
+    optional string commit = 5;
 }

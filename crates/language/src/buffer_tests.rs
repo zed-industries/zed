@@ -75,7 +75,6 @@ fn test_set_line_ending(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             base.read(cx).to_proto(cx),
             None,
-            cx.background_executor(),
         )
         .unwrap()
     });
@@ -256,18 +255,14 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
             .is_none()
     );
     assert!(
-        cx.read(|cx| languages.language_for_file(
-            &file("the/script"),
-            Some(&Rope::from_str("nothing", cx.background_executor())),
-            cx
-        ))
-        .is_none()
+        cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+            .is_none()
     );
 
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
             &file("the/script"),
-            Some(&Rope::from_str("#!/bin/env node", cx.background_executor())),
+            Some(&"#!/bin/env node".into()),
             cx
         ))
         .unwrap()
@@ -411,7 +406,6 @@ fn test_edit_events(cx: &mut gpui::App) {
             ReplicaId::new(1),
             Capability::ReadWrite,
             "abcdef",
-            cx.background_executor(),
         )
     });
     let buffer1_ops = Arc::new(Mutex::new(Vec::new()));
@@ -2639,7 +2633,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
         buffer.set_language_registry(language_registry.clone());
         buffer.set_language(
             language_registry
-                .language_for_name("ERB")
+                .language_for_name("HTML+ERB")
                 .now_or_never()
                 .unwrap()
                 .ok(),
@@ -2760,6 +2754,50 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            ```html+erb
+            <div>Hello</div>
+            <%= link_to "Some", "https://zed.dev" %>
+            ```
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(erb_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("HTML+ERB")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        // Test points in the code line
+        let html_point = Point::new(1, 4);
+        let language = snapshot.language_at(html_point).unwrap();
+        assert_eq!(language.name().as_ref(), "HTML");
+
+        let ruby_point = Point::new(2, 6);
+        let language = snapshot.language_at(ruby_point).unwrap();
+        assert_eq!(language.name().as_ref(), "Ruby");
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::App) {
     let mut now = Instant::now();
 
@@ -2787,14 +2825,8 @@ fn test_serialization(cx: &mut gpui::App) {
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
-        let mut buffer = Buffer::from_proto(
-            ReplicaId::new(1),
-            Capability::ReadWrite,
-            state,
-            None,
-            cx.background_executor(),
-        )
-        .unwrap();
+        let mut buffer =
+            Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -2818,7 +2850,6 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             base.read(cx).to_proto(cx),
             None,
-            cx.background_executor(),
         )
         .unwrap()
     });
@@ -3089,15 +3120,13 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 .map(|(range, text)| {
                     (
                         buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
-                        text.to_string(),
+                        text.into(),
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Arc<[_]>>()
         });
         let edit_preview = buffer
-            .read_with(cx, |buffer, cx| {
-                buffer.preview_edits(edits.clone().into(), cx)
-            })
+            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
             .await;
         let highlighted_edits = cx.read(|cx| {
             edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, include_deletions, cx)
@@ -3133,14 +3162,9 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             let ops = cx
                 .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer = Buffer::from_proto(
-                ReplicaId::new(i as u16),
-                Capability::ReadWrite,
-                state,
-                None,
-                cx.background_executor(),
-            )
-            .unwrap();
+            let mut buffer =
+                Buffer::from_proto(ReplicaId::new(i as u16), Capability::ReadWrite, state, None)
+                    .unwrap();
             buffer.apply_ops(
                 ops.into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -3269,7 +3293,6 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         Capability::ReadWrite,
                         old_buffer_state,
                         None,
-                        cx.background_executor(),
                     )
                     .unwrap();
                     new_buffer.apply_ops(
@@ -3433,7 +3456,7 @@ fn test_contiguous_ranges() {
 }
 
 #[gpui::test(iterations = 500)]
-fn test_trailing_whitespace_ranges(mut rng: StdRng, cx: &mut TestAppContext) {
+fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     // Generate a random multi-line string containing
     // some lines with trailing whitespace.
     let mut text = String::new();
@@ -3457,7 +3480,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng, cx: &mut TestAppContext) {
         _ => {}
     }
 
-    let rope = Rope::from_str(text.as_str(), cx.background_executor());
+    let rope = Rope::from(text.as_str());
     let actual_ranges = trailing_whitespace_ranges(&rope);
     let expected_ranges = TRAILING_WHITESPACE_REGEX
         .find_iter(&text)
@@ -3674,7 +3697,7 @@ fn html_lang() -> Language {
 fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "ERB".into(),
+            name: "HTML+ERB".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
@@ -3692,15 +3715,15 @@ fn erb_lang() -> Language {
     .with_injection_query(
         r#"
             (
-                (code) @injection.content
-                (#set! injection.language "ruby")
-                (#set! injection.combined)
+                (code) @content
+                (#set! "language" "ruby")
+                (#set! "combined")
             )
 
             (
-                (content) @injection.content
-                (#set! injection.language "html")
-                (#set! injection.combined)
+                (content) @content
+                (#set! "language" "html")
+                (#set! "combined")
             )
         "#,
     )
@@ -3899,7 +3922,6 @@ fn assert_bracket_pairs(
 fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
-    crate::init(cx);
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });

@@ -138,6 +138,8 @@ waker-fn = "1.2.0"
 lyon = "1.0"
 libc.workspace = true
 pin-project = "1.1.10"
+circular-buffer.workspace = true
+spin = "0.10.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -253,6 +255,7 @@ util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
+windows-registry = "0.5"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.71"

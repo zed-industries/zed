@@ -119,7 +119,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -156,7 +156,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor is at the first diagnostic
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(3), 8)..DisplayPoint::new(DisplayRow(3), 8)]
         );
     });
@@ -190,7 +192,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -232,7 +234,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor keeps its position.
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(8), 8)..DisplayPoint::new(DisplayRow(8), 8)]
         );
     });
@@ -277,7 +281,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     pretty_assertions::assert_eq!(
@@ -391,7 +395,7 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     editor.update_in(cx, |editor, window, cx| {
         editor.fold_ranges(vec![Point::new(0, 0)..Point::new(3, 0)], false, window, cx);
@@ -490,7 +494,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -530,7 +534,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -587,7 +591,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -629,7 +633,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language servers' diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
 
     pretty_assertions::assert_eq!(
@@ -760,7 +764,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -777,7 +781,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts =
@@ -789,7 +793,12 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     // The mutated view may contain more than the reference view as
     // we don't currently shrink excerpts when diagnostics were removed.
-    let mut ref_iter = reference_excerpts.lines().filter(|line| *line != "§ -----");
+    let mut ref_iter = reference_excerpts.lines().filter(|line| {
+        // ignore $ ---- and $ <file>.rs
+        !line.starts_with('§')
+            || line.starts_with("§ diagnostic")
+            || line.starts_with("§ related info")
+    });
     let mut next_ref_line = ref_iter.next();
     let mut skipped_block = false;
 
@@ -797,7 +806,12 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         if let Some(ref_line) = next_ref_line {
             if mut_line == ref_line {
                 next_ref_line = ref_iter.next();
-            } else if mut_line.contains('§') && mut_line != "§ -----" {
+            } else if mut_line.contains('§')
+                // ignore $ ---- and $ <file>.rs
+                && (!mut_line.starts_with('§')
+                    || mut_line.starts_with("§ diagnostic")
+                    || mut_line.starts_with("§ related info"))
+            {
                 skipped_block = true;
             }
         }
@@ -877,7 +891,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                             vec![Inlay::edit_prediction(
                                 post_inc(&mut next_inlay_id),
                                 snapshot.buffer_snapshot().anchor_before(position),
-                                Rope::from_iter_small(["Test inlay ", "next_inlay_id"]),
+                                Rope::from_iter(["Test inlay ", "next_inlay_id"]),
                             )],
                             cx,
                         );
@@ -949,7 +963,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -962,7 +976,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
     });
 
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 }
 
@@ -1427,7 +1441,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
 
     // Verify that the diagnostic codes are displayed correctly
@@ -1704,7 +1718,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
     // wait a little bit to ensure that the buffer diagnostic's editor content
     // is rendered.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
     pretty_assertions::assert_eq!(
         editor_content_with_blocks(&editor, cx),
@@ -1837,7 +1851,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
     // wait a little bit to ensure that the buffer diagnostic's editor content
     // is rendered.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
     pretty_assertions::assert_eq!(
         editor_content_with_blocks(&editor, cx),
@@ -1971,7 +1985,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     // wait a little bit to ensure that the buffer diagnostic's editor content
     // is rendered.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
     pretty_assertions::assert_eq!(
         editor_content_with_blocks(&editor, cx),
@@ -2007,10 +2021,6 @@ fn init_test(cx: &mut TestAppContext) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
-        client::init_settings(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         crate::init(cx);
         editor::init(cx);
     });
@@ -2070,7 +2080,7 @@ fn random_lsp_diagnostic(
     const ERROR_MARGIN: usize = 10;
 
     let file_content = fs.read_file_sync(path).unwrap();
-    let file_text = Rope::from_str_small(String::from_utf8_lossy(&file_content).as_ref());
+    let file_text = Rope::from(String::from_utf8_lossy(&file_content).as_ref());
 
     let start = rng.random_range(0..file_text.len().saturating_add(ERROR_MARGIN));
     let end = rng.random_range(start..file_text.len().saturating_add(ERROR_MARGIN));

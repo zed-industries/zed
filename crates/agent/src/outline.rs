@@ -1,6 +1,6 @@
 use anyhow::Result;
 use gpui::{AsyncApp, Entity};
-use language::{Buffer, OutlineItem, ParseStatus};
+use language::{Buffer, OutlineItem};
 use regex::Regex;
 use std::fmt::Write;
 use text::Point;
@@ -30,10 +30,9 @@ pub async fn get_buffer_content_or_outline(
     if file_size > AUTO_OUTLINE_SIZE {
         // For large files, use outline instead of full content
         // Wait until the buffer has been fully parsed, so we can read its outline
-        let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
-        while *parse_status.borrow() != ParseStatus::Idle {
-            parse_status.changed().await?;
-        }
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())?
+            .await;
 
         let outline_items = buffer.read_with(cx, |buffer, _| {
             let snapshot = buffer.snapshot();
@@ -44,6 +43,25 @@ pub async fn get_buffer_content_or_outline(
                 .map(|item| item.to_point(&snapshot))
                 .collect::<Vec<_>>()
         })?;
+
+        // If no outline exists, fall back to first 1KB so the agent has some context
+        if outline_items.is_empty() {
+            let text = buffer.read_with(cx, |buffer, _| {
+                let snapshot = buffer.snapshot();
+                let len = snapshot.len().min(1024);
+                let content = snapshot.text_for_range(0..len).collect::<String>();
+                if let Some(path) = path {
+                    format!("# First 1KB of {path} (file too large to show full content, and no outline available)\n\n{content}")
+                } else {
+                    format!("# First 1KB of file (file too large to show full content, and no outline available)\n\n{content}")
+                }
+            })?;
+
+            return Ok(BufferContent {
+                text,
+                is_outline: false,
+            });
+        }
 
         let outline_text = render_outline(outline_items, None, 0, usize::MAX).await?;
 
@@ -140,4 +158,63 @@ fn render_entries(
     }
 
     entries_rendered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_large_file_fallback_to_subset(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let content = "A".repeat(100 * 1024); // 100KB
+        let content_len = content.len();
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(true, cx))
+            .await
+            .expect("failed to create buffer");
+
+        buffer.update(cx, |buffer, cx| buffer.set_text(content, cx));
+
+        let result = cx
+            .spawn(|cx| async move { get_buffer_content_or_outline(buffer, None, &cx).await })
+            .await
+            .unwrap();
+
+        // Should contain some of the actual file content
+        assert!(
+            result.text.contains("AAAAAAAAAA"),
+            "Result did not contain content subset"
+        );
+
+        // Should be marked as not an outline (it's truncated content)
+        assert!(
+            !result.is_outline,
+            "Large file without outline should not be marked as outline"
+        );
+
+        // Should be reasonably sized (much smaller than original)
+        assert!(
+            result.text.len() < 50 * 1024,
+            "Result size {} should be smaller than 50KB",
+            result.text.len()
+        );
+
+        // Should be significantly smaller than the original content
+        assert!(
+            result.text.len() < content_len / 10,
+            "Result should be much smaller than original content"
+        );
+    }
 }

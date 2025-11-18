@@ -1,7 +1,7 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use indoc::formatdoc;
 use language::Point;
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
@@ -12,7 +12,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use crate::{AgentTool, ToolCallEventStream, outline};
+use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -42,13 +42,19 @@ pub struct ReadFileToolInput {
 }
 
 pub struct ReadFileTool {
+    thread: WeakEntity<Thread>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
 
 impl ReadFileTool {
-    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+    pub fn new(
+        thread: WeakEntity<Thread>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+    ) -> Self {
         Self {
+            thread,
             project,
             action_log,
         }
@@ -195,6 +201,17 @@ impl AgentTool for ReadFileTool {
                 anyhow::bail!("{file_path} not found");
             }
 
+            // Record the file read time and mtime
+            if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
+                buffer.file().and_then(|file| file.disk_state().mtime())
+            })? {
+                self.thread
+                    .update(cx, |thread, _| {
+                        thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
+                    })
+                    .ok();
+            }
+
             let mut anchor = None;
 
             // Check if specific line ranges are provided
@@ -285,11 +302,15 @@ impl AgentTool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{ContextServerRegistry, Templates, Thread};
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
+    use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::sync::Arc;
     use util::path;
 
     #[gpui::test]
@@ -300,7 +321,20 @@ mod test {
         fs.insert_tree(path!("/root"), json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let (event_stream, _) = ToolCallEventStream::test();
 
         let result = cx
@@ -333,7 +367,20 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -363,7 +410,20 @@ mod test {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(Arc::new(rust_lang()));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -435,7 +495,20 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -463,7 +536,20 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -509,8 +595,6 @@ mod test {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -609,7 +693,20 @@ mod test {
 
         let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
 
         // Reading a file outside the project worktree should fail
         let result = cx
@@ -823,7 +920,24 @@ mod test {
         .await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project.clone(), action_log.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log.clone(),
+        ));
 
         // Test reading allowed files in worktree1
         let result = cx

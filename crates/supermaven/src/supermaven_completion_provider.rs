@@ -7,6 +7,7 @@ use language::{Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
     path::Path,
+    sync::Arc,
     time::Duration,
 };
 use text::{ToOffset, ToPoint};
@@ -51,7 +52,7 @@ fn completion_from_diff(
 ) -> EditPrediction {
     let buffer_text = snapshot.text_for_range(delete_range).collect::<String>();
 
-    let mut edits: Vec<(Range<language::Anchor>, String)> = Vec::new();
+    let mut edits: Vec<(Range<language::Anchor>, Arc<str>)> = Vec::new();
 
     let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
     let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
@@ -70,7 +71,10 @@ fn completion_from_diff(
                 if k != 0 {
                     let offset = snapshot.anchor_after(offset);
                     // the range from the current position to item is an inlay.
-                    let edit = (offset..offset, completion_graphemes[i..i + k].join(""));
+                    let edit = (
+                        offset..offset,
+                        completion_graphemes[i..i + k].join("").into(),
+                    );
                     edits.push(edit);
                 }
                 i += k + 1;
@@ -90,7 +94,7 @@ fn completion_from_diff(
         // there is leftover completion text, so drop it as an inlay.
         let edit_range = offset..offset;
         let edit_text = completion_graphemes[i..].join("");
-        edits.push((edit_range, edit_text));
+        edits.push((edit_range, edit_text.into()));
     }
 
     EditPrediction::Local {

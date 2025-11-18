@@ -32,6 +32,14 @@ pub struct InlaySnapshot {
     pub version: usize,
 }
 
+impl std::ops::Deref for InlaySnapshot {
+    type Target = MultiBufferSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Transform {
     Isomorphic(TextSummary),
@@ -240,10 +248,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 // Determine split index handling edge cases
                 let split_index = if desired_bytes >= chunk.text.len() {
                     chunk.text.len()
-                } else if chunk.text.is_char_boundary(desired_bytes) {
-                    desired_bytes
                 } else {
-                    find_next_utf8_boundary(chunk.text, desired_bytes)
+                    chunk.text.ceil_char_boundary(desired_bytes)
                 };
 
                 let (prefix, suffix) = chunk.text.split_at(split_index);
@@ -365,10 +371,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                         .next()
                         .map(|c| c.len_utf8())
                         .unwrap_or(1)
-                } else if inlay_chunk.is_char_boundary(next_inlay_highlight_endpoint) {
-                    next_inlay_highlight_endpoint
                 } else {
-                    find_next_utf8_boundary(inlay_chunk, next_inlay_highlight_endpoint)
+                    inlay_chunk.ceil_char_boundary(next_inlay_highlight_endpoint)
                 };
 
                 let (chunk, remainder) = inlay_chunk.split_at(split_index);
@@ -700,20 +704,16 @@ impl InlayMap {
                     .collect::<String>();
 
                 let next_inlay = if i % 2 == 0 {
-                    use rope::Rope;
-
                     Inlay::mock_hint(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        Rope::from_str_small(&text),
+                        &text,
                     )
                 } else {
-                    use rope::Rope;
-
                     Inlay::edit_prediction(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        Rope::from_str_small(&text),
+                        &text,
                     )
                 };
                 let inlay_id = next_inlay.id;
@@ -1142,31 +1142,6 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
     }
 }
 
-/// Given a byte index that is NOT a UTF-8 boundary, find the next one.
-/// Assumes: 0 < byte_index < text.len() and !text.is_char_boundary(byte_index)
-#[inline(always)]
-fn find_next_utf8_boundary(text: &str, byte_index: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut idx = byte_index + 1;
-
-    // Scan forward until we find a boundary
-    while idx < text.len() {
-        if is_utf8_char_boundary(bytes[idx]) {
-            return idx;
-        }
-        idx += 1;
-    }
-
-    // Hit the end, return the full length
-    text.len()
-}
-
-// Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
-const fn is_utf8_char_boundary(byte: u8) -> bool {
-    // This is bit magic equivalent to: b < 128 || b >= 192
-    (byte as i8) >= -0x40
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1305,7 +1280,7 @@ mod tests {
             vec![Inlay::mock_hint(
                 post_inc(&mut next_inlay_id),
                 buffer.read(cx).snapshot(cx).anchor_after(3),
-                Rope::from_str_small("|123|"),
+                "|123|",
             )],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
@@ -1382,12 +1357,12 @@ mod tests {
                 Inlay::mock_hint(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_before(3),
-                    Rope::from_str_small("|123|"),
+                    "|123|",
                 ),
                 Inlay::edit_prediction(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_after(3),
-                    Rope::from_str_small("|456|"),
+                    "|456|",
                 ),
             ],
         );
@@ -1597,17 +1572,17 @@ mod tests {
                 Inlay::mock_hint(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_before(0),
-                    Rope::from_str_small("|123|\n"),
+                    "|123|\n",
                 ),
                 Inlay::mock_hint(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_before(4),
-                    Rope::from_str_small("|456|"),
+                    "|456|",
                 ),
                 Inlay::edit_prediction(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_before(7),
-                    Rope::from_str_small("\n|567|\n"),
+                    "\n|567|\n",
                 ),
             ],
         );
@@ -1681,14 +1656,9 @@ mod tests {
                     (offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut expected_text =
-                Rope::from_str(&buffer_snapshot.text(), cx.background_executor());
+            let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
-                expected_text.replace(
-                    *offset..*offset,
-                    &inlay.text().to_string(),
-                    cx.background_executor(),
-                );
+                expected_text.replace(*offset..*offset, &inlay.text().to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
@@ -2076,7 +2046,7 @@ mod tests {
         let inlay = Inlay {
             id: InlayId::Hint(0),
             position,
-            content: InlayContent::Text(text::Rope::from_str(inlay_text, cx.background_executor())),
+            content: InlayContent::Text(text::Rope::from(inlay_text)),
         };
 
         let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
@@ -2190,10 +2160,7 @@ mod tests {
             let inlay = Inlay {
                 id: InlayId::Hint(0),
                 position,
-                content: InlayContent::Text(text::Rope::from_str(
-                    test_case.inlay_text,
-                    cx.background_executor(),
-                )),
+                content: InlayContent::Text(text::Rope::from(test_case.inlay_text)),
             };
 
             let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);

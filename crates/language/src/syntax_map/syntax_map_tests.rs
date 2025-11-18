@@ -100,7 +100,6 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
             }
         "#
         .unindent(),
-        cx.background_executor(),
     );
 
     let mut syntax_map = SyntaxMap::new(&buffer);
@@ -148,7 +147,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
 
     // Replace a vec! macro invocation with a plain slice, removing a syntactic layer.
     let macro_name_range = range_for_text(&buffer, "vec!");
-    buffer.edit([(macro_name_range, "&")], cx.background_executor());
+    buffer.edit([(macro_name_range, "&")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(language.clone(), &buffer);
 
@@ -200,7 +199,6 @@ fn test_dynamic_language_injection(cx: &mut App) {
             ```
         "#
         .unindent(),
-        cx.background_executor(),
     );
 
     let mut syntax_map = SyntaxMap::new(&buffer);
@@ -220,10 +218,7 @@ fn test_dynamic_language_injection(cx: &mut App) {
 
     // Replace `rs` with a path to ending in `.rb` in code block.
     let macro_name_range = range_for_text(&buffer, "rs");
-    buffer.edit(
-        [(macro_name_range, "foo/bar/baz.rb")],
-        cx.background_executor(),
-    );
+    buffer.edit([(macro_name_range, "foo/bar/baz.rb")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
@@ -240,7 +235,7 @@ fn test_dynamic_language_injection(cx: &mut App) {
 
     // Replace Ruby with a language that hasn't been loaded yet.
     let macro_name_range = range_for_text(&buffer, "foo/bar/baz.rb");
-    buffer.edit([(macro_name_range, "html")], cx.background_executor());
+    buffer.edit([(macro_name_range, "html")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
@@ -816,12 +811,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     .unindent();
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let mut buffer = Buffer::new(
-        ReplicaId::LOCAL,
-        BufferId::new(1).unwrap(),
-        text,
-        cx.background_executor(),
-    );
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -869,7 +859,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     .unindent();
 
     log::info!("editing");
-    buffer.edit_via_marked_text(&text, cx.background_executor());
+    buffer.edit_via_marked_text(&text);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(language, &buffer);
 
@@ -913,7 +903,7 @@ fn test_random_syntax_map_edits_rust_macros(rng: StdRng, cx: &mut App) {
     let language = Arc::new(rust_lang());
     registry.add(language.clone());
 
-    test_random_edits(text, registry, language, rng, cx);
+    test_random_edits(text, registry, language, rng);
 }
 
 #[gpui::test(iterations = 50)]
@@ -942,7 +932,7 @@ fn test_random_syntax_map_edits_with_erb(rng: StdRng, cx: &mut App) {
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
 
-    test_random_edits(text, registry, language, rng, cx);
+    test_random_edits(text, registry, language, rng);
 }
 
 #[gpui::test(iterations = 50)]
@@ -975,7 +965,7 @@ fn test_random_syntax_map_edits_with_heex(rng: StdRng, cx: &mut App) {
     registry.add(Arc::new(heex_lang()));
     registry.add(Arc::new(html_lang()));
 
-    test_random_edits(text, registry, language, rng, cx);
+    test_random_edits(text, registry, language, rng);
 }
 
 fn test_random_edits(
@@ -983,18 +973,12 @@ fn test_random_edits(
     registry: Arc<LanguageRegistry>,
     language: Arc<Language>,
     mut rng: StdRng,
-    cx: &mut App,
 ) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffer = Buffer::new(
-        ReplicaId::LOCAL,
-        BufferId::new(1).unwrap(),
-        text,
-        cx.background_executor(),
-    );
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -1009,7 +993,7 @@ fn test_random_edits(
         let prev_buffer = buffer.snapshot();
         let prev_syntax_map = syntax_map.snapshot();
 
-        buffer.randomly_edit(&mut rng, 3, cx.background_executor());
+        buffer.randomly_edit(&mut rng, 3);
         log::info!("text:\n{}", buffer.text());
 
         syntax_map.interpolate(&buffer);
@@ -1175,12 +1159,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(
-        ReplicaId::LOCAL,
-        BufferId::new(1).unwrap(),
-        "",
-        cx.background_executor(),
-    );
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
 
     let mut mutated_syntax_map = SyntaxMap::new(&buffer);
     mutated_syntax_map.set_language_registry(registry.clone());
@@ -1189,7 +1168,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
     for (i, marked_string) in steps.iter().enumerate() {
         let marked_string = marked_string.unindent();
         log::info!("incremental parse {i}: {marked_string:?}");
-        buffer.edit_via_marked_text(&marked_string, cx.background_executor());
+        buffer.edit_via_marked_text(&marked_string);
 
         // Reparse the syntax map
         mutated_syntax_map.interpolate(&buffer);

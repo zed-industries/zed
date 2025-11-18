@@ -167,6 +167,14 @@ pub struct TabSnapshot {
     pub version: usize,
 }
 
+impl std::ops::Deref for TabSnapshot {
+    type Target = FoldSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fold_snapshot
+    }
+}
+
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
@@ -1042,7 +1050,7 @@ mod tests {
         let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
-        let text = text::Rope::from_str(tabs_snapshot.text().as_str(), cx.background_executor());
+        let text = text::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
             "TabMap text (tab size: {}): {:?}",
             tab_size,

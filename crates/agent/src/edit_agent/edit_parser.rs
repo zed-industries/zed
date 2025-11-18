@@ -13,7 +13,17 @@ const EDITS_END_TAG: &str = "</edits>";
 const SEARCH_MARKER: &str = "<<<<<<< SEARCH";
 const SEPARATOR_MARKER: &str = "=======";
 const REPLACE_MARKER: &str = ">>>>>>> REPLACE";
-const END_TAGS: [&str; 3] = [OLD_TEXT_END_TAG, NEW_TEXT_END_TAG, EDITS_END_TAG];
+const SONNET_PARAMETER_INVOKE_1: &str = "</parameter>\n</invoke>";
+const SONNET_PARAMETER_INVOKE_2: &str = "</parameter></invoke>";
+const SONNET_PARAMETER_INVOKE_3: &str = "</parameter>";
+const END_TAGS: [&str; 6] = [
+    OLD_TEXT_END_TAG,
+    NEW_TEXT_END_TAG,
+    EDITS_END_TAG,
+    SONNET_PARAMETER_INVOKE_1, // Remove these after switching to streaming tool call
+    SONNET_PARAMETER_INVOKE_2,
+    SONNET_PARAMETER_INVOKE_3,
+];
 
 #[derive(Debug)]
 pub enum EditParserEvent {
@@ -548,6 +558,45 @@ mod tests {
     }
 
     #[gpui::test(iterations = 1000)]
+    fn test_xml_edits_with_closing_parameter_invoke(mut rng: StdRng) {
+        // This case is a regression with Claude Sonnet 4.5.
+        // Sometimes Sonnet thinks that it's doing a tool call
+        // and closes its response with '</parameter></invoke>'
+        // instead of properly closing </new_text>
+
+        let mut parser = EditParser::new(EditFormat::XmlTags);
+        assert_eq!(
+            parse_random_chunks(
+                indoc! {"
+                    <old_text>some text</old_text><new_text>updated text</parameter></invoke>
+                    <old_text>more text</old_text><new_text>upd</parameter></new_text>
+                "},
+                &mut parser,
+                &mut rng
+            ),
+            vec![
+                Edit {
+                    old_text: "some text".to_string(),
+                    new_text: "updated text".to_string(),
+                    line_hint: None,
+                },
+                Edit {
+                    old_text: "more text".to_string(),
+                    new_text: "upd".to_string(),
+                    line_hint: None,
+                },
+            ]
+        );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 4,
+                mismatched_tags: 2
+            }
+        );
+    }
+
+    #[gpui::test(iterations = 1000)]
     fn test_xml_nested_tags(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::XmlTags);
         assert_eq!(
@@ -1033,6 +1082,11 @@ mod tests {
                 }
             }
             last_ix = chunk_ix;
+        }
+
+        if new_text.is_some() {
+            pending_edit.new_text = new_text.take().unwrap();
+            edits.push(pending_edit);
         }
 
         edits
