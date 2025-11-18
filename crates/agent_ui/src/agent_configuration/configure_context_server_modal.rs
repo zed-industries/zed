@@ -35,7 +35,6 @@ use crate::AddContextServer;
 
 enum ConfigurationTarget {
     New,
-    NewRemote,
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
@@ -55,11 +54,11 @@ enum ConfigurationTarget {
 enum ConfigurationSource {
     New {
         editor: Entity<Editor>,
-        is_remote: bool,
+        is_http: bool,
     },
     Existing {
         editor: Entity<Editor>,
-        is_remote: bool,
+        is_http: bool,
     },
     Extension {
         id: ContextServerId,
@@ -107,11 +106,7 @@ impl ConfigurationSource {
         match target {
             ConfigurationTarget::New => ConfigurationSource::New {
                 editor: create_editor(context_server_input(None), jsonc_language, window, cx),
-                is_remote: false,
-            },
-            ConfigurationTarget::NewRemote => ConfigurationSource::New {
-                editor: create_editor(context_server_http_input(None), jsonc_language, window, cx),
-                is_remote: true,
+                is_http: false,
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
                 editor: create_editor(
@@ -120,7 +115,7 @@ impl ConfigurationSource {
                     window,
                     cx,
                 ),
-                is_remote: false,
+                is_http: false,
             },
             ConfigurationTarget::ExistingHttp {
                 id,
@@ -133,7 +128,7 @@ impl ConfigurationSource {
                     window,
                     cx,
                 ),
-                is_remote: true,
+                is_http: true,
             },
             ConfigurationTarget::Extension {
                 id,
@@ -170,9 +165,9 @@ impl ConfigurationSource {
 
     fn output(&self, cx: &mut App) -> Result<(ContextServerId, ContextServerSettings)> {
         match self {
-            ConfigurationSource::New { editor, is_remote }
-            | ConfigurationSource::Existing { editor, is_remote } => {
-                if *is_remote {
+            ConfigurationSource::New { editor, is_http }
+            | ConfigurationSource::Existing { editor, is_http } => {
+                if *is_http {
                     parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth)| {
                         (
                             id,
@@ -360,20 +355,6 @@ pub struct ConfigureContextServerModal {
 }
 
 impl ConfigureContextServerModal {
-    pub fn new_remote_server(
-        project: Entity<project::Project>,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let target = ConfigurationTarget::NewRemote;
-        let language_registry = project.read(cx).languages().clone();
-
-        window.spawn(cx, async move |mut cx| {
-            Self::show_modal(target, language_registry, workspace, &mut cx).await
-        })
-    }
-
     pub fn register(
         workspace: &mut Workspace,
         language_registry: Arc<LanguageRegistry>,
@@ -481,7 +462,7 @@ impl ConfigureContextServerModal {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::ExistingHttp { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::New | ConfigurationTarget::NewRemote => None,
+                        ConfigurationTarget::New => None,
                     },
                     source: ConfigurationSource::from_target(
                         target,
@@ -728,6 +709,36 @@ impl ConfigureContextServerModal {
                                 let repository_url = repository_url.clone();
                                 move |_, _, cx| cx.open_url(&repository_url)
                             }),
+                    )
+                } else if let ConfigurationSource::New { is_http, .. } = &self.source {
+                    let label = if *is_http {
+                        "Run command"
+                    } else {
+                        "Connect via HTTP"
+                    };
+                    let tooltip = if *is_http {
+                        "Configure an MCP serevr that runs on stdin/stdout."
+                    } else {
+                        "Configure an MCP server that you connect to over HTTP"
+                    };
+
+                    Some(
+                        Button::new("toggle-kind", label)
+                            .tooltip(Tooltip::text(tooltip))
+                            .on_click(cx.listener(|this, _, window, cx| match &mut this.source {
+                                ConfigurationSource::New { editor, is_http } => {
+                                    *is_http = !*is_http;
+                                    let new_text = if *is_http {
+                                        context_server_http_input(None)
+                                    } else {
+                                        context_server_input(None)
+                                    };
+                                    editor.update(cx, |editor, cx| {
+                                        editor.set_text(new_text, window, cx);
+                                    })
+                                }
+                                _ => {}
+                            })),
                     )
                 } else {
                     None

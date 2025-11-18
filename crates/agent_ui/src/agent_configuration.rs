@@ -49,9 +49,6 @@ pub(crate) use manage_profiles_modal::ManageProfilesModal;
 use crate::agent_configuration::add_llm_provider_modal::{
     AddLlmProviderModal, LlmCompatibleProvider,
 };
-use gpui::actions;
-
-actions!(agent_ui, [AddRemoteContextServer]);
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
@@ -557,11 +554,6 @@ impl AgentConfiguration {
                         menu.entry("Add Custom Server", None, {
                             |window, cx| {
                                 window.dispatch_action(crate::AddContextServer.boxed_clone(), cx)
-                            }
-                        })
-                        .entry("Add Remote Server", None, {
-                            |window, cx| {
-                                window.dispatch_action(AddRemoteContextServer.boxed_clone(), cx)
                             }
                         })
                         .entry("Install from Extensions", None, {

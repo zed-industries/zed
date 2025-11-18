@@ -45,9 +45,7 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 
-use crate::agent_configuration::{
-    AddRemoteContextServer, ConfigureContextServerModal, ManageProfilesModal,
-};
+use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
@@ -274,19 +272,6 @@ pub fn init(
     terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
-    })
-    .detach();
-    cx.observe_new(move |workspace: &mut workspace::Workspace, _window, _| {
-        workspace.register_action({
-            move |workspace, _: &AddRemoteContextServer, window, cx| {
-                crate::agent_configuration::configure_context_server_modal::ConfigureContextServerModal::new_remote_server(
-                    workspace.project().clone(),
-                    workspace.weak_handle(),
-                    window,
-                    cx,
-                ).detach();
-            }
-        });
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
