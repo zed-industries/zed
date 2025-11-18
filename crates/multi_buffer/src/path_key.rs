@@ -288,7 +288,6 @@ impl MultiBuffer {
             .get(&path)
             .cloned()
             .unwrap_or_default();
-
         let mut new_iter = new.into_iter().peekable();
         let mut existing_iter = existing.into_iter().peekable();
 
@@ -410,15 +409,20 @@ impl MultiBuffer {
         }
 
         self.insert_excerpts_with_ids_after(insert_after, buffer, to_insert, cx);
+        // todo(lw): There is a logic bug somewhere that causes the to_remove vector to be not ordered correctly
+        to_remove.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
         self.remove_excerpts(to_remove, cx);
+
         if excerpt_ids.is_empty() {
             self.excerpts_by_path.remove(&path);
         } else {
             for excerpt_id in &excerpt_ids {
                 self.paths_by_excerpt.insert(*excerpt_id, path.clone());
             }
-            self.excerpts_by_path
-                .insert(path, excerpt_ids.iter().dedup().cloned().collect());
+            let snapshot = &*self.snapshot.get_mut();
+            let mut excerpt_ids: Vec<_> = excerpt_ids.iter().dedup().cloned().collect();
+            excerpt_ids.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
+            self.excerpts_by_path.insert(path, excerpt_ids);
         }
 
         (excerpt_ids, added_a_new_excerpt)

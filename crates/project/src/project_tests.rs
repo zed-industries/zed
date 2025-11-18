@@ -1293,6 +1293,67 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_language_server_tilde_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let settings_json_contents = json!({
+        "languages": {
+            "Rust": {
+                "language_servers": ["tilde_lsp"]
+            }
+        },
+        "lsp": {
+            "tilde_lsp": {
+                "binary": {
+                    "path": "~/.local/bin/rust-analyzer",
+                }
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json_contents.to_string(),
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut tilde_lsp = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "tilde_lsp",
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lsp_path = tilde_lsp.next().await.unwrap().binary.path;
+    let expected_path = paths::home_dir().join(".local/bin/rust-analyzer");
+    assert_eq!(
+        lsp_path, expected_path,
+        "Tilde path should expand to home directory"
+    );
+}
+
+#[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -8477,11 +8538,8 @@ fn merge_pending_ops_snapshots(
                     .find_map(|(op, idx)| if op.id == s_op.id { Some(idx) } else { None })
                 {
                     let t_op = &mut t_ops.ops[op_idx];
-                    match (s_op.job_status, t_op.job_status) {
-                        (pending_op::JobStatus::Running, _) => {}
-                        (s_st, pending_op::JobStatus::Running) => t_op.job_status = s_st,
-                        (s_st, t_st) if s_st == t_st => {}
-                        _ => unreachable!(),
+                    if s_op.finished {
+                        t_op.finished = true;
                     }
                 } else {
                     t_ops.ops.push(s_op);
@@ -8573,7 +8631,7 @@ async fn test_repository_pending_ops_staging(
                 Some(&pending_op::PendingOp {
                     id: id.into(),
                     git_status,
-                    job_status: pending_op::JobStatus::Running
+                    finished: false,
                 })
             );
             task
@@ -8588,7 +8646,7 @@ async fn test_repository_pending_ops_staging(
                 Some(&pending_op::PendingOp {
                     id: id.into(),
                     git_status,
-                    job_status: pending_op::JobStatus::Finished
+                    finished: true,
                 })
             );
         });
@@ -8614,27 +8672,27 @@ async fn test_repository_pending_ops_staging(
             pending_op::PendingOp {
                 id: 1u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
             pending_op::PendingOp {
                 id: 3u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
             pending_op::PendingOp {
                 id: 4u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
             pending_op::PendingOp {
                 id: 5u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             }
         ],
     );
@@ -8731,18 +8789,11 @@ async fn test_repository_pending_ops_long_running_staging(
             .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
             .ops,
-        vec![
-            pending_op::PendingOp {
-                id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Skipped
-            },
-            pending_op::PendingOp {
-                id: 2u16.into(),
-                git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
-            }
-        ],
+        vec![pending_op::PendingOp {
+            id: 2u16.into(),
+            git_status: pending_op::GitStatus::Staged,
+            finished: true,
+        }],
     );
 
     repo.update(cx, |repo, _cx| {
@@ -8843,12 +8894,12 @@ async fn test_repository_pending_ops_stage_all(
             pending_op::PendingOp {
                 id: 1u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
         ],
     );
@@ -8862,12 +8913,12 @@ async fn test_repository_pending_ops_stage_all(
             pending_op::PendingOp {
                 id: 1u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                job_status: pending_op::JobStatus::Finished
+                finished: true,
             },
         ],
     );
@@ -9514,7 +9565,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::StatusesChanged { full_scan: true },
+            RepositoryEvent::StatusesChanged,
             RepositoryEvent::MergeHeadsChanged,
         ],
         "Initial worktree scan should produce a repo update event"
@@ -9682,8 +9733,8 @@ async fn test_odd_events_for_ignored_dirs(
         vec![
             RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
-            RepositoryEvent::StatusesChanged { full_scan: false },
-            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged,
+            RepositoryEvent::StatusesChanged,
         ],
         "Initial worktree scan should produce a repo update event"
     );

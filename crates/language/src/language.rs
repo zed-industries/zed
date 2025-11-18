@@ -2658,6 +2658,35 @@ pub fn rust_lang() -> Arc<Language> {
     Arc::new(language)
 }
 
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn markdown_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_md::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/brackets.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/injections.scm"
+        ))),
+        ..Default::default()
+    })
+    .expect("Could not parse markdown queries");
+    Arc::new(language)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

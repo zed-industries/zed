@@ -41,7 +41,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
                 .add_input(model_name.name, model_name.input())
                 .add_input(commit_sha.name, commit_sha.input()),
         ))
-        .concurrency(vars::one_workflow_per_non_main_branch())
+        .concurrency(vars::allow_concurrent_runs())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
@@ -126,7 +126,7 @@ fn unit_evals(commit: Option<&Input>) -> Job {
         .add_step(steps::setup_cargo_config(Platform::Linux))
         .add_step(steps::cache_rust_dependencies_namespace())
         .map(steps::install_linux_dependencies)
-        .add_step(steps::cargo_install_nextest(Platform::Linux))
+        .add_step(steps::cargo_install_nextest())
         .add_step(steps::clear_target_dir_if_large(Platform::Linux))
         .add_step(match commit {
             Some(commit) => script_step.add_env(("UNIT_EVAL_COMMIT", commit)),

@@ -1586,12 +1586,11 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         matches: &[Range<Anchor>],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
-        let range = self.range_for_match(&matches[index], collapse);
+        let range = self.range_for_match(&matches[index]);
         let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
             Autoscroll::center()
         } else {

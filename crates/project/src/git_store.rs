@@ -256,6 +256,7 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub pending_ops_by_path: SumTree<PendingOps>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -312,10 +313,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    StatusesChanged {
-        // TODO could report which statuses changed here
-        full_scan: bool,
-    },
+    StatusesChanged,
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
@@ -3066,6 +3064,7 @@ impl RepositorySnapshot {
             id,
             statuses_by_path: Default::default(),
             pending_ops_by_path: Default::default(),
+            renamed_paths: HashMap::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3106,6 +3105,11 @@ impl RepositorySnapshot {
                 .entries
                 .iter()
                 .map(stash_to_proto)
+                .collect(),
+            renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
                 .collect(),
         }
     }
@@ -3175,6 +3179,11 @@ impl RepositorySnapshot {
                 .entries
                 .iter()
                 .map(stash_to_proto)
+                .collect(),
+            renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
                 .collect(),
         }
     }
@@ -4060,7 +4069,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_staged() {
+                } else if entry.status.staging().is_fully_staged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4080,7 +4089,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_unstaged() {
+                } else if entry.status.staging().is_fully_unstaged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4971,6 +4980,17 @@ impl Repository {
         }
         self.snapshot.stash_entries = new_stash_entries;
 
+        self.snapshot.renamed_paths = update
+            .renamed_paths
+            .into_iter()
+            .filter_map(|(new_path_str, old_path_str)| {
+                Some((
+                    RepoPath::from_proto(&new_path_str).log_err()?,
+                    RepoPath::from_proto(&old_path_str).log_err()?,
+                ))
+            })
+            .collect();
+
         let edits = update
             .removed_statuses
             .into_iter()
@@ -4989,7 +5009,7 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         if !edits.is_empty() {
-            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+            cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
@@ -5343,7 +5363,7 @@ impl Repository {
                     }
 
                     if !changed_path_statuses.is_empty() {
-                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
+                        cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
@@ -5384,18 +5404,27 @@ impl Repository {
         let ids = self.new_pending_ops_for_paths(paths, git_status);
 
         cx.spawn(async move |this, cx| {
-            let (job_status, result) = match f(this.clone(), cx).await {
-                Ok(()) => (pending_op::JobStatus::Finished, Ok(())),
-                Err(err) if err.is::<Canceled>() => (pending_op::JobStatus::Skipped, Ok(())),
-                Err(err) => (pending_op::JobStatus::Error, Err(err)),
+            let (finished, result) = match f(this.clone(), cx).await {
+                Ok(()) => (true, Ok(())),
+                Err(err) if err.is::<Canceled>() => (false, Ok(())),
+                Err(err) => (false, Err(err)),
             };
 
             this.update(cx, |this, _| {
                 let mut edits = Vec::with_capacity(ids.len());
                 for (id, entry) in ids {
                     if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
-                        if let Some(op) = ops.op_by_id_mut(id) {
-                            op.job_status = job_status;
+                        if finished {
+                            if let Some(op) = ops.op_by_id_mut(id) {
+                                op.finished = true;
+                            }
+                        } else {
+                            let idx = ops
+                                .ops
+                                .iter()
+                                .position(|op| op.id == id)
+                                .expect("pending operation must exist");
+                            ops.ops.remove(idx);
                         }
                         edits.push(sum_tree::Edit::Insert(ops));
                     }
@@ -5423,7 +5452,7 @@ impl Repository {
             ops.ops.push(PendingOp {
                 id,
                 git_status,
-                job_status: pending_op::JobStatus::Running,
+                finished: false,
             });
             edits.push(sum_tree::Edit::Insert(ops));
             ids.push((id, path));
@@ -5701,7 +5730,7 @@ async fn compute_snapshot(
     let pending_ops_by_path = SumTree::from_iter(
         prev_snapshot.pending_ops_by_path.iter().filter_map(|ops| {
             let inner_ops: Vec<PendingOp> =
-                ops.ops.iter().filter(|op| op.running()).cloned().collect();
+                ops.ops.iter().filter(|op| !op.finished).cloned().collect();
             if inner_ops.is_empty() {
                 None
             } else {
@@ -5725,7 +5754,7 @@ async fn compute_snapshot(
     }
 
     if statuses_by_path != prev_snapshot.statuses_by_path {
-        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
+        events.push(RepositoryEvent::StatusesChanged)
     }
 
     // Useful when branch is None in detached head state
@@ -5746,6 +5775,7 @@ async fn compute_snapshot(
         id,
         statuses_by_path,
         pending_ops_by_path,
+        renamed_paths: statuses.renamed_paths,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,

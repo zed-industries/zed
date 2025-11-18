@@ -506,7 +506,7 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) {
         self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            .scroll_to_item(self.selected_item, ScrollStrategy::Nearest);
         if let Some(provider) = provider {
             let entries = self.entries.borrow();
             let entry = if self.selected_item < entries.len() {
