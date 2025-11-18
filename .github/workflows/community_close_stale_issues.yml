@@ -26,3 +26,4 @@ jobs:
           ascending: true
           enable-statistics: true
           stale-issue-label: "stale"
+          exempt-issue-labels: "never stale"
