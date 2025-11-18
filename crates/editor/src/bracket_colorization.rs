@@ -213,6 +213,142 @@ where
         );
     }
 
+    #[gpui::test]
+    async fn test_bracket_colorization_when_editing(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {r#"
+struct Foo<'a, T> {
+    data: Vec<Option<&'a T>>,
+}
+
+fn process_data() {
+    let map:ˇ
+}
+"#});
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(" Result<", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_bracket_colors(
+            indoc! {r#"
+struct Foo«1<'a, T>1» «1{
+    data: Vec«2<Option«3<&'a T>3»>2»,
+}1»
+
+fn process_data«1()1» «1{
+    let map: Result<
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+"#},
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input("Option<Foo<'_, ()", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_bracket_colors(
+            indoc! {r#"
+struct Foo«1<'a, T>1» «1{
+    data: Vec«2<Option«3<&'a T>3»>2»,
+}1»
+
+fn process_data«1()1» «1{
+    let map: Result<Option<Foo<'_, «2()2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+"#},
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(">", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_bracket_colors(
+            indoc! {r#"
+struct Foo«1<'a, T>1» «1{
+    data: Vec«2<Option«3<&'a T>3»>2»,
+}1»
+
+fn process_data«1()1» «1{
+    let map: Result<Option<Foo«2<'_, «3()3»>2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+"#},
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(">", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_bracket_colors(
+            indoc! {r#"
+struct Foo«1<'a, T>1» «1{
+    data: Vec«2<Option«3<&'a T>3»>2»,
+}1»
+
+fn process_data«1()1» «1{
+    let map: Result<Option«2<Foo«3<'_, «4()4»>3»>2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+"#},
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(", ()> = todo!();", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_bracket_colors(
+            indoc! {r#"
+struct Foo«1<'a, T>1» «1{
+    data: Vec«2<Option«3<&'a T>3»>2»,
+}1»
+
+fn process_data«1()1» «1{
+    let map: Result«2<Option«3<Foo«4<'_, «5()5»>4»>3», «3()3»>2» = todo!«2()2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+            &mut cx,
+        );
+    }
+
     #[track_caller]
     fn assert_bracket_colors(expected_markup: &str, cx: &mut EditorTestContext) {
         let result = cx.update_editor(|editor, window, cx| {
