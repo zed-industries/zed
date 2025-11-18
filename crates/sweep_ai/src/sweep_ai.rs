@@ -37,10 +37,6 @@ pub struct SweepFeatureFlag;
 
 impl FeatureFlag for SweepFeatureFlag {
     const NAME: &str = "sweep-ai";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 
 #[derive(Clone)]
