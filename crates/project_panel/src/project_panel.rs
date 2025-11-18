@@ -1653,21 +1653,24 @@ impl ProjectPanel {
 
             match new_entry {
                 Err(e) => {
-                    project_panel.update_in( cx, |project_panel, window, cx| {
-                        project_panel.marked_entries.clear();
-                        project_panel.update_visible_entries(None, false, false, window, cx);
-                    }).ok();
+                    project_panel
+                        .update_in(cx, |project_panel, window, cx| {
+                            project_panel.marked_entries.clear();
+                            project_panel.update_visible_entries(None, false, false, window, cx);
+                        })
+                        .ok();
                     Err(e)?;
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
-                    project_panel.update_in( cx, |project_panel, window, cx| {
+                    project_panel.update_in(cx, |project_panel, window, cx| {
                         if let Some(selection) = &mut project_panel.state.selection
-                            && selection.entry_id == edited_entry_id {
-                                selection.worktree_id = worktree_id;
-                                selection.entry_id = new_entry.id;
-                                project_panel.marked_entries.clear();
-                                project_panel.expand_to_selection(cx);
-                            }
+                            && selection.entry_id == edited_entry_id
+                        {
+                            selection.worktree_id = worktree_id;
+                            selection.entry_id = new_entry.id;
+                            project_panel.marked_entries.clear();
+                            project_panel.expand_to_selection(cx);
+                        }
                         project_panel.update_visible_entries(None, false, false, window, cx);
                         if is_new_entry && !is_dir {
                             let settings = ProjectPanelSettings::get_global(cx);
@@ -1688,7 +1691,14 @@ impl ProjectPanel {
                                 project_panel.project.update(cx, |_, cx| {
                                     cx.emit(project::Event::Toast {
                                         notification_id: "excluded-directory".into(),
-                                        message: format!("Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel")
+                                        message: format!(
+                                            concat!(
+                                                "Created an excluded directory at {:?}.\n",
+                                                "Alter `file_scan_exclusions` in the settings ",
+                                                "to show it in the panel"
+                                            ),
+                                            abs_path
+                                        ),
                                     })
                                 });
                                 None
@@ -1696,7 +1706,15 @@ impl ProjectPanel {
                                 project_panel
                                     .workspace
                                     .update(cx, |workspace, cx| {
-                                        workspace.open_abs_path(abs_path, OpenOptions { visible: Some(OpenVisible::All), ..Default::default() }, window, cx)
+                                        workspace.open_abs_path(
+                                            abs_path,
+                                            OpenOptions {
+                                                visible: Some(OpenVisible::All),
+                                                ..Default::default()
+                                            },
+                                            window,
+                                            cx,
+                                        )
                                     })
                                     .ok()
                             }
@@ -3600,32 +3618,44 @@ impl ProjectPanel {
         cx.spawn_in(window, async move |this, cx| {
             async move {
                 for (filename, original_path) in &paths_to_replace {
-                    let answer = cx.update(|window, cx| {
-                        window
-                            .prompt(
+                    let prompt_message = format!(
+                        concat!(
+                            "A file or folder with name {} ",
+                            "already exists in the destination folder. ",
+                            "Do you want to replace it?"
+                        ),
+                        filename
+                    );
+                    let answer = cx
+                        .update(|window, cx| {
+                            window.prompt(
                                 PromptLevel::Info,
-                                format!("A file or folder with name {filename} already exists in the destination folder. Do you want to replace it?").as_str(),
+                                &prompt_message,
                                 None,
                                 &["Replace", "Cancel"],
                                 cx,
                             )
-                    })?.await?;
+                        })?
+                        .await?;
 
                     if answer == 1
-                        && let Some(item_idx) = paths.iter().position(|p| p == original_path) {
-                            paths.remove(item_idx);
-                        }
+                        && let Some(item_idx) = paths.iter().position(|p| p == original_path)
+                    {
+                        paths.remove(item_idx);
+                    }
                 }
 
                 if paths.is_empty() {
                     return Ok(());
                 }
 
-                let task = worktree.update( cx, |worktree, cx| {
+                let task = worktree.update(cx, |worktree, cx| {
                     worktree.copy_external_entries(target_directory, paths, fs, cx)
                 })?;
 
-                let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
+                let opened_entries = task
+                    .await
+                    .with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         let settings = ProjectPanelSettings::get_global(cx);
@@ -3635,7 +3665,8 @@ impl ProjectPanel {
                     }
                 })
             }
-            .log_err().await
+            .log_err()
+            .await
         })
         .detach();
     }

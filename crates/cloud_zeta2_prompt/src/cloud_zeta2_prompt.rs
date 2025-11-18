@@ -3,7 +3,8 @@ pub mod retrieval_prompt;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::predict_edits_v3::{
-    self, DiffPathFmt, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
+    self, DiffPathFmt, Event, Excerpt, IncludedFile, Line, Point, PromptFormat,
+    ReferencedDeclaration,
 };
 use indoc::indoc;
 use ordered_float::OrderedFloat;
@@ -166,6 +167,21 @@ const OLD_TEXT_NEW_TEXT_REMINDER: &str = indoc! {r#"
 pub fn build_prompt(
     request: &predict_edits_v3::PredictEditsRequest,
 ) -> Result<(String, SectionLabels)> {
+    let mut section_labels = Default::default();
+
+    match request.prompt_format {
+        PromptFormat::MinimalQwen => {
+            let prompt = MinimalQwenPrompt {
+                events: request.events.clone(),
+                cursor_point: request.cursor_point,
+                cursor_path: request.excerpt_path.clone(),
+                included_files: request.included_files.clone(),
+            };
+            return Ok((prompt.render(), section_labels));
+        }
+        _ => (),
+    };
+
     let mut insertions = match request.prompt_format {
         PromptFormat::MarkedExcerpt => vec![
             (
@@ -191,6 +207,7 @@ pub fn build_prompt(
             vec![(request.cursor_point, CURSOR_MARKER)]
         }
         PromptFormat::OnlySnippets => vec![],
+        PromptFormat::MinimalQwen => unreachable!(),
     };
 
     let mut prompt = match request.prompt_format {
@@ -200,6 +217,7 @@ pub fn build_prompt(
         PromptFormat::OldTextNewText => XML_TAGS_INSTRUCTIONS.to_string(),
         PromptFormat::OnlySnippets => String::new(),
         PromptFormat::Minimal => STUDENT_MODEL_INSTRUCTIONS.to_string(),
+        PromptFormat::MinimalQwen => unreachable!(),
     };
 
     if request.events.is_empty() {
@@ -250,8 +268,6 @@ pub fn build_prompt(
 
     prompt.push_str(excerpts_preamble);
     prompt.push('\n');
-
-    let mut section_labels = Default::default();
 
     if !request.referenced_declarations.is_empty() || !request.signatures.is_empty() {
         let syntax_based_prompt = SyntaxBasedPrompt::populate(request)?;
@@ -769,6 +785,7 @@ impl<'a> SyntaxBasedPrompt<'a> {
                             writeln!(output, "<|section_{}|>", section_index).ok();
                         }
                     }
+                    PromptFormat::MinimalQwen => unreachable!(),
                 }
 
                 let push_full_snippet = |output: &mut String| {
@@ -876,5 +893,71 @@ fn declaration_size(declaration: &ReferencedDeclaration, style: DeclarationStyle
     match style {
         DeclarationStyle::Signature => declaration.signature_range.len(),
         DeclarationStyle::Declaration => declaration.text.len(),
+    }
+}
+
+struct MinimalQwenPrompt {
+    events: Vec<Event>,
+    cursor_point: Point,
+    cursor_path: Arc<Path>, // TODO: make a common struct with cursor_point
+    included_files: Vec<IncludedFile>,
+}
+
+impl MinimalQwenPrompt {
+    const INSTRUCTIONS: &str = "You are a code completion assistant that analyzes edit history to identify and systematically complete incomplete refactorings or patterns across the entire codebase.\n";
+
+    fn render(&self) -> String {
+        let edit_history = self.fmt_edit_history();
+        let context = self.fmt_context();
+
+        format!(
+            "{instructions}\n\n{edit_history}\n\n{context}",
+            instructions = MinimalQwenPrompt::INSTRUCTIONS,
+            edit_history = edit_history,
+            context = context
+        )
+    }
+
+    fn fmt_edit_history(&self) -> String {
+        if self.events.is_empty() {
+            "(No edit history)\n\n".to_string()
+        } else {
+            let mut events_str = String::new();
+            push_events(&mut events_str, &self.events);
+            format!(
+                "The following are the latest edits made by the user, from earlier to later.\n\n{}",
+                events_str
+            )
+        }
+    }
+
+    fn fmt_context(&self) -> String {
+        let mut context = String::new();
+        let include_line_numbers = true;
+
+        for related_file in &self.included_files {
+            writeln!(context, "<|file_sep|>{}", DiffPathFmt(&related_file.path)).unwrap();
+
+            if related_file.path == self.cursor_path {
+                write!(context, "<|fim_prefix|>").unwrap();
+                write_excerpts(
+                    &related_file.excerpts,
+                    &[(self.cursor_point, "<|fim_suffix|>")],
+                    related_file.max_row,
+                    include_line_numbers,
+                    &mut context,
+                );
+                writeln!(context, "<|fim_middle|>").unwrap();
+            } else {
+                write_excerpts(
+                    &related_file.excerpts,
+                    &[],
+                    related_file.max_row,
+                    include_line_numbers,
+                    &mut context,
+                );
+            }
+        }
+        context
     }
 }

@@ -1573,6 +1573,8 @@ pub enum ClipboardEntry {
     String(ClipboardString),
     /// An image entry
     Image(Image),
+    /// A file entry
+    ExternalPaths(crate::ExternalPaths),
 }
 
 impl ClipboardItem {
@@ -1613,16 +1615,29 @@ impl ClipboardItem {
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
         let mut answer = String::new();
-        let mut any_entries = false;
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
                 answer.push_str(text);
-                any_entries = true;
             }
         }
 
-        if any_entries { Some(answer) } else { None }
+        if answer.is_empty() {
+            for entry in self.entries.iter() {
+                if let ClipboardEntry::ExternalPaths(paths) = entry {
+                    for path in &paths.0 {
+                        use std::fmt::Write as _;
+                        _ = write!(answer, "{}", path.display());
+                    }
+                }
+            }
+        }
+
+        if !answer.is_empty() {
+            Some(answer)
+        } else {
+            None
+        }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.

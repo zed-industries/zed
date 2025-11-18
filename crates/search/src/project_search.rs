@@ -9,12 +9,11 @@ use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects, VimFlavor,
+    SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
     multibuffer_context_lines,
     scroll::Autoscroll,
-    vim_flavor,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -1431,8 +1430,7 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-                let range_to_select = editor.range_for_match(&range_to_select, collapse);
+                let range_to_select = editor.range_for_match(&range_to_select);
                 let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
                     Autoscroll::center()
                 } else {
@@ -1509,10 +1507,9 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
-                    let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
                     let range_to_select = match_ranges
                         .first()
-                        .map(|range| editor.range_for_match(range, collapse));
+                        .map(|range| editor.range_for_match(range));
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });

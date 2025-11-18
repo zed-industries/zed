@@ -304,7 +304,7 @@ impl RemoteConnection for SshRemoteConnection {
                 let mut child = sftp_command.spawn()?;
                 if let Some(mut stdin) = child.stdin.take() {
                     use futures::AsyncWriteExt;
-                    let sftp_batch = format!("put -r {src_path_display} {dest_path_str}\n");
+                    let sftp_batch = format!("put -r \"{src_path_display}\" \"{dest_path_str}\"\n");
                     stdin.write_all(sftp_batch.as_bytes()).await?;
                     stdin.flush().await?;
                 }
