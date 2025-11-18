@@ -3690,6 +3690,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "http_client",
  "log",
  "net",
  "parking_lot",
@@ -8728,7 +8729,6 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
- "vim",
  "workspace",
  "zed_actions",
 ]
