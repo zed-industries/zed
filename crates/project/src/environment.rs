@@ -6,7 +6,7 @@ use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::{Shell, shell_to_proto};
 use terminal::terminal_settings::TerminalSettings;
-use util::{ResultExt, rel_path::RelPath};
+use util::{ResultExt, command::new_smol_command, rel_path::RelPath};
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -389,7 +389,7 @@ async fn load_direnv_environment(
     };
 
     let args = &["export", "json"];
-    let direnv_output = smol::process::Command::new(&direnv_path)
+    let direnv_output = new_smol_command(&direnv_path)
         .args(args)
         .envs(env)
         .env("TERM", "dumb")
