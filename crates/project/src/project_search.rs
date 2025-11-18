@@ -809,13 +809,16 @@ impl PathInclusionMatcher {
     fn new(query: Arc<SearchQuery>) -> Self {
         let mut included = BTreeSet::new();
         let mut excluded = BTreeSet::new();
+        // To do an inverse glob match, we split each glob into it's prefix and the glob part.
+        // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
+        // Then, when checking whether a given directory should be scanned, we check whether it is a non-empty substring of any glob prefix.
         if query.filters_path() {
             included.extend(
                 query
                     .files_to_include()
                     .sources()
                     .iter()
-                    .filter_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
+                    .flat_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
             );
             excluded.extend(
                 query
@@ -849,23 +852,47 @@ impl PathInclusionMatcher {
         }
 
         let as_abs_path = LazyCell::new(move || snapshot.absolutize(&entry.path));
-        let descendant_might_match_glob = |prefix: &Path| {
+        let entry_path = entry.path.as_std_path();
+        // 3. Check Exclusions (Pruning)
+        // If the current path is a child of an excluded path, we stop.
+        let is_excluded = self.excluded.iter().any(|prefix| {
             if prefix.is_absolute() {
                 as_abs_path.starts_with(prefix)
             } else {
-                entry.path.as_std_path().starts_with(prefix)
+                entry_path.starts_with(prefix)
             }
-        };
-        let matched_path = !self
-            .excluded
-            .iter()
-            .any(|prefix| descendant_might_match_glob(prefix))
-            && (self.included.is_empty()
-                || self
-                    .included
-                    .iter()
-                    .any(|prefix| descendant_might_match_glob(prefix)));
+        });
 
-        matched_path
+        if is_excluded {
+            return false;
+        }
+
+        // 4. Check Inclusions (Traversal)
+        if self.included.is_empty() {
+            return true;
+        }
+
+        // We scan if the current path is a descendant of an include prefix
+        // OR if the current path is an ancestor of an include prefix (we need to go deeper to find it).
+        let is_included = self.included.iter().any(|prefix| {
+            let (prefix_matches_entry, entry_matches_prefix) = if prefix.is_absolute() {
+                (
+                    prefix.starts_with(&**as_abs_path),
+                    as_abs_path.starts_with(prefix),
+                )
+            } else {
+                (
+                    prefix.starts_with(entry_path),
+                    entry_path.starts_with(prefix),
+                )
+            };
+
+            // Logic:
+            // 1. entry_matches_prefix: We are inside the target zone (e.g. glob: src/, current: src/lib/). Keep scanning.
+            // 2. prefix_matches_entry: We are above the target zone (e.g. glob: src/foo/, current: src/). Keep scanning to reach foo.
+            prefix_matches_entry || entry_matches_prefix
+        });
+
+        is_included
     }
 }
