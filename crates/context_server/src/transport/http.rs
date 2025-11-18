@@ -170,7 +170,6 @@ impl HttpTransport {
             let mut in_message = false;
 
             while let Some(line_result) = lines.next().await {
-                dbg!(&line_result); // do we see `data: `? or do we just get one JSON blob per line
                 match line_result {
                     Ok(line) => {
                         if line.is_empty() {
