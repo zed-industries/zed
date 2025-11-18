@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
+use collections::HashMap;
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -20,6 +21,7 @@ use project::{
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
+use serde::Deserialize;
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
@@ -38,10 +40,10 @@ enum ConfigurationTarget {
         id: ContextServerId,
         command: ContextServerCommand,
     },
-    ExistingRemote {
+    ExistingHttp {
         id: ContextServerId,
         url: String,
-        auth: Option<settings::ContextServerAuth>,
+        headers: HashMap<String, String>,
     },
     Extension {
         id: ContextServerId,
@@ -108,12 +110,7 @@ impl ConfigurationSource {
                 is_remote: false,
             },
             ConfigurationTarget::NewRemote => ConfigurationSource::New {
-                editor: create_editor(
-                    context_server_remote_input(None),
-                    jsonc_language,
-                    window,
-                    cx,
-                ),
+                editor: create_editor(context_server_http_input(None), jsonc_language, window, cx),
                 is_remote: true,
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
@@ -125,17 +122,19 @@ impl ConfigurationSource {
                 ),
                 is_remote: false,
             },
-            ConfigurationTarget::ExistingRemote { id, url, auth } => {
-                ConfigurationSource::Existing {
-                    editor: create_editor(
-                        context_server_remote_input(Some((id, url, auth))),
-                        jsonc_language,
-                        window,
-                        cx,
-                    ),
-                    is_remote: true,
-                }
-            }
+            ConfigurationTarget::ExistingHttp {
+                id,
+                url,
+                headers: auth,
+            } => ConfigurationSource::Existing {
+                editor: create_editor(
+                    context_server_http_input(Some((id, url, auth))),
+                    jsonc_language,
+                    window,
+                    cx,
+                ),
+                is_remote: true,
+            },
             ConfigurationTarget::Extension {
                 id,
                 repository_url,
@@ -174,13 +173,13 @@ impl ConfigurationSource {
             ConfigurationSource::New { editor, is_remote }
             | ConfigurationSource::Existing { editor, is_remote } => {
                 if *is_remote {
-                    parse_remote_input(&editor.read(cx).text(cx)).map(|(id, url, auth)| {
+                    parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth)| {
                         (
                             id,
-                            ContextServerSettings::Remote {
+                            ContextServerSettings::Http {
                                 enabled: true,
                                 url,
-                                auth,
+                                headers: auth,
                             },
                         )
                     })
@@ -256,77 +255,31 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     )
 }
 
-fn context_server_remote_input(
-    existing: Option<(ContextServerId, String, Option<settings::ContextServerAuth>)>,
+fn context_server_http_input(
+    existing: Option<(ContextServerId, String, HashMap<String, String>)>,
 ) -> String {
-    let (name, url, auth_example) = match existing {
-        Some((id, url, auth)) => {
-            let auth_text = if let Some(auth) = auth {
-                match auth {
-                    settings::ContextServerAuth::Bearer { token } => {
-                        format!(
-                            r#",
-    /// Authentication configuration
-    "auth": {{
-      "type": "bearer",
-      "token": "{}"
-    }}"#,
-                            token
-                        )
-                    }
-                    settings::ContextServerAuth::ApiKey { header, value } => {
-                        format!(
-                            r#",
-    /// Authentication configuration
-    "auth": {{
-      "type": "api_key",
-      "header": "{}",
-      "value": "{}"
-    }}"#,
-                            header, value
-                        )
-                    }
-                    settings::ContextServerAuth::Custom { headers } => {
-                        let headers_json = serde_json::to_string_pretty(&headers)
-                            .unwrap_or_else(|_| "{}".to_string());
-                        format!(
-                            r#",
-    /// Authentication configuration
-    "auth": {{
-      "type": "custom",
-      "headers": {}
-    }}"#,
-                            headers_json
-                        )
-                    }
-                }
+    let (name, url, headers) = match existing {
+        Some((id, url, headers)) => {
+            let header = if headers.is_empty() {
+                r#"// "Authorization": "Bearer <token>"#.to_string()
             } else {
-                String::new()
+                let json = serde_json::to_string_pretty(&headers).unwrap();
+                let mut lines = json.split("\n").collect::<Vec<_>>();
+                if lines.len() > 1 {
+                    lines.remove(0);
+                    lines.pop();
+                }
+                lines
+                    .into_iter()
+                    .map(|line| format!("  {}", line.to_string()))
+                    .collect::<String>()
             };
-            (id.0.to_string(), url, auth_text)
+            (id.0.to_string(), url, header)
         }
         None => (
             "some-remote-server".to_string(),
             "https://example.com/mcp".to_string(),
-            r#",
-    /// Optional: Authentication configuration
-    /// Uncomment one of the following auth types:
-    // "auth": {
-    //   "type": "bearer",
-    //   "token": "your-token-here"
-    // }
-    // "auth": {
-    //   "type": "api_key",
-    //   "header": "X-API-Key",
-    //   "value": "your-api-key-here"
-    // }
-    // "auth": {
-    //   "type": "custom",
-    //   "headers": {
-    //     "X-Custom-Header": "value"
-    //   }
-    // }"#
-                .to_string(),
+            r#"// "Authorization": "Bearer <token>"#.to_string(),
         ),
     };
 
@@ -335,38 +288,31 @@ fn context_server_remote_input(
   /// The name of your remote MCP server
   "{name}": {{
     /// The URL of the remote MCP server
-    "url": "{url}"{auth_example}
+    "url": "{url}"
+    "headers": {{
+     /// Any headers to send along
+     {headers}
+    }}
   }}
 }}"#
     )
 }
 
-fn parse_remote_input(
-    text: &str,
-) -> Result<(ContextServerId, String, Option<settings::ContextServerAuth>)> {
-    let value: serde_json::Value = serde_json_lenient::from_str(text)?;
-    let object = value.as_object().context("Expected object")?;
-    anyhow::ensure!(object.len() == 1, "Expected exactly one key-value pair");
-    let (context_server_name, value) = object.into_iter().next().unwrap();
-    let server_config = value
-        .as_object()
-        .context("Expected object for server config")?;
-    let url = server_config
-        .get("url")
-        .and_then(|v| v.as_str())
-        .context("Expected 'url' field as string")?;
+fn parse_http_input(text: &str) -> Result<(ContextServerId, String, HashMap<String, String>)> {
+    #[derive(Deserialize)]
+    struct Temp {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    }
+    let value: HashMap<String, Temp> = serde_json_lenient::from_str(text)?;
+    if value.len() != 1 {
+        anyhow::bail!("Expected exactly one context server configuration");
+    }
 
-    let auth = server_config
-        .get("auth")
-        .map(|auth_value| serde_json::from_value::<settings::ContextServerAuth>(auth_value.clone()))
-        .transpose()
-        .context("Failed to parse auth configuration")?;
+    let (key, value) = value.into_iter().next().unwrap();
 
-    Ok((
-        ContextServerId(context_server_name.clone().into()),
-        url.to_string(),
-        auth,
-    ))
+    Ok((ContextServerId(key.into()), value.url, value.headers))
 }
 
 fn resolve_context_server_extension(
@@ -483,14 +429,14 @@ impl ConfigureContextServerModal {
                     id: server_id,
                     command,
                 }),
-                ContextServerSettings::Remote {
+                ContextServerSettings::Http {
                     enabled: _,
                     url,
-                    auth,
-                } => Some(ConfigurationTarget::ExistingRemote {
+                    headers,
+                } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
-                    auth,
+                    headers,
                 }),
                 ContextServerSettings::Extension { .. } => {
                     match workspace
@@ -533,7 +479,7 @@ impl ConfigureContextServerModal {
                     state: State::Idle,
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::ExistingRemote { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::ExistingHttp { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
                         ConfigurationTarget::New | ConfigurationTarget::NewRemote => None,
                     },

@@ -9,7 +9,7 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
-use settings::{ContextServerAuth, Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
@@ -20,22 +20,6 @@ use crate::{
 
 pub fn init(cx: &mut App) {
     extension::init(cx);
-}
-
-fn headers_from_auth(auth: &settings::ContextServerAuth) -> HashMap<String, String> {
-    match auth {
-        settings::ContextServerAuth::Bearer { token } => {
-            let mut headers = HashMap::default();
-            headers.insert("Authorization".to_string(), format!("Bearer {}", token));
-            headers
-        }
-        settings::ContextServerAuth::ApiKey { header, value } => {
-            let mut headers = HashMap::default();
-            headers.insert(header.clone(), value.clone());
-            headers
-        }
-        settings::ContextServerAuth::Custom { headers } => headers.clone(),
-    }
 }
 
 actions!(
@@ -115,9 +99,9 @@ pub enum ContextServerConfiguration {
         command: ContextServerCommand,
         settings: serde_json::Value,
     },
-    Remote {
+    Http {
         url: url::Url,
-        auth: Option<settings::ContextServerAuth>,
+        headers: HashMap<String, String>,
     },
 }
 
@@ -126,7 +110,7 @@ impl ContextServerConfiguration {
         match self {
             ContextServerConfiguration::Custom { command } => Some(command),
             ContextServerConfiguration::Extension { command, .. } => Some(command),
-            ContextServerConfiguration::Remote { .. } => None,
+            ContextServerConfiguration::Http { .. } => None,
         }
     }
 
@@ -163,13 +147,13 @@ impl ContextServerConfiguration {
                     }
                 }
             }
-            ContextServerSettings::Remote {
+            ContextServerSettings::Http {
                 enabled: _,
                 url,
-                auth,
+                headers: auth,
             } => {
                 let url = url::Url::parse(&url).log_err()?;
-                Some(ContextServerConfiguration::Remote { url, auth })
+                Some(ContextServerConfiguration::Http { url, headers: auth })
             }
         }
     }
@@ -419,7 +403,7 @@ impl ContextServerStore {
             let configuration = state.configuration();
 
             self.stop_server(&state.server().id(), cx)?;
-            let new_server = self.create_context_server(id.clone(), configuration.clone(), cx);
+            let new_server = self.create_context_server(id.clone(), configuration.clone(), cx)?;
             self.run_server(new_server, configuration, cx);
         }
         Ok(())
@@ -508,53 +492,18 @@ impl ContextServerStore {
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
-    ) -> Arc<ContextServer> {
-        let project = self.project.upgrade();
-        let mut root_path = None;
-        if let Some(project) = project {
-            let project = project.read(cx);
-            if project.is_local() {
-                if let Some(path) = project.active_project_directory(cx) {
-                    root_path = Some(path);
-                } else {
-                    for worktree in self.worktree_store.read(cx).visible_worktrees(cx) {
-                        if let Some(path) = worktree.read(cx).root_dir() {
-                            root_path = Some(path);
-                            break;
-                        }
-                    }
-                }
-            }
-        };
-
+    ) -> Result<Arc<ContextServer>> {
         if let Some(factory) = self.context_server_factory.as_ref() {
-            return factory(id, configuration);
+            return Ok(factory(id, configuration));
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Remote { url, auth } => {
-                let headers = auth
-                    .as_ref()
-                    .map(|a| headers_from_auth(a))
-                    .unwrap_or_default();
-                match ContextServer::from_url(id.clone(), url, headers, cx) {
-                    Ok(server) => Arc::new(server),
-                    Err(e) => {
-                        log::error!("Failed to create remote context server {}: {}", id, e);
-                        // Return a stub server that will fail to start
-                        Arc::new(ContextServer::stdio(
-                            id,
-                            ContextServerCommand {
-                                path: "/bin/false".into(), // This will fail immediately
-                                args: vec![],
-                                env: Some(collections::HashMap::default()),
-                                timeout: None,
-                            },
-                            None,
-                        ))
-                    }
-                }
-            }
+            ContextServerConfiguration::Http { url, headers } => Ok(Arc::new(ContextServer::http(
+                id.clone(),
+                url,
+                headers.clone(),
+                cx,
+            )?)),
             _ => {
                 let root_path = self
                     .project
@@ -572,11 +521,11 @@ impl ContextServerStore {
                             })
                         })
                     });
-                Arc::new(ContextServer::stdio(
+                Ok(Arc::new(ContextServer::stdio(
                     id,
                     configuration.command().unwrap().clone(),
                     root_path,
-                ))
+                )))
             }
         }
     }
@@ -693,14 +642,16 @@ impl ContextServerStore {
                 let existing_config = state.as_ref().map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) || is_stopped {
                     let config = Arc::new(config);
-                    let server = this.create_context_server(id.clone(), config.clone(), cx);
+                    let server = this.create_context_server(id.clone(), config.clone(), cx)?;
                     servers_to_start.push((server, config));
                     if this.servers.contains_key(&id) {
                         servers_to_stop.insert(id);
                     }
                 }
             }
-        })?;
+
+            anyhow::Ok(())
+        })??;
 
         this.update(cx, |this, cx| {
             for id in servers_to_stop {
@@ -1311,10 +1262,10 @@ mod tests {
             json!({ "code.rs": "" }),
             vec![(
                 SERVER_ID.into(),
-                ContextServerSettings::Remote {
+                ContextServerSettings::Http {
                     enabled: true,
                     url: server_url.to_string(),
-                    auth: None,
+                    headers: Default::default(),
                 },
             )],
         )
@@ -1327,9 +1278,9 @@ mod tests {
                 Box::new(move |id, config| {
                     assert_eq!(id.0.as_ref(), SERVER_ID);
                     match config.as_ref() {
-                        ContextServerConfiguration::Remote { url, auth } => {
+                        ContextServerConfiguration::Http { url, headers } => {
                             assert_eq!(url.as_str(), server_url);
-                            assert!(auth.is_none());
+                            assert!(headers.is_empty());
                         }
                         _ => panic!("Expected remote configuration"),
                     }

@@ -135,15 +135,15 @@ pub enum ContextServerSettings {
         /// are supported.
         settings: serde_json::Value,
     },
-    Remote {
+    Http {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
         /// The URL of the remote context server.
         url: String,
         /// Optional authentication configuration for the remote server.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        auth: Option<settings::ContextServerAuth>,
+        #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+        headers: HashMap<String, String>,
     },
 }
 
@@ -156,9 +156,15 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
             settings::ContextServerSettingsContent::Extension { enabled, settings } => {
                 ContextServerSettings::Extension { enabled, settings }
             }
-            settings::ContextServerSettingsContent::Remote { enabled, url, auth } => {
-                ContextServerSettings::Remote { enabled, url, auth }
-            }
+            settings::ContextServerSettingsContent::Http {
+                enabled,
+                url,
+                headers,
+            } => ContextServerSettings::Http {
+                enabled,
+                url,
+                headers,
+            },
         }
     }
 }
@@ -171,9 +177,15 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
             ContextServerSettings::Extension { enabled, settings } => {
                 settings::ContextServerSettingsContent::Extension { enabled, settings }
             }
-            ContextServerSettings::Remote { enabled, url, auth } => {
-                settings::ContextServerSettingsContent::Remote { enabled, url, auth }
-            }
+            ContextServerSettings::Http {
+                enabled,
+                url,
+                headers,
+            } => settings::ContextServerSettingsContent::Http {
+                enabled,
+                url,
+                headers,
+            },
         }
     }
 }
@@ -190,7 +202,7 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled, .. } => *enabled,
             ContextServerSettings::Extension { enabled, .. } => *enabled,
-            ContextServerSettings::Remote { enabled, .. } => *enabled,
+            ContextServerSettings::Http { enabled, .. } => *enabled,
         }
     }
 
@@ -198,7 +210,7 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
-            ContextServerSettings::Remote { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Http { enabled: e, .. } => *e = enabled,
         }
     }
 }

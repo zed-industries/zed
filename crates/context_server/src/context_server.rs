@@ -18,6 +18,8 @@ use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
 use url::Url;
 
+use crate::transport::HttpTransport;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
 
@@ -54,14 +56,22 @@ impl ContextServer {
         }
     }
 
-    pub fn from_url(
+    pub fn http(
         id: ContextServerId,
         endpoint: &Url,
         headers: HashMap<String, String>,
         cx: &App,
     ) -> Result<Self> {
         let http_client = cx.http_client();
-        let transport = transport::build_transport(http_client, endpoint, headers, cx)?;
+
+        let transport = match endpoint.scheme() {
+            "http" | "https" => {
+                log::info!("Using HTTP transport for {}", endpoint);
+                let transport = HttpTransport::new(http_client, endpoint.to_string(), headers, cx);
+                Arc::new(transport) as _
+            }
+            _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
+        };
         Ok(Self::new(id, transport))
     }
 

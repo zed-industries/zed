@@ -265,15 +265,7 @@ impl Client {
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
-            log::info!("Received raw message: {:?}", &message);
-
-            // Handle ping messages specially - they're not JSON-RPC formatted
-            let trimmed_message = message.trim();
-            if trimmed_message == "ping" {
-                log::info!("Received ping message from context server");
-                continue;
-            }
-
+            log::trace!("recv: {}", &message);
             if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
                 let mut request_handlers = request_handlers.lock();
                 if let Some(handler) = request_handlers.get_mut(request.method) {
@@ -295,18 +287,7 @@ impl Client {
                     handler(notification.params.unwrap_or(Value::Null), cx.clone());
                 }
             } else {
-                // Try to parse each type and log specific errors
-                let request_err = serde_json::from_str::<AnyRequest>(&message).err();
-                let response_err = serde_json::from_str::<AnyResponse>(&message).err();
-                let notification_err = serde_json::from_str::<AnyNotification>(&message).err();
-
-                log::error!(
-                    "Failed to parse message as any JSON-RPC type: {:?}",
-                    &message
-                );
-                log::info!("Request parse error: {:?}", request_err);
-                log::info!("Response parse error: {:?}", response_err);
-                log::info!("Notification parse error: {:?}", notification_err);
+                log::error!("Unhandled JSON from context_server: {}", message);
             }
         }
 
@@ -319,14 +300,7 @@ impl Client {
     /// Continuously reads and logs any error messages from the server.
     async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
-            let err_trimmed = err.trim();
-
-            // Don't treat HTTP errors as fatal - they're often expected for notifications
-            if err_trimmed.contains("HTTP error") {
-                log::info!("context server stderr: {}", err_trimmed);
-            } else if !err_trimmed.is_empty() {
-                log::info!("context server stderr: {}", err_trimmed);
-            }
+            log::debug!("context server stderr: {}", err.trim());
         }
 
         Ok(())

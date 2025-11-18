@@ -716,7 +716,10 @@ impl AgentConfiguration {
                 "Server is stopped.",
             ),
         };
-
+        let is_remote = server_configuration
+            .as_ref()
+            .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
+            .unwrap_or(false);
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
