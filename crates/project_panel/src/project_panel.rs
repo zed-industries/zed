@@ -1048,11 +1048,7 @@ impl ProjectPanel {
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
-                            .action_disabled_when(
-                                !has_clipboard,
-                                "Paste",
-                                Box::new(Paste),
-                            )
+                            .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
                             .separator()
                             .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
                             .action(
@@ -2711,11 +2707,19 @@ impl ProjectPanel {
         // Try local clipboard first, then system clipboard
         let clipboard_clone = self.clipboard.clone();
 
-        if let Some(clipboard_entries) = clipboard_clone.as_ref().filter(|clipboard| !clipboard.items().is_empty()) {
+        if let Some(clipboard_entries) = clipboard_clone
+            .as_ref()
+            .filter(|clipboard| !clipboard.items().is_empty())
+        {
             self.paste_from_local_clipboard(clipboard_entries, window, cx);
         } else if let Some((file_paths, _is_cut)) = self.parse_system_clipboard(cx) {
             if let Some(entry_id) = self.selected_entry_handle(cx).map(|(_, e)| e.id) {
-                self.drop_external_files(&file_paths.iter().map(PathBuf::from).collect::<Vec<_>>(), entry_id, window, cx);
+                self.drop_external_files(
+                    &file_paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
+                    entry_id,
+                    window,
+                    cx,
+                );
             }
         }
     }
