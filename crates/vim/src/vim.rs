@@ -996,21 +996,6 @@ impl Vim {
         })
     }
 
-    fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
-        editor.set_cursor_shape(CursorShape::Bar, cx);
-        editor.set_clip_at_line_ends(false, cx);
-        editor.set_input_enabled(true);
-        editor.set_autoindent(true);
-        editor.selections.set_line_mode(false);
-        editor.unregister_addon::<VimAddon>();
-        editor.set_relative_line_number(None, cx);
-        if let Some(vim) = Vim::globals(cx).focused_vim()
-            && vim.entity_id() == cx.entity().entity_id()
-        {
-            Vim::globals(cx).focused_vim = None;
-        }
-    }
-
     /// Register an action on the editor.
     pub fn action<A: Action>(
         editor: &mut Editor,
@@ -2029,7 +2014,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(cx), cx);
-            editor.set_collapse_matches(Vim::enabled(true));
+            editor.set_collapse_matches(Vim::enabled(cx));
             editor.set_input_enabled(vim.editor_input_enabled(cx));
             editor.set_autoindent(vim.should_autoindent());
             editor
