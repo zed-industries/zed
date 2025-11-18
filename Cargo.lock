@@ -8729,7 +8729,6 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
- "vim",
  "workspace",
  "zed_actions",
 ]

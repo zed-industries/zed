@@ -1002,7 +1002,7 @@ fn register_actions(
         .register_action(open_project_debug_tasks_file)
         .register_action(
             |workspace: &mut Workspace,
-             _: &project_panel::ToggleFocus,
+             _: &zed_actions::project_panel::ToggleFocus,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
