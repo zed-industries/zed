@@ -672,20 +672,25 @@ impl CollabPanel {
             {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
+
+            let should_respect_collapse = query.is_empty();
             let mut collapse_depth = None;
+
             for (idx, channel) in channels.into_iter().enumerate() {
                 let depth = channel.parent_path.len();
 
-                if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
-                    collapse_depth = Some(depth);
-                } else if let Some(collapsed_depth) = collapse_depth {
-                    if depth > collapsed_depth {
-                        continue;
-                    }
-                    if self.is_channel_collapsed(channel.id) {
+                if should_respect_collapse {
+                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
                         collapse_depth = Some(depth);
-                    } else {
-                        collapse_depth = None;
+                    } else if let Some(collapsed_depth) = collapse_depth {
+                        if depth > collapsed_depth {
+                            continue;
+                        }
+                        if self.is_channel_collapsed(channel.id) {
+                            collapse_depth = Some(depth);
+                        } else {
+                            collapse_depth = None;
+                        }
                     }
                 }
 

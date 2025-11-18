@@ -463,8 +463,8 @@ pub fn find_model(
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "No language model with ID {}/{} was available. Available models: {}",
-                selected.model.0,
                 selected.provider.0,
+                selected.model.0,
                 model_registry
                     .available_models(cx)
                     .map(|model| format!("{}/{}", model.provider_id().0, model.id().0))

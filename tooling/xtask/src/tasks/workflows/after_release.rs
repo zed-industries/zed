@@ -1,7 +1,8 @@
 use gh_workflow::*;
 
 use crate::tasks::workflows::{
-    release, runners,
+    release::{self, notify_on_failure},
+    runners,
     steps::{NamedJob, checkout_repo, dependant_job, named},
     vars::{self, StepOutput},
 };
@@ -11,6 +12,12 @@ pub fn after_release() -> Workflow {
     let post_to_discord = post_to_discord(&[&refresh_zed_dev]);
     let publish_winget = publish_winget();
     let create_sentry_release = create_sentry_release();
+    let notify_on_failure = notify_on_failure(&[
+        &refresh_zed_dev,
+        &post_to_discord,
+        &publish_winget,
+        &create_sentry_release,
+    ]);
 
     named::workflow()
         .on(Event::default().release(Release::default().types(vec![ReleaseType::Published])))
@@ -18,6 +25,7 @@ pub fn after_release() -> Workflow {
         .add_job(post_to_discord.name, post_to_discord.job)
         .add_job(publish_winget.name, publish_winget.job)
         .add_job(create_sentry_release.name, create_sentry_release.job)
+        .add_job(notify_on_failure.name, notify_on_failure.job)
 }
 
 fn rebuild_releases_page() -> NamedJob {
@@ -98,14 +106,14 @@ fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
 
 fn publish_winget() -> NamedJob {
     fn set_package_name() -> (Step<Run>, StepOutput) {
-        let step = named::bash(indoc::indoc! {r#"
-            if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-                PACKAGE_NAME=ZedIndustries.Zed.Preview
-            else
-                PACKAGE_NAME=ZedIndustries.Zed
-            fi
+        let step = named::pwsh(indoc::indoc! {r#"
+            if ("${{ github.event.release.prerelease }}" -eq "true") {
+                $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+            } else {
+                $PACKAGE_NAME = "ZedIndustries.Zed"
+            }
 
-            echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+            echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
         "#})
         .id("set-package-name");
 

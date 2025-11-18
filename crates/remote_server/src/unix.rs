@@ -321,6 +321,7 @@ fn init_paths() -> anyhow::Result<()> {
         paths::languages_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
         paths::remote_extensions_dir(),
         paths::remote_extensions_uploads_dir(),
     ]

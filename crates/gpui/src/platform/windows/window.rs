@@ -6,13 +6,12 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{Arc, Once},
+    sync::{Arc, Once, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
 use ::util::ResultExt;
 use anyhow::{Context as _, Result};
-use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -54,6 +53,9 @@ pub struct WindowsWindowState {
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    pub invalidate_devices: Arc<AtomicBool>,
     fullscreen: Option<StyleAndBounds>,
     initial_placement: Option<WindowOpenStatus>,
     hwnd: HWND,
@@ -63,14 +65,14 @@ pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
-    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
+    system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
 }
 
@@ -84,6 +86,7 @@ impl WindowsWindowState {
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
         disable_direct_composition: bool,
+        invalidate_devices: Arc<AtomicBool>,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -139,6 +142,7 @@ impl WindowsWindowState {
             fullscreen,
             initial_placement,
             hwnd,
+            invalidate_devices,
         })
     }
 
@@ -212,6 +216,7 @@ impl WindowsWindowInner {
             context.min_size,
             context.appearance,
             context.disable_direct_composition,
+            context.invalidate_devices.clone(),
         )?);
 
         Ok(Rc::new(Self {
@@ -321,6 +326,14 @@ impl WindowsWindowInner {
         }
         Ok(())
     }
+
+    pub(crate) fn system_settings(&self) -> std::cell::Ref<'_, WindowsSystemSettings> {
+        self.system_settings.borrow()
+    }
+
+    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<'_, WindowsSystemSettings> {
+        self.system_settings.borrow_mut()
+    }
 }
 
 #[derive(Default)]
@@ -349,11 +362,12 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_receiver: flume::Receiver<Runnable>,
+    main_receiver: flume::Receiver<RunnableVariant>,
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
+    invalidate_devices: Arc<AtomicBool>,
 }
 
 impl WindowsWindow {
@@ -373,6 +387,7 @@ impl WindowsWindow {
             platform_window_handle,
             disable_direct_composition,
             directx_devices,
+            invalidate_devices,
         } = creation_info;
         register_window_class(icon);
         let hide_title_bar = params
@@ -433,6 +448,7 @@ impl WindowsWindow {
             appearance,
             disable_direct_composition,
             directx_devices,
+            invalidate_devices,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -453,8 +469,9 @@ impl WindowsWindow {
 
         // Failure to create a `WindowsWindowState` can cause window creation to fail,
         // so check the inner result first.
-        let this = context.inner.take().unwrap()?;
+        let this = context.inner.take().transpose()?;
         let hwnd = creation_result?;
+        let this = this.unwrap();
 
         register_drag_drop(&this)?;
         configure_dwm_dark_mode(hwnd, appearance);

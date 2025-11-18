@@ -2400,10 +2400,6 @@ impl HttpClient for NullHttpClient {
     fn proxy(&self) -> Option<&Url> {
         None
     }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
-    }
 }
 
 /// A mutable reference to an entity owned by GPUI

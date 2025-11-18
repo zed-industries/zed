@@ -1139,6 +1139,26 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
+#[gpui::test]
+async fn test_go_to_definition(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+
+    cx.set_state("const before = 2; console.log(beforˇe)", Mode::Normal);
+    let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
+    let mut go_to_request =
+        cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(url.clone(), def_range),
+            )))
+        });
+
+    cx.simulate_keystrokes("g d");
+    go_to_request.next().await.unwrap();
+    cx.run_until_parked();
+
+    cx.assert_state("const ˇbefore = 2; console.log(before)", Mode::Normal);
+}
+
 #[perf]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
@@ -2364,4 +2384,20 @@ async fn test_wrap_selections_in_tag_line_mode(cx: &mut gpui::TestAppContext) {
         },
         Mode::VisualLine,
     );
+}
+
+#[gpui::test]
+async fn test_repeat_grouping_41735(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    // typically transaction gropuing is disabled in tests, but here we need to test it.
+    cx.update_buffer(|buffer, _cx| buffer.set_group_interval(Duration::from_millis(300)));
+
+    cx.set_shared_state("ˇ").await;
+
+    cx.simulate_shared_keystrokes("i a escape").await;
+    cx.simulate_shared_keystrokes(". . .").await;
+    cx.shared_state().await.assert_eq("ˇaaaa");
+    cx.simulate_shared_keystrokes("u").await;
+    cx.shared_state().await.assert_eq("ˇaaa");
 }

@@ -759,9 +759,13 @@ pub enum SnippetSortOrder {
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
     pub button: Option<bool>,
+    /// Whether to only match on whole words.
     pub whole_word: Option<bool>,
+    /// Whether to match case sensitively.
     pub case_sensitive: Option<bool>,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: Option<bool>,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,

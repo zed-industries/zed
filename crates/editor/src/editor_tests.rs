@@ -32,6 +32,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
+use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
@@ -44,8 +45,8 @@ use project::{
 };
 use serde_json::{self, json};
 use settings::{
-    AllLanguageSettingsContent, IndentGuideBackgroundColoring, IndentGuideColoring,
-    ProjectSettingsContent,
+    AllLanguageSettingsContent, EditorSettingsContent, IndentGuideBackgroundColoring,
+    IndentGuideColoring, ProjectSettingsContent, SearchSettingsContent,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -8314,8 +8315,15 @@ async fn test_add_selection_above_below_multi_cursor_existing_state(cx: &mut Tes
 #[gpui::test]
 async fn test_select_next(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Enable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(true);
+        settings.search = Some(search_settings);
+    });
+
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
@@ -8346,13 +8354,40 @@ async fn test_select_next(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("abc\n«ˇabc» «ˇabc»\ndefabc\nabc");
+
+    // Test case sensitivity
+    cx.set_state("«ˇfoo»\nFOO\nFoo\nfoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_next(&SelectNext::default(), window, cx).unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
+
+    // Disable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(false);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("«ˇfoo»\nFOO\nFoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_next(&SelectNext::default(), window, cx).unwrap();
+        e.select_next(&SelectNext::default(), window, cx).unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\n«ˇFoo»");
 }
 
 #[gpui::test]
 async fn test_select_all_matches(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Enable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(true);
+        settings.search = Some(search_settings);
+    });
 
     // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
@@ -8398,6 +8433,26 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
         e.set_clip_at_line_ends(false, cx);
     });
     cx.assert_editor_state("«abcˇ»");
+
+    // Test case sensitivity
+    cx.set_state("fˇoo\nFOO\nFoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
+    });
+    cx.assert_editor_state("«fooˇ»\nFOO\nFoo");
+
+    // Disable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(false);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("fˇoo\nFOO\nFoo");
+    cx.update_editor(|e, window, cx| {
+        e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
+    });
+    cx.assert_editor_state("«fooˇ»\n«FOOˇ»\n«Fooˇ»");
 }
 
 #[gpui::test]
@@ -8769,8 +8824,15 @@ let foo = «2ˇ»;"#,
 #[gpui::test]
 async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Enable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(true);
+        settings.search = Some(search_settings);
+    });
+
     cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
@@ -8795,6 +8857,32 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«ˇabc»\n«ˇabc» «ˇabc»\ndef«ˇabc»\n«ˇabc»");
+
+    // Test case sensitivity
+    cx.set_state("foo\nFOO\nFoo\n«ˇfoo»");
+    cx.update_editor(|e, window, cx| {
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\nFOO\nFoo\n«ˇfoo»");
+
+    // Disable case sensitive search.
+    update_test_editor_settings(&mut cx, |settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.case_sensitive = Some(false);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("foo\nFOO\n«ˇFoo»");
+    cx.update_editor(|e, window, cx| {
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+        e.select_previous(&SelectPrevious::default(), window, cx)
+            .unwrap();
+    });
+    cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\n«ˇFoo»");
 }
 
 #[gpui::test]
@@ -11325,6 +11413,53 @@ async fn test_snippet_indentation(cx: &mut TestAppContext) {
          *•
          */
         ˇ"});
+}
+
+#[gpui::test]
+async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, _, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: vec!["multi word".to_string()],
+                    body: "this is many words".to_string(),
+                    description: Some("description".to_string()),
+                    name: "multi-word snippet test".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                );
+            });
+        })
+    });
+
+    for (input_to_simulate, should_match_snippet) in [
+        ("m", true),
+        ("m ", true),
+        ("m w", true),
+        ("aa m w", true),
+        ("aa m g", false),
+    ] {
+        cx.set_state("ˇ");
+        cx.simulate_input(input_to_simulate); // fails correctly
+
+        cx.update_editor(|editor, _, _| {
+            let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu.borrow()
+            else {
+                assert!(!should_match_snippet); // no completions! don't even show the menu
+                return;
+            };
+            assert!(context_menu.visible());
+            let completions = context_menu.completions.borrow();
+
+            assert_eq!(!completions.is_empty(), should_match_snippet);
+        });
+    }
 }
 
 #[gpui::test]
@@ -17282,6 +17417,41 @@ fn test_split_words() {
     assert_eq!(split(":do_the_thing"), &[":", "do_", "the_", "thing"]);
 }
 
+#[test]
+fn test_split_words_for_snippet_prefix() {
+    fn split(text: &str) -> Vec<&str> {
+        snippet_candidate_suffixes(text, |c| c.is_alphanumeric() || c == '_').collect()
+    }
+
+    assert_eq!(split("HelloWorld"), &["HelloWorld"]);
+    assert_eq!(split("hello_world"), &["hello_world"]);
+    assert_eq!(split("_hello_world_"), &["_hello_world_"]);
+    assert_eq!(split("Hello_World"), &["Hello_World"]);
+    assert_eq!(split("helloWOrld"), &["helloWOrld"]);
+    assert_eq!(split("helloworld"), &["helloworld"]);
+    assert_eq!(
+        split("this@is!@#$^many   . symbols"),
+        &[
+            "symbols",
+            " symbols",
+            ". symbols",
+            " . symbols",
+            "  . symbols",
+            "   . symbols",
+            "many   . symbols",
+            "^many   . symbols",
+            "$^many   . symbols",
+            "#$^many   . symbols",
+            "@#$^many   . symbols",
+            "!@#$^many   . symbols",
+            "is!@#$^many   . symbols",
+            "@is!@#$^many   . symbols",
+            "this@is!@#$^many   . symbols",
+        ],
+    );
+    assert_eq!(split("a.s"), &["s", ".s", "a.s"]);
+}
+
 #[gpui::test]
 async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -17332,6 +17502,89 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
                 console.logˇ('test')
             }"},
     );
+}
+
+#[gpui::test]
+async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    language_registry.add(markdown_lang());
+    language_registry.add(rust_lang());
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local(
+            indoc! {"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }
+            }
+            ```
+        "},
+            cx,
+        );
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(Some(markdown_lang()), cx);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+    cx.executor().run_until_parked();
+    _ = editor.update(cx, |editor, window, cx| {
+        // Case 1: Test outer enclosing brackets
+        select_ranges(
+            editor,
+            &indoc! {"
+                ```rs
+                impl Worktree {
+                    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                    }
+                }ˇ
+                ```
+            "},
+            window,
+            cx,
+        );
+        editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, window, cx);
+        assert_text_with_selections(
+            editor,
+            &indoc! {"
+                ```rs
+                impl Worktree ˇ{
+                    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                    }
+                }
+                ```
+            "},
+            cx,
+        );
+        // Case 2: Test inner enclosing brackets
+        select_ranges(
+            editor,
+            &indoc! {"
+                ```rs
+                impl Worktree {
+                    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                    }ˇ
+                }
+                ```
+            "},
+            window,
+            cx,
+        );
+        editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, window, cx);
+        assert_text_with_selections(
+            editor,
+            &indoc! {"
+                ```rs
+                impl Worktree {
+                    pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{
+                    }
+                }
+                ```
+            "},
+            cx,
+        );
+    });
 }
 
 #[gpui::test]
@@ -22291,7 +22544,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
+        "\n\naaaa\nBbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -22300,7 +22553,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
+        "\n\naaaa\nBbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
@@ -25533,6 +25786,195 @@ pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorL
     });
 }
 
+#[gpui::test]
+async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "unsafe".into(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 0,
+                                character: 9,
+                            },
+                            end: lsp::Position {
+                                line: 0,
+                                character: 11,
+                            },
+                        },
+                        new_text: "unsafe".to_string(),
+                    })),
+                    insert_text_mode: Some(lsp::InsertTextMode::AS_IS),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.update_editor(|editor, _, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![
+                        Arc::new(project::snippet_provider::Snippet {
+                            prefix: vec![
+                                "unlimited word count".to_string(),
+                                "unlimit word count".to_string(),
+                                "unlimited unknown".to_string(),
+                            ],
+                            body: "this is many words".to_string(),
+                            description: Some("description".to_string()),
+                            name: "multi-word snippet test".to_string(),
+                        }),
+                        Arc::new(project::snippet_provider::Snippet {
+                            prefix: vec!["unsnip".to_string(), "@few".to_string()],
+                            body: "fewer words".to_string(),
+                            description: Some("alt description".to_string()),
+                            name: "other name".to_string(),
+                        }),
+                        Arc::new(project::snippet_provider::Snippet {
+                            prefix: vec!["ab aa".to_string()],
+                            body: "abcd".to_string(),
+                            description: None,
+                            name: "alphabet".to_string(),
+                        }),
+                    ],
+                );
+            });
+        })
+    });
+
+    let get_completions = |cx: &mut EditorLspTestContext| {
+        cx.update_editor(|editor, _, _| match &*editor.context_menu.borrow() {
+            Some(CodeContextMenu::Completions(context_menu)) => {
+                let entries = context_menu.entries.borrow();
+                entries
+                    .iter()
+                    .map(|entry| entry.string.clone())
+                    .collect_vec()
+            }
+            _ => vec![],
+        })
+    };
+
+    // snippets:
+    //  @foo
+    //  foo bar
+    //
+    // when typing:
+    //
+    // when typing:
+    //  - if I type a symbol "open the completions with snippets only"
+    //  - if I type a word character "open the completions menu" (if it had been open snippets only, clear it out)
+    //
+    // stuff we need:
+    //  - filtering logic change?
+    //  - remember how far back the completion started.
+
+    let test_cases: &[(&str, &[&str])] = &[
+        (
+            "un",
+            &[
+                "unsafe",
+                "unlimit word count",
+                "unlimited unknown",
+                "unlimited word count",
+                "unsnip",
+            ],
+        ),
+        (
+            "u ",
+            &[
+                "unlimit word count",
+                "unlimited unknown",
+                "unlimited word count",
+            ],
+        ),
+        ("u a", &["ab aa", "unsafe"]), // unsAfe
+        (
+            "u u",
+            &[
+                "unsafe",
+                "unlimit word count",
+                "unlimited unknown", // ranked highest among snippets
+                "unlimited word count",
+                "unsnip",
+            ],
+        ),
+        ("uw c", &["unlimit word count", "unlimited word count"]),
+        (
+            "u w",
+            &[
+                "unlimit word count",
+                "unlimited word count",
+                "unlimited unknown",
+            ],
+        ),
+        ("u w ", &["unlimit word count", "unlimited word count"]),
+        (
+            "u ",
+            &[
+                "unlimit word count",
+                "unlimited unknown",
+                "unlimited word count",
+            ],
+        ),
+        ("wor", &[]),
+        ("uf", &["unsafe"]),
+        ("af", &["unsafe"]),
+        ("afu", &[]),
+        (
+            "ue",
+            &["unsafe", "unlimited unknown", "unlimited word count"],
+        ),
+        ("@", &["@few"]),
+        ("@few", &["@few"]),
+        ("@ ", &[]),
+        ("a@", &["@few"]),
+        ("a@f", &["@few", "unsafe"]),
+        ("a@fw", &["@few"]),
+        ("a", &["ab aa", "unsafe"]),
+        ("aa", &["ab aa"]),
+        ("aaa", &["ab aa"]),
+        ("ab", &["ab aa"]),
+        ("ab ", &["ab aa"]),
+        ("ab a", &["ab aa", "unsafe"]),
+        ("ab ab", &["ab aa"]),
+        ("ab ab aa", &["ab aa"]),
+    ];
+
+    for &(input_to_simulate, expected_completions) in test_cases {
+        cx.set_state("fn a() { ˇ }\n");
+        for c in input_to_simulate.split("") {
+            cx.simulate_input(c);
+            cx.run_until_parked();
+        }
+        let expected_completions = expected_completions
+            .iter()
+            .map(|s| s.to_string())
+            .collect_vec();
+        assert_eq!(
+            get_completions(&mut cx),
+            expected_completions,
+            "< actual / expected >, input = {input_to_simulate:?}",
+        );
+    }
+}
+
 /// Handle completion request passing a marked string specifying where the completion
 /// should be triggered from using '|' character, what range should be replaced, and what completions
 /// should be returned using '<' and '>' to delimit the range.
@@ -25715,6 +26157,17 @@ pub(crate) fn update_test_project_settings(
             store.update_user_settings(cx, |settings| f(&mut settings.project));
         });
     });
+}
+
+pub(crate) fn update_test_editor_settings(
+    cx: &mut TestAppContext,
+    f: impl Fn(&mut EditorSettingsContent),
+) {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| f(&mut settings.editor));
+        })
+    })
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
@@ -27007,6 +27460,60 @@ async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_multi_selection_copy_with_newline_between_copied_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇline1\nˇline2\nˇline3\n");
+
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string));
+
+    assert_eq!(
+        clipboard_text,
+        Some("line1\nline2\nline3\n".to_string()),
+        "Copying multiple lines should include a single newline between lines"
+    );
+
+    cx.set_state("lineA\nˇ");
+
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+
+    cx.assert_editor_state("lineA\nline1\nline2\nline3\nˇ");
+}
+
+#[gpui::test]
+async fn test_multi_selection_cut_with_newline_between_copied_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇline1\nˇline2\nˇline3\n");
+
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string));
+
+    assert_eq!(
+        clipboard_text,
+        Some("line1\nline2\nline3\n".to_string()),
+        "Copying multiple lines should include a single newline between lines"
+    );
+
+    cx.set_state("lineA\nˇ");
+
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+
+    cx.assert_editor_state("lineA\nline1\nline2\nline3\nˇ");
+}
+
+#[gpui::test]
 async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -27354,4 +27861,214 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
 
     _move(Direction::Prev, 2, &mut cx).await;
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
+}
+
+#[gpui::test]
+async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("1\n2\n3\n", vec![Point::row_range(0..3)]),
+                ("1\n2\n3\n", vec![Point::row_range(0..3)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|mb, _| mb.excerpt_buffer_ids());
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ1
+        2
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        "});
+
+    // Scenario 1: Unfolded buffers, position cursor on "2", select all matches, then insert
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([2..3]);
+        });
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        Xˇ
+        3
+        [EXCERPT]
+        1
+        Xˇ
+        3
+        "});
+
+    // Scenario 2: Select "2", then fold second buffer before insertion
+    cx.update_multibuffer(|mb, cx| {
+        for buffer_id in buffer_ids.iter() {
+            let buffer = mb.buffer(*buffer_id).unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, cx);
+            });
+        }
+    });
+
+    // Select "2" and select all matches
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([2..3]);
+        });
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+
+    // Fold second buffer - should remove selections from folded buffer
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        [EXCERPT]
+        [FOLDED]
+        "});
+
+    // Insert text - should only affect first buffer
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("Y", window, cx);
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor.unfold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        Yˇ
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        "});
+
+    // Scenario 3: Select "2", then fold first buffer before insertion
+    cx.update_multibuffer(|mb, cx| {
+        for buffer_id in buffer_ids.iter() {
+            let buffer = mb.buffer(*buffer_id).unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, cx);
+            });
+        }
+    });
+
+    // Select "2" and select all matches
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([2..3]);
+        });
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+
+    // Fold first buffer - should remove selections from folded buffer
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffer(buffer_ids[0], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        "});
+
+    // Insert text - should only affect second buffer
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("Z", window, cx);
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor.unfold_buffer(buffer_ids[0], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2
+        3
+        [EXCERPT]
+        1
+        Zˇ
+        3
+        "});
+
+    // Edge case scenario: fold all buffers, then try to insert
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffer(buffer_ids[0], cx);
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "});
+
+    // Insert should work via default selection
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("W", window, cx);
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor.unfold_buffer(buffer_ids[0], cx);
+        editor.unfold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        Wˇ1
+        2
+        3
+        [EXCERPT]
+        1
+        Z
+        3
+        "});
 }

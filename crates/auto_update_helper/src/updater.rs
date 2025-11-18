@@ -1,6 +1,6 @@
 use std::{
-    cell::LazyCell,
     path::Path,
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 
@@ -13,8 +13,8 @@ use windows::Win32::{
 use crate::windows_impl::WM_JOB_UPDATED;
 
 pub(crate) struct Job {
-    pub apply: Box<dyn Fn(&Path) -> Result<()>>,
-    pub rollback: Box<dyn Fn(&Path) -> Result<()>>,
+    pub apply: Box<dyn Fn(&Path) -> Result<()> + Send + Sync>,
+    pub rollback: Box<dyn Fn(&Path) -> Result<()> + Send + Sync>,
 }
 
 impl Job {
@@ -154,10 +154,8 @@ impl Job {
     }
 }
 
-// app is single threaded
 #[cfg(not(test))]
-#[allow(clippy::declare_interior_mutable_const)]
-pub(crate) const JOBS: LazyCell<[Job; 22]> = LazyCell::new(|| {
+pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
     fn p(value: &str) -> &Path {
         Path::new(value)
     }
@@ -206,10 +204,8 @@ pub(crate) const JOBS: LazyCell<[Job; 22]> = LazyCell::new(|| {
     ]
 });
 
-// app is single threaded
 #[cfg(test)]
-#[allow(clippy::declare_interior_mutable_const)]
-pub(crate) const JOBS: LazyCell<[Job; 9]> = LazyCell::new(|| {
+pub(crate) static JOBS: LazyLock<[Job; 9]> = LazyLock::new(|| {
     fn p(value: &str) -> &Path {
         Path::new(value)
     }

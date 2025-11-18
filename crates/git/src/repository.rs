@@ -2045,7 +2045,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
-        OsString::from("--no-renames"),
+        OsString::from("--find-renames"),
         OsString::from("-z"),
     ];
     args.extend(
@@ -2387,22 +2387,37 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
             continue;
         }
         let mut fields = line.split('\x00');
-        let is_current_branch = fields.next().context("no HEAD")? == "*";
-        let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
-        let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
-        let ref_name = fields.next().context("no refname")?.to_string().into();
-        let upstream_name = fields.next().context("no upstream")?.to_string();
-        let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
-        let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
-        let author_name = fields.next().context("no authorname")?.to_string().into();
-        let subject: SharedString = fields
-            .next()
-            .context("no contents:subject")?
-            .to_string()
-            .into();
+        let Some(head) = fields.next() else {
+            continue;
+        };
+        let Some(head_sha) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(parent_sha) = fields.next().map(|f| f.to_string()) else {
+            continue;
+        };
+        let Some(ref_name) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(upstream_name) = fields.next().map(|f| f.to_string()) else {
+            continue;
+        };
+        let Some(upstream_tracking) = fields.next().and_then(|f| parse_upstream_track(f).ok())
+        else {
+            continue;
+        };
+        let Some(commiterdate) = fields.next().and_then(|f| f.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(author_name) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(subject) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
 
         branches.push(Branch {
-            is_head: is_current_branch,
+            is_head: head == "*",
             ref_name,
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
@@ -2741,6 +2756,44 @@ mod tests {
                     has_parent: false,
                 })
             }]
+        )
+    }
+
+    #[test]
+    fn test_branches_parsing_containing_refs_with_missing_fields() {
+        #[allow(clippy::octal_escapes)]
+        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0refs/heads/broken\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\0\01762948725\0Zed\0Add feature\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\0\01762948695\0Zed\0Initial commit\n";
+
+        let branches = parse_branch_input(input).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert_eq!(
+            branches,
+            vec![
+                Branch {
+                    is_head: false,
+                    ref_name: "refs/heads/dev".into(),
+                    upstream: None,
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "eb0cae33272689bd11030822939dd2701c52f81e".into(),
+                        subject: "Add feature".into(),
+                        commit_timestamp: 1762948725,
+                        author_name: SharedString::new("Zed"),
+                        has_parent: true,
+                    })
+                },
+                Branch {
+                    is_head: true,
+                    ref_name: "refs/heads/main".into(),
+                    upstream: None,
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "895951d681e5561478c0acdd6905e8aacdfd2249".into(),
+                        subject: "Initial commit".into(),
+                        commit_timestamp: 1762948695,
+                        author_name: SharedString::new("Zed"),
+                        has_parent: false,
+                    })
+                }
+            ]
         )
     }
 

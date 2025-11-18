@@ -1586,12 +1586,11 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         matches: &[Range<Anchor>],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
-        let range = self.range_for_match(&matches[index], collapse);
+        let range = self.range_for_match(&matches[index]);
         let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
             Autoscroll::center()
         } else {
@@ -1795,6 +1794,14 @@ impl SearchableItem for Editor {
 
     fn search_bar_visibility_changed(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {
         self.expect_bounds_change = self.last_bounds;
+    }
+
+    fn set_search_is_case_sensitive(
+        &mut self,
+        case_sensitive: Option<bool>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.select_next_is_case_sensitive = case_sensitive;
     }
 }
 

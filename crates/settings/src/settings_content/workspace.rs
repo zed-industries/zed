@@ -512,6 +512,23 @@ impl OnLastWindowClosed {
 
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct ProjectPanelAutoOpenSettings {
+    /// Whether to automatically open newly created files in the editor.
+    ///
+    /// Default: true
+    pub on_create: Option<bool>,
+    /// Whether to automatically open files after pasting or duplicating them.
+    ///
+    /// Default: true
+    pub on_paste: Option<bool>,
+    /// Whether to automatically open files dropped from external sources.
+    ///
+    /// Default: true
+    pub on_drop: Option<bool>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///
@@ -590,10 +607,12 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
-    /// Whether to automatically open files when pasting them in the project panel.
+    /// Settings for automatically opening files.
+    pub auto_open: Option<ProjectPanelAutoOpenSettings>,
+    /// How to order sibling entries in the project panel.
     ///
-    /// Default: true
-    pub open_file_on_paste: Option<bool>,
+    /// Default: directories_first
+    pub sort_mode: Option<ProjectPanelSortMode>,
 }
 
 #[derive(
@@ -617,6 +636,31 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortMode {
+    /// Show directories first, then files
+    #[default]
+    DirectoriesFirst,
+    /// Mix directories and files together
+    Mixed,
+    /// Show files first, then directories
+    FilesFirst,
 }
 
 #[skip_serializing_none]
