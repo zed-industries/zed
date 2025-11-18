@@ -209,8 +209,6 @@ impl Search {
                         let (sorted_search_results_tx, sorted_search_results_rx) = unbounded();
 
                         let (input_paths_tx, input_paths_rx) = unbounded();
-                        // glob: src/rust/
-                        // path: src/
                         let tasks = vec![
                             cx.spawn(Self::provide_search_paths(
                                 std::mem::take(worktrees),
