@@ -220,7 +220,7 @@ impl ContextServerStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_maintain_server_loop(
-        context_server_factory: ContextServerFactory,
+        context_server_factory: Option<ContextServerFactory>,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
         weak_project: WeakEntity<Project>,
@@ -228,7 +228,7 @@ impl ContextServerStore {
     ) -> Self {
         Self::new_internal(
             true,
-            Some(context_server_factory),
+            context_server_factory.into(),
             registry,
             worktree_store,
             weak_project,
@@ -398,17 +398,6 @@ impl ContextServerStore {
         result
     }
 
-    pub fn restart_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
-        if let Some(state) = self.servers.get(id) {
-            let configuration = state.configuration();
-
-            self.stop_server(&state.server().id(), cx)?;
-            let new_server = self.create_context_server(id.clone(), configuration.clone(), cx)?;
-            self.run_server(new_server, configuration, cx);
-        }
-        Ok(())
-    }
-
     fn run_server(
         &mut self,
         server: Arc<ContextServer>,
@@ -498,9 +487,13 @@ impl ContextServerStore {
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Http { url, headers } => {
-                Ok(Arc::new(ContextServer::http(id, url, headers.clone(), cx)?))
-            }
+            ContextServerConfiguration::Http { url, headers } => Ok(Arc::new(ContextServer::http(
+                id,
+                url,
+                headers.clone(),
+                cx.http_client(),
+                cx.background_executor().clone(),
+            )?)),
             _ => {
                 let root_path = self
                     .project
@@ -674,6 +667,7 @@ mod tests {
     };
     use context_server::test::create_fake_transport;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
+    use http_client::{FakeHttpClient, Response};
     use serde_json::json;
     use std::{cell::RefCell, path::PathBuf, rc::Rc};
     use util::path;
@@ -914,12 +908,12 @@ mod tests {
         });
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
-                Box::new(move |id, _| {
+                Some(Box::new(move |id, _| {
                     Arc::new(ContextServer::new(
                         id.clone(),
                         Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
                     ))
-                }),
+                })),
                 registry.clone(),
                 project.read(cx).worktree_store(),
                 project.downgrade(),
@@ -1150,12 +1144,12 @@ mod tests {
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
-                Box::new(move |id, _| {
+                Some(Box::new(move |id, _| {
                     Arc::new(ContextServer::new(
                         id.clone(),
                         Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
                     ))
-                }),
+                })),
                 registry.clone(),
                 project.read(cx).worktree_store(),
                 project.downgrade(),
@@ -1268,24 +1262,35 @@ mod tests {
         )
         .await;
 
-        let executor = cx.executor();
+        let client = FakeHttpClient::create(|_| async move {
+            use http_client::AsyncBody;
+
+            let response = Response::builder()
+                .status(200)
+                .header("Content-Type", "application/json")
+                .body(AsyncBody::from(
+                    serde_json::to_string(&json!({
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "serverInfo": {
+                                "name": "test-server",
+                                "version": "1.0.0"
+                            }
+                        }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap();
+            Ok(response)
+        });
+        cx.update(|cx| cx.set_http_client(client));
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
-                Box::new(move |id, config| {
-                    assert_eq!(id.0.as_ref(), SERVER_ID);
-                    match config.as_ref() {
-                        ContextServerConfiguration::Http { url, headers } => {
-                            assert_eq!(url.as_str(), server_url);
-                            assert!(headers.is_empty());
-                        }
-                        _ => panic!("Expected remote configuration"),
-                    }
-                    Arc::new(ContextServer::new(
-                        id.clone(),
-                        Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
-                    ))
-                }),
+                None,
                 registry.clone(),
                 project.read(cx).worktree_store(),
                 project.downgrade(),

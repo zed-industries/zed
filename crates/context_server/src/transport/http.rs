@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, executor};
 use gpui::{App, BackgroundExecutor};
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
@@ -25,8 +25,6 @@ pub struct HttpTransport {
     response_rx: channel::Receiver<String>,
     error_tx: channel::Sender<String>,
     error_rx: channel::Receiver<String>,
-    // Track if we've sent the initialize response
-    initialized: Arc<SyncMutex<bool>>,
     // Authentication headers to include in requests
     headers: HashMap<String, String>,
 }
@@ -36,29 +34,26 @@ impl HttpTransport {
         http_client: Arc<dyn HttpClient>,
         endpoint: String,
         headers: HashMap<String, String>,
-        cx: &App,
+        executor: BackgroundExecutor,
     ) -> Self {
         let (response_tx, response_rx) = channel::unbounded();
         let (error_tx, error_rx) = channel::unbounded();
 
         Self {
             http_client,
-            executor: cx.background_executor().clone(),
+            executor,
             endpoint,
             session_id: Arc::new(SyncMutex::new(None)),
             response_tx,
             response_rx,
             error_tx,
             error_rx,
-            initialized: Arc::new(SyncMutex::new(false)),
             headers,
         }
     }
 
     /// Send a message and handle the response based on content type
     async fn send_message(&self, message: String) -> Result<()> {
-        // Check if this is an initialize request
-        let is_initialize = message.contains("\"method\":\"initialize\"");
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
 
@@ -76,10 +71,8 @@ impl HttpTransport {
         }
 
         // Add session ID if we have one (except for initialize)
-        if !is_initialize {
-            if let Some(ref session_id) = *self.session_id.lock() {
-                request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
-            }
+        if let Some(ref session_id) = *self.session_id.lock() {
+            request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
         }
 
         let request = request_builder.body(AsyncBody::from(message.into_bytes()))?;
@@ -122,11 +115,6 @@ impl HttpTransport {
                     Some(ct) if ct.starts_with(EVENT_STREAM_MIME_TYPE) => {
                         // SSE stream - set up streaming
                         self.setup_sse_stream(response).await?;
-
-                        // Mark as initialized after setting up the first SSE stream
-                        if is_initialize {
-                            *self.initialized.lock() = true;
-                        }
                     }
                     _ => {
                         // For notifications, 202 Accepted with no content type is ok

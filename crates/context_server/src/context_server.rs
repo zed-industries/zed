@@ -7,6 +7,7 @@ pub mod transport;
 pub mod types;
 
 use collections::HashMap;
+use http_client::HttpClient;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, path::PathBuf};
@@ -60,14 +61,14 @@ impl ContextServer {
         id: ContextServerId,
         endpoint: &Url,
         headers: HashMap<String, String>,
-        cx: &App,
+        http_client: Arc<dyn HttpClient>,
+        executor: gpui::BackgroundExecutor,
     ) -> Result<Self> {
-        let http_client = cx.http_client();
-
         let transport = match endpoint.scheme() {
             "http" | "https" => {
                 log::info!("Using HTTP transport for {}", endpoint);
-                let transport = HttpTransport::new(http_client, endpoint.to_string(), headers, cx);
+                let transport =
+                    HttpTransport::new(http_client, endpoint.to_string(), headers, executor);
                 Arc::new(transport) as _
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
