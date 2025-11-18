@@ -4350,8 +4350,11 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{TestAppContext, VisualTestContext, size};
+    use crate::{
+        Member,
+        item::test::{TestItem, TestProjectItem},
+    };
+    use gpui::{Axis, TestAppContext, VisualTestContext, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6973,6 +6976,148 @@ mod tests {
             pane.swap_item_right(&Default::default(), window, cx);
         });
         assert_item_labels(&pane, ["A", "C*", "B"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_split_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        pane.update(cx, |pane, cx| {
+            pane.split(SplitDirection::Right, &SplitBehavior::Empty, cx);
+        });
+        cx.executor().run_until_parked();
+        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&right_pane, [], cx);
+
+        // TODO better way to check right-of-direction?
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(axis) => {
+                assert_eq!(axis.axis, Axis::Horizontal);
+                assert_eq!(axis.members.len(), 2);
+                if let (Member::Pane(p), Member::Pane(rp)) = (&axis.members[0], &axis.members[1]) {
+                    assert_eq!(p.entity_id(), pane.entity_id());
+                    assert_eq!(rp.entity_id(), right_pane.entity_id());
+                } else {
+                    panic!("expected two panes");
+                }
+            }
+            Member::Pane(_) => {
+                panic!("should be axis after split");
+            }
+        });
+
+        add_labeled_item(&right_pane, "B", false, cx);
+        assert_item_labels(&right_pane, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_split_clone(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item(&pane, "A", false, cx);
+        pane.update(cx, |pane, cx| {
+            pane.split(SplitDirection::Right, &SplitBehavior::Clone, cx);
+        });
+        cx.run_until_parked();
+        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&right_pane, ["A*"], cx);
+
+        // TODO better way to check right-of-direction?
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(axis) => {
+                assert_eq!(axis.axis, Axis::Horizontal);
+                assert_eq!(axis.members.len(), 2);
+                if let (Member::Pane(p), Member::Pane(rp)) = (&axis.members[0], &axis.members[1]) {
+                    assert_eq!(p.entity_id(), pane.entity_id());
+                    assert_eq!(rp.entity_id(), right_pane.entity_id());
+                } else {
+                    panic!("expected two panes");
+                }
+            }
+            Member::Pane(_) => {
+                panic!("should be axis after split");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_split_move(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        pane.update(cx, |pane, cx| {
+            pane.split(SplitDirection::Right, &SplitBehavior::Move, cx);
+        });
+        cx.run_until_parked();
+        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&right_pane, ["B*"], cx);
+
+        // TODO better way to check right-of-direction?
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(axis) => {
+                assert_eq!(axis.axis, Axis::Horizontal);
+                assert_eq!(axis.members.len(), 2);
+                if let (Member::Pane(p), Member::Pane(rp)) = (&axis.members[0], &axis.members[1]) {
+                    assert_eq!(p.entity_id(), pane.entity_id());
+                    assert_eq!(rp.entity_id(), right_pane.entity_id());
+                } else {
+                    panic!("expected two panes");
+                }
+            }
+            Member::Pane(_) => {
+                panic!("should be axis after split");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_split_move_on_single_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item(&pane, "A", false, cx);
+        pane.update(cx, |pane, cx| {
+            pane.split(SplitDirection::Right, &SplitBehavior::Move, cx);
+        });
+        cx.run_until_parked();
+        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // NOTE single pane means just getting the same pane again
+        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&right_pane, ["A*"], cx);
+        assert_eq!(pane.entity_id(), right_pane.entity_id());
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(_) => panic!("expected a pane"),
+            Member::Pane(p) => assert_eq!(p.entity_id(), pane.entity_id()),
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {
