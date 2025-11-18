@@ -1894,6 +1894,10 @@ mod tests {
     async fn test_clean_up_diff(cx: &mut TestAppContext) {
         init_test(cx);
 
+        // Ensure test isolation from ZED_PREDICT_EDITS_URL environment variable
+        let original_predict_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
+        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+
         assert_eq!(
             apply_edit_prediction(
                 indoc! {"
@@ -1946,6 +1950,11 @@ mod tests {
                 }
             "},
         );
+
+        // Restore original environment variable
+        if let Some(url) = original_predict_url {
+            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+        }
     }
 
     #[gpui::test]
@@ -2120,6 +2129,10 @@ mod tests {
     async fn test_data_collection_status_changes_on_move(cx: &mut TestAppContext) {
         init_test(cx);
 
+        // Ensure test isolation from ZED_PREDICT_EDITS_URL environment variable
+        let original_predict_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
+        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/open_source_worktree"),
@@ -2178,11 +2191,20 @@ mod tests {
             captured_request.lock().clone().unwrap().can_collect_data,
             false
         );
+
+        // Restore original environment variable
+        if let Some(url) = original_predict_url {
+            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+        }
     }
 
     #[gpui::test]
     async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut TestAppContext) {
         init_test(cx);
+
+        // Ensure test isolation from ZED_PREDICT_EDITS_URL environment variable
+        let original_predict_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
+        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -2255,6 +2277,11 @@ mod tests {
             captured_request.lock().clone().unwrap().can_collect_data,
             true
         );
+
+        // Restore original environment variable
+        if let Some(url) = original_predict_url {
+            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -2450,6 +2477,102 @@ mod tests {
         });
 
         // Restore original environment variable
+        if let Some(url) = original_url {
+            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unauthenticated_user_with_custom_url_succeeds(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Save and set ZED_PREDICT_EDITS_URL for test
+        let original_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
+        unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", "http://localhost:9999/test"); }
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/test/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Create unauthenticated client with mock HTTP client that handles custom URL
+        let http_client = FakeHttpClient::create(|req| async move {
+            if req.uri().to_string().contains("/test") {
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&PredictEditsResponse {
+                            request_id: Uuid::new_v4().to_string(),
+                            output_excerpt: indoc! {"
+                                ```main.rs
+                                <|start_of_file|>
+                                <|editable_region_start|>
+                                fn main() { println!(\"Hello\"); }
+                                <|editable_region_end|>
+                                ```"
+                            }
+                            .to_string(),
+                        })
+                        .unwrap()
+                        .into(),
+                    )
+                    .unwrap())
+            } else {
+                Ok(http_client::Response::builder()
+                    .status(404)
+                    .body("Not Found".into())
+                    .unwrap())
+            }
+        });
+
+        let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+        cx.update(|cx| {
+            RefreshLlmTokenListener::register(client.clone(), cx);
+        });
+
+        // Create zeta without authentication
+        let zeta = cx.new(|cx| {
+            let mut zeta = Zeta::new(client, project.read(cx).user_store(), cx);
+            let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
+            for worktree in worktrees {
+                let worktree_id = worktree.read(cx).id();
+                zeta.license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
+            }
+            zeta
+        });
+
+        // Create provider
+        let provider = cx.new(|cx| {
+            ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx)
+        });
+
+        // Attempt to refresh - should succeed with custom URL
+        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)));
+        provider.update(cx, |provider, cx| {
+            provider.refresh(buffer.clone(), cursor, false, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify that pending completions were created
+        provider.read_with(cx, |provider, _| {
+            assert!(
+                !provider.pending_completions.is_empty(),
+                "Expected pending completions for unauthenticated user with custom URL"
+            );
+        });
+
+        // Restore original environment variable
+        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
         if let Some(url) = original_url {
             unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
         }
