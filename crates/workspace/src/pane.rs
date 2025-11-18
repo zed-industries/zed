@@ -4347,7 +4347,7 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZero;
+    use std::{iter::zip, num::NonZero};
 
     use super::*;
     use crate::{
@@ -6997,23 +6997,12 @@ mod tests {
 
         assert_item_labels(&pane, ["A*"], cx);
         assert_item_labels(&right_pane, [], cx);
-
-        // TODO better way to check right-of-direction?
-        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
-            Member::Axis(axis) => {
-                assert_eq!(axis.axis, Axis::Horizontal);
-                assert_eq!(axis.members.len(), 2);
-                if let (Member::Pane(p), Member::Pane(rp)) = (&axis.members[0], &axis.members[1]) {
-                    assert_eq!(p.entity_id(), pane.entity_id());
-                    assert_eq!(rp.entity_id(), right_pane.entity_id());
-                } else {
-                    panic!("expected two panes");
-                }
-            }
-            Member::Pane(_) => {
-                panic!("should be axis after split");
-            }
-        });
+        assert_pane_ids_on_axis(
+            &workspace,
+            [&pane.entity_id(), &right_pane.entity_id()],
+            Axis::Horizontal,
+            cx,
+        );
 
         add_labeled_item(&right_pane, "B", false, cx);
         assert_item_labels(&right_pane, ["B*"], cx);
@@ -7037,23 +7026,12 @@ mod tests {
 
         assert_item_labels(&pane, ["A*"], cx);
         assert_item_labels(&right_pane, ["A*"], cx);
-
-        // TODO better way to check right-of-direction?
-        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
-            Member::Axis(axis) => {
-                assert_eq!(axis.axis, Axis::Horizontal);
-                assert_eq!(axis.members.len(), 2);
-                if let (Member::Pane(p), Member::Pane(rp)) = (&axis.members[0], &axis.members[1]) {
-                    assert_eq!(p.entity_id(), pane.entity_id());
-                    assert_eq!(rp.entity_id(), right_pane.entity_id());
-                } else {
-                    panic!("expected two panes");
-                }
-            }
-            Member::Pane(_) => {
-                panic!("should be axis after split");
-            }
-        });
+        assert_pane_ids_on_axis(
+            &workspace,
+            [&pane.entity_id(), &right_pane.entity_id()],
+            Axis::Horizontal,
+            cx,
+        );
     }
 
     #[gpui::test]
@@ -7075,23 +7053,12 @@ mod tests {
 
         assert_item_labels(&pane, ["A*"], cx);
         assert_item_labels(&right_pane, ["B*"], cx);
-
-        // TODO better way to check right-of-direction?
-        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
-            Member::Axis(axis) => {
-                assert_eq!(axis.axis, Axis::Horizontal);
-                assert_eq!(axis.members.len(), 2);
-                if let (Member::Pane(p), Member::Pane(rp)) = (&axis.members[0], &axis.members[1]) {
-                    assert_eq!(p.entity_id(), pane.entity_id());
-                    assert_eq!(rp.entity_id(), right_pane.entity_id());
-                } else {
-                    panic!("expected two panes");
-                }
-            }
-            Member::Pane(_) => {
-                panic!("should be axis after split");
-            }
-        });
+        assert_pane_ids_on_axis(
+            &workspace,
+            [&pane.entity_id(), &right_pane.entity_id()],
+            Axis::Horizontal,
+            cx,
+        );
     }
 
     #[gpui::test]
@@ -7214,5 +7181,30 @@ mod tests {
             actual_states, expected_states,
             "pane items do not match expectation"
         );
+    }
+
+    fn assert_pane_ids_on_axis<const COUNT: usize>(
+        workspace: &Entity<Workspace>,
+        expected_ids: [&EntityId; COUNT],
+        expected_axis: Axis,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(axis) => {
+                assert_eq!(axis.axis, expected_axis);
+                assert_eq!(axis.members.len(), expected_ids.len());
+                assert!(
+                    zip(expected_ids, &axis.members).all(|(e, a)| {
+                        if let Member::Pane(p) = a {
+                            p.entity_id() == *e
+                        } else {
+                            false
+                        }
+                    }),
+                    "pane ids do not match expectation"
+                );
+            }
+            Member::Pane(_) => panic!("expected axis"),
+        });
     }
 }
