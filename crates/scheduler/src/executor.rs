@@ -13,6 +13,18 @@ use std::{
     time::Duration,
 };
 
+// pub struct TaskBuilder;
+
+// impl TaskBuilder {
+//     fn new() -> Self {
+//         Self {
+//         }
+//     }
+
+//     fn name(&self, name: &'a str) -> Self {
+//     }
+// }
+
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     session_id: SessionId,
