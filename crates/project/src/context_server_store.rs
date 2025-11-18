@@ -228,7 +228,7 @@ impl ContextServerStore {
     ) -> Self {
         Self::new_internal(
             true,
-            context_server_factory.into(),
+            context_server_factory,
             registry,
             worktree_store,
             weak_project,
