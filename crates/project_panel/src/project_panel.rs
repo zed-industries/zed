@@ -1008,6 +1008,7 @@ impl ProjectPanel {
                 && (cfg!(target_os = "windows")
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
+            let has_clipboard = self.has_clipboard_content(cx);
 
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -1047,9 +1048,8 @@ impl ProjectPanel {
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
-                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
                             .action_disabled_when(
-                                self.clipboard.as_ref().is_none(),
+                                !has_clipboard,
                                 "Paste",
                                 Box::new(Paste),
                             )
@@ -2590,7 +2590,8 @@ impl ProjectPanel {
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
-            self.clipboard = Some(ClipboardEntry::Cut(entries));
+            self.clipboard = Some(ClipboardEntry::Cut(entries.clone()));
+            self.write_entries_to_system_clipboard(&entries, true, cx);
             cx.notify();
         }
     }
@@ -2598,9 +2599,57 @@ impl ProjectPanel {
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
-            self.clipboard = Some(ClipboardEntry::Copied(entries));
+            self.clipboard = Some(ClipboardEntry::Copied(entries.clone()));
+            self.write_entries_to_system_clipboard(&entries, false, cx);
             cx.notify();
         }
+    }
+
+    fn write_entries_to_system_clipboard(
+        &self,
+        entries: &BTreeSet<SelectedEntry>,
+        is_cut: bool,
+        cx: &Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+        let file_paths = entries
+            .iter()
+            .filter_map(|entry| {
+                let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
+                let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
+                Some(worktree.read(cx).absolutize(&entry_path))
+            })
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        if !file_paths.is_empty() {
+            let operation = if is_cut { "CUT" } else { "COPY" };
+            let clipboard_text = format!("ZED_CLIPBOARD:{}\n{}", operation, file_paths.join("\n"));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
+        }
+    }
+
+    fn has_clipboard_content(&self, cx: &Context<Self>) -> bool {
+        // Check local clipboard first (for performance)
+        if self.clipboard.is_some() {
+            return true;
+        }
+
+        // Check system clipboard for Zed clipboard data or file paths
+        if let Some(clipboard_item) = cx.read_from_clipboard() {
+            if let Some(text) = clipboard_item.text() {
+                // Check if it's Zed clipboard data
+                if text.starts_with("ZED_CLIPBOARD:") {
+                    return true;
+                }
+                // Check if it contains file paths (newline-separated paths)
+                if text.lines().any(|line| Path::new(line).exists()) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn create_paste_path(
@@ -2659,14 +2708,56 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        // Try local clipboard first, then system clipboard
+        let clipboard_clone = self.clipboard.clone();
+
+        if let Some(clipboard_entries) = clipboard_clone.as_ref().filter(|clipboard| !clipboard.items().is_empty()) {
+            self.paste_from_local_clipboard(clipboard_entries, window, cx);
+        } else if let Some((file_paths, _is_cut)) = self.parse_system_clipboard(cx) {
+            if let Some(entry_id) = self.selected_entry_handle(cx).map(|(_, e)| e.id) {
+                self.drop_external_files(&file_paths.iter().map(PathBuf::from).collect::<Vec<_>>(), entry_id, window, cx);
+            }
+        }
+    }
+
+    fn parse_system_clipboard(&self, cx: &Context<Self>) -> Option<(Vec<String>, bool)> {
+        let clipboard_item = cx.read_from_clipboard()?;
+        let text = clipboard_item.text()?;
+
+        // Check if it's Zed clipboard data
+        if let Some(content) = text.strip_prefix("ZED_CLIPBOARD:") {
+            let mut lines = content.lines();
+            let operation = lines.next()?;
+            let is_cut = operation == "CUT";
+            let file_paths: Vec<String> = lines.map(|s| s.to_string()).collect();
+            if !file_paths.is_empty() {
+                return Some((file_paths, is_cut));
+            }
+        } else {
+            // Try to parse as plain file paths
+            let file_paths: Vec<String> = text
+                .lines()
+                .filter(|line| !line.trim().is_empty() && Path::new(line).exists())
+                .map(|s| s.to_string())
+                .collect();
+            if !file_paths.is_empty() {
+                return Some((file_paths, false));
+            }
+        }
+
+        None
+    }
+
+    fn paste_from_local_clipboard(
+        &mut self,
+        clipboard_entries: &ClipboardEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
             let worktree_id = worktree.read(cx).id();
-            let clipboard_entries = self
-                .clipboard
-                .as_ref()
-                .filter(|clipboard| !clipboard.items().is_empty())?;
 
             enum PasteTask {
                 Rename(Task<Result<CreatedEntry>>),
