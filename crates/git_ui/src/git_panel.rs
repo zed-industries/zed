@@ -147,6 +147,12 @@ struct GitMenuState {
     tree_view: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrLink {
+    text: String,
+    link: String,
+}
+
 fn git_panel_context_menu(
     focus_handle: FocusHandle,
     state: GitMenuState,
@@ -619,6 +625,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    last_pr_links: HashMap<RepositoryId, PrLink>,
     _settings_subscription: Subscription,
 }
 
@@ -725,14 +732,27 @@ impl GitPanel {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
+                        repo_id,
+                        RepositoryEvent::BranchChanged,
+                        true,
+                    ) => {
+                        if this.last_pr_links.remove(&repo_id).is_some() {
+                            cx.notify();
+                        }
+                        this.schedule_update(window, cx);
+                    }
+                    GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged
-                        | RepositoryEvent::BranchChanged
-                        | RepositoryEvent::MergeHeadsChanged,
+                        RepositoryEvent::StatusesChanged | RepositoryEvent::MergeHeadsChanged,
                         true,
                     )
-                    | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_) => {
+                    | GitStoreEvent::RepositoryAdded => {
+                        this.schedule_update(window, cx);
+                    }
+                    GitStoreEvent::RepositoryRemoved(repo_id) => {
+                        if this.last_pr_links.remove(&repo_id).is_some() {
+                            cx.notify();
+                        }
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -788,6 +808,7 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                last_pr_links: HashMap::new(),
                 _settings_subscription,
             };
 
@@ -3678,6 +3699,16 @@ impl GitPanel {
         self.tracked_count > 0
     }
 
+    fn pr_link_for_repo(&self, repo_id: RepositoryId) -> Option<&PrLink> {
+        self.last_pr_links.get(&repo_id)
+    }
+
+    fn pr_link_for_active_repo<'a>(&'a self, cx: &'a App) -> Option<&'a PrLink> {
+        let repo = self.active_repository.as_ref()?;
+        let repo_id = repo.read(cx).id;
+        self.pr_link_for_repo(repo_id)
+    }
+
     pub fn has_unstaged_conflicts(&self) -> bool {
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
@@ -3709,14 +3740,47 @@ impl GitPanel {
         }
     }
 
-    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+    fn show_remote_output(
+        &mut self,
+        action: RemoteAction,
+        info: RemoteCommandOutput,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
+        let view_log_output = format!("stdout:\n{}\nstderr:\n{}", &info.stdout, &info.stderr);
+        let SuccessMessage { message, style } = remote_output::format_output(&action, info);
+
+        let mut should_notify = false;
+        if let Some(active_repository) = self.active_repository.as_ref() {
+            let repo_id = active_repository.read(cx).id;
+            match &style {
+                remote_output::SuccessStyle::PushPrLink { text, link } => {
+                    let entry = PrLink {
+                        text: text.clone(),
+                        link: link.clone(),
+                    };
+                    match self.last_pr_links.insert(repo_id, entry) {
+                        Some(existing) if existing.text == *text && existing.link == *link => {}
+                        _ => should_notify = true,
+                    }
+                }
+                _ => {
+                    if self.last_pr_links.remove(&repo_id).is_some() {
+                        should_notify = true;
+                    }
+                }
+            }
+        }
+
+        if should_notify {
+            cx.notify();
+        }
+
+        let log_output_for_action = view_log_output.clone();
         workspace.update(cx, |workspace, cx| {
-            let view_log_output = format!("stdout:\n{}\nstderr:\n{}", &info.stdout, &info.stderr);
-            let SuccessMessage { message, style } = remote_output::format_output(&action, info);
             let workspace_weak = cx.weak_entity();
             let operation = action.name();
 
@@ -3736,13 +3800,10 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink {
-                        text: _text,
-                        link: _link,
-                    } => this
+                    PushPrLink { .. } => this
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action("View Log", move |window, cx| {
-                            let output = view_log_output.clone();
+                            let output = log_output_for_action.clone();
                             workspace_weak
                                 .update(cx, move |workspace, cx| {
                                     Self::open_output(operation, workspace, &output, window, cx)
@@ -3954,7 +4015,7 @@ impl GitPanel {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right("commit-split-button-right")
-                    .layer(ui::ElevationIndex::ModalSurface)
+                    .layer(ElevationIndex::ModalSurface)
                     .size(ButtonSize::None)
                     .child(
                         h_flex()
@@ -5360,26 +5421,33 @@ impl GitPanel {
             return;
         };
 
-        let repo_snapshot = active_repository.read(cx);
-        let Some(branch) = repo_snapshot.branch.as_ref() else {
-            self.show_error_toast("create pull request", anyhow!("No active branch"), cx);
+        if let Some(pr_link) = self.pr_link_for_active_repo(cx) {
+            cx.open_url(pr_link.link.as_str());
             return;
-        };
+        }
 
-        // Prefer origin for MVP per request.
-        let remote_url = repo_snapshot.remote_origin_url.as_ref();
+        let (branch_name, remote_url) = {
+            let repo_snapshot = active_repository.read(cx);
+            let Some(branch) = repo_snapshot.branch.as_ref() else {
+                self.show_error_toast("create pull request", anyhow!("No active branch"), cx);
+                return;
+            };
 
-        let Some(remote_url) = remote_url else {
-            self.show_error_toast(
-                "create pull request",
-                anyhow!("No remote URL found (origin missing)"),
-                cx,
-            );
-            return;
+            // Prefer origin for MVP per request.
+            let Some(remote_url) = repo_snapshot.remote_origin_url.clone() else {
+                self.show_error_toast(
+                    "create pull request",
+                    anyhow!("No remote URL found (origin missing)"),
+                    cx,
+                );
+                return;
+            };
+
+            (branch.name().to_string(), remote_url)
         };
 
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
-        let Some((provider, parsed_remote)) = parse_git_remote_url(provider_registry, remote_url)
+        let Some((provider, parsed_remote)) = parse_git_remote_url(provider_registry, &remote_url)
         else {
             self.show_error_toast(
                 "create pull request",
@@ -5391,7 +5459,7 @@ impl GitPanel {
 
         // Keep target_branch = None for MVP per request.
         let params = BuildCreatePullRequestParams {
-            source_branch: branch.name(),
+            source_branch: &branch_name,
             target_branch: None,
         };
 
@@ -5743,6 +5811,20 @@ impl RenderOnce for PanelRepoFooter {
         let show_separator = self.branch.is_some() || self.head_commit.is_some();
 
         let active_repo_name = self.active_repository.clone();
+        let has_git_panel = self.git_panel.is_some();
+
+        let pr_link = if let (Some(git_panel), Some(repo_entity)) =
+            (self.git_panel.as_ref(), repo.as_ref())
+        {
+            let repo_id = repo_entity.read(cx).id;
+            git_panel.read(cx).pr_link_for_repo(repo_id).cloned()
+        } else {
+            None
+        };
+        let primary_label = pr_link
+            .as_ref()
+            .map(|link| link.text.clone())
+            .unwrap_or_else(|| "Create PR".to_string());
 
         let branch_actual_len = branch_name.len();
         let repo_actual_len = active_repo_name.len();
@@ -5769,7 +5851,7 @@ impl RenderOnce for PanelRepoFooter {
         };
 
         let truncated_branch_name = if branch_actual_len <= branch_display_len {
-            branch_name
+            branch_name.clone()
         } else {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
@@ -5801,6 +5883,8 @@ impl RenderOnce for PanelRepoFooter {
             .on_click(|_, window, cx| {
                 window.dispatch_action(zed_actions::git::Switch.boxed_clone(), cx);
             });
+
+        let repo_for_branch_selector = repo.clone();
 
         let branch_selector = PopoverMenu::new("popover-button")
             .menu(move |window, cx| {
@@ -5849,26 +5933,116 @@ impl RenderOnce for PanelRepoFooter {
                     })
                     .child(branch_selector),
             )
-            .children(if let Some(git_panel) = self.git_panel {
+            .children(if let Some(git_panel) = self.git_panel.as_ref() {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
             } else {
                 None
             })
-            .when(self.branch.is_some() && self.git_panel.is_some(), |this| {
-                this.child(
-                    panel_filled_button("Create PR")
-                        .size(ButtonSize::None)
-                        .tooltip(Tooltip::for_action_title(
-                            "Create Pull Request",
-                            &zed_actions::git::CreatePullRequest,
-                        ))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                zed_actions::git::CreatePullRequest.boxed_clone(),
-                                cx,
-                            );
-                        }),
-                )
+            .when(self.branch.is_some() && has_git_panel, |this| {
+                this.child({
+                    let branch_for_menu = branch_name.clone();
+                    let repo_for_menu = repo.clone();
+                    let pr_link = pr_link.clone();
+                    let primary_label = primary_label.clone();
+                    let pr_link_available = pr_link.is_some();
+
+                    let primary =
+                        ButtonLike::new_rounded_left(ElementId::Name("create-pr-primary".into()))
+                            .layer(ElevationIndex::ModalSurface)
+                            .size(ButtonSize::Compact)
+                            .opacity(if pr_link_available { 1.0 } else { 0.65 })
+                            .child(
+                                h_flex()
+                                    .ml_neg_0p5()
+                                    .items_center()
+                                    .gap_0p5()
+                                    .child(Icon::new(IconName::PullRequest).size(IconSize::XSmall))
+                                    .child(
+                                        div()
+                                            .child(
+                                                Label::new(primary_label.clone())
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .mr_0p5(),
+                                    ),
+                            )
+                            .disabled(!pr_link_available)
+                            .tooltip({
+                                move |window, cx| {
+                                    if pr_link_available {
+                                        Tooltip::for_action_title(
+                                            "Create Pull Request",
+                                            &zed_actions::git::CreatePullRequest,
+                                        )(window, cx)
+                                    } else {
+                                        Tooltip::text("Push to remote to create a PR link")(
+                                            window, cx,
+                                        )
+                                    }
+                                }
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::git::CreatePullRequest.boxed_clone(),
+                                    cx,
+                                );
+                            });
+
+                    let secondary = PopoverMenu::new("create-pr-menu")
+                        .trigger(
+                            ButtonLike::new_rounded_right(ElementId::Name(
+                                "create-pr-menu-trigger".into(),
+                            ))
+                            .layer(ElevationIndex::ModalSurface)
+                            .size(ButtonSize::None)
+                            .opacity(if pr_link_available { 1.0 } else { 0.65 })
+                            .disabled(!pr_link_available)
+                            .child(
+                                div()
+                                    .px_1()
+                                    .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                            ),
+                        )
+                        .menu(move |window, cx| {
+                            let branch_for_clipboard = branch_for_menu.clone();
+                            let remote_url = repo_for_menu
+                                .as_ref()
+                                .and_then(|repo| repo.read(cx).remote_origin_url.clone());
+
+                            Some(ContextMenu::build(window, cx, move |context_menu, _, _| {
+                                let branch_for_clipboard = branch_for_clipboard.clone();
+                                let remote_url = remote_url.clone();
+
+                                let mut context_menu =
+                                    context_menu.entry("Copy branch name", None, {
+                                        let branch_for_clipboard = branch_for_clipboard.clone();
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                branch_for_clipboard.clone(),
+                                            ));
+                                        }
+                                    });
+
+                                if let Some(remote_url) = remote_url {
+                                    context_menu = context_menu.entry(
+                                        "Copy origin URL",
+                                        None,
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                remote_url.clone(),
+                                            ));
+                                        },
+                                    );
+                                }
+
+                                context_menu
+                            }))
+                        })
+                        .anchor(Corner::BottomRight)
+                        .into_any_element();
+
+                    SplitButton::new(primary, secondary)
+                })
             })
     }
 }

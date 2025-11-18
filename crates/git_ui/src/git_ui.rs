@@ -218,14 +218,16 @@ pub fn init(cx: &mut App) {
                 GitCloneModal::show(panel, window, cx)
             });
         });
-        workspace.register_action(|workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.open_create_pull_request(window, cx);
-            });
-        });
+        workspace.register_action(
+            |workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.open_create_pull_request(window, cx);
+                });
+            },
+        );
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });

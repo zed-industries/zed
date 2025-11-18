@@ -79,7 +79,7 @@ mod macos {
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
 
-        let bindings = bindgen::Builder::default()
+        let mut builder = bindgen::Builder::default()
             .header("src/platform/mac/dispatch.h")
             .allowlist_var("_dispatch_main_q")
             .allowlist_var("_dispatch_source_type_data_add")
@@ -99,9 +99,9 @@ mod macos {
             .allowlist_function("dispatch_source_cancel")
             .allowlist_function("dispatch_set_context")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-            .layout_tests(false)
-            .generate()
-            .expect("unable to generate bindings");
+            .layout_tests(false);
+
+        let bindings = builder.generate().expect("unable to generate bindings");
 
         let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
         bindings
