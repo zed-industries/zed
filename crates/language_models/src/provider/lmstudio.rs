@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
-use lmstudio::{ModelType, get_models};
+use lmstudio::{ModelType, Request, ResponseChoice, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -385,7 +385,11 @@ impl LmStudioLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
+            let request = lmstudio::stream_complete(
+                http_client.as_ref(),
+                &api_url,
+                Request::ChatCompletion(request),
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -501,13 +505,14 @@ impl LmStudioEventMapper {
         &mut self,
         event: lmstudio::ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.into_iter().next() else {
+        let Some(ResponseChoice::Delta(choice)) = event.choices.into_iter().next() else {
             return vec![Err(LanguageModelCompletionError::from(anyhow!(
                 "Response contained no choices"
             )))];
         };
 
         let mut events = Vec::new();
+
         if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }

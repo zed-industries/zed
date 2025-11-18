@@ -9447,8 +9447,11 @@ name = "lmstudio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "edit_prediction",
  "futures 0.3.31",
+ "gpui",
  "http_client",
+ "language",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -21273,6 +21276,7 @@ dependencies = [
  "language_tools",
  "languages",
  "line_ending_selector",
+ "lmstudio",
  "log",
  "markdown",
  "markdown_preview",

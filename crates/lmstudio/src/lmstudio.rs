@@ -1,9 +1,13 @@
+mod lmstudio_completion_provider;
+
+pub use lmstudio_completion_provider::*;
+
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, time::Duration};
+use std::{convert::TryFrom, fmt::Debug, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 
@@ -206,6 +210,20 @@ pub struct FunctionContent {
 }
 
 #[derive(Serialize, Debug)]
+pub struct CompletionRequest {
+    pub model: String,
+    pub prompt: String,
+    pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    // The completon endpoint doesn't support tools
+}
+
+#[derive(Serialize, Debug)]
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
@@ -222,19 +240,40 @@ pub struct ChatCompletionRequest {
     pub tool_choice: Option<ToolChoice>,
 }
 
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+pub enum Request {
+    ChatCompletion(ChatCompletionRequest),
+    Completion(CompletionRequest),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatResponse {
     pub id: String,
     pub object: String,
     pub created: u64,
     pub model: String,
-    pub choices: Vec<ChoiceDelta>,
+    pub choices: Vec<ResponseChoice>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ResponseChoice {
+    Delta(ChoiceDelta),
+    Text(TextChoice),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ResponseMessageDelta,
+    pub delta: ChatCompletionResponseMessageDelta,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TextChoice {
+    pub index: u32,
+    pub text: String,
     pub finish_reason: Option<String>,
 }
 
@@ -293,7 +332,7 @@ pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
     pub object: String,
-    pub choices: Vec<ChoiceDelta>,
+    pub choices: Vec<ResponseChoice>,
     pub usage: Option<Usage>,
 }
 
@@ -342,7 +381,7 @@ pub enum CompatibilityType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
+pub struct ChatCompletionResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -351,12 +390,21 @@ pub struct ResponseMessageDelta {
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CompletionResponseMessageDelta {
+    pub text: String,
+}
+
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
-    request: ChatCompletionRequest,
+    request: Request,
 ) -> Result<ChatResponse> {
-    let uri = format!("{api_url}/chat/completions");
+    let uri = match request {
+        Request::ChatCompletion(_) => format!("{api_url}/chat/completions"),
+        Request::Completion(_) => format!("{api_url}/completions"),
+    };
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -383,12 +431,16 @@ pub async fn complete(
     }
 }
 
-pub async fn stream_chat_completion(
+pub async fn stream_complete(
     client: &dyn HttpClient,
     api_url: &str,
-    request: ChatCompletionRequest,
+    request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    let uri = format!("{api_url}/chat/completions");
+    let uri = match request {
+        Request::ChatCompletion(_) => format!("{api_url}/chat/completions"),
+        Request::Completion(_) => format!("{api_url}/completions"),
+    };
+
     let request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
