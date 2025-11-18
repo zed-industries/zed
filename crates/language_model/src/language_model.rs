@@ -176,6 +176,12 @@ pub enum LanguageModelCompletionError {
         error: serde_json::Error,
     },
 
+    #[error("The model refused to complete the request, possibly because of a security policy.")]
+    Refusal,
+
+    #[error("The model could not respond because its maximum number of tokens has been exceeded.")]
+    MaxTokens,
+
     // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
