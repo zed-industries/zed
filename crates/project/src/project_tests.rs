@@ -17,7 +17,7 @@ use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
-    status::{StatusCode, TrackedStatus},
+    status::{StageStatus, StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, FutureExt, SemanticVersion, UpdateGlobal};
@@ -8614,10 +8614,10 @@ async fn test_repository_pending_ops_staging(
     let mut id = 1u16;
 
     let mut assert_stage = async |path: RepoPath, stage| {
-        let git_status = if stage {
-            pending_op::GitStatus::Staged
+        let stage_status = if stage {
+            StageStatus::Staged
         } else {
-            pending_op::GitStatus::Unstaged
+            StageStatus::Unstaged
         };
         repo.update(cx, |repo, cx| {
             let task = if stage {
@@ -8630,7 +8630,7 @@ async fn test_repository_pending_ops_staging(
                 ops.ops.last(),
                 Some(&pending_op::PendingOp {
                     id: id.into(),
-                    git_status,
+                    stage_status,
                     finished: false,
                 })
             );
@@ -8645,7 +8645,7 @@ async fn test_repository_pending_ops_staging(
                 ops.ops.last(),
                 Some(&pending_op::PendingOp {
                     id: id.into(),
-                    git_status,
+                    stage_status,
                     finished: true,
                 })
             );
@@ -8671,27 +8671,27 @@ async fn test_repository_pending_ops_staging(
         vec![
             pending_op::PendingOp {
                 id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
+                stage_status: StageStatus::Staged,
                 finished: true,
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
+                stage_status: StageStatus::Unstaged,
                 finished: true,
             },
             pending_op::PendingOp {
                 id: 3u16.into(),
-                git_status: pending_op::GitStatus::Staged,
+                stage_status: StageStatus::Staged,
                 finished: true,
             },
             pending_op::PendingOp {
                 id: 4u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
+                stage_status: StageStatus::Unstaged,
                 finished: true,
             },
             pending_op::PendingOp {
                 id: 5u16.into(),
-                git_status: pending_op::GitStatus::Staged,
+                stage_status: StageStatus::Staged,
                 finished: true,
             }
         ],
@@ -8791,7 +8791,7 @@ async fn test_repository_pending_ops_long_running_staging(
             .ops,
         vec![pending_op::PendingOp {
             id: 2u16.into(),
-            git_status: pending_op::GitStatus::Staged,
+            stage_status: StageStatus::Staged,
             finished: true,
         }],
     );
@@ -8893,12 +8893,12 @@ async fn test_repository_pending_ops_stage_all(
         vec![
             pending_op::PendingOp {
                 id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
+                stage_status: StageStatus::Staged,
                 finished: true,
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
+                stage_status: StageStatus::Unstaged,
                 finished: true,
             },
         ],
@@ -8912,12 +8912,12 @@ async fn test_repository_pending_ops_stage_all(
         vec![
             pending_op::PendingOp {
                 id: 1u16.into(),
-                git_status: pending_op::GitStatus::Staged,
+                stage_status: StageStatus::Staged,
                 finished: true,
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
-                git_status: pending_op::GitStatus::Unstaged,
+                stage_status: StageStatus::Unstaged,
                 finished: true,
             },
         ],

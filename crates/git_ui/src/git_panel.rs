@@ -49,7 +49,7 @@ use panel::{
 };
 use project::{
     Fs, Project, ProjectPath,
-    git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
+    git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -2657,15 +2657,6 @@ impl GitPanel {
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
-
-            if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
-                && pending
-                    .ops
-                    .iter()
-                    .any(|op| op.git_status == pending_op::GitStatus::Reverted && op.finished)
-            {
-                continue;
-            }
 
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),

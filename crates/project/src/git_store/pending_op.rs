@@ -1,15 +1,8 @@
 use git::repository::RepoPath;
+use git::status::StageStatus;
 use std::ops::Add;
 use sum_tree::{ContextLessSummary, Item, KeyedItem};
 use worktree::{PathKey, PathSummary};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GitStatus {
-    Staged,
-    Unstaged,
-    Reverted,
-    Unchanged,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingOps {
@@ -20,7 +13,7 @@ pub struct PendingOps {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingOp {
     pub id: PendingOpId,
-    pub git_status: GitStatus,
+    pub stage_status: StageStatus,
     pub finished: bool,
 }
 
@@ -103,20 +96,20 @@ impl PendingOps {
         self.ops.iter_mut().find(|op| op.id == id)
     }
 
-    /// File is staged if the last job is finished and has status Staged.
+    /// File is staged if the last job is finished and status is fully staged.
     pub fn staged(&self) -> bool {
         if let Some(last) = self.ops.last() {
-            if last.git_status == GitStatus::Staged && last.finished {
+            if last.stage_status.is_fully_staged() && last.finished {
                 return true;
             }
         }
         false
     }
 
-    /// File is staged if the last job is not finished and has status Staged.
+    /// File is staged if the last job is not yet finished and status is fully staged.
     pub fn staging(&self) -> bool {
         if let Some(last) = self.ops.last() {
-            if last.git_status == GitStatus::Staged && !last.finished {
+            if last.stage_status.is_fully_staged() && !last.finished {
                 return true;
             }
         }

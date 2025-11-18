@@ -35,8 +35,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
-        UnmergedStatus, UnmergedStatusCode,
+        DiffTreeType, FileStatus, GitSummary, StageStatus, StatusCode, TrackedStatus, TreeDiff,
+        TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -48,7 +48,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
-use pending_op::{PendingOp, PendingOpId, PendingOps};
+use pending_op::{PendingOp, PendingOps};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -3768,47 +3768,39 @@ impl Repository {
         let commit = commit.to_string();
         let id = self.id;
 
-        self.spawn_job_with_tracking(
-            paths.clone(),
-            pending_op::GitStatus::Reverted,
-            cx,
-            async move |this, cx| {
-                this.update(cx, |this, _cx| {
-                    this.send_job(
-                        Some(format!("git checkout {}", commit).into()),
-                        move |git_repo, _| async move {
-                            match git_repo {
-                                RepositoryState::Local {
-                                    backend,
-                                    environment,
-                                    ..
-                                } => {
-                                    backend
-                                        .checkout_files(commit, paths, environment.clone())
-                                        .await
-                                }
-                                RepositoryState::Remote { project_id, client } => {
-                                    client
-                                        .request(proto::GitCheckoutFiles {
-                                            project_id: project_id.0,
-                                            repository_id: id.to_proto(),
-                                            commit,
-                                            paths: paths
-                                                .into_iter()
-                                                .map(|p| p.to_proto())
-                                                .collect(),
-                                        })
-                                        .await?;
-
-                                    Ok(())
-                                }
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _cx| {
+                this.send_job(
+                    Some(format!("git checkout {}", commit).into()),
+                    move |git_repo, _| async move {
+                        match git_repo {
+                            RepositoryState::Local {
+                                backend,
+                                environment,
+                                ..
+                            } => {
+                                backend
+                                    .checkout_files(commit, paths, environment.clone())
+                                    .await
                             }
-                        },
-                    )
-                })?
-                .await?
-            },
-        )
+                            RepositoryState::Remote { project_id, client } => {
+                                client
+                                    .request(proto::GitCheckoutFiles {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        commit,
+                                        paths: paths.into_iter().map(|p| p.to_proto()).collect(),
+                                    })
+                                    .await?;
+
+                                Ok(())
+                            }
+                        }
+                    },
+                )
+            })?
+            .await?
+        })
     }
 
     pub fn reset(
@@ -3953,9 +3945,9 @@ impl Repository {
         let status = format!("git add {paths}");
         let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        self.spawn_job_with_tracking(
+        self.spawn_stage_job_with_tracking(
             entries.clone(),
-            pending_op::GitStatus::Staged,
+            StageStatus::Staged,
             cx,
             async move |this, cx| {
                 for save_task in save_tasks {
@@ -4015,9 +4007,9 @@ impl Repository {
         let status = format!("git reset {paths}");
         let job_key = GitJobKey::WriteIndex(entries.clone());
 
-        self.spawn_job_with_tracking(
+        self.spawn_stage_job_with_tracking(
             entries.clone(),
-            pending_op::GitStatus::Unstaged,
+            StageStatus::Unstaged,
             cx,
             async move |this, cx| {
                 for save_task in save_tasks {
@@ -4057,6 +4049,67 @@ impl Repository {
                 .await?
             },
         )
+    }
+
+    fn spawn_stage_job_with_tracking<AsyncFn>(
+        &mut self,
+        paths: Vec<RepoPath>,
+        stage_status: StageStatus,
+        cx: &mut Context<Self>,
+        f: AsyncFn,
+    ) -> Task<Result<()>>
+    where
+        AsyncFn: AsyncFnOnce(WeakEntity<Repository>, &mut AsyncApp) -> Result<()> + 'static,
+    {
+        let mut edits = Vec::with_capacity(paths.len());
+        let mut ids = Vec::with_capacity(paths.len());
+        for path in paths {
+            let mut ops = self
+                .snapshot
+                .pending_ops_for_path(&path)
+                .unwrap_or_else(|| PendingOps::new(&path));
+            let id = ops.max_id() + 1;
+            ops.ops.push(PendingOp {
+                id,
+                stage_status,
+                finished: false,
+            });
+            edits.push(sum_tree::Edit::Insert(ops));
+            ids.push((id, path));
+        }
+        self.snapshot.pending_ops_by_path.edit(edits, ());
+
+        cx.spawn(async move |this, cx| {
+            let (finished, result) = match f(this.clone(), cx).await {
+                Ok(()) => (true, Ok(())),
+                Err(err) if err.is::<Canceled>() => (false, Ok(())),
+                Err(err) => (false, Err(err)),
+            };
+
+            this.update(cx, |this, _| {
+                let mut edits = Vec::with_capacity(ids.len());
+                for (id, entry) in ids {
+                    if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
+                        if finished {
+                            if let Some(op) = ops.op_by_id_mut(id) {
+                                op.finished = true;
+                            }
+                        } else {
+                            let idx = ops
+                                .ops
+                                .iter()
+                                .position(|op| op.id == id)
+                                .expect("pending operation must exist");
+                            ops.ops.remove(idx);
+                        }
+                        edits.push(sum_tree::Edit::Insert(ops));
+                    }
+                }
+                this.snapshot.pending_ops_by_path.edit(edits, ());
+            })?;
+
+            result
+        })
     }
 
     pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
@@ -5389,76 +5442,6 @@ impl Repository {
 
     pub fn barrier(&mut self) -> oneshot::Receiver<()> {
         self.send_job(None, |_, _| async {})
-    }
-
-    fn spawn_job_with_tracking<AsyncFn>(
-        &mut self,
-        paths: Vec<RepoPath>,
-        git_status: pending_op::GitStatus,
-        cx: &mut Context<Self>,
-        f: AsyncFn,
-    ) -> Task<Result<()>>
-    where
-        AsyncFn: AsyncFnOnce(WeakEntity<Repository>, &mut AsyncApp) -> Result<()> + 'static,
-    {
-        let ids = self.new_pending_ops_for_paths(paths, git_status);
-
-        cx.spawn(async move |this, cx| {
-            let (finished, result) = match f(this.clone(), cx).await {
-                Ok(()) => (true, Ok(())),
-                Err(err) if err.is::<Canceled>() => (false, Ok(())),
-                Err(err) => (false, Err(err)),
-            };
-
-            this.update(cx, |this, _| {
-                let mut edits = Vec::with_capacity(ids.len());
-                for (id, entry) in ids {
-                    if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
-                        if finished {
-                            if let Some(op) = ops.op_by_id_mut(id) {
-                                op.finished = true;
-                            }
-                        } else {
-                            let idx = ops
-                                .ops
-                                .iter()
-                                .position(|op| op.id == id)
-                                .expect("pending operation must exist");
-                            ops.ops.remove(idx);
-                        }
-                        edits.push(sum_tree::Edit::Insert(ops));
-                    }
-                }
-                this.snapshot.pending_ops_by_path.edit(edits, ());
-            })?;
-
-            result
-        })
-    }
-
-    fn new_pending_ops_for_paths(
-        &mut self,
-        paths: Vec<RepoPath>,
-        git_status: pending_op::GitStatus,
-    ) -> Vec<(PendingOpId, RepoPath)> {
-        let mut edits = Vec::with_capacity(paths.len());
-        let mut ids = Vec::with_capacity(paths.len());
-        for path in paths {
-            let mut ops = self
-                .snapshot
-                .pending_ops_for_path(&path)
-                .unwrap_or_else(|| PendingOps::new(&path));
-            let id = ops.max_id() + 1;
-            ops.ops.push(PendingOp {
-                id,
-                git_status,
-                finished: false,
-            });
-            edits.push(sum_tree::Edit::Insert(ops));
-            ids.push((id, path));
-        }
-        self.snapshot.pending_ops_by_path.edit(edits, ());
-        ids
     }
 }
 
