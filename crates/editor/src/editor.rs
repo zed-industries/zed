@@ -5403,7 +5403,7 @@ impl Editor {
         }
     }
 
-    fn trigger_on_type_formatting(
+    pub fn trigger_on_type_formatting(
         &self,
         input: String,
         window: &mut Window,
