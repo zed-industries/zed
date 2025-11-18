@@ -799,13 +799,13 @@ struct MatchingEntry {
 /// scanned based on include/exclude patterns of a search query (as include/exclude parameters may match paths inside it).
 /// It is kind-of doing an inverse of glob. Given a glob pattern like `src/**/` and a parent path like `src`, we need to decide whether the parent
 /// may contain glob hits.
-struct PathInclusionMatcher {
+pub(crate) struct PathInclusionMatcher {
     included: BTreeSet<PathBuf>,
     query: Arc<SearchQuery>,
 }
 
 impl PathInclusionMatcher {
-    fn new(query: Arc<SearchQuery>) -> Self {
+    pub(crate) fn new(query: Arc<SearchQuery>) -> Self {
         let mut included = BTreeSet::new();
         // To do an inverse glob match, we split each glob into it's prefix and the glob part.
         // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
@@ -822,7 +822,7 @@ impl PathInclusionMatcher {
         Self { included, query }
     }
 
-    fn should_scan_gitignored_dir(
+    pub(crate) fn should_scan_gitignored_dir(
         &self,
         entry: &Entry,
         snapshot: &Snapshot,
