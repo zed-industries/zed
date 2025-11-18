@@ -127,7 +127,12 @@ pub struct ThemeColors {
     pub tab_bar_background: Hsla,
     pub tab_inactive_background: Hsla,
     pub tab_active_background: Hsla,
+
+    /// Background color for passive search matches.
     pub search_match_background: Hsla,
+    /// Background color to highlight the active search match.
+    pub search_active_match_background: Hsla,
+
     pub panel_background: Hsla,
     pub panel_focused_border: Hsla,
     pub panel_indent_guide: Hsla,
@@ -349,6 +354,7 @@ pub enum ThemeColorField {
     TabInactiveBackground,
     TabActiveBackground,
     SearchMatchBackground,
+    SearchActiveMatchBackground,
     PanelBackground,
     PanelFocusedBorder,
     PanelIndentGuide,
@@ -464,6 +470,7 @@ impl ThemeColors {
             ThemeColorField::TabInactiveBackground => self.tab_inactive_background,
             ThemeColorField::TabActiveBackground => self.tab_active_background,
             ThemeColorField::SearchMatchBackground => self.search_match_background,
+            ThemeColorField::SearchActiveMatchBackground => self.search_active_match_background,
             ThemeColorField::PanelBackground => self.panel_background,
             ThemeColorField::PanelFocusedBorder => self.panel_focused_border,
             ThemeColorField::PanelIndentGuide => self.panel_indent_guide,
