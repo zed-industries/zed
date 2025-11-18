@@ -2629,7 +2629,7 @@ impl GitPanel {
                 && pending
                     .ops
                     .iter()
-                    .any(|op| op.git_status == pending_op::GitStatus::Reverted && op.finished())
+                    .any(|op| op.git_status == pending_op::GitStatus::Reverted && op.finished)
             {
                 continue;
             }
