@@ -27,20 +27,20 @@ use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
     git_store::{
-        Repository,
+        self, Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
 use settings::{Settings, SettingsStore};
-use std::sync::Arc;
+use std::ops::Range;
 use std::{
     any::{Any, TypeId},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::Arc,
 };
-use std::{ops::Range, time::Duration};
+
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
-use util::rel_path::RelPath;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -554,81 +554,82 @@ impl ProjectDiff {
     }
 
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-        let mut path_keys = Vec::new();
-        let buffers_to_load = this.update(cx, |this, cx| {
-            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
-                (branch_diff.repo().cloned(), load_buffers)
-            });
-            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+        use git_store::branch_diff::BranchDiff;
+        let Some(this) = this.upgrade() else {
+            return Ok(());
+        };
+        let multibuffer = cx.read_entity(&this, |this, _| this.multibuffer.clone())?;
+        let branch_diff = cx.read_entity(&this, |pd, _| pd.branch_diff.clone())?;
 
-            if let Some(repo) = repo {
-                let repo = repo.read(cx);
+        let Some(repo) = cx.read_entity(&branch_diff, |bd, _| bd.repo.clone())? else {
+            return Ok(());
+        };
+        let project = cx.read_entity(&branch_diff, |bd, _| bd.project.clone())?;
 
-                path_keys = Vec::with_capacity(buffers_to_load.len());
-                for group in buffers_to_load.iter() {
-                    for (repo_path, file_status) in
-                        group.repo_paths.iter().zip(group.file_statussus.iter())
-                    {
-                        let sort_prefix = sort_prefix(&repo, &repo_path, *file_status, cx);
-                        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.0.clone());
-                        previous_paths.remove(&path_key);
-                        path_keys.push(path_key)
-                    }
-                }
+        let cached_status: Vec<git_store::StatusEntry> =
+            cx.read_entity(&repo, |repo: &Repository, _| repo.cached_status().collect())?;
+
+        let mut previous_paths =
+            cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
+
+        let mut seen = HashSet::default();
+        for entry in cached_status {
+            seen.insert(entry.repo_path.clone());
+            let tree_diff_status = cx.read_entity(&branch_diff, |branch_diff, _| {
+                branch_diff
+                    .tree_diff
+                    .as_ref()
+                    .and_then(|t| t.entries.get(&entry.repo_path))
+                    .cloned()
+            })?;
+
+            let Some(status) = cx.read_entity(&branch_diff, |bd, _| {
+                bd.merge_statuses(Some(entry.status), tree_diff_status.as_ref())
+            })?
+            else {
+                continue;
+            };
+            if !status.has_changes() {
+                continue;
             }
 
-            this.multibuffer.update(cx, |multibuffer, cx| {
+            let Some(project_path) = cx.read_entity(&repo, |repo, cx| {
+                repo.repo_path_to_project_path(&entry.repo_path, cx)
+            })?
+            else {
+                continue;
+            };
+
+            let task = project.update(cx, |_, cx| {
+                BranchDiff::load_buffer(tree_diff_status, project_path, repo.clone(), cx)
+            })?;
+
+            let sort_prefix = cx.read_entity(&repo, |repo, cx| {
+                sort_prefix(repo, &entry.repo_path, entry.status, cx)
+            })?;
+
+            let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.into_arc());
+            previous_paths.remove(&path_key);
+
+            // TODO re-introduce concurrency by moving this out of the spawn loop
+            if let Some((buffer, diff)) = task.await.log_err() {
+                cx.update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.register_buffer(path_key, entry.status, buffer, diff, window, cx)
+                    });
+                })?;
+            }
+        }
+
+        // remove anything not part of the diff in the multibuffer
+        this.update(cx, |this, cx| {
+            multibuffer.update(cx, |multibuffer, cx| {
                 for path in previous_paths {
                     this.buffer_diff_subscriptions.remove(&path.path);
                     multibuffer.remove_excerpts_for_path(path, cx);
                 }
             });
-            buffers_to_load
         })?;
-
-        let buffers_still_to_load = Arc::new(AtomicUsize::new(buffers_to_load.len()));
-        let buffers_still_to_load2 = Arc::clone(&buffers_still_to_load);
-        let this2 = this.clone();
-        cx.spawn(async move |cx| {
-            for (group, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
-                let buffer_and_diffs = group.load.await;
-                let buffers_still_to_load = buffers_still_to_load.clone();
-                for (res, file_status) in buffer_and_diffs.into_iter().zip(group.file_statussus) {
-                    let (buffer, diff) = res?;
-
-                    cx.update(|window, cx| {
-                        this2.update(cx, |this2, cx| {
-                            this2.register_buffer(
-                                path_key.clone(),
-                                file_status,
-                                buffer,
-                                diff,
-                                window,
-                                cx,
-                            );
-                            buffers_still_to_load.fetch_sub(1, Ordering::Relaxed);
-                        })
-                    })??;
-                }
-            }
-            Ok::<(), anyhow::Error>(())
-        })
-        .detach();
-
-        loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
-            if buffers_still_to_load2.load(Ordering::Relaxed) == 0 {
-                this.update(cx, |this, cx| {
-                    this.pending_scroll.take();
-                    cx.notify();
-                })
-                .ok();
-                break;
-            }
-        }
 
         Ok(())
     }
