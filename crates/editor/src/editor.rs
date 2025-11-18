@@ -24274,13 +24274,35 @@ impl EntityInputHandler for Editor {
             return;
         }
 
+        let ime_active = self
+            .text_highlights::<InputComposition>(cx)
+            .is_some_and(|(_, ranges)| ranges.iter().any(|r| r.start != r.end));
+
+        if ime_active && text != " " {
+            self.replace_and_mark_text_in_range(None, text, None, window, cx);
+            if let Some(transaction) = self.ime_transaction {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.group_until_transaction(transaction, cx);
+                });
+            }
+            self.unmark_text(window, cx);
+            return;
+        }
+
+        if range_utf16.is_some() {
+            self.replace_and_mark_text_in_range(range_utf16, text, None, window, cx);
+            if let Some(transaction) = self.ime_transaction {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.group_until_transaction(transaction, cx);
+                });
+            }
+            self.unmark_text(window, cx);
+            return;
+        }
+
         self.transact(window, cx, |this, window, cx| {
-            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                this.marked_text_ranges(cx)
-            };
+            let marked = this.marked_text_ranges(cx);
+            let new_selected_ranges = if marked.is_some() { marked } else { None };
 
             let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
                 let newest_selection_id = this.selections.newest_anchor().id;
@@ -24337,7 +24359,8 @@ impl EntityInputHandler for Editor {
         }
 
         let transaction = self.transact(window, cx, |this, window, cx| {
-            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+            let mut ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx)
+            {
                 let snapshot = this.buffer.read(cx).read(cx);
                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
                     for marked_range in &mut marked_ranges {
@@ -24350,12 +24373,27 @@ impl EntityInputHandler for Editor {
                     }
                 }
                 Some(marked_ranges)
-            } else if let Some(range_utf16) = range_utf16 {
+            } else if let Some(ref range_utf16) = range_utf16 {
                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
                 Some(this.selection_replacement_ranges(range_utf16, cx))
             } else {
                 None
             };
+
+            if range_utf16.is_some() && !text.is_empty() {
+                let text_len_utf16 = text.encode_utf16().count();
+                if let Some(ranges) = ranges_to_replace.as_mut() {
+                    for r in ranges.iter_mut() {
+                        if r.start.0 == r.end.0 {
+                            r.end.0 = r.start.0 + text_len_utf16;
+                        }
+                    }
+                } else if let Some(ref r) = range_utf16 {
+                    let start = OffsetUtf16(r.start);
+                    let end = OffsetUtf16(r.start + text_len_utf16);
+                    ranges_to_replace = Some(this.selection_replacement_ranges(start..end, cx));
+                }
+            }
 
             let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
                 let newest_selection_id = this.selections.newest_anchor().id;
@@ -24380,7 +24418,7 @@ impl EntityInputHandler for Editor {
                 text: text.into(),
             });
 
-            if let Some(ranges) = ranges_to_replace {
+            if let Some(ranges) = ranges_to_replace.take() {
                 this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges(ranges)
                 });
