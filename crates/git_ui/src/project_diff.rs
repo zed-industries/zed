@@ -554,87 +554,6 @@ impl ProjectDiff {
     }
 
     pub async fn new_refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-            use git_store::branch_diff::BranchDiff;
-            let Some(this) = this.upgrade() else {
-                return Ok(());
-            };
-            let multibuffer = cx.read_entity(&this, |this, _| this.multibuffer.clone())?;
-            let branch_diff = cx.read_entity(&this, |pd, _| pd.branch_diff.clone())?;
-
-            let Some(repo) = cx.read_entity(&branch_diff, |bd, _| bd.repo.clone())? else {
-                return Ok(());
-            };
-            let project = cx.read_entity(&branch_diff, |bd, _| bd.project.clone())?;
-
-            let cached_status: Vec<git_store::StatusEntry> =
-                cx.read_entity(&repo, |repo: &Repository, _| repo.cached_status().collect())?;
-
-            let mut previous_paths =
-                cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
-
-            let mut seen = HashSet::default();
-            for entry in cached_status {
-                seen.insert(entry.repo_path.clone());
-                let tree_diff_status = cx.read_entity(&branch_diff, |branch_diff, _| {
-                    branch_diff
-                        .tree_diff
-                        .as_ref()
-                        .and_then(|t| t.entries.get(&entry.repo_path))
-                        .cloned()
-                })?;
-
-                let Some(status) = cx.read_entity(&branch_diff, |bd, _| {
-                    bd.merge_statuses(Some(entry.status), tree_diff_status.as_ref())
-                })?
-                else {
-                    continue;
-                };
-                if !status.has_changes() {
-                    continue;
-                }
-
-                let Some(project_path) = cx.read_entity(&repo, |repo, cx| {
-                    repo.repo_path_to_project_path(&entry.repo_path, cx)
-                })?
-                else {
-                    continue;
-                };
-
-                let task = project.update(cx, |_, cx| {
-                    BranchDiff::load_buffer(tree_diff_status, project_path, repo.clone(), cx)
-                })?;
-
-                let sort_prefix = cx.read_entity(&repo, |repo, cx| {
-                    sort_prefix(repo, &entry.repo_path, entry.status, cx)
-                })?;
-
-                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.into_arc());
-                previous_paths.remove(&path_key);
-
-                // TODO re-introduce concurrency by moving this out of the spawn loop
-                if let Some((buffer, diff)) = task.await.log_err() {
-                    cx.update(|window, cx| {
-                        this.update(cx, |this, cx| {
-                            this.register_buffer(path_key, entry.status, buffer, diff, window, cx)
-                        });
-                    })?;
-                }
-            }
-
-            // remove anything not part of the diff in the multibuffer
-            this.update(cx, |this, cx| {
-                multibuffer.update(cx, |multibuffer, cx| {
-                    for path in previous_paths {
-                        this.buffer_diff_subscriptions.remove(&path.path);
-                        multibuffer.remove_excerpts_for_path(path, cx);
-                    }
-                });
-            })?;
-
-            Ok(())
-        }
-
-    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         use git_store::branch_diff::BranchDiff;
         let Some(this) = this.upgrade() else {
             return Ok(());
@@ -713,7 +632,56 @@ impl ProjectDiff {
         })?;
 
         Ok(())
-    }
+        }
+
+        pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+            let mut path_keys = Vec::new();
+            let buffers_to_load = this.update(cx, |this, cx| {
+                let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+                    let load_buffers = branch_diff.load_buffers(cx);
+                    (branch_diff.repo().cloned(), load_buffers)
+                });
+                let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+
+                if let Some(repo) = repo {
+                    let repo = repo.read(cx);
+
+                    path_keys = Vec::with_capacity(buffers_to_load.len());
+                    for entry in buffers_to_load.iter() {
+                        let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                        let path_key =
+                            PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+                        previous_paths.remove(&path_key);
+                        path_keys.push(path_key)
+                    }
+                }
+
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    for path in previous_paths {
+                        this.buffer_diff_subscriptions.remove(&path.path);
+                        multibuffer.remove_excerpts_for_path(path, cx);
+                    }
+                });
+                buffers_to_load
+            })?;
+
+            for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+                if let Some((buffer, diff)) = entry.load.await.log_err() {
+                    cx.update(|window, cx| {
+                        this.update(cx, |this, cx| {
+                            this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                        })
+                        .ok();
+                    })?;
+                }
+            }
+            this.update(cx, |this, cx| {
+                this.pending_scroll.take();
+                cx.notify();
+            })?;
+
+            Ok(())
+        }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
