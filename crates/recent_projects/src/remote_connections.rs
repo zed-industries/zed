@@ -96,6 +96,7 @@ impl From<Connection> for RemoteConnectionOptions {
             Connection::DevContainer(conn) => {
                 RemoteConnectionOptions::DockerExec(DockerExecConnectionOptions {
                     name: conn.name.to_string(),
+                    upload_binary_over_docker_exec: false,
                 })
             }
         }
