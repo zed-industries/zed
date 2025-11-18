@@ -183,7 +183,7 @@ impl VsCodeSettings {
             disable_ai: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
-            file_finder: None,
+            file_finder: None.into(),
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
             global_lsp_settings: None,

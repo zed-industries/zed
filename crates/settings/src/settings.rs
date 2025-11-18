@@ -1,5 +1,6 @@
 mod base_keymap_setting;
 mod editable_setting_control;
+mod fallible_options;
 mod keymap_file;
 pub mod merge_from;
 mod serde_helper;
