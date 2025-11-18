@@ -36,8 +36,8 @@ pub fn is_invisible(c: char) -> bool {
     } else if c >= '\u{7f}' {
         c <= '\u{9f}'
             || (c.is_whitespace() && c != IDEOGRAPHIC_SPACE)
-            || contains(c, &FORMAT)
-            || contains(c, &OTHER)
+            || contains(c, FORMAT)
+            || contains(c, OTHER)
     } else {
         false
     }
@@ -50,25 +50,28 @@ pub fn replacement(c: char) -> Option<&'static str> {
         Some(C0_SYMBOLS[c as usize])
     } else if c == '\x7f' {
         Some(DEL)
-    } else if contains(c, &PRESERVE) {
+    } else if contains(c, PRESERVE) {
         None
     } else {
-        Some("\u{2007}") // fixed width space
+        Some(FIXED_WIDTH_SPACE)
     }
 }
+
+const FIXED_WIDTH_SPACE: &str = "\u{2007}";
+
 // IDEOGRAPHIC SPACE is common alongside Chinese and other wide character sets.
 // We don't highlight this for now (as it already shows up wide in the editor),
 // but could if we tracked state in the classifier.
 const IDEOGRAPHIC_SPACE: char = '\u{3000}';
 
-const C0_SYMBOLS: &'static [&'static str] = &[
+const C0_SYMBOLS: &[&str] = &[
     "␀", "␁", "␂", "␃", "␄", "␅", "␆", "␇", "␈", "␉", "␊", "␋", "␌", "␍", "␎", "␏", "␐", "␑", "␒",
     "␓", "␔", "␕", "␖", "␗", "␘", "␙", "␚", "␛", "␜", "␝", "␞", "␟",
 ];
-const DEL: &'static str = "␡";
+const DEL: &str = "␡";
 
 // generated using ucd-generate: ucd-generate general-category --include Format --chars ucd-16.0.0
-pub const FORMAT: &'static [(char, char)] = &[
+pub const FORMAT: &[(char, char)] = &[
     ('\u{ad}', '\u{ad}'),
     ('\u{600}', '\u{605}'),
     ('\u{61c}', '\u{61c}'),
@@ -93,7 +96,7 @@ pub const FORMAT: &'static [(char, char)] = &[
 ];
 
 // hand-made base on https://invisible-characters.com (Excluding Cf)
-pub const OTHER: &'static [(char, char)] = &[
+pub const OTHER: &[(char, char)] = &[
     ('\u{034f}', '\u{034f}'),
     ('\u{115F}', '\u{1160}'),
     ('\u{17b4}', '\u{17b5}'),
@@ -107,7 +110,7 @@ pub const OTHER: &'static [(char, char)] = &[
 ];
 
 // a subset of FORMAT/OTHER that may appear within glyphs
-const PRESERVE: &'static [(char, char)] = &[
+const PRESERVE: &[(char, char)] = &[
     ('\u{034f}', '\u{034f}'),
     ('\u{200d}', '\u{200d}'),
     ('\u{17b4}', '\u{17b5}'),
@@ -117,11 +120,11 @@ const PRESERVE: &'static [(char, char)] = &[
 ];
 
 fn contains(c: char, list: &[(char, char)]) -> bool {
-    for (start, end) in list {
-        if c < *start {
+    for &(start, end) in list {
+        if c < start {
             return false;
         }
-        if c <= *end {
+        if c <= end {
             return true;
         }
     }

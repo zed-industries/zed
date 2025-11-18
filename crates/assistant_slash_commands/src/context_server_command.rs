@@ -39,12 +39,12 @@ impl SlashCommand for ContextServerSlashCommand {
 
     fn label(&self, cx: &App) -> language::CodeLabel {
         let mut parts = vec![self.prompt.name.as_str()];
-        if let Some(args) = &self.prompt.arguments {
-            if let Some(arg) = args.first() {
-                parts.push(arg.name.as_str());
-            }
+        if let Some(args) = &self.prompt.arguments
+            && let Some(arg) = args.first()
+        {
+            parts.push(arg.name.as_str());
         }
-        create_label_for_command(&parts[0], &parts[1..], cx)
+        create_label_for_command(parts[0], &parts[1..], cx)
     }
 
     fn description(&self) -> String {
@@ -62,9 +62,10 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 
     fn requires_argument(&self) -> bool {
-        self.prompt.arguments.as_ref().map_or(false, |args| {
-            args.iter().any(|arg| arg.required == Some(true))
-        })
+        self.prompt
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args.iter().any(|arg| arg.required == Some(true)))
     }
 
     fn complete_argument(
@@ -190,7 +191,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     text: prompt,
                     run_commands_in_text: false,
                 }
-                .to_event_stream())
+                .into_event_stream())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

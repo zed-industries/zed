@@ -79,7 +79,7 @@ impl SlashCommand for SelectionCommand {
                 editor.update(cx, |editor, cx| {
                     let selection_ranges = editor
                         .selections
-                        .all_adjusted(cx)
+                        .all_adjusted(&editor.display_snapshot(cx))
                         .iter()
                         .map(|selection| selection.range())
                         .collect::<Vec<_>>();
@@ -137,7 +137,9 @@ pub fn selections_creases(
             None
         };
         let language_name = language_name.as_deref().unwrap_or("");
-        let filename = snapshot.file_at(range.start).map(|file| file.full_path(cx));
+        let filename = snapshot
+            .file_at(range.start)
+            .map(|file| file.full_path(cx).to_string_lossy().into_owned());
         let text = if language_name == "markdown" {
             selected_text
                 .lines()
@@ -187,9 +189,9 @@ pub fn selections_creases(
             let start_line = range.start.row + 1;
             let end_line = range.end.row + 1;
             if start_line == end_line {
-                format!("{}, Line {}", path.display(), start_line)
+                format!("{path}, Line {start_line}")
             } else {
-                format!("{}, Lines {} to {}", path.display(), start_line, end_line)
+                format!("{path}, Lines {start_line} to {end_line}")
             }
         } else {
             "Quoted selection".to_string()

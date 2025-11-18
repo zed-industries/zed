@@ -3,15 +3,14 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
-use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
+use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub struct CLspAdapter;
 
@@ -19,32 +18,18 @@ impl CLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 }
 
-#[async_trait(?Send)]
-impl super::LspAdapter for CLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-        Some(LanguageServerBinary {
-            path,
-            arguments: Vec::new(),
-            env: None,
-        })
-    }
+impl LspInstaller for CLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        pre_release: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
         let release =
-            latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
+            latest_github_release("clangd/clangd", true, pre_release, delegate.http_client())
+                .await?;
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
@@ -62,22 +47,36 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
             digest: asset.digest.clone(),
         };
-        Ok(Box::new(version) as Box<_>)
+        Ok(version)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: Vec::new(),
+            env: None,
+        })
     }
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion { name, url, digest } =
-            &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = version;
         let version_dir = container_dir.join(format!("clangd_{name}"));
         let binary_path = version_dir.join("bin/clangd");
-        let expected_digest = digest
-            .as_ref()
-            .and_then(|digest| digest.strip_prefix("sha256:"));
 
         let binary = LanguageServerBinary {
             path: binary_path.clone(),
@@ -99,11 +98,11 @@ impl super::LspAdapter for CLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, expected_digest)
+                (&metadata.digest, &expected_digest)
             {
                 if actual_digest == expected_digest {
                     if validity_check().await.is_ok() {
@@ -119,9 +118,9 @@ impl super::LspAdapter for CLspAdapter {
             }
         }
         download_server_binary(
-            delegate,
-            url,
-            digest.as_deref(),
+            &*delegate.http_client(),
+            &url,
+            expected_digest.as_deref(),
             &container_dir,
             AssetKind::Zip,
         )
@@ -130,7 +129,7 @@ impl super::LspAdapter for CLspAdapter {
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
-                digest: digest.clone(),
+                digest: expected_digest,
             },
             &metadata_path,
         )
@@ -146,6 +145,13 @@ impl super::LspAdapter for CLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
     }
+}
+
+#[async_trait(?Send)]
+impl super::LspAdapter for CLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
 
     async fn label_for_completion(
         &self,
@@ -160,13 +166,24 @@ impl super::LspAdapter for CLspAdapter {
             None => "",
         };
 
-        let label = completion
+        let mut label = completion
             .label
             .strip_prefix('•')
             .unwrap_or(&completion.label)
             .trim()
-            .to_owned()
-            + label_detail;
+            .to_owned();
+
+        if !label_detail.is_empty() {
+            let should_add_space = match completion.kind {
+                Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD) => false,
+                _ => true,
+            };
+
+            if should_add_space && !label.ends_with(' ') && !label_detail.starts_with(' ') {
+                label.push(' ');
+            }
+            label.push_str(label_detail);
+        }
 
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
@@ -182,11 +199,7 @@ impl super::LspAdapter for CLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(detail.len() + 1..text.len());
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
                 if completion.detail.is_some() =>
@@ -202,11 +215,7 @@ impl super::LspAdapter for CLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(detail.len() + 1..text.len());
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
                 if completion.detail.is_some() =>
@@ -230,11 +239,7 @@ impl super::LspAdapter for CLspAdapter {
                         filter_start..filter_end
                     });
 
-                return Some(CodeLabel {
-                    filter_range,
-                    text,
-                    runs,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some(kind) => {
                 let highlight_name = match kind {
@@ -253,8 +258,7 @@ impl super::LspAdapter for CLspAdapter {
                     .grammar()
                     .and_then(|g| g.highlight_id_for_name(highlight_name?))
                 {
-                    let mut label =
-                        CodeLabel::plain(label.to_string(), completion.filter_text.as_deref());
+                    let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
@@ -264,10 +268,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(
-            label.to_string(),
-            completion.filter_text.as_deref(),
-        ))
+        Some(CodeLabel::plain(label, completion.filter_text.as_deref()))
     }
 
     async fn label_for_symbol(
@@ -322,11 +323,11 @@ impl super::LspAdapter for CLspAdapter {
             _ => return None,
         };
 
-        Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     fn prepare_initialize_params(
@@ -391,20 +392,19 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
-    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
+    use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use unindent::Unindent;
 
     #[gpui::test]
-    async fn test_c_autoindent(cx: &mut TestAppContext) {
-        // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
+    async fn test_c_autoindent_basic(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                    s.defaults.tab_size = NonZeroU32::new(2);
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
                 });
             });
         });
@@ -413,23 +413,229 @@ mod tests {
         cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
-            // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);
 
-            // indent inside braces
             let ix = buffer.len() - 1;
             buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "int main() {\n  \n}");
+            assert_eq!(
+                buffer.text(),
+                "int main() {\n  \n}",
+                "content inside braces should be indented"
+            );
 
-            // indent body of single-statement if statement
-            let ix = buffer.len() - 2;
-            buffer.edit([(ix..ix, "if (a)\nb;")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b;\n}");
+            buffer
+        });
+    }
 
-            // indent inside field expression
-            let ix = buffer.len() - 3;
+    #[gpui::test]
+    async fn test_c_autoindent_if_else(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    b;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b;
+                }
+                "#
+                .unindent(),
+                "body of if-statement without braces should be indented"
+            );
+
+            let ix = buffer.len() - 4;
             buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b\n      .c;\n}");
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b
+                      .c;
+                }
+                "#
+                .unindent(),
+                "field expression (.c) should be indented further than the statement body"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a) a++;
+                    else b++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a) a++;
+                  else b++;
+                }
+                "#
+                .unindent(),
+                "single-line if/else without braces should align at the same level"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    b++;
+                    else
+                    c++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b++;
+                  else
+                    c++;
+                }
+                "#
+                .unindent(),
+                "multi-line if/else without braces should indent statement bodies"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    if (b)
+                    c++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    if (b)
+                      c++;
+                }
+                "#
+                .unindent(),
+                "nested if statements without braces should indent properly"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    b++;
+                    else if (c)
+                    d++;
+                    else
+                    f++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b++;
+                  else if (c)
+                    d++;
+                  else
+                    f++;
+                }
+                "#
+                .unindent(),
+                "else-if chains should align all conditions at same level with indented bodies"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a) {
+                    b++;
+                    } else
+                    c++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a) {
+                    b++;
+                  } else
+                    c++;
+                }
+                "#
+                .unindent(),
+                "mixed braces should indent properly"
+            );
 
             buffer
         });

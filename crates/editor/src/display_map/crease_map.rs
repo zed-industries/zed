@@ -365,9 +365,9 @@ impl Default for ItemSummary {
 }
 
 impl sum_tree::Summary for ItemSummary {
-    type Context = MultiBufferSnapshot;
+    type Context<'a> = &'a MultiBufferSnapshot;
 
-    fn zero(_cx: &Self::Context) -> Self {
+    fn zero(_cx: Self::Context<'_>) -> Self {
         Default::default()
     }
 

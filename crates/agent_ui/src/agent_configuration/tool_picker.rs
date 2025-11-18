@@ -1,14 +1,11 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agent_settings::{
-    AgentProfileContent, AgentProfileId, AgentProfileSettings, AgentSettings, AgentSettingsContent,
-    ContextServerPresetContent,
-};
-use assistant_tool::{ToolSource, ToolWorkingSet};
+use agent::ContextServerRegistry;
+use agent_settings::{AgentProfileId, AgentProfileSettings};
 use fs::Fs;
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::update_settings_file;
+use settings::{AgentProfileContent, ContextServerPresetContent, update_settings_file};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
 
@@ -17,7 +14,7 @@ pub struct ToolPicker {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ToolPickerMode {
+enum ToolPickerMode {
     BuiltinTools,
     McpTools,
 }
@@ -79,59 +76,79 @@ pub struct ToolPickerDelegate {
 }
 
 impl ToolPickerDelegate {
-    pub fn new(
-        mode: ToolPickerMode,
+    pub fn builtin_tools(
+        tool_names: Vec<Arc<str>>,
         fs: Arc<dyn Fs>,
-        tool_set: Entity<ToolWorkingSet>,
         profile_id: AgentProfileId,
         profile_settings: AgentProfileSettings,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
-        let items = Arc::new(Self::resolve_items(mode, &tool_set, cx));
+        Self::new(
+            Arc::new(
+                tool_names
+                    .into_iter()
+                    .map(|name| PickerItem::Tool {
+                        name,
+                        server_id: None,
+                    })
+                    .collect(),
+            ),
+            ToolPickerMode::BuiltinTools,
+            fs,
+            profile_id,
+            profile_settings,
+            cx,
+        )
+    }
 
+    pub fn mcp_tools(
+        registry: &Entity<ContextServerRegistry>,
+        fs: Arc<dyn Fs>,
+        profile_id: AgentProfileId,
+        profile_settings: AgentProfileSettings,
+        cx: &mut Context<ToolPicker>,
+    ) -> Self {
+        let mut items = Vec::new();
+
+        for (id, tools) in registry.read(cx).servers() {
+            let server_id = id.clone().0;
+            items.push(PickerItem::ContextServer {
+                server_id: server_id.clone(),
+            });
+            items.extend(tools.keys().map(|tool_name| PickerItem::Tool {
+                name: tool_name.clone().into(),
+                server_id: Some(server_id.clone()),
+            }));
+        }
+
+        Self::new(
+            Arc::new(items),
+            ToolPickerMode::McpTools,
+            fs,
+            profile_id,
+            profile_settings,
+            cx,
+        )
+    }
+
+    fn new(
+        items: Arc<Vec<PickerItem>>,
+        mode: ToolPickerMode,
+        fs: Arc<dyn Fs>,
+        profile_id: AgentProfileId,
+        profile_settings: AgentProfileSettings,
+        cx: &mut Context<ToolPicker>,
+    ) -> Self {
         Self {
             tool_picker: cx.entity().downgrade(),
+            mode,
             fs,
             items,
             profile_id,
             profile_settings,
             filtered_items: Vec::new(),
             selected_index: 0,
-            mode,
         }
-    }
-
-    fn resolve_items(
-        mode: ToolPickerMode,
-        tool_set: &Entity<ToolWorkingSet>,
-        cx: &mut App,
-    ) -> Vec<PickerItem> {
-        let mut items = Vec::new();
-        for (source, tools) in tool_set.read(cx).tools_by_source(cx) {
-            match source {
-                ToolSource::Native => {
-                    if mode == ToolPickerMode::BuiltinTools {
-                        items.extend(tools.into_iter().map(|tool| PickerItem::Tool {
-                            name: tool.name().into(),
-                            server_id: None,
-                        }));
-                    }
-                }
-                ToolSource::ContextServer { id } => {
-                    if mode == ToolPickerMode::McpTools && !tools.is_empty() {
-                        let server_id: Arc<str> = id.clone().into();
-                        items.push(PickerItem::ContextServer {
-                            server_id: server_id.clone(),
-                        });
-                        items.extend(tools.into_iter().map(|tool| PickerItem::Tool {
-                            name: tool.name().into(),
-                            server_id: Some(server_id.clone()),
-                        }));
-                    }
-                }
-            }
-        }
-        items
     }
 }
 
@@ -191,10 +208,10 @@ impl PickerDelegate for ToolPickerDelegate {
                         BTreeMap::default();
 
                     for item in all_items.iter() {
-                        if let PickerItem::Tool { server_id, name } = item.clone() {
-                            if name.contains(&query) {
-                                tools_by_provider.entry(server_id).or_default().push(name);
-                            }
+                        if let PickerItem::Tool { server_id, name } = item.clone()
+                            && name.contains(&query)
+                        {
+                            tools_by_provider.entry(server_id).or_default().push(name);
                         }
                     }
 
@@ -266,15 +283,19 @@ impl PickerDelegate for ToolPickerDelegate {
             is_enabled
         };
 
-        update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
+        update_settings_file(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
             let default_profile = self.profile_settings.clone();
             let server_id = server_id.clone();
             let tool_name = tool_name.clone();
-            move |settings: &mut AgentSettingsContent, _cx| {
-                let profiles = settings.profiles.get_or_insert_default();
+            move |settings, _cx| {
+                let profiles = settings
+                    .agent
+                    .get_or_insert_default()
+                    .profiles
+                    .get_or_insert_default();
                 let profile = profiles
-                    .entry(profile_id)
+                    .entry(profile_id.0)
                     .or_insert_with(|| AgentProfileContent {
                         name: default_profile.name.into(),
                         tools: default_profile.tools,
@@ -293,6 +314,7 @@ impl PickerDelegate for ToolPickerDelegate {
                                 )
                             })
                             .collect(),
+                        default_model: default_profile.default_model.clone(),
                     });
 
                 if let Some(server_id) = server_id {
@@ -318,7 +340,7 @@ impl PickerDelegate for ToolPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let item = &self.filtered_items[ix];
+        let item = &self.filtered_items.get(ix)?;
         match item {
             PickerItem::ContextServer { server_id, .. } => Some(
                 div()

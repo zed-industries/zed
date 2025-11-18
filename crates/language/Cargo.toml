@@ -20,8 +20,8 @@ test-support = [
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-python",
-    "tree-sitter-rust",
     "tree-sitter-typescript",
+    "tree-sitter-md",
     "settings/test-support",
     "util/test-support",
 ]
@@ -39,7 +39,6 @@ globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 imara-diff.workspace = true
-inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -61,6 +60,7 @@ sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
@@ -68,7 +68,7 @@ tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
+zlog.workspace = true
 diffy = "0.4.2"
 
 [dev-dependencies]

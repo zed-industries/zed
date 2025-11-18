@@ -34,15 +34,14 @@ where
 
     pub fn insert(&mut self, new_bounds: Bounds<U>) -> u32 {
         // If the tree is empty, make the root the new leaf.
-        if self.root.is_none() {
+        let Some(mut index) = self.root else {
             let new_node = self.push_leaf(new_bounds, 1);
             self.root = Some(new_node);
             return 1;
-        }
+        };
 
         // Search for the best place to add the new leaf based on heuristics.
         let mut max_intersecting_ordering = 0;
-        let mut index = self.root.unwrap();
         while let Node::Internal {
             left,
             right,
@@ -309,12 +308,12 @@ mod tests {
             let mut expected_quads: Vec<(Bounds<f32>, u32)> = Vec::new();
 
             // Insert a random number of random AABBs into the tree.
-            let num_bounds = rng.gen_range(1..=max_bounds);
+            let num_bounds = rng.random_range(1..=max_bounds);
             for _ in 0..num_bounds {
-                let min_x: f32 = rng.gen_range(-100.0..100.0);
-                let min_y: f32 = rng.gen_range(-100.0..100.0);
-                let width: f32 = rng.gen_range(0.0..50.0);
-                let height: f32 = rng.gen_range(0.0..50.0);
+                let min_x: f32 = rng.random_range(-100.0..100.0);
+                let min_y: f32 = rng.random_range(-100.0..100.0);
+                let width: f32 = rng.random_range(0.0..50.0);
+                let height: f32 = rng.random_range(0.0..50.0);
                 let bounds = Bounds {
                     origin: Point { x: min_x, y: min_y },
                     size: Size { width, height },

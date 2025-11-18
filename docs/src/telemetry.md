@@ -4,18 +4,17 @@ Zed collects anonymous telemetry data to help the team understand how people are
 
 ## Configuring Telemetry Settings
 
-You have full control over what data is sent out by Zed. To enable or disable some or all telemetry types, open your `settings.json` file via {#action zed::OpenSettings}({#kb zed::OpenSettings}) from the command palette.
+You have full control over what data is sent out by Zed.
+To enable or disable some or all telemetry types, open your `settings.json` file via {#action zed::OpenSettings}({#kb zed::OpenSettings}) from the command palette.
 
 Insert and tweak the following:
 
-```json
+```json [settings]
 "telemetry": {
     "diagnostics": false,
     "metrics": false
 },
 ```
-
-The telemetry settings can also be configured via the welcome screen, which can be invoked via the {#action workspace::Welcome} action in the command palette.
 
 ## Dataflow
 

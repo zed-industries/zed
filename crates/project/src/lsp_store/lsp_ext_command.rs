@@ -115,14 +115,14 @@ impl LspCommand for ExpandMacro {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -213,7 +213,7 @@ impl LspCommand for OpenDocs {
     ) -> Result<OpenDocsParams> {
         Ok(OpenDocsParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+                uri: lsp::Uri::from_file_path(path).unwrap(),
             },
             position: point_to_lsp(self.position),
         })
@@ -249,14 +249,14 @@ impl LspCommand for OpenDocs {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -462,14 +462,14 @@ impl LspCommand for GoToParentModule {
         request: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = request
             .position
             .and_then(deserialize_anchor)
             .context("bad request with bad position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -657,6 +657,7 @@ impl LspCommand for GetLspRunnables {
                     );
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
+                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
                         task_template.args.push("--".to_string());
                         task_template.args.extend(
                             cargo
@@ -682,7 +683,7 @@ impl LspCommand for GetLspRunnables {
                                 // That bit is not auto-expanded when using single quotes.
                                 // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
                                 .flat_map(|extra_arg| {
-                                    shlex::try_quote(&extra_arg).ok().map(|s| s.to_string())
+                                    shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
                                 }),
                         );
                     }
@@ -691,7 +692,7 @@ impl LspCommand for GetLspRunnables {
                     task_template.command = shell.program;
                     task_template.args = shell.args;
                     task_template.env = shell.environment;
-                    task_template.cwd = Some(shell.cwd.to_string_lossy().to_string());
+                    task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
                 }
             }
 

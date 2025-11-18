@@ -87,6 +87,11 @@
   --download-btn-border-hover: hsla(220, 60%, 50%, 0.2);
   --download-btn-shadow: hsla(220, 40%, 60%, 0.1);
 
+  --toast-bg: hsla(220, 93%, 98%);
+  --toast-border: hsla(220, 93%, 42%, 0.3);
+  --toast-border-success: hsla(120, 73%, 42%, 0.3);
+  --toast-border-error: hsla(0, 90%, 50%, 0.3);
+
   --footer-btn-bg: hsl(220, 60%, 98%, 0.4);
   --footer-btn-bg-hover: hsl(220, 60%, 93%, 0.5);
   --footer-btn-border: hsla(220, 60%, 40%, 0.15);
@@ -165,6 +170,11 @@
   --download-btn-border: hsla(220, 90%, 80%, 0.2);
   --download-btn-border-hover: hsla(220, 90%, 80%, 0.4);
   --download-btn-shadow: hsla(220, 50%, 60%, 0.15);
+
+  --toast-bg: hsla(220, 20%, 98%, 0.05);
+  --toast-border: hsla(220, 93%, 70%, 0.2);
+  --toast-border-success: hsla(120, 90%, 60%, 0.3);
+  --toast-border-error: hsla(0, 90%, 80%, 0.3);
 
   --footer-btn-bg: hsl(220, 90%, 95%, 0.01);
   --footer-btn-bg-hover: hsl(220, 90%, 50%, 0.05);

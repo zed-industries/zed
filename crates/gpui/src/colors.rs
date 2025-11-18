@@ -88,9 +88,9 @@ impl Deref for GlobalColors {
 
 impl Global for GlobalColors {}
 
-/// Implement this trait to allow global [Color] access via `cx.default_colors()`.
+/// Implement this trait to allow global [Colors] access via `cx.default_colors()`.
 pub trait DefaultColors {
-    /// Returns the default [`gpui::Colors`]
+    /// Returns the default [`Colors`]
     fn default_colors(&self) -> &Arc<Colors>;
 }
 

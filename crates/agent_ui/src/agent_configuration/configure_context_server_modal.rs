@@ -1,16 +1,14 @@
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    Animation, AnimationExt as _, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle,
-    WeakEntity, percentage, prelude::*,
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
+    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -24,7 +22,10 @@ use project::{
 };
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
-use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
+use ui::{
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
+    WithScrollbar, prelude::*,
+};
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
@@ -163,10 +164,10 @@ impl ConfigurationSource {
                     .read(cx)
                     .text(cx);
                 let settings = serde_json_lenient::from_str::<serde_json::Value>(&text)?;
-                if let Some(settings_validator) = settings_validator {
-                    if let Err(error) = settings_validator.validate(&settings) {
-                        return Err(anyhow::anyhow!(error.to_string()));
-                    }
+                if let Some(settings_validator) = settings_validator
+                    && let Err(error) = settings_validator.validate(&settings)
+                {
+                    return Err(anyhow::anyhow!(error.to_string()));
                 }
                 Ok((
                     id.clone(),
@@ -251,6 +252,8 @@ pub struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     source: ConfigurationSource,
     state: State,
+    original_server_id: Option<ContextServerId>,
+    scroll_handle: ScrollHandle,
 }
 
 impl ConfigureContextServerModal {
@@ -261,7 +264,6 @@ impl ConfigureContextServerModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action({
-            let language_registry = language_registry.clone();
             move |_workspace, _: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
@@ -349,6 +351,11 @@ impl ConfigureContextServerModal {
                     context_server_store,
                     workspace: workspace_handle,
                     state: State::Idle,
+                    original_server_id: match &target {
+                        ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::New => None,
+                    },
                     source: ConfigurationSource::from_target(
                         target,
                         language_registry,
@@ -356,6 +363,7 @@ impl ConfigureContextServerModal {
                         window,
                         cx,
                     ),
+                    scroll_handle: ScrollHandle::new(),
                 })
             })
         })
@@ -416,8 +424,17 @@ impl ConfigureContextServerModal {
             // When we write the settings to the file, the context server will be restarted.
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
-                update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
-                    project_settings.context_servers.insert(id.0, settings);
+                let original_server_id = self.original_server_id.clone();
+                update_settings_file(fs.clone(), cx, move |current, _| {
+                    if let Some(original_id) = original_server_id {
+                        if original_id != id {
+                            current.project.context_servers.remove(&original_id.0);
+                        }
+                    }
+                    current
+                        .project
+                        .context_servers
+                        .insert(id.0, settings.into());
                 });
             });
         } else if let Some(existing_server) = existing_server {
@@ -487,7 +504,7 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        const MODAL_DESCRIPTION: &'static str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
+        const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
             installation_instructions: Some(installation_instructions),
@@ -552,7 +569,7 @@ impl ConfigureContextServerModal {
             .into_any_element()
     }
 
-    fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
+    fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
         let is_connecting = matches!(self.state, State::Waiting);
 
@@ -570,12 +587,11 @@ impl ConfigureContextServerModal {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::with_meta(
                                         "Open Repository",
                                         None,
                                         repository_url.clone(),
-                                        window,
                                         cx,
                                     )
                                 }
@@ -602,7 +618,7 @@ impl ConfigureContextServerModal {
                             },
                         )
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -620,7 +636,7 @@ impl ConfigureContextServerModal {
                         )
                         .disabled(is_connecting)
                         .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(
@@ -639,11 +655,7 @@ impl ConfigureContextServerModal {
                 Icon::new(IconName::ArrowCircle)
                     .size(IconSize::XSmall)
                     .color(Color::Info)
-                    .with_animation(
-                        "arrow-circle",
-                        Animation::new(Duration::from_secs(2)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    )
+                    .with_rotate_animation(2)
                     .into_any_element(),
             )
             .child(
@@ -671,6 +683,7 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_handle = self.scroll_handle.clone();
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -690,16 +703,31 @@ impl Render for ConfigureContextServerModal {
                 Modal::new("configure-context-server", None)
                     .header(self.render_modal_header())
                     .section(
-                        Section::new()
-                            .child(self.render_modal_description(window, cx))
-                            .child(self.render_modal_content(cx))
-                            .child(match &self.state {
-                                State::Idle => div(),
-                                State::Waiting => Self::render_waiting_for_context_server(),
-                                State::Error(error) => Self::render_modal_error(error.clone()),
-                            }),
+                        Section::new().child(
+                            div()
+                                .size_full()
+                                .child(
+                                    div()
+                                        .id("modal-content")
+                                        .max_h(vh(0.7, window))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&scroll_handle)
+                                        .child(self.render_modal_description(window, cx))
+                                        .child(self.render_modal_content(cx))
+                                        .child(match &self.state {
+                                            State::Idle => div(),
+                                            State::Waiting => {
+                                                Self::render_waiting_for_context_server()
+                                            }
+                                            State::Error(error) => {
+                                                Self::render_modal_error(error.clone())
+                                            }
+                                        }),
+                                )
+                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                        ),
                     )
-                    .footer(self.render_modal_footer(window, cx)),
+                    .footer(self.render_modal_footer(cx)),
             )
     }
 }
@@ -716,24 +744,24 @@ fn wait_for_context_server(
         project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
             match status {
                 ContextServerStatus::Running => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Ok(()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Ok(()));
                     }
                 }
                 ContextServerStatus::Stopped => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Err("Context server stopped running".into()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Err("Context server stopped running".into()));
                     }
                 }
                 ContextServerStatus::Error(error) => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Err(error.clone()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Err(error.clone()));
                     }
                 }
                 _ => {}

@@ -18,7 +18,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 If you can't compile Zed, make sure that you have at least the following components installed in case of a Visual Studio installation:
 
-```json
+```json [settings]
 {
   "version": "1.0",
   "components": [
@@ -36,7 +36,7 @@ If you can't compile Zed, make sure that you have at least the following compone
 
 Or if in case of just Build Tools, the following components:
 
-```json
+```json [settings]
 {
   "version": "1.0",
   "components": [
@@ -68,7 +68,7 @@ The list can be obtained as follows:
 
 ### Backend Dependencies (optional) {#backend-dependencies}
 
-If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ### Notes
 
@@ -114,20 +114,9 @@ cargo test --workspace
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
+Zed does not support unofficial MSYS2 Zed packages built for Mingw-w64. Please report any issues you may have with [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed) to [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed).
 
-```sh
-pacman -Syu
-pacman -S $MINGW_PACKAGE_PREFIX-zed
-```
-
-then you can run `zeditor` CLI. Editor executable is installed under `$MINGW_PREFIX/lib/zed` directory
-
-You can see the [build script](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-zed/PKGBUILD) for more details on build process.
-
-> Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
-
-Note that `collab` is not supported for MSYS2.
+Please refer to [MSYS2 documentation](https://www.msys2.org/docs/ides-editors/#zed) first.
 
 ## Troubleshooting
 

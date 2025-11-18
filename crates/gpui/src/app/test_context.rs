@@ -10,7 +10,9 @@ use crate::{
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
 use rand::{SeedableRng, rngs::StdRng};
-use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -134,7 +136,7 @@ impl TestAppContext {
             app: App::new_app(platform.clone(), asset_source, http_client),
             background_executor,
             foreground_executor,
-            dispatcher: dispatcher.clone(),
+            dispatcher,
             test_platform: platform,
             text_system,
             fn_name,
@@ -144,7 +146,7 @@ impl TestAppContext {
 
     /// Create a single TestAppContext, for non-multi-client tests
     pub fn single() -> Self {
-        let dispatcher = TestDispatcher::new(StdRng::from_entropy());
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         Self::build(dispatcher, None)
     }
 
@@ -192,6 +194,7 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
+    #[expect(clippy::wrong_self_convention)]
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut cx = self.app.borrow_mut();
         cx.new(build_entity)
@@ -219,7 +222,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
 
         // Some tests rely on the window size matching the bounds of the test display
-        let bounds = Bounds::maximized(None, &mut cx);
+        let bounds = Bounds::maximized(None, &cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -233,7 +236,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(None, &mut cx);
+        let bounds = Bounds::maximized(None, &cx);
         let window = cx
             .open_window(
                 WindowOptions {
@@ -244,7 +247,7 @@ impl TestAppContext {
             )
             .unwrap();
         drop(cx);
-        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), self).into_mut();
         cx.run_until_parked();
         cx
     }
@@ -261,7 +264,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(None, &mut cx);
+        let bounds = Bounds::maximized(None, &cx);
         let window = cx
             .open_window(
                 WindowOptions {
@@ -273,7 +276,7 @@ impl TestAppContext {
             .unwrap();
         drop(cx);
         let view = window.root(self).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), self).into_mut();
         cx.run_until_parked();
 
         // it might be nice to try and cleanup these at the end of each test.
@@ -330,6 +333,13 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Returns true if there's an alert dialog open.
+    pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.test_platform.expect_restart.borrow_mut().replace(tx);
+        rx
+    }
+
     /// Causes the given sources to be returned if the application queries for screen
     /// capture sources.
     pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
@@ -338,7 +348,7 @@ impl TestAppContext {
 
     /// Returns all windows open in the test.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
-        self.app.borrow().windows().clone()
+        self.app.borrow().windows()
     }
 
     /// Run the given task on the main thread.
@@ -454,7 +464,7 @@ impl TestAppContext {
             .windows
             .get_mut(window.id)
             .unwrap()
-            .as_mut()
+            .as_deref_mut()
             .unwrap()
             .platform_window
             .as_test()
@@ -585,7 +595,7 @@ impl<V: 'static> Entity<V> {
         cx.executor().advance_clock(advance_clock_by);
 
         async move {
-            let notification = crate::util::timeout(duration, rx.recv())
+            let notification = crate::util::smol_timeout(duration, rx.recv())
                 .await
                 .expect("next notification timed out");
             drop(subscription);
@@ -618,7 +628,7 @@ impl<V> Entity<V> {
                 }
             }),
             cx.subscribe(self, {
-                let mut tx = tx.clone();
+                let mut tx = tx;
                 move |_, _: &Evt, _| {
                     tx.blocking_send(()).ok();
                 }
@@ -629,7 +639,7 @@ impl<V> Entity<V> {
         let handle = self.downgrade();
 
         async move {
-            crate::util::timeout(Duration::from_secs(1), async move {
+            crate::util::smol_timeout(Duration::from_secs(1), async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -835,7 +845,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a SrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.test_window(self.window)
@@ -882,12 +892,14 @@ impl VisualTestContext {
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
     /// This method internally retains the VisualTestContext until the end of the test.
-    pub fn as_mut(self) -> &'static mut Self {
+    pub fn into_mut(self) -> &'static mut Self {
         let ptr = Box::into_raw(Box::new(self));
         // safety: on_quit will be called after the test has finished.
         // the executor will ensure that all tasks related to the test have stopped.
         // so there is no way for cx to be accessed after on_quit is called.
-        let cx = Box::leak(unsafe { Box::from_raw(ptr) });
+        // todo: This is unsound under stacked borrows (also tree borrows probably?)
+        // the mutable reference invalidates `ptr` which is later used in the closure
+        let cx = unsafe { &mut *ptr };
         cx.on_quit(move || unsafe {
             drop(Box::from_raw(ptr));
         });
@@ -1025,7 +1037,7 @@ impl VisualContext for VisualTestContext {
     fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Self::Result<()> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                view.read(cx).focus_handle(cx).clone().focus(window)
+                view.read(cx).focus_handle(cx).focus(window)
             })
             .unwrap()
     }

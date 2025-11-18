@@ -1,5 +1,5 @@
 use crate::{
-    Vim,
+    Operator, Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
@@ -8,7 +8,7 @@ use editor::{
     Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
     display_map::ToDisplayPoint,
 };
-use gpui::{Context, Window, actions};
+use gpui::{ClipboardEntry, Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -49,11 +49,11 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
-                let display_selections = editor.selections.all::<Point>(cx);
+                let display_selections = editor.selections.all::<Point>(&map.display_snapshot);
 
                 // Handles all string that require manipulation, including inserts and replaces
                 let edits = display_selections
@@ -65,12 +65,12 @@ impl Vim {
                         // we don't do a replace, we need insert a "\n"
                         if !is_new_line {
                             range.end.column += 1;
-                            range.end = map.buffer_snapshot.clip_point(range.end, Bias::Right);
+                            range.end = map.buffer_snapshot().clip_point(range.end, Bias::Right);
                         }
-                        let replace_range = map.buffer_snapshot.anchor_before(range.start)
-                            ..map.buffer_snapshot.anchor_after(range.end);
+                        let replace_range = map.buffer_snapshot().anchor_before(range.start)
+                            ..map.buffer_snapshot().anchor_after(range.end);
                         let current_text = map
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .text_for_range(replace_range.clone())
                             .collect();
                         vim.replacements.push((replace_range.clone(), current_text));
@@ -94,11 +94,11 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&map.display_snapshot);
                 let mut new_selections = vec![];
                 let edits: Vec<(Range<Point>, String)> = selections
                     .into_iter()
@@ -111,15 +111,15 @@ impl Vim {
                         )
                         .to_point(&map);
                         new_selections.push(
-                            map.buffer_snapshot.anchor_before(start)
-                                ..map.buffer_snapshot.anchor_before(start),
+                            map.buffer_snapshot().anchor_before(start)
+                                ..map.buffer_snapshot().anchor_before(start),
                         );
 
                         let mut undo = None;
                         let edit_range = start..end;
                         for (i, (range, inverse)) in vim.replacements.iter().rev().enumerate() {
-                            if range.start.to_point(&map.buffer_snapshot) <= edit_range.start
-                                && range.end.to_point(&map.buffer_snapshot) >= edit_range.end
+                            if range.start.to_point(&map.buffer_snapshot()) <= edit_range.start
+                                && range.end.to_point(&map.buffer_snapshot()) >= edit_range.end
                             {
                                 undo = Some(inverse.clone());
                                 vim.replacements.remove(vim.replacements.len() - i - 1);
@@ -148,16 +148,18 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let mut selection = editor.selections.newest_display(cx);
+            let mut selection = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
             object.expand_selection(&snapshot, &mut selection, around, None);
             let start = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.start.to_point(&snapshot));
             let end = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.end.to_point(&snapshot));
             let new_range = start..end;
             vim.exchange_impl(new_range, editor, &snapshot, window, cx);
@@ -167,7 +169,7 @@ impl Vim {
 
     pub fn exchange_visual(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
             let new_range = selection.start..selection.end;
             let snapshot = editor.snapshot(window, cx);
@@ -178,7 +180,7 @@ impl Vim {
 
     pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, _, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.clear_background_highlights::<VimExchange>(cx);
         });
         self.clear_operator(window, cx);
@@ -193,10 +195,12 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
-            let mut selection = editor.selections.newest_display(cx);
+            let mut selection = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
             motion.expand_selection(
                 &snapshot,
@@ -206,10 +210,10 @@ impl Vim {
                 forced_motion,
             );
             let start = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.start.to_point(&snapshot));
             let end = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.end.to_point(&snapshot));
             let new_range = start..end;
             vim.exchange_impl(new_range, editor, &snapshot, window, cx);
@@ -228,14 +232,14 @@ impl Vim {
         if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
             let previous_range = ranges[0].clone();
 
-            let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot);
-            let new_range_end = new_range.end.to_offset(&snapshot.buffer_snapshot);
-            let previous_range_end = previous_range.end.to_offset(&snapshot.buffer_snapshot);
-            let previous_range_start = previous_range.start.to_offset(&snapshot.buffer_snapshot);
+            let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot());
+            let new_range_end = new_range.end.to_offset(&snapshot.buffer_snapshot());
+            let previous_range_end = previous_range.end.to_offset(&snapshot.buffer_snapshot());
+            let previous_range_start = previous_range.start.to_offset(&snapshot.buffer_snapshot());
 
             let text_for = |range: Range<Anchor>| {
                 snapshot
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .text_for_range(range)
                     .collect::<String>()
             };
@@ -274,10 +278,27 @@ impl Vim {
             );
         }
     }
+
+    /// Pastes the clipboard contents, replacing the same number of characters
+    /// as the clipboard's contents.
+    pub fn paste_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let clipboard_text =
+            cx.read_from_clipboard()
+                .and_then(|item| match item.entries().first() {
+                    Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
+                    _ => None,
+                });
+
+        if let Some(text) = clipboard_text {
+            self.push_operator(Operator::Replace, window, cx);
+            self.normal_replace(Arc::from(text), window, cx);
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use gpui::ClipboardItem;
     use indoc::indoc;
 
     use crate::{
@@ -516,5 +537,23 @@ mod test {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert_eq!(0, highlights.len());
         });
+    }
+
+    #[gpui::test]
+    async fn test_paste_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(ClipboardItem::new_string("456".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"45ˇ6"}, Mode::Replace);
+
+        // If the clipboard's contents length is greater than the remaining text
+        // length, nothing sould be replace and cursor should remain in the same
+        // position.
+        cx.set_state(indoc! {"ˇ123"}, Mode::Replace);
+        cx.write_to_clipboard(ClipboardItem::new_string("4567".to_string()));
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(indoc! {"ˇ123"}, Mode::Replace);
     }
 }

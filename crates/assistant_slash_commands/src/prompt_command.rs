@@ -80,7 +80,7 @@ impl SlashCommand for PromptSlashCommand {
         };
 
         let store = PromptStore::global(cx);
-        let title = SharedString::from(title.clone());
+        let title = SharedString::from(title);
         let prompt = cx.spawn({
             let title = title.clone();
             async move |cx| {
@@ -117,7 +117,7 @@ impl SlashCommand for PromptSlashCommand {
                 }],
                 run_commands_in_text: true,
             }
-            .to_event_stream())
+            .into_event_stream())
         })
     }
 }

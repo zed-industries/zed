@@ -70,9 +70,14 @@ pub trait EntityInputHandler: 'static + Sized {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
+
+    /// See [`InputHandler::accepts_text_input`] for details
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        true
+    }
 }
 
-/// The canonical implementation of [`PlatformInputHandler`]. Call [`Window::handle_input`]
+/// The canonical implementation of [`crate::PlatformInputHandler`]. Call [`Window::handle_input`]
 /// with an instance during your element's paint.
 pub struct ElementInputHandler<V> {
     view: Entity<V>,
@@ -176,5 +181,10 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         self.view.update(cx, |view, cx| {
             view.character_index_for_point(point, window, cx)
         })
+    }
+
+    fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.view
+            .update(cx, |view, cx| view.accepts_text_input(window, cx))
     }
 }

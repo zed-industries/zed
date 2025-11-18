@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
-use http_client::{HttpClient, Url};
+use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::Version;
 use serde::Deserialize;
@@ -13,6 +13,7 @@ use std::{
     env::{self, consts},
     ffi::OsString,
     io,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     process::Output,
     sync::Arc,
@@ -27,6 +28,13 @@ pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
     pub allow_binary_download: bool,
     pub use_paths: Option<(PathBuf, PathBuf)>,
+}
+
+pub enum VersionStrategy<'a> {
+    /// Install if current version doesn't match pinned version
+    Pin(&'a str),
+    /// Install if current version is older than latest version
+    Latest(&'a str),
 }
 
 #[derive(Clone)]
@@ -69,9 +77,8 @@ impl NodeRuntime {
         let mut state = self.0.lock().await;
 
         let options = loop {
-            match state.options.borrow().as_ref() {
-                Some(options) => break options.clone(),
-                None => {}
+            if let Some(options) = state.options.borrow().as_ref() {
+                break options.clone();
             }
             match state.options.changed().await {
                 Ok(()) => {}
@@ -190,7 +197,7 @@ impl NodeRuntime {
 
         state.instance = Some(instance.boxed_clone());
         state.last_options = Some(options);
-        return instance;
+        instance
     }
 
     pub async fn binary_path(&self) -> Result<PathBuf> {
@@ -286,7 +293,7 @@ impl NodeRuntime {
         package_name: &str,
         local_executable_path: &Path,
         local_package_directory: &Path,
-        latest_version: &str,
+        version_strategy: VersionStrategy<'_>,
     ) -> bool {
         // In the case of the local system not having the package installed,
         // or in the instances where we fail to parse package.json data,
@@ -307,11 +314,21 @@ impl NodeRuntime {
         let Some(installed_version) = Version::parse(&installed_version).log_err() else {
             return true;
         };
-        let Some(latest_version) = Version::parse(latest_version).log_err() else {
-            return true;
-        };
 
-        installed_version < latest_version
+        match version_strategy {
+            VersionStrategy::Pin(pinned_version) => {
+                let Some(pinned_version) = Version::parse(pinned_version).log_err() else {
+                    return true;
+                };
+                installed_version != pinned_version
+            }
+            VersionStrategy::Latest(latest_version) => {
+                let Some(latest_version) = Version::parse(latest_version).log_err() else {
+                    return true;
+                };
+                installed_version < latest_version
+            }
+        }
     }
 }
 
@@ -359,7 +376,7 @@ struct ManagedNodeRuntime {
 }
 
 impl ManagedNodeRuntime {
-    const VERSION: &str = "v22.5.1";
+    const VERSION: &str = "v24.11.0";
 
     #[cfg(not(windows))]
     const NODE_PATH: &str = "bin/node";
@@ -540,7 +557,6 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
             let mut command = util::command::new_smol_command(node_binary);
-            command.env_clear();
             command.env("PATH", env_path);
             command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
@@ -597,7 +613,7 @@ pub struct SystemNodeRuntime {
 }
 
 impl SystemNodeRuntime {
-    const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
+    const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")
@@ -783,17 +799,18 @@ fn configure_npm_command(
         command.args(["--prefix".into(), directory.to_path_buf()]);
     }
 
-    if let Some(proxy) = proxy {
+    if let Some(mut proxy) = proxy.cloned() {
         // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
         // NodeRuntime without environment information can not parse `localhost`
         // correctly.
         // TODO: map to `[::1]` if we are using ipv6
-        let proxy = proxy
-            .to_string()
-            .to_ascii_lowercase()
-            .replace("localhost", "127.0.0.1");
+        if matches!(proxy.host(), Some(Host::Domain(domain)) if domain.eq_ignore_ascii_case("localhost"))
+        {
+            // When localhost is a valid Host, so is `127.0.0.1`
+            let _ = proxy.set_ip_host(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        }
 
-        command.args(["--proxy", &proxy]);
+        command.args(["--proxy", proxy.as_str()]);
     }
 
     #[cfg(windows)]
@@ -811,6 +828,49 @@ fn configure_npm_command(
             .log_err()
         {
             command.env("ComSpec", val);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http_client::Url;
+
+    use super::configure_npm_command;
+
+    // Map localhost to 127.0.0.1
+    // NodeRuntime without environment information can not parse `localhost` correctly.
+    #[test]
+    fn test_configure_npm_command_map_localhost_proxy() {
+        const CASES: [(&str, &str); 4] = [
+            // Map localhost to 127.0.0.1
+            ("http://localhost:9090/", "http://127.0.0.1:9090/"),
+            ("https://google.com/", "https://google.com/"),
+            (
+                "http://username:password@proxy.thing.com:8080/",
+                "http://username:password@proxy.thing.com:8080/",
+            ),
+            // Test when localhost is contained within a different part of the URL
+            (
+                "http://username:localhost@localhost:8080/",
+                "http://username:localhost@127.0.0.1:8080/",
+            ),
+        ];
+
+        for (proxy, mapped_proxy) in CASES {
+            let mut dummy = smol::process::Command::new("");
+            let proxy = Url::parse(proxy).unwrap();
+            configure_npm_command(&mut dummy, None, Some(&proxy));
+            let proxy = dummy
+                .get_args()
+                .skip_while(|&arg| arg != "--proxy")
+                .skip(1)
+                .next();
+            let proxy = proxy.expect("Proxy was not passed to Command correctly");
+            assert_eq!(
+                proxy, mapped_proxy,
+                "Incorrectly mapped localhost to 127.0.0.1"
+            );
         }
     }
 }

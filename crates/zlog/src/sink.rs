@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -19,17 +19,17 @@ const ANSI_GREEN: &str = "\x1b[32m";
 const ANSI_BLUE: &str = "\x1b[34m";
 const ANSI_MAGENTA: &str = "\x1b[35m";
 
-/// Whether stdout output is enabled.
-static mut ENABLED_SINKS_STDOUT: bool = false;
-/// Whether stderr output is enabled.
-static mut ENABLED_SINKS_STDERR: bool = false;
-
 /// Is Some(file) if file output is enabled.
 static ENABLED_SINKS_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
 static SINK_FILE_PATH: OnceLock<&'static PathBuf> = OnceLock::new();
 static SINK_FILE_PATH_ROTATE: OnceLock<&'static PathBuf> = OnceLock::new();
+
+// NB: Since this can be accessed in tests, we probably should stick to atomics here.
+/// Whether stdout output is enabled.
+static ENABLED_SINKS_STDOUT: AtomicBool = AtomicBool::new(false);
+/// Whether stderr output is enabled.
+static ENABLED_SINKS_STDERR: AtomicBool = AtomicBool::new(false);
 /// Atomic counter for the size of the log file in bytes.
-// TODO: make non-atomic if writing single threaded
 static SINK_FILE_SIZE_BYTES: AtomicU64 = AtomicU64::new(0);
 /// Maximum size of the log file before it will be rotated, in bytes.
 const SINK_FILE_SIZE_BYTES_MAX: u64 = 1024 * 1024; // 1 MB
@@ -39,18 +39,17 @@ pub struct Record<'a> {
     pub level: log::Level,
     pub message: &'a std::fmt::Arguments<'a>,
     pub module_path: Option<&'a str>,
+    pub line: Option<u32>,
 }
 
 pub fn init_output_stdout() {
-    unsafe {
-        ENABLED_SINKS_STDOUT = true;
-    }
+    // Use atomics here instead of just a `static mut`, since in the context
+    // of tests these accesses can be multi-threaded.
+    ENABLED_SINKS_STDOUT.store(true, Ordering::Release);
 }
 
 pub fn init_output_stderr() {
-    unsafe {
-        ENABLED_SINKS_STDERR = true;
-    }
+    ENABLED_SINKS_STDERR.store(true, Ordering::Release);
 }
 
 pub fn init_output_file(
@@ -79,7 +78,7 @@ pub fn init_output_file(
     if size_bytes >= SINK_FILE_SIZE_BYTES_MAX {
         rotate_log_file(&mut file, Some(path), path_rotate, &SINK_FILE_SIZE_BYTES);
     } else {
-        SINK_FILE_SIZE_BYTES.store(size_bytes, Ordering::Relaxed);
+        SINK_FILE_SIZE_BYTES.store(size_bytes, Ordering::Release);
     }
 
     *enabled_sinks_file = Some(file);
@@ -107,8 +106,12 @@ static LEVEL_ANSI_COLORS: [&str; 6] = [
 ];
 
 // PERF: batching
-pub fn submit(record: Record) {
-    if unsafe { ENABLED_SINKS_STDOUT } {
+pub fn submit(mut record: Record) {
+    if record.module_path.is_none_or(|p| !p.ends_with(".rs")) {
+        // Only render line numbers for actual rust files emitted by `log_err` and friends
+        record.line.take();
+    }
+    if ENABLED_SINKS_STDOUT.load(Ordering::Acquire) {
         let mut stdout = std::io::stdout().lock();
         _ = writeln!(
             &mut stdout,
@@ -119,11 +122,12 @@ pub fn submit(record: Record) {
             SourceFmt {
                 scope: record.scope,
                 module_path: record.module_path,
+                line: record.line,
                 ansi: true,
             },
             record.message
         );
-    } else if unsafe { ENABLED_SINKS_STDERR } {
+    } else if ENABLED_SINKS_STDERR.load(Ordering::Acquire) {
         let mut stdout = std::io::stderr().lock();
         _ = writeln!(
             &mut stdout,
@@ -134,6 +138,7 @@ pub fn submit(record: Record) {
             SourceFmt {
                 scope: record.scope,
                 module_path: record.module_path,
+                line: record.line,
                 ansi: true,
             },
             record.message
@@ -169,11 +174,12 @@ pub fn submit(record: Record) {
                 SourceFmt {
                     scope: record.scope,
                     module_path: record.module_path,
+                    line: record.line,
                     ansi: false,
                 },
                 record.message
             );
-            SINK_FILE_SIZE_BYTES.fetch_add(writer.written, Ordering::Relaxed) + writer.written
+            SINK_FILE_SIZE_BYTES.fetch_add(writer.written, Ordering::AcqRel) + writer.written
         };
         if file_size_bytes > SINK_FILE_SIZE_BYTES_MAX {
             rotate_log_file(
@@ -187,23 +193,24 @@ pub fn submit(record: Record) {
 }
 
 pub fn flush() {
-    if unsafe { ENABLED_SINKS_STDOUT } {
+    if ENABLED_SINKS_STDOUT.load(Ordering::Acquire) {
         _ = std::io::stdout().lock().flush();
     }
     let mut file = ENABLED_SINKS_FILE.lock().unwrap_or_else(|handle| {
         ENABLED_SINKS_FILE.clear_poison();
         handle.into_inner()
     });
-    if let Some(file) = file.as_mut() {
-        if let Err(err) = file.flush() {
-            eprintln!("Failed to flush log file: {}", err);
-        }
+    if let Some(file) = file.as_mut()
+        && let Err(err) = file.flush()
+    {
+        eprintln!("Failed to flush log file: {}", err);
     }
 }
 
 struct SourceFmt<'a> {
     scope: Scope,
     module_path: Option<&'a str>,
+    line: Option<u32>,
     ansi: bool,
 }
 
@@ -226,6 +233,10 @@ impl std::fmt::Display for SourceFmt<'_> {
                 f.write_char(SCOPE_STRING_SEP_CHAR)?;
                 f.write_str(subscope)?;
             }
+        }
+        if let Some(line) = self.line {
+            f.write_char(':')?;
+            line.fmt(f)?;
         }
         if self.ansi {
             f.write_str(ANSI_RESET)?;
@@ -265,7 +276,7 @@ fn rotate_log_file<PathRef>(
     // according to the documentation, it only fails if:
     // - the file is not writeable: should never happen,
     // - the size would cause an overflow (implementation specific): 0 should never cause an overflow
-    atomic_size.store(0, Ordering::Relaxed);
+    atomic_size.store(0, Ordering::Release);
 }
 
 #[cfg(test)]
@@ -298,7 +309,7 @@ mod tests {
             std::fs::read_to_string(&rotation_log_file_path).unwrap(),
             contents,
         );
-        assert_eq!(size.load(Ordering::Relaxed), 0);
+        assert_eq!(size.load(Ordering::Acquire), 0);
     }
 
     /// Regression test, ensuring that if log level values change we are made aware

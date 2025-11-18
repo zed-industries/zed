@@ -82,11 +82,12 @@ impl Render for Breadcrumbs {
             }
             text_style.color = Color::Muted.color(cx);
 
-            if index == 0 && !TabBarSettings::get_global(cx).show && active_item.is_dirty(cx) {
-                if let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
-                {
-                    return styled_element;
-                }
+            if index == 0
+                && !TabBarSettings::get_global(cx).show
+                && active_item.is_dirty(cx)
+                && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+            {
+                return styled_element;
             }
 
             StyledText::new(segment.text.replace('\n', "⏎"))
@@ -99,13 +100,21 @@ impl Render for Breadcrumbs {
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
 
+        let prefix_element = active_item.breadcrumb_prefix(window, cx);
+
+        let breadcrumbs = if let Some(prefix) = prefix_element {
+            h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+        } else {
+            breadcrumbs_stack
+        };
+
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
         {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs_stack)
+                    .child(breadcrumbs)
                     .style(ButtonStyle::Transparent)
                     .on_click({
                         let editor = editor.clone();
@@ -118,21 +127,19 @@ impl Render for Breadcrumbs {
                             }
                         }
                     })
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         if let Some(editor) = editor.upgrade() {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         } else {
                             Tooltip::for_action(
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
-                                window,
                                 cx,
                             )
                         }
@@ -142,7 +149,7 @@ impl Render for Breadcrumbs {
                 // Match the height and padding of the `ButtonLike` in the other arm.
                 .h(rems_from_px(22.))
                 .pl_1()
-                .child(breadcrumbs_stack),
+                .child(breadcrumbs),
         }
     }
 }
@@ -231,7 +238,7 @@ fn apply_dirty_filename_style(
     let highlight = vec![(filename_position..text.len(), highlight_style)];
     Some(
         StyledText::new(text)
-            .with_default_highlights(&text_style, highlight)
+            .with_default_highlights(text_style, highlight)
             .into_any(),
     )
 }

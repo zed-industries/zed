@@ -29,13 +29,13 @@ The remote machine must be able to run Zed's server. The following platforms sho
 
 - macOS Catalina or later (Intel or Apple Silicon)
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
-- Windows is not yet supported.
+- Windows is not yet supported as a remote server, but Windows can be used as a local machine to connect to remote servers.
 
 ## Configuration
 
 The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialog {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -48,7 +48,7 @@ The list of remote servers is stored in your settings file {#kb zed::OpenSetting
 
 Zed shells out to the `ssh` on your path, and so it will inherit any configuration you have in `~/.ssh/config` for the given host. That said, if you need to override anything you can configure the following additional options on each connection:
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -66,7 +66,7 @@ Zed shells out to the `ssh` on your path, and so it will inherit any configurati
 
 There are two additional Zed-specific options per connection, `upload_binary_over_ssh` and `nickname`:
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -87,11 +87,33 @@ If you use the command line to open a connection to a host by doing `zed ssh://1
 
 Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
 
+## Remote Development on Windows (SSH)
+
+Zed on Windows supports SSH remoting and will prompt for credentials when needed.
+
+If you encounter authentication issues, confirm that your SSH key agent is running (e.g., ssh-agent or your Git client's agent) and that ssh.exe is on PATH.
+
+### Troubleshooting SSH on Windows
+
+When prompted for credentials, use the graphical askpass dialog. If it doesn't appear, check for credential manager conflicts and that GUI prompts aren't blocked by your terminal.
+
+## WSL Support
+
+Zed supports opening folders inside of WSL natively on Windows.
+
+### Opening a local folder in WSL
+
+To open a local folder inside a WSL container, use the `projects: open in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
+
+### Opening a folder already in WSL
+
+To open a folder that's already located inside of a WSL container, use the `projects: open wsl` action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
+
 ## Port forwarding
 
 If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -106,7 +128,7 @@ This will cause requests from your local machine to `localhost:8080` to be forwa
 
 By default these ports are bound to localhost, so other computers in the same network as your development machine cannot access them. You can set the local_host to bind to a different interface, for example, 0.0.0.0 will bind to all local interfaces.
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -125,7 +147,7 @@ By default these ports are bound to localhost, so other computers in the same ne
 
 These ports also default to the `localhost` interface on the remote host. If you need to change this, you can also set the remote host:
 
-```json
+```json [settings]
 {
   "ssh_connections": [
     {
@@ -184,7 +206,7 @@ If you are struggling with connection issues, you should be able to see more inf
 
 ## Supported SSH Options
 
-Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and use then use that to multiplex SSH connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your SSH config file, but if you want to specify additional options to the SSH control master you can configure Zed to set them.
+Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and then use that to multiplex SSH connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your SSH config file, but if you want to specify additional options to the SSH control master you can configure Zed to set them.
 
 When typing in the "Connect New Server" dialog, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
 

@@ -7,7 +7,10 @@ use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 use language::{Anchor, Buffer, ToPoint};
 use parking_lot::Mutex;
-use project::{CompletionIntent, CompletionSource, lsp_store::CompletionDocumentation};
+use project::{
+    CompletionDisplayOptions, CompletionIntent, CompletionSource,
+    lsp_store::CompletionDocumentation,
+};
 use rope::Point;
 use std::{
     ops::Range,
@@ -88,8 +91,6 @@ impl SlashCommandCompletionProvider {
                                 .map(|(editor, workspace)| {
                                     let command_name = mat.string.clone();
                                     let command_range = command_range.clone();
-                                    let editor = editor.clone();
-                                    let workspace = workspace.clone();
                                     Arc::new(
                                             move |intent: CompletionIntent,
                                             window: &mut Window,
@@ -126,6 +127,8 @@ impl SlashCommandCompletionProvider {
                             new_text,
                             label: command.label(cx),
                             icon_path: None,
+                            match_start: None,
+                            snippet_deduplication_key: None,
                             insert_text_mode: None,
                             confirm,
                             source: CompletionSource::Custom,
@@ -135,6 +138,7 @@ impl SlashCommandCompletionProvider {
 
                 vec![project::CompletionResponse {
                     completions,
+                    display_options: CompletionDisplayOptions::default(),
                     is_incomplete: false,
                 }]
             })
@@ -158,7 +162,7 @@ impl SlashCommandCompletionProvider {
         if let Some(command) = self.slash_commands.command(command_name, cx) {
             let completions = command.complete_argument(
                 arguments,
-                new_cancel_flag.clone(),
+                new_cancel_flag,
                 self.workspace.clone(),
                 window,
                 cx,
@@ -230,6 +234,8 @@ impl SlashCommandCompletionProvider {
                             icon_path: None,
                             new_text,
                             documentation: None,
+                            match_start: None,
+                            snippet_deduplication_key: None,
                             confirm,
                             insert_text_mode: None,
                             source: CompletionSource::Custom,
@@ -239,6 +245,7 @@ impl SlashCommandCompletionProvider {
 
                 Ok(vec![project::CompletionResponse {
                     completions,
+                    display_options: CompletionDisplayOptions::default(),
                     // TODO: Could have slash commands indicate whether their completions are incomplete.
                     is_incomplete: true,
                 }])
@@ -246,6 +253,7 @@ impl SlashCommandCompletionProvider {
         } else {
             Task::ready(Ok(vec![project::CompletionResponse {
                 completions: Vec::new(),
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: true,
             }]))
         }
@@ -307,6 +315,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         else {
             return Task::ready(Ok(vec![project::CompletionResponse {
                 completions: Vec::new(),
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }]));
         };

@@ -40,7 +40,7 @@ impl AsyncBody {
     }
 
     pub fn from_bytes(bytes: Bytes) -> Self {
-        Self(Inner::Bytes(Cursor::new(bytes.clone())))
+        Self(Inner::Bytes(Cursor::new(bytes)))
     }
 }
 

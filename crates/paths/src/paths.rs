@@ -2,9 +2,10 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 pub use util::paths::home_dir;
+use util::rel_path::RelPath;
 
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
@@ -29,8 +30,17 @@ static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
-pub fn remote_server_dir_relative() -> &'static Path {
-    Path::new(".zed_server")
+pub fn remote_server_dir_relative() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+    *CACHED
+}
+
+/// Returns the relative path to the zed_wsl_server directory on the wsl host.
+pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+    *CACHED
 }
 
 /// Sets a custom directory for all user data, overriding the default data directory.
@@ -41,7 +51,7 @@ pub fn remote_server_dir_relative() -> &'static Path {
 /// # Arguments
 ///
 /// * `dir` - The path to use as the custom data directory. This will be used as the base
-///           directory for all user data, including databases, extensions, and logs.
+///   directory for all user data, including databases, extensions, and logs.
 ///
 /// # Returns
 ///
@@ -59,11 +69,11 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
         let mut path = PathBuf::from(dir);
-        if path.is_relative() {
+        if path.is_relative() && path.exists() {
             let abs_path = path
                 .canonicalize()
                 .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = PathBuf::from(util::paths::SanitizedPath::from(abs_path))
+            path = util::paths::SanitizedPath::new(&abs_path).into()
         }
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
         path
@@ -143,6 +153,12 @@ pub fn temp_dir() -> &'static PathBuf {
 
         home_dir().join(".cache").join("zed")
     })
+}
+
+/// Returns the path to the hang traces directory.
+pub fn hang_traces_dir() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGS_DIR.get_or_init(|| data_dir().join("hang_traces"))
 }
 
 /// Returns the path to the logs directory.
@@ -278,7 +294,7 @@ pub fn snippets_dir() -> &'static PathBuf {
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
-pub fn contexts_dir() -> &'static PathBuf {
+pub fn text_threads_dir() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
@@ -360,12 +376,12 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
     DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
-/// Returns the path to the agent servers directory
+/// Returns the path to the external agents directory
 ///
 /// This is where agent servers are downloaded to
-pub fn agent_servers_dir() -> &'static PathBuf {
-    static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+pub fn external_agents_dir() -> &'static PathBuf {
+    static EXTERNAL_AGENTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTERNAL_AGENTS_DIR.get_or_init(|| data_dir().join("external_agents"))
 }
 
 /// Returns the path to the Copilot directory.
@@ -393,28 +409,34 @@ pub fn remote_servers_dir() -> &'static PathBuf {
 }
 
 /// Returns the relative path to a `.zed` folder within a project.
-pub fn local_settings_folder_relative_path() -> &'static Path {
-    Path::new(".zed")
+pub fn local_settings_folder_name() -> &'static str {
+    ".zed"
 }
 
 /// Returns the relative path to a `.vscode` folder within a project.
-pub fn local_vscode_folder_relative_path() -> &'static Path {
-    Path::new(".vscode")
+pub fn local_vscode_folder_name() -> &'static str {
+    ".vscode"
 }
 
 /// Returns the relative path to a `settings.json` file within a project.
-pub fn local_settings_file_relative_path() -> &'static Path {
-    Path::new(".zed/settings.json")
+pub fn local_settings_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed/settings.json").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
-pub fn local_tasks_file_relative_path() -> &'static Path {
-    Path::new(".zed/tasks.json")
+pub fn local_tasks_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed/tasks.json").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
-pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
-    Path::new(".vscode/tasks.json")
+pub fn local_vscode_tasks_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".vscode/tasks.json").unwrap());
+    *CACHED
 }
 
 pub fn debug_task_file_name() -> &'static str {
@@ -427,21 +449,29 @@ pub fn task_file_name() -> &'static str {
 
 /// Returns the relative path to a `debug.json` file within a project.
 /// .zed/debug.json
-pub fn local_debug_file_relative_path() -> &'static Path {
-    Path::new(".zed/debug.json")
+pub fn local_debug_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed/debug.json").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
-pub fn local_vscode_launch_file_relative_path() -> &'static Path {
-    Path::new(".vscode/launch.json")
+pub fn local_vscode_launch_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".vscode/launch.json").unwrap());
+    *CACHED
 }
 
 pub fn user_ssh_config_file() -> PathBuf {
     home_dir().join(".ssh/config")
 }
 
-pub fn global_ssh_config_file() -> &'static Path {
-    Path::new("/etc/ssh/ssh_config")
+pub fn global_ssh_config_file() -> Option<&'static Path> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(Path::new("/etc/ssh/ssh_config"))
+    }
 }
 
 /// Returns candidate paths for the vscode user settings file
@@ -514,4 +544,17 @@ fn add_vscode_user_data_paths(paths: &mut Vec<PathBuf>, product_name: &str) {
                 .join(product_name),
         );
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn global_gitignore_path() -> Option<PathBuf> {
+    Some(home_dir().join(".config").join("git").join("ignore"))
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+pub fn global_gitignore_path() -> Option<PathBuf> {
+    static GLOBAL_GITIGNORE_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    GLOBAL_GITIGNORE_PATH
+        .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
+        .clone()
 }

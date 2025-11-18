@@ -476,7 +476,7 @@ pub(crate) struct Underline {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub thickness: ScaledPixels,
-    pub wavy: bool,
+    pub wavy: u32,
 }
 
 impl From<Underline> for Primitive {

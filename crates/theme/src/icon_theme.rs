@@ -28,6 +28,8 @@ pub struct IconTheme {
     pub appearance: Appearance,
     /// The icons used for directories.
     pub directory_icons: DirectoryIcons,
+    /// The icons used for named directories.
+    pub named_directory_icons: HashMap<String, DirectoryIcons>,
     /// The icons used for chevrons.
     pub chevron_icons: ChevronIcons,
     /// The mapping of file stems to their associated icon keys.
@@ -39,7 +41,7 @@ pub struct IconTheme {
 }
 
 /// The icons used for directories.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct DirectoryIcons {
     /// The path to the icon to use for a collapsed directory.
     pub collapsed: Option<SharedString>,
@@ -150,7 +152,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ),
     ("java", &["java"]),
     ("javascript", &["cjs", "js", "mjs"]),
-    ("json", &["json"]),
+    ("json", &["json", "jsonc"]),
     ("julia", &["jl"]),
     ("kdl", &["kdl"]),
     ("kotlin", &["kt"]),
@@ -197,9 +199,9 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     (
         "storage",
         &[
-            "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "jsonc",
-            "ldf", "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql",
-            "sqlite", "tsv",
+            "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "ldf",
+            "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
+            "tsv",
         ],
     ),
     (
@@ -392,13 +394,14 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
             collapsed: Some("icons/file_icons/folder.svg".into()),
             expanded: Some("icons/file_icons/folder_open.svg".into()),
         },
+        named_directory_icons: HashMap::default(),
         chevron_icons: ChevronIcons {
             collapsed: Some("icons/file_icons/chevron_right.svg".into()),
             expanded: Some("icons/file_icons/chevron_down.svg".into()),
         },
         file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
         file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
-        file_icons: HashMap::from_iter(FILE_ICONS.into_iter().map(|(ty, path)| {
+        file_icons: HashMap::from_iter(FILE_ICONS.iter().map(|(ty, path)| {
             (
                 ty.to_string(),
                 IconDefinition {

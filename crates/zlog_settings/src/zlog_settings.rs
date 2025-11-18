@@ -1,13 +1,10 @@
 //! # zlog_settings
-use anyhow::Result;
+use collections::HashMap;
+
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsStore};
 
 pub fn init(cx: &mut App) {
-    ZlogSettings::register(cx);
-
     cx.observe_global::<SettingsStore>(|cx| {
         let zlog_settings = ZlogSettings::get_global(cx);
         zlog::filter::refresh_from_settings(&zlog_settings.scopes);
@@ -15,23 +12,19 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct ZlogSettings {
-    #[serde(default, flatten)]
-    pub scopes: std::collections::HashMap<String, String>,
+    /// A map of log scopes to the desired log level.
+    /// Useful for filtering out noisy logs or enabling more verbose logging.
+    ///
+    /// Example: {"log": {"client": "warn"}}
+    pub scopes: HashMap<String, String>,
 }
 
 impl Settings for ZlogSettings {
-    const KEY: Option<&'static str> = Some("log");
-
-    type FileContent = Self;
-
-    fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        ZlogSettings {
+            scopes: content.log.clone().unwrap(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

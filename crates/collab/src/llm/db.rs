@@ -1,30 +1,9 @@
-mod ids;
-mod queries;
-mod seed;
-mod tables;
-
-#[cfg(test)]
-mod tests;
-
-use cloud_llm_client::LanguageModelProvider;
-use collections::HashMap;
-pub use ids::*;
-pub use seed::*;
-pub use tables::*;
-
-#[cfg(test)]
-pub use tests::TestLlmDb;
-use usage_measure::UsageMeasure;
-
 use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::Context;
 pub use sea_orm::ConnectOptions;
-use sea_orm::prelude::*;
-use sea_orm::{
-    ActiveValue, DatabaseConnection, DatabaseTransaction, IsolationLevel, TransactionTrait,
-};
+use sea_orm::{DatabaseConnection, DatabaseTransaction, IsolationLevel, TransactionTrait};
 
 use crate::Result;
 use crate::db::TransactionHandle;
@@ -36,9 +15,6 @@ pub struct LlmDatabase {
     pool: DatabaseConnection,
     #[allow(unused)]
     executor: Executor,
-    provider_ids: HashMap<LanguageModelProvider, ProviderId>,
-    models: HashMap<(LanguageModelProvider, String), model::Model>,
-    usage_measure_ids: HashMap<UsageMeasure, UsageMeasureId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -51,57 +27,9 @@ impl LlmDatabase {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
             executor,
-            provider_ids: HashMap::default(),
-            models: HashMap::default(),
-            usage_measure_ids: HashMap::default(),
             #[cfg(test)]
             runtime: None,
         })
-    }
-
-    pub async fn initialize(&mut self) -> Result<()> {
-        self.initialize_providers().await?;
-        self.initialize_models().await?;
-        self.initialize_usage_measures().await?;
-        Ok(())
-    }
-
-    /// Returns the list of all known models, with their [`LanguageModelProvider`].
-    pub fn all_models(&self) -> Vec<(LanguageModelProvider, model::Model)> {
-        self.models
-            .iter()
-            .map(|((model_provider, _model_name), model)| (*model_provider, model.clone()))
-            .collect::<Vec<_>>()
-    }
-
-    /// Returns the names of the known models for the given [`LanguageModelProvider`].
-    pub fn model_names_for_provider(&self, provider: LanguageModelProvider) -> Vec<String> {
-        self.models
-            .keys()
-            .filter_map(|(model_provider, model_name)| {
-                if model_provider == &provider {
-                    Some(model_name)
-                } else {
-                    None
-                }
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-    }
-
-    pub fn model(&self, provider: LanguageModelProvider, name: &str) -> Result<&model::Model> {
-        Ok(self
-            .models
-            .get(&(provider, name.to_string()))
-            .with_context(|| format!("unknown model {provider:?}:{name}"))?)
-    }
-
-    pub fn model_by_id(&self, id: ModelId) -> Result<&model::Model> {
-        Ok(self
-            .models
-            .values()
-            .find(|model| model.id == id)
-            .with_context(|| format!("no model for ID {id:?}"))?)
     }
 
     pub fn options(&self) -> &ConnectOptions {

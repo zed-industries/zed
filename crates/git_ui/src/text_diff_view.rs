@@ -48,8 +48,8 @@ impl TextDiffView {
 
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
-            let source_buffer = multibuffer.as_singleton()?.clone();
-            let selections = editor.selections.all::<Point>(cx);
+            let source_buffer = multibuffer.as_singleton()?;
+            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
             let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
             let max_point = buffer_snapshot.max_point();
@@ -193,7 +193,7 @@ impl TextDiffView {
             .and_then(|b| {
                 b.read(cx)
                     .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
             .unwrap_or("untitled".into());
 
@@ -207,7 +207,7 @@ impl TextDiffView {
             path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
             buffer_changes_tx,
             _recalculate_diff_task: cx.spawn(async move |_, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()
@@ -259,7 +259,7 @@ async fn update_diff_buffer(
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let base_text = base_buffer_snapshot.text().to_string();
+    let base_text = base_buffer_snapshot.text();
 
     let diff_snapshot = cx
         .update(|cx| {
@@ -322,10 +322,6 @@ impl Item for TextDiffView {
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.diff_editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn act_as_type<'a>(
@@ -416,7 +412,7 @@ impl Item for TextDiffView {
 pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
     let buffer = editor.buffer().read(cx);
     let buffer_snapshot = buffer.snapshot(cx);
-    let first_selection = editor.selections.disjoint.first()?;
+    let first_selection = editor.selections.disjoint_anchors().first()?;
 
     let selection_start = first_selection.start.to_point(&buffer_snapshot);
     let selection_end = first_selection.end.to_point(&buffer_snapshot);
@@ -454,7 +450,7 @@ mod tests {
     use gpui::{TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::SettingsStore;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
 
@@ -462,11 +458,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
-            theme::ThemeSettings::register(cx)
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -686,7 +678,7 @@ mod tests {
 
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
-        let (workspace, mut cx) =
+        let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer = project
@@ -725,7 +717,7 @@ mod tests {
 
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
-            &mut cx,
+            cx,
             expected_diff,
         );
 

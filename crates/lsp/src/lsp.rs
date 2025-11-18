@@ -45,7 +45,7 @@ use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone, Deserialize)]
+#[derive(Clone)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -70,19 +70,24 @@ pub struct LanguageServerBinary {
 }
 
 /// Configures the search (and installation) of language servers.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LanguageServerBinaryOptions {
     /// Whether the adapter should look at the users system
     pub allow_path_lookup: bool,
     /// Whether the adapter should download its own version
     pub allow_binary_download: bool,
+    /// Whether the adapter should download a pre-release version
+    pub pre_release: bool,
 }
+
+struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
 
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
+    notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
@@ -100,8 +105,8 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
-    workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
-    root_uri: Url,
+    workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
+    root_uri: Uri,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -163,6 +168,12 @@ impl LanguageServerName {
 impl<'a> From<&'a str> for LanguageServerName {
     fn from(str: &'a str) -> LanguageServerName {
         LanguageServerName(str.to_string().into())
+    }
+}
+
+impl PartialEq<str> for LanguageServerName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
     }
 }
 
@@ -310,7 +321,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -318,6 +329,8 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
+        let root_uri = Uri::from_file_path(&working_dir)
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(
             "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
@@ -326,27 +339,22 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut server = util::command::new_smol_command(&binary.path)
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
             .current_dir(working_dir)
             .args(&binary.arguments)
             .envs(binary.env.clone().unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        let mut server = command
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
-                    binary.path, working_dir, &binary.arguments
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {command:?}",))?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -384,8 +392,8 @@ impl LanguageServer {
         server: Option<Child>,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
-        root_uri: Url,
-        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
+        root_uri: Uri,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -472,9 +480,24 @@ impl LanguageServer {
         }
         .into();
 
+        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
+        cx.background_spawn({
+            let outbound_tx = outbound_tx.clone();
+            async move {
+                while let Ok(serializer) = notification_rx.recv().await {
+                    let serialized = (serializer.0)();
+                    let Ok(_) = outbound_tx.send(serialized).await else {
+                        return;
+                    };
+                }
+                outbound_tx.close();
+            }
+        })
+        .detach();
         Self {
             server_id,
             notification_handlers,
+            notification_tx,
             response_handlers,
             io_handlers,
             name: server_name,
@@ -651,7 +674,7 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
                     position_encodings: Some(vec![PositionEncodingKind::UTF16]),
-                    ..Default::default()
+                    ..GeneralClientCapabilities::default()
                 }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -665,6 +688,7 @@ impl LanguageServer {
                     workspace_folders: Some(true),
                     symbol: Some(WorkspaceSymbolClientCapabilities {
                         resolve_support: None,
+                        dynamic_registration: Some(true),
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
@@ -688,21 +712,21 @@ impl LanguageServer {
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     file_operations: Some(WorkspaceFileOperationsClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         did_rename: Some(true),
                         will_rename: Some(true),
-                        ..Default::default()
+                        ..WorkspaceFileOperationsClientCapabilities::default()
                     }),
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    ..WorkspaceClientCapabilities::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
@@ -725,7 +749,8 @@ impl LanguageServer {
                                 "command".to_string(),
                             ],
                         }),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CodeActionClientCapabilities::default()
                     }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
@@ -751,7 +776,7 @@ impl LanguageServer {
                                 MarkupKind::Markdown,
                                 MarkupKind::PlainText,
                             ]),
-                            ..Default::default()
+                            ..CompletionItemCapability::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
@@ -764,18 +789,20 @@ impl LanguageServer {
                             ]),
                         }),
                         context_support: Some(true),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CompletionClientCapabilities::default()
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
                         prepare_support_default_behavior: Some(
                             PrepareSupportDefaultBehavior::IDENTIFIER,
                         ),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..RenameClientCapabilities::default()
                     }),
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
@@ -787,7 +814,7 @@ impl LanguageServer {
                                 "label.command".to_string(),
                             ],
                         }),
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -818,26 +845,29 @@ impl LanguageServer {
                             }),
                             active_parameter_support: Some(true),
                         }),
+                        dynamic_registration: Some(true),
                         ..SignatureHelpClientCapabilities::default()
                     }),
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
+                        dynamic_registration: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
                     code_lens: Some(CodeLensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
+                        dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
                     diagnostic: Some(DiagnosticClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
@@ -850,7 +880,7 @@ impl LanguageServer {
                     show_message: Some(ShowMessageRequestClientCapabilities {
                         message_action_item: None,
                     }),
-                    ..Default::default()
+                    ..WindowClientCapabilities::default()
                 }),
             },
             trace: None,
@@ -862,8 +892,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
-
-            ..Default::default()
+            ..InitializeParams::default()
         }
     }
 
@@ -895,7 +924,7 @@ impl LanguageServer {
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(&InitializedParams {})?;
+            self.notify::<notification::Initialized>(InitializedParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -907,11 +936,13 @@ impl LanguageServer {
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
             let executor = self.executor.clone();
+            let notification_serializers = self.notification_tx.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
             let shutdown_request = Self::request_internal::<request::Shutdown>(
                 &next_id,
                 &response_handlers,
                 &outbound_tx,
+                &notification_serializers,
                 &executor,
                 (),
             );
@@ -945,8 +976,8 @@ impl LanguageServer {
                 }
 
                 response_handlers.lock().take();
-                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
-                outbound_tx.close();
+                Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
+                notification_serializers.close();
                 output_done.recv().await;
                 server.lock().take().map(|mut child| child.kill());
                 drop(tasks);
@@ -1168,6 +1199,7 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
+            &self.notification_tx,
             &self.executor,
             params,
         )
@@ -1189,6 +1221,7 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
+            &self.notification_tx,
             &self.executor,
             timer,
             params,
@@ -1199,6 +1232,7 @@ impl LanguageServer {
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
+        notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1250,7 +1284,7 @@ impl LanguageServer {
             .try_send(message)
             .context("failed to write to language server's stdin");
 
-        let outbound_tx = outbound_tx.downgrade();
+        let notification_serializers = notification_serializers.downgrade();
         let started = Instant::now();
         LspRequest::new(id, async move {
             if let Err(e) = handle_response {
@@ -1261,10 +1295,10 @@ impl LanguageServer {
             }
 
             let cancel_on_drop = util::defer(move || {
-                if let Some(outbound_tx) = outbound_tx.upgrade() {
+                if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
-                        &outbound_tx,
-                        &CancelParams {
+                        &notification_serializers,
+                        CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1299,6 +1333,7 @@ impl LanguageServer {
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
+        notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
@@ -1310,6 +1345,7 @@ impl LanguageServer {
             next_id,
             response_handlers,
             outbound_tx,
+            notification_serializers,
             executor,
             Self::default_request_timer(executor.clone()),
             params,
@@ -1325,26 +1361,30 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
-        Self::notify_internal::<T>(&self.outbound_tx, params)
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+        let outbound = self.notification_tx.clone();
+        Self::notify_internal::<T>(&outbound, params)
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<String>,
-        params: &T::Params,
+        outbound_tx: &channel::Sender<NotificationSerializer>,
+        params: T::Params,
     ) -> Result<()> {
-        let message = serde_json::to_string(&Notification {
-            jsonrpc: JSON_RPC_VERSION,
-            method: T::METHOD,
-            params,
-        })
-        .unwrap();
-        outbound_tx.try_send(message)?;
+        let serializer = NotificationSerializer(Box::new(move || {
+            serde_json::to_string(&Notification {
+                jsonrpc: JSON_RPC_VERSION,
+                method: T::METHOD,
+                params,
+            })
+            .unwrap()
+        }));
+
+        outbound_tx.send_blocking(serializer)?;
         Ok(())
     }
 
     /// Add new workspace folder to the list.
-    pub fn add_workspace_folder(&self, uri: Url) {
+    pub fn add_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1374,11 +1414,12 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).ok();
         }
     }
-    /// Add new workspace folder to the list.
-    pub fn remove_workspace_folder(&self, uri: Url) {
+
+    /// Remove existing workspace folder from the list.
+    pub fn remove_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1407,10 +1448,10 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).ok();
         }
     }
-    pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
+    pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
         let Some(workspace_folders) = self.workspace_folders.as_ref() else {
             return;
         };
@@ -1439,11 +1480,11 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).ok();
         }
     }
 
-    pub fn workspace_folders(&self) -> BTreeSet<Url> {
+    pub fn workspace_folders(&self) -> BTreeSet<Uri> {
         self.workspace_folders.as_ref().map_or_else(
             || BTreeSet::from_iter([self.root_uri.clone()]),
             |folders| folders.lock().clone(),
@@ -1452,19 +1493,19 @@ impl LanguageServer {
 
     pub fn register_buffer(
         &self,
-        uri: Url,
+        uri: Uri,
         language_id: String,
         version: i32,
         initial_text: String,
     ) {
-        self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+        self.notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
             text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
         })
         .ok();
     }
 
-    pub fn unregister_buffer(&self, uri: Url) {
-        self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
+    pub fn unregister_buffer(&self, uri: Uri) {
+        self.notify::<notification::DidCloseTextDocument>(DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
         .ok();
@@ -1580,7 +1621,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
-        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1650,13 +1691,13 @@ impl FakeLanguageServer {
         (server, fake)
     }
     #[cfg(target_os = "windows")]
-    fn root_path() -> Url {
-        Url::from_file_path("C:/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("C:/").unwrap()
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn root_path() -> Url {
-        Url::from_file_path("/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("/").unwrap()
     }
 }
 
@@ -1672,7 +1713,7 @@ impl LanguageServer {
             workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
+            ..ServerCapabilities::default()
         }
     }
 }
@@ -1680,7 +1721,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1789,7 +1830,7 @@ impl FakeLanguageServer {
         .await
         .into_response()
         .unwrap();
-        self.notify::<notification::Progress>(&ProgressParams {
+        self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1797,7 +1838,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(&ProgressParams {
+        self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1856,9 +1897,9 @@ mod tests {
             .await
             .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    Url::from_str("file://a/b").unwrap(),
+                    Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1874,12 +1915,12 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
-            uri: Url::from_str("file://b/c").unwrap(),
+        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+            uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
         });
@@ -1892,6 +1933,7 @@ mod tests {
         fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
+        cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
     }
 

@@ -1,6 +1,6 @@
 use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
 use collections::HashMap;
-use std::{iter, sync::Arc};
+use std::{borrow::Cow, iter, sync::Arc};
 
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
@@ -44,7 +44,7 @@ impl LineWrapper {
         let mut prev_c = '\0';
         let mut index = 0;
         let mut candidates = fragments
-            .into_iter()
+            .iter()
             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
             .peekable();
         iter::from_fn(move || {
@@ -129,13 +129,13 @@ impl LineWrapper {
     }
 
     /// Truncate a line of text to the given width with this wrapper's font and font size.
-    pub fn truncate_line(
+    pub fn truncate_line<'a>(
         &mut self,
         line: SharedString,
         truncate_width: Pixels,
         truncation_suffix: &str,
-        runs: &mut Vec<TextRun>,
-    ) -> SharedString {
+        runs: &'a [TextRun],
+    ) -> (SharedString, Cow<'a, [TextRun]>) {
         let mut width = px(0.);
         let mut suffix_width = truncation_suffix
             .chars()
@@ -154,15 +154,18 @@ impl LineWrapper {
             if width.floor() > truncate_width {
                 let result =
                     SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
-                update_runs_after_truncation(&result, truncation_suffix, runs);
+                let mut runs = runs.to_vec();
+                update_runs_after_truncation(&result, truncation_suffix, &mut runs);
 
-                return result;
+                return (result, Cow::Owned(runs));
             }
         }
 
-        line
+        (line, Cow::Borrowed(runs))
     }
 
+    /// Any character in this list should be treated as a word character,
+    /// meaning it can be part of a word that should not be wrapped.
     pub(crate) fn is_word_char(c: char) -> bool {
         // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
         c.is_ascii_alphanumeric() ||
@@ -180,10 +183,9 @@ impl LineWrapper {
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
         // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',') ||
-        // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
-        matches!(c,  '/' | ':' | '?' | '&' | '=') ||
+        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+        // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -225,18 +227,14 @@ impl LineWrapper {
 
 fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
     let mut truncate_at = result.len() - ellipsis.len();
-    let mut run_end = None;
     for (run_index, run) in runs.iter_mut().enumerate() {
         if run.len <= truncate_at {
             truncate_at -= run.len;
         } else {
             run.len = truncate_at + ellipsis.len();
-            run_end = Some(run_index + 1);
+            runs.truncate(run_index + 1);
             break;
         }
-    }
-    if let Some(run_end) = run_end {
-        runs.truncate(run_end);
     }
 }
 
@@ -317,9 +315,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher, font,
-    };
+    use crate::{Font, FontFeatures, FontStyle, FontWeight, TestAppContext, TestDispatcher, font};
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
@@ -327,7 +323,7 @@ mod tests {
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::build(dispatcher, None);
-        let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
+        let id = cx.text_system().resolve_font(&font(".ZedMono"));
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }
 
@@ -343,10 +339,7 @@ mod tests {
                     weight: FontWeight::default(),
                     style: FontStyle::Normal,
                 },
-                color: Hsla::default(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
+                ..Default::default()
             })
             .collect()
     }
@@ -496,15 +489,14 @@ mod tests {
         fn perform_test(
             wrapper: &mut LineWrapper,
             text: &'static str,
-            result: &'static str,
+            expected: &'static str,
             ellipsis: &str,
         ) {
             let dummy_run_lens = vec![text.len()];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(220.), ellipsis, &mut dummy_runs),
-                result
-            );
+            let dummy_runs = generate_test_runs(&dummy_run_lens);
+            let (result, dummy_runs) =
+                wrapper.truncate_line(text.into(), px(220.), ellipsis, &dummy_runs);
+            assert_eq!(result, expected);
             assert_eq!(dummy_runs.first().unwrap().len, result.len());
         }
 
@@ -535,16 +527,15 @@ mod tests {
         fn perform_test(
             wrapper: &mut LineWrapper,
             text: &'static str,
-            result: &str,
+            expected: &str,
             run_lens: &[usize],
             result_run_len: &[usize],
             line_width: Pixels,
         ) {
-            let mut dummy_runs = generate_test_runs(run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), line_width, "…", &mut dummy_runs),
-                result
-            );
+            let dummy_runs = generate_test_runs(run_lens);
+            let (result, dummy_runs) =
+                wrapper.truncate_line(text.into(), line_width, "…", &dummy_runs);
+            assert_eq!(result, expected);
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
                 assert_eq!(run.len, *result_len);
             }
@@ -648,15 +639,19 @@ mod tests {
         assert_word("@mention");
         assert_word("#hashtag");
         assert_word("$variable");
+        assert_word("a=1");
+        assert_word("Self::is_word_char");
         assert_word("more⋯");
 
         // Space
         assert_not_word("foo bar");
 
         // URL case
-        assert_word("https://github.com/zed-industries/zed/");
         assert_word("github.com");
-        assert_word("a=1&b=2");
+        assert_not_word("zed-industries/zed");
+        assert_not_word("zed-industries\\zed");
+        assert_not_word("a=1&b=2");
+        assert_not_word("foo?b=2");
 
         // Latin-1 Supplement
         assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
@@ -691,16 +686,12 @@ mod tests {
                 font: font("Helvetica"),
                 color: Default::default(),
                 underline: Default::default(),
-                strikethrough: None,
-                background_color: None,
+                ..Default::default()
             };
             let bold = TextRun {
                 len: 0,
                 font: font("Helvetica").bold(),
-                color: Default::default(),
-                underline: Default::default(),
-                strikethrough: None,
-                background_color: None,
+                ..Default::default()
             };
 
             let text = "aa bbb cccc ddddd eeee".into();

@@ -28,7 +28,6 @@ pub struct ExtensionHostProxy {
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
     slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
-    indexed_docs_provider_proxy: RwLock<Option<Arc<dyn ExtensionIndexedDocsProviderProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
 }
 
@@ -54,7 +53,6 @@ impl ExtensionHostProxy {
             snippet_proxy: RwLock::default(),
             slash_command_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
-            indexed_docs_provider_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
         }
     }
@@ -87,14 +85,6 @@ impl ExtensionHostProxy {
         self.context_server_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_indexed_docs_provider_proxy(
-        &self,
-        proxy: impl ExtensionIndexedDocsProviderProxy,
-    ) {
-        self.indexed_docs_provider_proxy
-            .write()
-            .replace(Arc::new(proxy));
-    }
     pub fn register_debug_adapter_proxy(&self, proxy: impl ExtensionDebugAdapterProviderProxy) {
         self.debug_adapter_provider_proxy
             .write()
@@ -405,30 +395,6 @@ impl ExtensionContextServerProxy for ExtensionHostProxy {
         };
 
         proxy.unregister_context_server(server_id, cx)
-    }
-}
-
-pub trait ExtensionIndexedDocsProviderProxy: Send + Sync + 'static {
-    fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>);
-
-    fn unregister_indexed_docs_provider(&self, provider_id: Arc<str>);
-}
-
-impl ExtensionIndexedDocsProviderProxy for ExtensionHostProxy {
-    fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
-        let Some(proxy) = self.indexed_docs_provider_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.register_indexed_docs_provider(extension, provider_id)
-    }
-
-    fn unregister_indexed_docs_provider(&self, provider_id: Arc<str>) {
-        let Some(proxy) = self.indexed_docs_provider_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.unregister_indexed_docs_provider(provider_id)
     }
 }
 

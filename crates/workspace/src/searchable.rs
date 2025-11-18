@@ -45,6 +45,16 @@ pub struct SearchOptions {
     pub find_in_results: bool,
 }
 
+// Whether to always select the current selection (even if empty)
+// or to use the default (restoring the previous search ranges if some,
+// otherwise using the whole file).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum FilteredSearchRange {
+    Selection,
+    #[default]
+    Default,
+}
+
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     type Match: Any + Sync + Send + Clone;
 
@@ -73,7 +83,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
 
     fn toggle_filtered_search_ranges(
         &mut self,
-        _enabled: bool,
+        _enabled: Option<FilteredSearchRange>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
@@ -155,6 +165,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
+    fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -216,7 +227,14 @@ pub trait SearchableItemHandle: ItemHandle {
     ) -> Option<usize>;
     fn search_bar_visibility_changed(&self, visible: bool, window: &mut Window, cx: &mut App);
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut App);
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: Option<FilteredSearchRange>,
+        window: &mut Window,
+        cx: &mut App,
+    );
+
+    fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -362,22 +380,32 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         });
     }
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut App) {
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: Option<FilteredSearchRange>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.update(cx, |this, cx| {
             this.toggle_filtered_search_ranges(enabled, window, cx)
+        });
+    }
+    fn set_search_is_case_sensitive(&self, enabled: Option<bool>, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_search_is_case_sensitive(enabled, cx)
         });
     }
 }
 
 impl From<Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any().clone()
+        this.to_any()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any().clone()
+        this.to_any()
     }
 }
 

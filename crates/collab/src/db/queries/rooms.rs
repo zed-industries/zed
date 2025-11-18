@@ -671,6 +671,7 @@ impl Database {
                             canonical_path: db_entry.canonical_path,
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
+                            is_hidden: db_entry.is_hidden,
                             // This is only used in the summarization backlog, so if it's None,
                             // that just means we won't be able to detect when to resummarize
                             // based on total number of backlogged bytes - instead, we'd go
@@ -746,21 +747,21 @@ impl Database {
                     let current_merge_conflicts = db_repository
                         .current_merge_conflicts
                         .as_ref()
-                        .map(|conflicts| serde_json::from_str(&conflicts))
+                        .map(|conflicts| serde_json::from_str(conflicts))
                         .transpose()?
                         .unwrap_or_default();
 
                     let branch_summary = db_repository
                         .branch_summary
                         .as_ref()
-                        .map(|branch_summary| serde_json::from_str(&branch_summary))
+                        .map(|branch_summary| serde_json::from_str(branch_summary))
                         .transpose()?
                         .unwrap_or_default();
 
                     let head_commit_details = db_repository
                         .head_commit_details
                         .as_ref()
-                        .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                        .map(|head_commit_details| serde_json::from_str(head_commit_details))
                         .transpose()?
                         .unwrap_or_default();
 
@@ -793,6 +794,9 @@ impl Database {
                             abs_path: db_repository.abs_path,
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
+                            merge_message: db_repository.merge_message,
+                            stash_entries: Vec::new(),
+                            renamed_paths: Default::default(),
                         });
                     }
                 }
@@ -808,7 +812,7 @@ impl Database {
                 server: proto::LanguageServer {
                     id: language_server.id as u64,
                     name: language_server.name,
-                    worktree_id: None,
+                    worktree_id: language_server.worktree_id.map(|id| id as u64),
                 },
                 capabilities: language_server.capabilities,
             })
@@ -1192,7 +1196,6 @@ impl Database {
         self.transaction(|tx| async move {
             self.room_connection_lost(connection, &tx).await?;
             self.channel_buffer_connection_lost(connection, &tx).await?;
-            self.channel_chat_connection_lost(connection, &tx).await?;
             Ok(())
         })
         .await

@@ -1,7 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use collections::{HashSet, IndexMap};
-use feature_flags::ZedProFeatureFlag;
+use collections::IndexMap;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
@@ -10,10 +9,7 @@ use language_model::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use proto::Plan;
 use ui::{ListItem, ListItemSpacing, prelude::*};
-
-const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -23,14 +19,26 @@ pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
+    popover_styles: bool,
     window: &mut Window,
     cx: &mut Context<LanguageModelSelector>,
 ) -> LanguageModelSelector {
-    let delegate = LanguageModelPickerDelegate::new(get_active_model, on_model_changed, window, cx);
-    Picker::list(delegate, window, cx)
-        .show_scrollbar(true)
-        .width(rems(20.))
-        .max_height(Some(rems(20.).into()))
+    let delegate = LanguageModelPickerDelegate::new(
+        get_active_model,
+        on_model_changed,
+        popover_styles,
+        window,
+        cx,
+    );
+
+    if popover_styles {
+        Picker::list(delegate, window, cx)
+            .show_scrollbar(true)
+            .width(rems(20.))
+            .max_height(Some(rems(20.).into()))
+    } else {
+        Picker::list(delegate, window, cx).show_scrollbar(true)
+    }
 }
 
 fn all_models(cx: &App) -> GroupedModels {
@@ -49,7 +57,7 @@ fn all_models(cx: &App) -> GroupedModels {
         })
         .collect();
 
-    let other = providers
+    let all = providers
         .iter()
         .flat_map(|provider| {
             provider
@@ -62,7 +70,7 @@ fn all_models(cx: &App) -> GroupedModels {
         })
         .collect();
 
-    GroupedModels::new(other, recommended)
+    GroupedModels::new(all, recommended)
 }
 
 #[derive(Clone)]
@@ -79,12 +87,14 @@ pub struct LanguageModelPickerDelegate {
     selected_index: usize,
     _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
+    popover_styles: bool,
 }
 
 impl LanguageModelPickerDelegate {
     fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
+        popover_styles: bool,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
@@ -93,7 +103,7 @@ impl LanguageModelPickerDelegate {
         let entries = models.entries();
 
         Self {
-            on_model_changed: on_model_changed.clone(),
+            on_model_changed,
             all_models: Arc::new(models),
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
@@ -104,7 +114,7 @@ impl LanguageModelPickerDelegate {
                 window,
                 |picker, _, event, window, cx| {
                     match event {
-                        language_model::Event::ProviderStateChanged
+                        language_model::Event::ProviderStateChanged(_)
                         | language_model::Event::AddedProvider(_)
                         | language_model::Event::RemovedProvider(_) => {
                             let query = picker.query(cx);
@@ -117,6 +127,7 @@ impl LanguageModelPickerDelegate {
                     }
                 },
             )],
+            popover_styles,
         }
     }
 
@@ -181,7 +192,7 @@ impl LanguageModelPickerDelegate {
                             }
                             _ => {
                                 log::error!(
-                                    "Failed to authenticate provider: {}: {err}",
+                                    "Failed to authenticate provider: {}: {err:#}",
                                     provider_name.0
                                 );
                             }
@@ -199,33 +210,24 @@ impl LanguageModelPickerDelegate {
 
 struct GroupedModels {
     recommended: Vec<ModelInfo>,
-    other: IndexMap<LanguageModelProviderId, Vec<ModelInfo>>,
+    all: IndexMap<LanguageModelProviderId, Vec<ModelInfo>>,
 }
 
 impl GroupedModels {
-    pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
-        let recommended_ids = recommended
-            .iter()
-            .map(|info| (info.model.provider_id(), info.model.id()))
-            .collect::<HashSet<_>>();
-
-        let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
-        for model in other {
-            if recommended_ids.contains(&(model.model.provider_id(), model.model.id())) {
-                continue;
-            }
-
+    pub fn new(all: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
+        let mut all_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
+        for model in all {
             let provider = model.model.provider_id();
-            if let Some(models) = other_by_provider.get_mut(&provider) {
+            if let Some(models) = all_by_provider.get_mut(&provider) {
                 models.push(model);
             } else {
-                other_by_provider.insert(provider, vec![model]);
+                all_by_provider.insert(provider, vec![model]);
             }
         }
 
         Self {
             recommended,
-            other: other_by_provider,
+            all: all_by_provider,
         }
     }
 
@@ -241,7 +243,7 @@ impl GroupedModels {
             );
         }
 
-        for models in self.other.values() {
+        for models in self.all.values() {
             if models.is_empty() {
                 continue;
             }
@@ -255,20 +257,6 @@ impl GroupedModels {
             );
         }
         entries
-    }
-
-    fn model_infos(&self) -> Vec<ModelInfo> {
-        let other = self
-            .other
-            .values()
-            .flat_map(|model| model.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        self.recommended
-            .iter()
-            .chain(&other)
-            .cloned()
-            .collect::<Vec<_>>()
     }
 }
 
@@ -296,7 +284,7 @@ impl ModelMatcher {
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
         let mut matches = self.bg_executor.block(match_strings(
             &self.candidates,
-            &query,
+            query,
             false,
             true,
             100,
@@ -414,8 +402,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .collect::<Vec<_>>();
 
         let available_models = all_models
-            .model_infos()
-            .iter()
+            .all
+            .values()
+            .flat_map(|models| models.iter())
             .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
             .cloned()
             .collect::<Vec<_>>();
@@ -503,18 +492,16 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .start_slot(
-                            Icon::new(model_info.icon)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
-                        )
                         .child(
                             h_flex()
                                 .w_full()
-                                .pl_0p5()
                                 .gap_1p5()
-                                .w(px(240.))
-                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                                .child(
+                                    Icon::new(model_info.icon)
+                                        .color(model_icon_color)
+                                        .size(IconSize::Small),
+                                )
+                                .child(Label::new(model_info.model.name().0).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
                             this.child(
@@ -531,12 +518,12 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn render_footer(
         &self,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
-        use feature_flags::FeatureFlagAppExt;
-
-        let plan = proto::Plan::ZedPro;
+        if !self.popover_styles {
+            return None;
+        }
 
         Some(
             h_flex()
@@ -546,28 +533,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
-                    this.child(match plan {
-                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                            .icon(IconName::ZedAssistant)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
-                            }),
-                        Plan::Free | Plan::ZedProTrial => Button::new(
-                            "try-pro",
-                            if plan == Plan::ZedProTrial {
-                                "Upgrade to Pro"
-                            } else {
-                                "Try Pro"
-                            },
-                        )
-                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
-                    })
-                })
                 .child(
                     Button::new("configure", "Configure")
                         .icon(IconName::Settings)
@@ -775,46 +740,52 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
+    fn test_recommended_models_also_appear_in_other(_cx: &mut TestAppContext) {
         let recommended_models = create_models(vec![("zed", "claude")]);
         let all_models = create_models(vec![
-            ("zed", "claude"), // Should be filtered out from "other"
+            ("zed", "claude"), // Should also appear in "other"
             ("zed", "gemini"),
             ("copilot", "o3"),
         ]);
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
 
-        let actual_other_models = grouped_models
-            .other
+        let actual_all_models = grouped_models
+            .all
             .values()
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
 
-        // Recommended models should not appear in "other"
-        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
+        // Recommended models should also appear in "all"
+        assert_models_eq(
+            actual_all_models,
+            vec!["zed/claude", "zed/gemini", "copilot/o3"],
+        );
     }
 
     #[gpui::test]
-    fn test_dont_exclude_models_from_other_providers(_cx: &mut TestAppContext) {
+    fn test_models_from_different_providers(_cx: &mut TestAppContext) {
         let recommended_models = create_models(vec![("zed", "claude")]);
         let all_models = create_models(vec![
-            ("zed", "claude"), // Should be filtered out from "other"
+            ("zed", "claude"), // Should also appear in "other"
             ("zed", "gemini"),
-            ("copilot", "claude"), // Should not be filtered out from "other"
+            ("copilot", "claude"), // Different provider, should appear in "other"
         ]);
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
 
-        let actual_other_models = grouped_models
-            .other
+        let actual_all_models = grouped_models
+            .all
             .values()
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
 
-        // Recommended models should not appear in "other"
-        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/claude"]);
+        // All models should appear in "all" regardless of recommended status
+        assert_models_eq(
+            actual_all_models,
+            vec!["zed/claude", "zed/gemini", "copilot/claude"],
+        );
     }
 }

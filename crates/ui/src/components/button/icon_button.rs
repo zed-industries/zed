@@ -133,7 +133,7 @@ impl Clickable for IconButton {
 }
 
 impl FixedWidth for IconButton {
-    fn width(mut self, width: DefiniteLength) -> Self {
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.base = self.base.width(width);
         self
     }
@@ -173,6 +173,11 @@ impl ButtonCommon for IconButton {
         self.base = self.base.layer(elevation);
         self
     }
+
+    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.base = self.base.track_focus(focus_handle);
+        self
+    }
 }
 
 impl VisibleOnHover for IconButton {
@@ -194,7 +199,7 @@ impl RenderOnce for IconButton {
             .map(|this| match self.shape {
                 IconButtonShape::Square => {
                     let size = self.icon_size.square(window, cx);
-                    this.width(size.into()).height(size.into())
+                    this.width(size).height(size.into())
                 }
                 IconButtonShape::Wide => this,
             })

@@ -7,12 +7,16 @@ use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::Color;
 use crate::prelude::*;
+use crate::traits::transformable::Transformable;
 
 #[derive(
     Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
+    AcpGrid,
+    AcpLogo,
+    AcpLogoSerif,
     AiGrid,
     DebuggerGrid,
     Grid,
@@ -71,8 +75,10 @@ impl Vector {
         self.size = size;
         self
     }
+}
 
-    pub fn transform(mut self, transformation: Transformation) -> Self {
+impl Transformable for Vector {
+    fn transform(mut self, transformation: Transformation) -> Self {
         self.transformation = transformation;
         self
     }

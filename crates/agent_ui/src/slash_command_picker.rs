@@ -140,12 +140,10 @@ impl PickerDelegate for SlashCommandDelegate {
                     );
                     ret.push(index - 1);
                 }
-            } else {
-                if let SlashCommandEntry::Advert { .. } = command {
-                    previous_is_advert = true;
-                    if index != 0 {
-                        ret.push(index - 1);
-                    }
+            } else if let SlashCommandEntry::Advert { .. } = command {
+                previous_is_advert = true;
+                if index != 0 {
+                    ret.push(index - 1);
                 }
             }
         }
@@ -157,8 +155,8 @@ impl PickerDelegate for SlashCommandDelegate {
             match command {
                 SlashCommandEntry::Info(info) => {
                     self.active_context_editor
-                        .update(cx, |context_editor, cx| {
-                            context_editor.insert_command(&info.name, window, cx)
+                        .update(cx, |text_thread_editor, cx| {
+                            text_thread_editor.insert_command(&info.name, window, cx)
                         })
                         .ok();
                 }
@@ -214,7 +212,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                         let mut label = format!("{}", info.name);
                                         if let Some(args) = info.args.as_ref().filter(|_| selected)
                                         {
-                                            label.push_str(&args);
+                                            label.push_str(args);
                                         }
                                         Label::new(label)
                                             .single_line()
@@ -329,9 +327,7 @@ where
         };
 
         let picker_view = cx.new(|cx| {
-            let picker =
-                Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
-            picker
+            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
         });
 
         let handle = self

@@ -1,9 +1,8 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
-use language::Buffer;
-use project::Project;
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt};
 
 // TODO: Find a better home for `Direction`.
 //
@@ -16,11 +15,19 @@ pub enum Direction {
 }
 
 #[derive(Clone)]
-pub struct EditPrediction {
-    /// The ID of the completion, if it has one.
-    pub id: Option<SharedString>,
-    pub edits: Vec<(Range<language::Anchor>, String)>,
-    pub edit_preview: Option<language::EditPreview>,
+pub enum EditPrediction {
+    /// Edits within the buffer that requested the prediction
+    Local {
+        id: Option<SharedString>,
+        edits: Vec<(Range<language::Anchor>, Arc<str>)>,
+        edit_preview: Option<language::EditPreview>,
+    },
+    /// Jump to a different file from the one that requested the prediction
+    Jump {
+        id: Option<SharedString>,
+        snapshot: language::BufferSnapshot,
+        target: language::Anchor,
+    },
 }
 
 pub enum DataCollectionState {
@@ -34,7 +41,7 @@ pub enum DataCollectionState {
 
 impl DataCollectionState {
     pub fn is_supported(&self) -> bool {
-        !matches!(self, DataCollectionState::Unsupported { .. })
+        !matches!(self, DataCollectionState::Unsupported)
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -83,15 +90,11 @@ pub trait EditPredictionProvider: 'static + Sized {
     fn is_refreshing(&self) -> bool;
     fn refresh(
         &mut self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
         cx: &mut Context<Self>,
     );
-    fn needs_terms_acceptance(&self, _cx: &App) -> bool {
-        false
-    }
     fn cycle(
         &mut self,
         buffer: Entity<Buffer>,
@@ -101,6 +104,7 @@ pub trait EditPredictionProvider: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
+    fn did_show(&mut self, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -124,11 +128,9 @@ pub trait EditPredictionProviderHandle {
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
-    fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -141,6 +143,7 @@ pub trait EditPredictionProviderHandle {
         direction: Direction,
         cx: &mut App,
     );
+    fn did_show(&self, cx: &mut App);
     fn accept(&self, cx: &mut App);
     fn discard(&self, cx: &mut App);
     fn suggest(
@@ -196,24 +199,19 @@ where
         self.read(cx).is_enabled(buffer, cursor_position, cx)
     }
 
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        self.read(cx).needs_terms_acceptance(cx)
-    }
-
     fn is_refreshing(&self, cx: &App) -> bool {
         self.read(cx).is_refreshing()
     }
 
     fn refresh(
         &self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(project, buffer, cursor_position, debounce, cx)
+            this.refresh(buffer, cursor_position, debounce, cx)
         })
     }
 
@@ -237,6 +235,10 @@ where
         self.update(cx, |this, cx| this.discard(cx))
     }
 
+    fn did_show(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.did_show(cx))
+    }
+
     fn suggest(
         &self,
         buffer: &Entity<Buffer>,
@@ -245,4 +247,52 @@ where
     ) -> Option<EditPrediction> {
         self.update(cx, |this, cx| this.suggest(buffer, cursor_position, cx))
     }
+}
+
+/// Returns edits updated based on user edits since the old snapshot. None is returned if any user
+/// edit is not a prefix of a predicted insertion.
+pub fn interpolate_edits(
+    old_snapshot: &BufferSnapshot,
+    new_snapshot: &BufferSnapshot,
+    current_edits: &[(Range<Anchor>, Arc<str>)],
+) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
+    let mut edits = Vec::new();
+
+    let mut model_edits = current_edits.iter().peekable();
+    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        while let Some((model_old_range, _)) = model_edits.peek() {
+            let model_old_range = model_old_range.to_offset(old_snapshot);
+            if model_old_range.end < user_edit.old.start {
+                let (model_old_range, model_new_text) = model_edits.next().unwrap();
+                edits.push((model_old_range.clone(), model_new_text.clone()));
+            } else {
+                break;
+            }
+        }
+
+        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
+            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            if user_edit.old == model_old_offset_range {
+                let user_new_text = new_snapshot
+                    .text_for_range(user_edit.new.clone())
+                    .collect::<String>();
+
+                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
+                    if !model_suffix.is_empty() {
+                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
+                        edits.push((anchor..anchor, model_suffix.into()));
+                    }
+
+                    model_edits.next();
+                    continue;
+                }
+            }
+        }
+
+        return None;
+    }
+
+    edits.extend(model_edits.cloned());
+
+    if edits.is_empty() { None } else { Some(edits) }
 }

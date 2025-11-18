@@ -9,8 +9,6 @@ use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::iter;
 use std::mem;
 use std::ops::Range;
@@ -19,12 +17,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, actions, img, point, quad,
+    Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task,
+    TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -32,7 +31,7 @@ use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{Tooltip, prelude::*};
+use ui::{ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -67,8 +66,8 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
-    pub table_overflow_x_scroll: bool,
     pub height_is_multiple_of_line_height: bool,
+    pub prevent_mouse_interaction: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -87,8 +86,8 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
-            table_overflow_x_scroll: false,
             height_is_multiple_of_line_height: false,
+            prevent_mouse_interaction: false,
         }
     }
 }
@@ -107,6 +106,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
+    code_block_scroll_handles: HashMap<usize, ScrollHandle>,
 }
 
 struct Options {
@@ -174,7 +174,8 @@ impl Markdown {
             options: Options {
                 parse_links_only: false,
             },
-            copied_code_blocks: HashSet::new(),
+            copied_code_blocks: HashSet::default(),
+            code_block_scroll_handles: HashMap::default(),
         };
         this.parse(cx);
         this
@@ -197,10 +198,27 @@ impl Markdown {
             options: Options {
                 parse_links_only: true,
             },
-            copied_code_blocks: HashSet::new(),
+            copied_code_blocks: HashSet::default(),
+            code_block_scroll_handles: HashMap::default(),
         };
         this.parse(cx);
         this
+    }
+
+    fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
+        self.code_block_scroll_handles
+            .entry(id)
+            .or_insert_with(ScrollHandle::new)
+            .clone()
+    }
+
+    fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
+        self.code_block_scroll_handles
+            .retain(|id, _| ids.contains(id));
+    }
+
+    fn clear_code_block_scroll_handles(&mut self) {
+        self.code_block_scroll_handles.clear();
     }
 
     pub fn is_parsing(&self) -> bool {
@@ -333,34 +351,36 @@ impl Markdown {
                 }
 
                 for path in paths {
-                    if let Ok(language) = registry.language_for_file_path(&path).await {
+                    if let Ok(language) = registry
+                        .load_language_for_file_path(Path::new(path.as_ref()))
+                        .await
+                    {
                         languages_by_path.insert(path, language);
                     }
                 }
             }
 
             for (range, event) in &events {
-                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event {
-                    if let Some(data_url) = dest_url.strip_prefix("data:") {
-                        let Some((mime_info, data)) = data_url.split_once(',') else {
-                            continue;
-                        };
-                        let Some((mime_type, encoding)) = mime_info.split_once(';') else {
-                            continue;
-                        };
-                        let Some(format) = ImageFormat::from_mime_type(mime_type) else {
-                            continue;
-                        };
-                        let is_base64 = encoding == "base64";
-                        if is_base64 {
-                            if let Some(bytes) = base64::prelude::BASE64_STANDARD
-                                .decode(data)
-                                .log_with_level(Level::Debug)
-                            {
-                                let image = Arc::new(Image::from_bytes(format, bytes));
-                                images_by_source_offset.insert(range.start, image);
-                            }
-                        }
+                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
+                    && let Some(data_url) = dest_url.strip_prefix("data:")
+                {
+                    let Some((mime_info, data)) = data_url.split_once(',') else {
+                        continue;
+                    };
+                    let Some((mime_type, encoding)) = mime_info.split_once(';') else {
+                        continue;
+                    };
+                    let Some(format) = ImageFormat::from_mime_type(mime_type) else {
+                        continue;
+                    };
+                    let is_base64 = encoding == "base64";
+                    if is_base64
+                        && let Some(bytes) = base64::prelude::BASE64_STANDARD
+                            .decode(data)
+                            .log_with_level(Level::Debug)
+                    {
+                        let image = Arc::new(Image::from_bytes(format, bytes));
+                        images_by_source_offset.insert(range.start, image);
                     }
                 }
             }
@@ -434,7 +454,7 @@ pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
-    pub languages_by_path: TreeMap<Arc<Path>, Arc<Language>>,
+    pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
 }
 
 impl ParsedMarkdown {
@@ -576,16 +596,22 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.style.prevent_mouse_interaction {
+            return;
+        }
+
         let is_hovering_link = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
                 .link_for_position(window.mouse_position())
                 .is_some();
 
-        if is_hovering_link {
-            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-        } else {
-            window.set_cursor_style(CursorStyle::IBeam, hitbox);
+        if !self.style.prevent_mouse_interaction {
+            if is_hovering_link {
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            } else {
+                window.set_cursor_style(CursorStyle::IBeam, hitbox);
+            }
         }
 
         let on_open_url = self.on_url_click.take();
@@ -659,13 +685,13 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    if let Some(pressed_link) = markdown.pressed_link.take() {
-                        if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
-                            if let Some(open_url) = on_open_url.as_ref() {
-                                open_url(pressed_link.destination_url, window, cx);
-                            } else {
-                                cx.open_url(&pressed_link.destination_url);
-                            }
+                    if let Some(pressed_link) = markdown.pressed_link.take()
+                        && Some(&pressed_link) == rendered_text.link_for_position(event.position)
+                    {
+                        if let Some(open_url) = on_open_url.as_ref() {
+                            open_url(pressed_link.destination_url, window, cx);
+                        } else {
+                            cx.open_url(&pressed_link.destination_url);
                         }
                     }
                 } else if markdown.selection.pending {
@@ -745,23 +771,27 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let markdown = self.markdown.read(cx);
-        let parsed_markdown = &markdown.parsed_markdown;
-        let images = &markdown.images_by_source_offset;
+        let (parsed_markdown, images) = {
+            let markdown = self.markdown.read(cx);
+            (
+                markdown.parsed_markdown.clone(),
+                markdown.images_by_source_offset.clone(),
+            )
+        };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
             0
         };
+        let mut code_block_ids = HashSet::default();
 
-        let mut current_code_block_metadata = None;
         let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
             // Skip alt text for images that rendered
-            if let Some(current_img_block_range) = &current_img_block_range {
-                if current_img_block_range.end > range.end {
-                    continue;
-                }
+            if let Some(current_img_block_range) = &current_img_block_range
+                && current_img_block_range.end > range.end
+            {
+                continue;
             }
 
             match event {
@@ -816,7 +846,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        MarkdownTag::CodeBlock { kind, metadata } => {
+                        MarkdownTag::CodeBlock { kind, .. } => {
                             let language = match kind {
                                 CodeBlockKind::Fenced => None,
                                 CodeBlockKind::FencedLang(language) => {
@@ -829,87 +859,78 @@ impl Element for MarkdownElement {
                                 _ => None,
                             };
 
-                            current_code_block_metadata = Some(metadata.clone());
-
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
+                            let scroll_handle = if self.style.code_block_overflow_x_scroll {
+                                code_block_ids.insert(range.start);
+                                Some(self.markdown.update(cx, |markdown, _| {
+                                    markdown.code_block_scroll_handle(range.start)
+                                }))
+                            } else {
+                                None
+                            };
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
-                                    builder.push_div(
-                                        div().group("code_block").relative().w_full(),
-                                        range,
-                                        markdown_end,
-                                    );
+                                    let parent_container =
+                                        div().group("code_block").relative().w_full();
 
-                                    let mut code_block = div()
-                                        .id(("code-block", range.start))
-                                        .rounded_lg()
-                                        .map(|mut code_block| {
-                                            if self.style.code_block_overflow_x_scroll {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
-                                                code_block.flex().overflow_x_scroll()
-                                            } else {
-                                                code_block.w_full()
-                                            }
-                                        });
+                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
+                                        scroll_handle.as_ref()
+                                    {
+                                        let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
+                                            .id(("markdown-code-block-scrollbar", range.start))
+                                            .tracked_scroll_handle(scroll_handle.clone())
+                                            .with_track_along(
+                                                ScrollAxes::Horizontal,
+                                                cx.theme().colors().editor_background,
+                                            )
+                                            .notify_content();
+
+                                        parent_container
+                                            .rounded_lg()
+                                            .custom_scrollbars(scrollbars, window, cx)
+                                            .into()
+                                    } else {
+                                        parent_container.into()
+                                    };
 
                                     if let CodeBlockRenderer::Default { border: true, .. } =
                                         &self.code_block_renderer
                                     {
-                                        code_block = code_block
+                                        parent_container = parent_container
                                             .rounded_md()
                                             .border_1()
                                             .border_color(cx.theme().colors().border_variant);
                                     }
 
-                                    code_block.style().refine(&self.style.code_block);
-                                    if let Some(code_block_text_style) = &self.style.code_block.text
-                                    {
-                                        builder.push_text_style(code_block_text_style.to_owned());
-                                    }
-                                    builder.push_code_block(language);
-                                    builder.push_div(code_block, range, markdown_end);
-                                }
-                                (CodeBlockRenderer::Custom { render, .. }, _) => {
-                                    let parent_container = render(
-                                        kind,
-                                        &parsed_markdown,
-                                        range.clone(),
-                                        metadata.clone(),
-                                        window,
-                                        cx,
-                                    );
-
+                                    parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
-                                    let mut code_block = div()
+                                    let code_block = div()
                                         .id(("code-block", range.start))
-                                        .rounded_b_lg()
+                                        .rounded_lg()
                                         .map(|mut code_block| {
-                                            if self.style.code_block_overflow_x_scroll {
+                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
                                                 code_block
                                                     .flex()
                                                     .overflow_x_scroll()
-                                                    .overflow_y_hidden()
+                                                    .track_scroll(scroll_handle)
                                             } else {
-                                                code_block.w_full().overflow_hidden()
+                                                code_block.w_full()
                                             }
                                         });
-
-                                    code_block.style().refine(&self.style.code_block);
 
                                     if let Some(code_block_text_style) = &self.style.code_block.text
                                     {
                                         builder.push_text_style(code_block_text_style.to_owned());
                                     }
-
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
+                                (CodeBlockRenderer::Custom { .. }, _) => {}
                             }
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
@@ -969,54 +990,54 @@ impl Element for MarkdownElement {
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
                             builder.table_alignments = alignments.clone();
+
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .flex()
+                                    .min_w_0()
+                                    .size_full()
+                                    .mb_2()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .when(self.style.table_overflow_x_scroll, |mut table| {
-                                        table.style().restrict_scroll_to_axis = Some(true);
-                                        table.overflow_x_scroll()
-                                    }),
+                                    .overflow_hidden(),
                                 range,
                                 markdown_end,
                             );
-                            // This inner `v_flex` is so the table rows will stack vertically without disrupting the `overflow_x_scroll`.
-                            builder.push_div(div().v_flex().flex_grow(), range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
                                 div()
-                                    .flex()
-                                    .justify_between()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border),
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .bg(cx.theme().colors().title_bar_background),
                                 range,
                                 markdown_end,
                             );
                             builder.push_text_style(TextStyleRefinement {
-                                font_weight: Some(FontWeight::BOLD),
+                                font_weight: Some(FontWeight::SEMIBOLD),
                                 ..Default::default()
                             });
                         }
                         MarkdownTag::TableRow => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
-                                div().h_flex().justify_between().px_1().py_0p5(),
+                                div().grid().grid_cols(column_count as u16),
                                 range,
                                 markdown_end,
                             );
                         }
                         MarkdownTag::TableCell => {
-                            let column_count = builder.table_alignments.len();
-
                             builder.push_div(
                                 div()
-                                    .flex()
+                                    .min_w_0()
+                                    .border(px(0.5))
+                                    .border_color(cx.theme().colors().border)
                                     .px_1()
-                                    .w(relative(1. / column_count as f32))
-                                    .truncate(),
+                                    .py_0p5(),
                                 range,
                                 markdown_end,
                             );
@@ -1048,54 +1069,13 @@ impl Element for MarkdownElement {
                             builder.pop_text_style();
                         }
 
-                        let metadata = current_code_block_metadata.take();
-
-                        if let CodeBlockRenderer::Custom {
-                            transform: Some(transform),
-                            ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                transform(
-                                    el,
-                                    range.clone(),
-                                    metadata.clone().unwrap_or_default(),
-                                    window,
-                                    cx,
-                                )
-                            });
-                        }
-
                         if let CodeBlockRenderer::Default {
                             copy_button: true, ..
                         } = &self.code_block_renderer
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
-                                );
-                                let content_range = content_range.start + range.start
-                                    ..content_range.end + range.start;
-
-                                let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                    cx,
-                                );
-                                el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
-                            });
-                        }
-
-                        if let CodeBlockRenderer::Default {
-                            copy_button_on_hover: true,
-                            ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;
@@ -1108,11 +1088,43 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div()
+                                    h_flex()
+                                        .w_4()
+                                        .absolute()
+                                        .top_1p5()
+                                        .right_1p5()
+                                        .justify_end()
+                                        .child(codeblock),
+                                )
+                            });
+                        }
+
+                        if let CodeBlockRenderer::Default {
+                            copy_button_on_hover: true,
+                            ..
+                        } = &self.code_block_renderer
+                        {
+                            builder.modify_current_div(|el| {
+                                let content_range = parser::extract_code_block_content_range(
+                                    &parsed_markdown.source()[range.clone()],
+                                );
+                                let content_range = content_range.start + range.start
+                                    ..content_range.end + range.start;
+
+                                let code = parsed_markdown.source()[content_range].to_string();
+                                let codeblock = render_copy_code_block_button(
+                                    range.end,
+                                    code,
+                                    self.markdown.clone(),
+                                    cx,
+                                );
+                                el.child(
+                                    h_flex()
+                                        .w_4()
                                         .absolute()
                                         .top_0()
                                         .right_0()
-                                        .w_5()
+                                        .justify_end()
                                         .visible_on_hover("code_block")
                                         .child(codeblock),
                                 )
@@ -1140,7 +1152,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table_alignments.clear();
                     }
@@ -1197,8 +1208,17 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
-                _ => log::error!("unsupported markdown event {:?}", event),
+                _ => log::debug!("unsupported markdown event {:?}", event),
             }
+        }
+        if self.style.code_block_overflow_x_scroll {
+            let code_block_ids = code_block_ids;
+            self.markdown.update(cx, move |markdown, _| {
+                markdown.retain_code_block_scroll_handles(&code_block_ids);
+            });
+        } else {
+            self.markdown
+                .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
@@ -1312,11 +1332,12 @@ fn render_copy_code_block_button(
         },
     )
     .icon_color(Color::Muted)
+    .icon_size(IconSize::Small)
+    .style(ButtonStyle::Filled)
     .shape(ui::IconButtonShape::Square)
-    .tooltip(Tooltip::text("Copy Code"))
+    .tooltip(Tooltip::text("Copy"))
     .on_click({
-        let id = id.clone();
-        let markdown = markdown.clone();
+        let markdown = markdown;
         move |_event, _window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {
@@ -1693,10 +1714,10 @@ impl RenderedText {
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
-                if let Some(next_line) = lines.peek() {
-                    if position.y < next_line.layout.bounds().top() {
-                        return Err(line.source_end);
-                    }
+                if let Some(next_line) = lines.peek()
+                    && position.y < next_line.layout.bounds().top()
+                {
+                    return Err(line.source_end);
                 }
 
                 continue;

@@ -1,29 +1,27 @@
-use anyhow::{Context as _, Result, anyhow};
-use credentials_provider::CredentialsProvider;
-
+use anyhow::{Result, anyhow};
 use convert_case::{Case, Casing};
-use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
+use futures::{FutureExt, StreamExt, future, future::BoxFuture};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-
 use ui::{ElevationIndex, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::ResultExt;
+use zed_env_vars::EnvVar;
 
-use crate::AllLanguageModelSettings;
+use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
+pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
@@ -31,122 +29,76 @@ pub struct OpenAiCompatibleSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-}
-
 pub struct OpenAiCompatibleLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
     id: Arc<str>,
-    env_var_name: Arc<str>,
-    api_key: Option<String>,
-    api_key_from_env: bool,
+    api_key_env_var: EnvVar,
+    api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
-    _subscription: Subscription,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+        self.api_key_state.has_key()
     }
 
-    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = self.settings.api_url.clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .delete_credentials(&api_url, &cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = None;
-                this.api_key_from_env = false;
-                cx.notify();
-            })
-        })
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let api_url = SharedString::new(self.settings.api_url.as_str());
+        self.api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = self.settings.api_url.clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
-        })
-    }
-
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let env_var_name = self.env_var_name.clone();
-        let api_url = self.settings.api_url.clone();
-        cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(env_var_name.as_ref()) {
-                (api_key, true)
-            } else {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let api_url = SharedString::new(self.settings.api_url.clone());
+        self.api_key_state.load_if_needed(
+            api_url,
+            &self.api_key_env_var,
+            |this| &mut this.api_key_state,
+            cx,
+        )
     }
 }
 
 impl OpenAiCompatibleLanguageModelProvider {
     pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiCompatibleSettings> {
-            AllLanguageModelSettings::get_global(cx)
+            crate::AllLanguageModelSettings::get_global(cx)
                 .openai_compatible
                 .get(id)
         }
 
-        let state = cx.new(|cx| State {
-            id: id.clone(),
-            env_var_name: format!("{}_API_KEY", id).to_case(Case::Constant).into(),
-            settings: resolve_settings(&id, cx).cloned().unwrap_or_default(),
-            api_key: None,
-            api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let Some(settings) = resolve_settings(&this.id, cx) else {
+        let api_key_env_var_name = format!("{}_API_KEY", id).to_case(Case::UpperSnake).into();
+        let state = cx.new(|cx| {
+            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let Some(settings) = resolve_settings(&this.id, cx).cloned() else {
                     return;
                 };
-                if &this.settings != settings {
-                    this.settings = settings.clone();
+                if &this.settings != &settings {
+                    let api_url = SharedString::new(settings.api_url.as_str());
+                    this.api_key_state.handle_url_change(
+                        api_url,
+                        &this.api_key_env_var,
+                        |this| &mut this.api_key_state,
+                        cx,
+                    );
+                    this.settings = settings;
                     cx.notify();
                 }
-            }),
+            })
+            .detach();
+            let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
+            State {
+                id: id.clone(),
+                api_key_env_var: EnvVar::new(api_key_env_var_name),
+                api_key_state: ApiKeyState::new(SharedString::new(settings.api_url.as_str())),
+                settings,
+            }
         });
 
         Self {
@@ -173,7 +125,7 @@ impl OpenAiCompatibleLanguageModelProvider {
 impl LanguageModelProviderState for OpenAiCompatibleLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -222,13 +174,19 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        self.state
+            .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 }
 
@@ -237,7 +195,7 @@ pub struct OpenAiCompatibleLanguageModel {
     provider_id: LanguageModelProviderId,
     provider_name: LanguageModelProviderName,
     model: AvailableModel,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -247,13 +205,23 @@ impl OpenAiCompatibleLanguageModel {
         &self,
         request: open_ai::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, _| {
-            (state.api_key.clone(), state.settings.api_url.clone())
+
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            (
+                state.api_key_state.key(api_url),
+                state.settings.api_url.clone(),
+            )
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let provider = self.provider_name.clone();
@@ -261,7 +229,13 @@ impl OpenAiCompatibleLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -293,17 +267,21 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.capabilities.tools
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.capabilities.images
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::Auto => self.model.capabilities.tools,
+            LanguageModelToolChoice::Any => self.model.capabilities.tools,
             LanguageModelToolChoice::None => true,
         }
     }
@@ -355,7 +333,14 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model.name, true, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            &self.model.name,
+            self.model.capabilities.parallel_tool_calls,
+            self.model.capabilities.prompt_cache_key,
+            self.max_output_tokens(),
+            None,
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
@@ -366,15 +351,15 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<InputField>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
-            SingleLineInput::new(
+            InputField::new(
                 window,
                 cx,
                 "000000000000000000000000000000000000000000000000000",
@@ -412,56 +397,47 @@ impl ConfigurationView {
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self
-            .api_key_editor
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-
-        // Don't proceed if no API key is provided and we're not authenticated
-        if api_key.is_empty() && !self.state.read(cx).is_authenticated() {
+        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
+        if api_key.is_empty() {
             return;
         }
+
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
                 .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
+    fn should_render_editor(&self, cx: &Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_from_env;
-        let env_var_name = self.state.read(cx).env_var_name.clone();
+        let state = self.state.read(cx);
+        let env_var_set = state.api_key_state.is_from_env_var();
+        let env_var_name = &state.api_key_env_var.name;
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
@@ -490,25 +466,39 @@ impl Render for ConfigurationView {
                 .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
+                        .flex_1()
+                        .min_w_0()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {env_var_name} environment variable.")
-                        } else {
-                            "API key configured.".to_string()
-                        })),
+                        .child(
+                            div()
+                                .w_full()
+                                .overflow_x_hidden()
+                                .text_ellipsis()
+                                .child(Label::new(
+                                    if env_var_set {
+                                        format!("API key set in {env_var_name} environment variable")
+                                    } else {
+                                        format!("API key configured for {}", &state.settings.api_url)
+                                    }
+                                ))
+                        ),
                 )
                 .child(
-                    Button::new("reset-api-key", "Reset API Key")
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .layer(ElevationIndex::ModalSurface)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                    h_flex()
+                        .flex_shrink_0()
+                        .child(
+                            Button::new("reset-api-key", "Reset API Key")
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Undo)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .layer(ElevationIndex::ModalSurface)
+                                .when(env_var_set, |this| {
+                                    this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                        ),
                 )
                 .into_any()
         };

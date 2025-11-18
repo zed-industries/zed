@@ -14,7 +14,7 @@ impl Editor {
             return Task::ready(None);
         };
         let (selection, buffer, editor_snapshot) = {
-            let selection = self.selections.newest_adjusted(cx);
+            let selection = self.selections.newest_adjusted(&self.display_snapshot(cx));
             let Some((buffer, _)) = self
                 .buffer()
                 .read(cx)
@@ -28,12 +28,12 @@ impl Editor {
         let selection_range = selection.range();
         let start = editor_snapshot
             .display_snapshot
-            .buffer_snapshot
+            .buffer_snapshot()
             .anchor_after(selection_range.start)
             .text_anchor;
         let end = editor_snapshot
             .display_snapshot
-            .buffer_snapshot
+            .buffer_snapshot()
             .anchor_after(selection_range.end)
             .text_anchor;
         let location = Location {
@@ -89,7 +89,7 @@ impl Editor {
                     .lsp_task_source()?;
                 if lsp_settings
                     .get(&lsp_tasks_source)
-                    .map_or(true, |s| s.enable_lsp_tasks)
+                    .is_none_or(|s| s.enable_lsp_tasks)
                 {
                     let buffer_id = buffer.read(cx).remote_id();
                     Some((lsp_tasks_source, buffer_id))

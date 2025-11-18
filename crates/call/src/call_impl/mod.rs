@@ -1,7 +1,6 @@
 pub mod participant;
 pub mod room;
 
-use crate::call_settings::CallSettings;
 use anyhow::{Context as _, Result, anyhow};
 use audio::Audio;
 use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE, proto};
@@ -14,7 +13,6 @@ use gpui::{
 use postage::watch;
 use project::Project;
 use room::Event;
-use settings::Settings;
 use std::sync::Arc;
 
 pub use livekit_client::{RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent};
@@ -26,8 +24,6 @@ struct GlobalActiveCall(Entity<ActiveCall>);
 impl Global for GlobalActiveCall {}
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    CallSettings::register(cx);
-
     let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(GlobalActiveCall(active_call));
 }
@@ -116,7 +112,7 @@ impl ActiveCall {
         envelope: TypedEnvelope<proto::IncomingCall>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&cx, |this, _| this.user_store.clone())?;
         let call = IncomingCall {
             room_id: envelope.payload.room_id,
             participants: user_store
@@ -147,7 +143,7 @@ impl ActiveCall {
             let mut incoming_call = this.incoming_call.0.borrow_mut();
             if incoming_call
                 .as_ref()
-                .map_or(false, |call| call.room_id == envelope.payload.room_id)
+                .is_some_and(|call| call.room_id == envelope.payload.room_id)
             {
                 incoming_call.take();
             }

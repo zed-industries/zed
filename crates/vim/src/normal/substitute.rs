@@ -45,7 +45,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let text_layout_details = editor.text_layout_details(window);
@@ -94,7 +94,10 @@ impl Vim {
                     MotionKind::Exclusive
                 };
                 vim.copy_selections_content(editor, kind, window, cx);
-                let selections = editor.selections.all::<Point>(cx).into_iter();
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.display_snapshot(cx))
+                    .into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
                 editor.edit(edits, cx);
             });

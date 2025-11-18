@@ -1,15 +1,20 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    http::{HeaderMap, HeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
+use thiserror::Error;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -89,11 +94,13 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
+        reasoning_effort: Option<ReasoningEffort>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
+        // TODO: Replace with FiveMini since all other models are deprecated
         Self::FourPointOneMini
     }
 
@@ -206,6 +213,15 @@ impl Model {
         }
     }
 
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        match self {
+            Self::Custom {
+                reasoning_effort, ..
+            } => reasoning_effort.to_owned(),
+            _ => None,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -224,6 +240,13 @@ impl Model {
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
+    }
+
+    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up.
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        true
     }
 }
 
@@ -244,14 +267,19 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
+    #[serde(untagged)]
     Other(ToolDefinition),
 }
 
@@ -269,7 +297,7 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
@@ -342,23 +370,40 @@ pub struct ImageUrl {
     pub detail: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Response {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Choice {
+    pub index: u32,
+    pub message: RequestMessage,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -386,7 +431,7 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -396,38 +441,61 @@ pub struct Usage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ResponseMessageDelta,
+    pub delta: Option<ResponseMessageDelta>,
     pub finish_reason: Option<String>,
+}
+
+#[derive(Error, Debug)]
+pub enum RequestError {
+    #[error("HTTP response error from {provider}'s API: status {status_code} - {body:?}")]
+    HttpResponseError {
+        provider: String,
+        status_code: StatusCode,
+        body: String,
+        headers: HeaderMap<HeaderValue>,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ResponseStreamError {
+    message: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: ResponseStreamError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
 
 pub async fn stream_completion(
     client: &dyn HttpClient,
+    provider_name: &str,
     api_url: &str,
     api_key: &str,
     request: Request,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -436,16 +504,24 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
+                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
                             None
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error.message)))
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
                                     Some(Err(anyhow!(error)))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
                     }
@@ -455,32 +531,18 @@ pub async fn stream_completion(
             .boxed())
     } else {
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
 
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "API request to {} failed: {}",
-                api_url,
-                response.error.message,
-            )),
-
-            _ => anyhow::bail!(
-                "API request to {} failed with status {}: {}",
-                api_url,
-                response.status(),
-                body,
-            ),
-        }
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
     }
 }
 
@@ -526,7 +588,7 @@ pub fn embed<'a>(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .body(body)
         .map(|request| client.send(request));
 

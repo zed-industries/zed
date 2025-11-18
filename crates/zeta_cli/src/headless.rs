@@ -7,7 +7,6 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::Project;
 use project::project_settings::ProjectSettings;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
@@ -31,12 +30,8 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
-    let mut settings_store = SettingsStore::new(cx);
-    settings_store
-        .set_default_settings(settings::default_settings().as_ref(), cx)
-        .unwrap();
+    let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
-    client::init_settings(cx);
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
@@ -57,8 +52,6 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
             .expect("could not start HTTP client")
     };
     cx.set_http_client(Arc::new(http));
-
-    Project::init_settings(cx);
 
     let client = Client::production(cx);
     cx.set_http_client(client.http_client());
@@ -105,16 +98,11 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 
-    language::init(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-    language_extension::init(
-        LspAccess::Noop,
-        extension_host_proxy.clone(),
-        languages.clone(),
-    );
+    language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
-    languages::init(languages.clone(), node_runtime.clone(), cx);
+    languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
 

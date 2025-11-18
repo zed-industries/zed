@@ -1,11 +1,9 @@
-use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+pub use settings::HourFormat;
+use settings::{RegisterSetting, Settings};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -22,50 +20,30 @@ actions!(
 );
 
 /// Settings specific to journaling
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
     ///
     /// Default: `~`
-    pub path: Option<String>,
+    pub path: String,
     /// What format to display the hours in.
     ///
     /// Default: hour12
-    pub hour_format: Option<HourFormat>,
+    pub hour_format: HourFormat,
 }
 
-impl Default for JournalSettings {
-    fn default() -> Self {
+impl settings::Settings for JournalSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let journal = content.journal.clone().unwrap();
+
         Self {
-            path: Some("~".into()),
-            hour_format: Some(Default::default()),
+            path: journal.path.unwrap(),
+            hour_format: journal.hour_format.unwrap(),
         }
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HourFormat {
-    #[default]
-    Hour12,
-    Hour24,
-}
-
-impl settings::Settings for JournalSettings {
-    const KEY: Option<&'static str> = Some("journal");
-
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
-}
-
 pub fn init(_: Arc<AppState>, cx: &mut App) {
-    JournalSettings::register(cx);
-
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {
@@ -78,7 +56,7 @@ pub fn init(_: Arc<AppState>, cx: &mut App) {
 
 pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut App) {
     let settings = JournalSettings::get_global(cx);
-    let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
+    let journal_dir = match journal_dir(&settings.path) {
         Some(journal_dir) => journal_dir,
         None => {
             log::error!("Can't determine journal directory");
@@ -114,7 +92,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
             break;
         }
         for directory in worktree.read(cx).directories(true, 1) {
-            let full_directory_path = worktree_root.join(&directory.path);
+            let full_directory_path = worktree_root.join(directory.path.as_std_path());
             if full_directory_path.ends_with(&journal_dir_clone) {
                 open_new_workspace = false;
                 break 'outer;
@@ -123,7 +101,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
     }
 
     let app_state = workspace.app_state().clone();
-    let view_snapshot = workspace.weak_handle().clone();
+    let view_snapshot = workspace.weak_handle();
 
     window
         .spawn(cx, async move |cx| {
@@ -170,23 +148,23 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     .await
             };
 
-            if let Some(Some(Ok(item))) = opened.first() {
-                if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                    editor.update_in(cx, |editor, window, cx| {
-                        let len = editor.buffer().read(cx).len(cx);
-                        editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::center()),
-                            window,
-                            cx,
-                            |s| s.select_ranges([len..len]),
-                        );
-                        if len > 0 {
-                            editor.insert("\n\n", window, cx);
-                        }
-                        editor.insert(&entry_heading, window, cx);
+            if let Some(Some(Ok(item))) = opened.first()
+                && let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade())
+            {
+                editor.update_in(cx, |editor, window, cx| {
+                    let len = editor.buffer().read(cx).len(cx);
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |s| s.select_ranges([len..len]),
+                    );
+                    if len > 0 {
                         editor.insert("\n\n", window, cx);
-                    })?;
-                }
+                    }
+                    editor.insert(&entry_heading, window, cx);
+                    editor.insert("\n\n", window, cx);
+                })?;
             }
 
             anyhow::Ok(())
@@ -195,20 +173,24 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {
-    let expanded_journal_dir = shellexpand::full(path) //TODO handle this better
-        .ok()
-        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
-
-    expanded_journal_dir
+    let expanded = shellexpand::full(path).ok()?;
+    let base_path = Path::new(expanded.as_ref());
+    let absolute_path = if base_path.is_absolute() {
+        base_path.to_path_buf()
+    } else {
+        log::warn!("Invalid journal path {path:?} (not absolute), falling back to home directory",);
+        std::env::home_dir()?
+    };
+    Some(absolute_path.join("journal"))
 }
 
-fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {
+fn heading_entry(now: NaiveTime, hour_format: &HourFormat) -> String {
     match hour_format {
-        Some(HourFormat::Hour24) => {
+        HourFormat::Hour24 => {
             let hour = now.hour();
             format!("# {}:{:02}", hour, now.minute())
         }
-        _ => {
+        HourFormat::Hour12 => {
             let (pm, hour) = now.hour12();
             let am_or_pm = if pm { "PM" } else { "AM" };
             format!("# {}:{:02} {}", hour, now.minute(), am_or_pm)
@@ -224,7 +206,7 @@ mod tests {
         #[test]
         fn test_heading_entry_defaults_to_hour_12() {
             let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
-            let actual_heading_entry = heading_entry(naive_time, &None);
+            let actual_heading_entry = heading_entry(naive_time, &HourFormat::Hour12);
             let expected_heading_entry = "# 3:00 PM";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
@@ -233,7 +215,7 @@ mod tests {
         #[test]
         fn test_heading_entry_is_hour_12() {
             let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
-            let actual_heading_entry = heading_entry(naive_time, &Some(HourFormat::Hour12));
+            let actual_heading_entry = heading_entry(naive_time, &HourFormat::Hour12);
             let expected_heading_entry = "# 3:00 PM";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
@@ -242,10 +224,71 @@ mod tests {
         #[test]
         fn test_heading_entry_is_hour_24() {
             let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
-            let actual_heading_entry = heading_entry(naive_time, &Some(HourFormat::Hour24));
+            let actual_heading_entry = heading_entry(naive_time, &HourFormat::Hour24);
             let expected_heading_entry = "# 15:00";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
+        }
+    }
+
+    mod journal_dir_tests {
+        use super::super::*;
+
+        #[test]
+        #[cfg(target_family = "unix")]
+        fn test_absolute_unix_path() {
+            let result = journal_dir("/home/user");
+            assert!(result.is_some());
+            let path = result.unwrap();
+            assert!(path.is_absolute());
+            assert_eq!(path, PathBuf::from("/home/user/journal"));
+        }
+
+        #[test]
+        fn test_tilde_expansion() {
+            let result = journal_dir("~/documents");
+            assert!(result.is_some());
+            let path = result.unwrap();
+
+            assert!(path.is_absolute(), "Tilde should expand to absolute path");
+
+            if let Some(home) = std::env::home_dir() {
+                assert_eq!(path, home.join("documents").join("journal"));
+            }
+        }
+
+        #[test]
+        fn test_relative_path_falls_back_to_home() {
+            for relative_path in ["relative/path", "NONEXT/some/path", "../some/path"] {
+                let result = journal_dir(relative_path);
+                assert!(result.is_some(), "Failed for path: {}", relative_path);
+                let path = result.unwrap();
+
+                assert!(
+                    path.is_absolute(),
+                    "Path should be absolute for input '{}', got: {:?}",
+                    relative_path,
+                    path
+                );
+
+                if let Some(home) = std::env::home_dir() {
+                    assert_eq!(
+                        path,
+                        home.join("journal"),
+                        "Should fall back to home directory for input '{}'",
+                        relative_path
+                    );
+                }
+            }
+        }
+
+        #[test]
+        #[cfg(target_os = "windows")]
+        fn test_absolute_path_windows_style() {
+            let result = journal_dir("C:\\Users\\user\\Documents");
+            assert!(result.is_some());
+            let path = result.unwrap();
+            assert_eq!(path, PathBuf::from("C:\\Users\\user\\Documents\\journal"));
         }
     }
 }

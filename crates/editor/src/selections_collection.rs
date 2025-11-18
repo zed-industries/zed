@@ -1,47 +1,44 @@
 use std::{
-    cell::Ref,
-    cmp, iter, mem,
+    cmp, fmt, iter, mem,
     ops::{Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 
 use collections::HashMap;
-use gpui::{App, Entity, Pixels};
-use itertools::Itertools;
+use gpui::Pixels;
+use itertools::Itertools as _;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
-    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset, ToPoint,
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBufferSnapshot, SelectMode, ToOffset,
+    ToPoint,
+    display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
 };
 
 #[derive(Debug, Clone)]
 pub struct PendingSelection {
-    pub selection: Selection<Anchor>,
-    pub mode: SelectMode,
+    selection: Selection<Anchor>,
+    mode: SelectMode,
 }
 
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
-    display_map: Entity<DisplayMap>,
-    buffer: Entity<MultiBuffer>,
-    pub next_selection_id: usize,
-    pub line_mode: bool,
+    next_selection_id: usize,
+    line_mode: bool,
     /// The non-pending, non-overlapping selections.
     /// The [SelectionsCollection::pending] selection could possibly overlap these
-    pub disjoint: Arc<[Selection<Anchor>]>,
+    disjoint: Arc<[Selection<Anchor>]>,
     /// A pending selection, such as when the mouse is being dragged
-    pub pending: Option<PendingSelection>,
+    pending: Option<PendingSelection>,
+    select_mode: SelectMode,
+    is_extending: bool,
 }
 
 impl SelectionsCollection {
-    pub fn new(display_map: Entity<DisplayMap>, buffer: Entity<MultiBuffer>) -> Self {
+    pub fn new() -> Self {
         Self {
-            display_map,
-            buffer,
             next_selection_id: 1,
             line_mode: false,
             disjoint: Arc::default(),
@@ -55,15 +52,9 @@ impl SelectionsCollection {
                 },
                 mode: SelectMode::Character,
             }),
+            select_mode: SelectMode::Character,
+            is_extending: false,
         }
-    }
-
-    pub fn display_map(&self, cx: &mut App) -> DisplaySnapshot {
-        self.display_map.update(cx, |map, cx| map.snapshot(cx))
-    }
-
-    fn buffer<'a>(&self, cx: &'a App) -> Ref<'a, MultiBufferSnapshot> {
-        self.buffer.read(cx).read(cx)
     }
 
     pub fn clone_state(&mut self, other: &SelectionsCollection) {
@@ -84,57 +75,64 @@ impl SelectionsCollection {
     /// The non-pending, non-overlapping selections. There could be a pending selection that
     /// overlaps these if the mouse is being dragged, etc. This could also be empty if there is a
     /// pending selection. Returned as selections over Anchors.
-    pub fn disjoint_anchors(&self) -> Arc<[Selection<Anchor>]> {
+    pub fn disjoint_anchors_arc(&self) -> Arc<[Selection<Anchor>]> {
         self.disjoint.clone()
+    }
+
+    /// The non-pending, non-overlapping selections. There could be a pending selection that
+    /// overlaps these if the mouse is being dragged, etc. This could also be empty if there is a
+    /// pending selection. Returned as selections over Anchors.
+    pub fn disjoint_anchors(&self) -> &[Selection<Anchor>] {
+        &self.disjoint
     }
 
     pub fn disjoint_anchor_ranges(&self) -> impl Iterator<Item = Range<Anchor>> {
         // Mapping the Arc slice would borrow it, whereas indexing captures it.
-        let disjoint = self.disjoint_anchors();
+        let disjoint = self.disjoint_anchors_arc();
         (0..disjoint.len()).map(move |ix| disjoint[ix].range())
     }
 
     /// Non-overlapping selections using anchors, including the pending selection.
-    pub fn all_anchors(&self, cx: &mut App) -> Arc<[Selection<Anchor>]> {
+    pub fn all_anchors(&self, snapshot: &DisplaySnapshot) -> Arc<[Selection<Anchor>]> {
         if self.pending.is_none() {
-            self.disjoint_anchors()
+            self.disjoint_anchors_arc()
         } else {
-            let all_offset_selections = self.all::<usize>(cx);
-            let buffer = self.buffer(cx);
+            let all_offset_selections = self.all::<usize>(snapshot);
             all_offset_selections
                 .into_iter()
-                .map(|selection| selection_to_anchor_selection(selection, &buffer))
+                .map(|selection| selection_to_anchor_selection(selection, snapshot))
                 .collect()
         }
     }
 
-    pub fn pending_anchor(&self) -> Option<Selection<Anchor>> {
-        self.pending
-            .as_ref()
-            .map(|pending| pending.selection.clone())
+    pub fn pending_anchor(&self) -> Option<&Selection<Anchor>> {
+        self.pending.as_ref().map(|pending| &pending.selection)
+    }
+
+    pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
+        self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Option<Selection<D>> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections(self.pending_anchor().as_ref(), &map).next();
-        selection
+        resolve_selections_wrapping_blocks(self.pending_anchor(), &snapshot).next()
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, cx: &mut App) -> Vec<Selection<D>>
+    pub fn all<'a, D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
-        let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint = resolve_selections::<D, _>(disjoint_anchors.iter(), &map).peekable();
-        let mut pending_opt = self.pending::<D>(cx);
+        let mut disjoint =
+            resolve_selections_wrapping_blocks::<D, _>(disjoint_anchors.iter(), &snapshot)
+                .peekable();
+        let mut pending_opt = self.pending::<D>(&snapshot);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -162,12 +160,11 @@ impl SelectionsCollection {
     }
 
     /// Returns all of the selections, adjusted to take into account the selection line_mode
-    pub fn all_adjusted(&self, cx: &mut App) -> Vec<Selection<Point>> {
-        let mut selections = self.all::<Point>(cx);
+    pub fn all_adjusted(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<Point>> {
+        let mut selections = self.all::<Point>(&snapshot);
         if self.line_mode {
-            let map = self.display_map(cx);
             for selection in &mut selections {
-                let new_range = map.expand_to_line(selection.range());
+                let new_range = snapshot.expand_to_line(selection.range());
                 selection.start = new_range.start;
                 selection.end = new_range.end;
             }
@@ -176,11 +173,10 @@ impl SelectionsCollection {
     }
 
     /// Returns the newest selection, adjusted to take into account the selection line_mode
-    pub fn newest_adjusted(&self, cx: &mut App) -> Selection<Point> {
-        let mut selection = self.newest::<Point>(cx);
+    pub fn newest_adjusted(&self, snapshot: &DisplaySnapshot) -> Selection<Point> {
+        let mut selection = self.newest::<Point>(&snapshot);
         if self.line_mode {
-            let map = self.display_map(cx);
-            let new_range = map.expand_to_line(selection.range());
+            let new_range = snapshot.expand_to_line(selection.range());
             selection.start = new_range.start;
             selection.end = new_range.end;
         }
@@ -189,54 +185,55 @@ impl SelectionsCollection {
 
     pub fn all_adjusted_display(
         &self,
-        cx: &mut App,
-    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
+        display_map: &DisplaySnapshot,
+    ) -> Vec<Selection<DisplayPoint>> {
         if self.line_mode {
-            let selections = self.all::<Point>(cx);
-            let map = self.display_map(cx);
+            let selections = self.all::<Point>(&display_map);
             let result = selections
                 .into_iter()
                 .map(|mut selection| {
-                    let new_range = map.expand_to_line(selection.range());
+                    let new_range = display_map.expand_to_line(selection.range());
                     selection.start = new_range.start;
                     selection.end = new_range.end;
-                    selection.map(|point| point.to_display_point(&map))
+                    selection.map(|point| point.to_display_point(&display_map))
                 })
                 .collect();
-            (map, result)
+            result
         } else {
-            self.all_display(cx)
+            self.all_display(display_map)
         }
     }
 
-    pub fn disjoint_in_range<'a, D>(&self, range: Range<Anchor>, cx: &mut App) -> Vec<Selection<D>>
+    pub fn disjoint_in_range<'a, D>(
+        &self,
+        range: Range<Anchor>,
+        snapshot: &DisplaySnapshot,
+    ) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     {
-        let map = self.display_map(cx);
         let start_ix = match self
             .disjoint
-            .binary_search_by(|probe| probe.end.cmp(&range.start, &map.buffer_snapshot))
+            .binary_search_by(|probe| probe.end.cmp(&range.start, snapshot.buffer_snapshot()))
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match self
             .disjoint
-            .binary_search_by(|probe| probe.start.cmp(&range.end, &map.buffer_snapshot))
+            .binary_search_by(|probe| probe.start.cmp(&range.end, snapshot.buffer_snapshot()))
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
-        resolve_selections(&self.disjoint[start_ix..end_ix], &map).collect()
+        resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
 
-    pub fn all_display(&self, cx: &mut App) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
-        let map = self.display_map(cx);
+    pub fn all_display(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<DisplayPoint>> {
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &map).peekable();
-        let mut pending_opt =
-            resolve_selections_display(self.pending_anchor().as_ref(), &map).next();
-        let selections = iter::from_fn(move || {
+        let mut disjoint =
+            resolve_selections_display(disjoint_anchors.iter(), &snapshot).peekable();
+        let mut pending_opt = resolve_selections_display(self.pending_anchor(), &snapshot).next();
+        iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
                     if pending.start <= next_selection.end && pending.end >= next_selection.start {
@@ -259,8 +256,7 @@ impl SelectionsCollection {
                 disjoint.next()
             }
         })
-        .collect();
-        (map, selections)
+        .collect()
     }
 
     pub fn newest_anchor(&self) -> &Selection<Anchor> {
@@ -273,21 +269,17 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections([self.newest_anchor()], &map)
+        resolve_selections_wrapping_blocks([self.newest_anchor()], &snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
-    pub fn newest_display(&self, cx: &mut App) -> Selection<DisplayPoint> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections_display([self.newest_anchor()], &map)
+    pub fn newest_display(&self, snapshot: &DisplaySnapshot) -> Selection<DisplayPoint> {
+        resolve_selections_display([self.newest_anchor()], &snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
@@ -300,13 +292,11 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections([self.oldest_anchor()], &map)
+        resolve_selections_wrapping_blocks([self.oldest_anchor()], &snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
@@ -316,19 +306,28 @@ impl SelectionsCollection {
             .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
-    pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(&self, cx: &mut App) -> Selection<D> {
-        self.all(cx).first().unwrap().clone()
+    pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> Selection<D> {
+        self.all(snapshot).first().unwrap().clone()
     }
 
-    pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(&self, cx: &mut App) -> Selection<D> {
-        self.all(cx).last().unwrap().clone()
+    pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> Selection<D> {
+        self.all(snapshot).last().unwrap().clone()
     }
 
+    /// Returns a list of (potentially backwards!) ranges representing the selections.
+    /// Useful for test assertions, but prefer `.all()` instead.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Vec<Range<D>> {
-        self.all::<D>(cx)
+        self.all::<D>(snapshot)
             .iter()
             .map(|s| {
                 if s.reversed {
@@ -341,21 +340,27 @@ impl SelectionsCollection {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn display_ranges(&self, cx: &mut App) -> Vec<Range<DisplayPoint>> {
-        let display_map = self.display_map(cx);
-        self.disjoint_anchors()
+    pub fn display_ranges(&self, display_snapshot: &DisplaySnapshot) -> Vec<Range<DisplayPoint>> {
+        self.disjoint_anchors_arc()
             .iter()
-            .chain(self.pending_anchor().as_ref())
+            .chain(self.pending_anchor())
             .map(|s| {
                 if s.reversed {
-                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+                    s.end.to_display_point(display_snapshot)
+                        ..s.start.to_display_point(display_snapshot)
                 } else {
-                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+                    s.start.to_display_point(display_snapshot)
+                        ..s.end.to_display_point(display_snapshot)
                 }
             })
             .collect()
     }
 
+    /// Attempts to build a selection in the provided `DisplayRow` within the
+    /// same range as the provided range of `Pixels`.
+    /// Returns `None` if the range is not empty but it starts past the line's
+    /// length, meaning that the line isn't long enough to be contained within
+    /// part of the provided range.
     pub fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
@@ -396,13 +401,13 @@ impl SelectionsCollection {
 
     pub fn change_with<R>(
         &mut self,
-        cx: &mut App,
-        change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
+        snapshot: &DisplaySnapshot,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> (bool, R) {
         let mut mutable_collection = MutableSelectionsCollection {
+            snapshot,
             collection: self,
             selections_changed: false,
-            cx,
         };
 
         let result = change(&mut mutable_collection);
@@ -412,21 +417,54 @@ impl SelectionsCollection {
         );
         (mutable_collection.selections_changed, result)
     }
-}
 
-pub struct MutableSelectionsCollection<'a> {
-    collection: &'a mut SelectionsCollection,
-    selections_changed: bool,
-    cx: &'a mut App,
-}
-
-impl<'a> MutableSelectionsCollection<'a> {
-    pub fn display_map(&mut self) -> DisplaySnapshot {
-        self.collection.display_map(self.cx)
+    pub fn next_selection_id(&self) -> usize {
+        self.next_selection_id
     }
 
-    pub fn buffer(&self) -> Ref<'_, MultiBufferSnapshot> {
-        self.collection.buffer(self.cx)
+    pub fn line_mode(&self) -> bool {
+        self.line_mode
+    }
+
+    pub fn set_line_mode(&mut self, line_mode: bool) {
+        self.line_mode = line_mode;
+    }
+
+    pub fn select_mode(&self) -> &SelectMode {
+        &self.select_mode
+    }
+
+    pub fn set_select_mode(&mut self, select_mode: SelectMode) {
+        self.select_mode = select_mode;
+    }
+
+    pub fn is_extending(&self) -> bool {
+        self.is_extending
+    }
+
+    pub fn set_is_extending(&mut self, is_extending: bool) {
+        self.is_extending = is_extending;
+    }
+}
+
+pub struct MutableSelectionsCollection<'snap, 'a> {
+    collection: &'a mut SelectionsCollection,
+    snapshot: &'snap DisplaySnapshot,
+    selections_changed: bool,
+}
+
+impl<'snap, 'a> fmt::Debug for MutableSelectionsCollection<'snap, 'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MutableSelectionsCollection")
+            .field("collection", &self.collection)
+            .field("selections_changed", &self.selections_changed)
+            .finish()
+    }
+}
+
+impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
+    pub fn display_snapshot(&self) -> DisplaySnapshot {
+        self.snapshot.clone()
     }
 
     pub fn clear_disjoint(&mut self) {
@@ -449,6 +487,43 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.selections_changed |= changed;
     }
 
+    pub fn remove_selections_from_buffer(&mut self, buffer_id: language::BufferId) {
+        let mut changed = false;
+
+        let filtered_selections: Arc<[Selection<Anchor>]> = {
+            self.disjoint
+                .iter()
+                .filter(|selection| {
+                    if let Some(selection_buffer_id) =
+                        self.snapshot.buffer_id_for_anchor(selection.start)
+                    {
+                        let should_remove = selection_buffer_id == buffer_id;
+                        changed |= should_remove;
+                        !should_remove
+                    } else {
+                        true
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+
+        if filtered_selections.is_empty() {
+            let default_anchor = self.snapshot.anchor_before(0);
+            self.collection.disjoint = Arc::from([Selection {
+                id: post_inc(&mut self.collection.next_selection_id),
+                start: default_anchor,
+                end: default_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            }]);
+        } else {
+            self.collection.disjoint = filtered_selections;
+        }
+
+        self.selections_changed |= changed;
+    }
+
     pub fn clear_pending(&mut self) {
         if self.collection.pending.is_some() {
             self.collection.pending = None;
@@ -458,12 +533,22 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub(crate) fn set_pending_anchor_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
         self.collection.pending = Some(PendingSelection {
-            selection: Selection {
-                id: post_inc(&mut self.collection.next_selection_id),
-                start: range.start,
-                end: range.end,
-                reversed: false,
-                goal: SelectionGoal::None,
+            selection: {
+                let mut start = range.start;
+                let mut end = range.end;
+                let reversed = if start.cmp(&end, self.snapshot).is_gt() {
+                    mem::swap(&mut start, &mut end);
+                    true
+                } else {
+                    false
+                };
+                Selection {
+                    id: post_inc(&mut self.collection.next_selection_id),
+                    start,
+                    end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                }
             },
             mode,
         });
@@ -491,7 +576,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             return true;
         }
 
-        if !oldest.start.cmp(&oldest.end, &self.buffer()).is_eq() {
+        if !oldest.start.cmp(&oldest.end, self.snapshot).is_eq() {
             let head = oldest.head();
             oldest.start = head;
             oldest.end = head;
@@ -507,9 +592,10 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
     {
-        let mut selections = self.collection.all(self.cx);
-        let mut start = range.start.to_offset(&self.buffer());
-        let mut end = range.end.to_offset(&self.buffer());
+        let display_map = self.display_snapshot();
+        let mut selections = self.collection.all(&display_map);
+        let mut start = range.start.to_offset(self.snapshot);
+        let mut end = range.end.to_offset(self.snapshot);
         let reversed = if start > end {
             mem::swap(&mut start, &mut end);
             true
@@ -526,21 +612,31 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select(selections);
     }
 
-    pub fn select<T>(&mut self, mut selections: Vec<Selection<T>>)
+    pub fn select<T>(&mut self, selections: Vec<Selection<T>>)
     where
-        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
+        T: ToOffset + std::marker::Copy + std::fmt::Debug,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let mut selections = selections
+            .into_iter()
+            .map(|selection| selection.map(|it| it.to_offset(self.snapshot)))
+            .map(|mut selection| {
+                if selection.start > selection.end {
+                    mem::swap(&mut selection.start, &mut selection.end);
+                    selection.reversed = true
+                }
+                selection
+            })
+            .collect::<Vec<_>>();
         selections.sort_unstable_by_key(|s| s.start);
         // Merge overlapping selections.
         let mut i = 1;
         while i < selections.len() {
-            if selections[i - 1].end >= selections[i].start {
+            if selections[i].start <= selections[i - 1].end {
                 let removed = selections.remove(i);
                 if removed.start < selections[i - 1].start {
                     selections[i - 1].start = removed.start;
                 }
-                if removed.end > selections[i - 1].end {
+                if selections[i - 1].end < removed.end {
                     selections[i - 1].end = removed.end;
                 }
             } else {
@@ -551,16 +647,16 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.disjoint = Arc::from_iter(
             selections
                 .into_iter()
-                .map(|selection| selection_to_anchor_selection(selection, &buffer)),
+                .map(|selection| selection_to_anchor_selection(selection, self.snapshot)),
         );
         self.collection.pending = None;
         self.selections_changed = true;
     }
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
-        let map = self.display_map();
+        let map = self.display_snapshot();
         let resolved_selections =
-            resolve_selections::<usize, _>(&selections, &map).collect::<Vec<_>>();
+            resolve_selections_wrapping_blocks::<usize, _>(&selections, &map).collect::<Vec<_>>();
         self.select(resolved_selections);
     }
 
@@ -569,10 +665,9 @@ impl<'a> MutableSelectionsCollection<'a> {
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let ranges = ranges
             .into_iter()
-            .map(|range| range.start.to_offset(&buffer)..range.end.to_offset(&buffer));
+            .map(|range| range.start.to_offset(self.snapshot)..range.end.to_offset(self.snapshot));
         self.select_offset_ranges(ranges);
     }
 
@@ -608,13 +703,12 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         I: IntoIterator<Item = Range<Anchor>>,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let selections = ranges
             .into_iter()
             .map(|range| {
                 let mut start = range.start;
                 let mut end = range.end;
-                let reversed = if start.cmp(&end, &buffer).is_gt() {
+                let reversed = if start.cmp(&end, self.snapshot).is_gt() {
                     mem::swap(&mut start, &mut end);
                     true
                 } else {
@@ -640,7 +734,6 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: IntoIterator<Item = Range<DisplayPoint>>,
     {
-        let display_map = self.display_map();
         let selections = ranges
             .into_iter()
             .map(|range| {
@@ -654,8 +747,8 @@ impl<'a> MutableSelectionsCollection<'a> {
                 };
                 Selection {
                     id: post_inc(&mut self.collection.next_selection_id),
-                    start: start.to_point(&display_map),
-                    end: end.to_point(&display_map),
+                    start: start.to_point(self.snapshot),
+                    end: end.to_point(self.snapshot),
                     reversed,
                     goal: SelectionGoal::None,
                 }
@@ -665,7 +758,6 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 
     pub fn reverse_selections(&mut self) {
-        let map = &self.display_map();
         let mut new_selections: Vec<Selection<Point>> = Vec::new();
         let disjoint = self.disjoint.clone();
         for selection in disjoint
@@ -675,8 +767,14 @@ impl<'a> MutableSelectionsCollection<'a> {
         {
             new_selections.push(Selection {
                 id: self.new_selection_id(),
-                start: selection.start.to_display_point(map).to_point(map),
-                end: selection.end.to_display_point(map).to_point(map),
+                start: selection
+                    .start
+                    .to_display_point(self.snapshot)
+                    .to_point(self.snapshot),
+                end: selection
+                    .end
+                    .to_display_point(self.snapshot)
+                    .to_point(self.snapshot),
                 reversed: selection.reversed,
                 goal: selection.goal,
             });
@@ -689,8 +787,8 @@ impl<'a> MutableSelectionsCollection<'a> {
         mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
     ) {
         let mut changed = false;
-        let display_map = self.display_map();
-        let (_, selections) = self.collection.all_display(self.cx);
+        let display_map = self.display_snapshot();
+        let selections = self.collection.all_display(&display_map);
         let selections = selections
             .into_iter()
             .map(|selection| {
@@ -713,21 +811,20 @@ impl<'a> MutableSelectionsCollection<'a> {
         mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<usize>),
     ) {
         let mut changed = false;
-        let snapshot = self.buffer().clone();
+        let display_map = self.display_snapshot();
         let selections = self
             .collection
-            .all::<usize>(self.cx)
+            .all::<usize>(&display_map)
             .into_iter()
             .map(|selection| {
                 let mut moved_selection = selection.clone();
-                move_selection(&snapshot, &mut moved_selection);
+                move_selection(self.snapshot, &mut moved_selection);
                 if selection != moved_selection {
                     changed = true;
                 }
                 moved_selection
             })
             .collect();
-        drop(snapshot);
 
         if changed {
             self.select(selections)
@@ -779,11 +876,10 @@ impl<'a> MutableSelectionsCollection<'a> {
         &mut self,
         find_replacement_cursors: impl FnOnce(&DisplaySnapshot) -> Vec<DisplayPoint>,
     ) {
-        let display_map = self.display_map();
-        let new_selections = find_replacement_cursors(&display_map)
+        let new_selections = find_replacement_cursors(self.snapshot)
             .into_iter()
             .map(|cursor| {
-                let cursor_point = cursor.to_point(&display_map);
+                let cursor_point = cursor.to_point(self.snapshot);
                 Selection {
                     id: post_inc(&mut self.collection.next_selection_id),
                     start: cursor_point,
@@ -807,12 +903,11 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut selections_with_lost_position = HashMap::default();
 
         let anchors_with_status = {
-            let buffer = self.buffer();
             let disjoint_anchors = self
                 .disjoint
                 .iter()
                 .flat_map(|selection| [&selection.start, &selection.end]);
-            buffer.refresh_anchors(disjoint_anchors)
+            self.snapshot.refresh_anchors(disjoint_anchors)
         };
         let adjusted_disjoint: Vec<_> = anchors_with_status
             .chunks(2)
@@ -840,15 +935,16 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
 
         if !adjusted_disjoint.is_empty() {
-            let map = self.display_map();
-            let resolved_selections = resolve_selections(adjusted_disjoint.iter(), &map).collect();
+            let map = self.display_snapshot();
+            let resolved_selections =
+                resolve_selections_wrapping_blocks(adjusted_disjoint.iter(), &map).collect();
             self.select::<usize>(resolved_selections);
         }
 
         if let Some(pending) = pending.as_mut() {
-            let buffer = self.buffer();
-            let anchors =
-                buffer.refresh_anchors([&pending.selection.start, &pending.selection.end]);
+            let anchors = self
+                .snapshot
+                .refresh_anchors([&pending.selection.start, &pending.selection.end]);
             let (_, start, kept_start) = anchors[0];
             let (_, end, kept_end) = anchors[1];
             let kept_head = if pending.selection.reversed {
@@ -871,30 +967,27 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 }
 
-impl Deref for MutableSelectionsCollection<'_> {
+impl Deref for MutableSelectionsCollection<'_, '_> {
     type Target = SelectionsCollection;
     fn deref(&self) -> &Self::Target {
         self.collection
     }
 }
 
-impl DerefMut for MutableSelectionsCollection<'_> {
+impl DerefMut for MutableSelectionsCollection<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.collection
     }
 }
 
-fn selection_to_anchor_selection<T>(
-    selection: Selection<T>,
+fn selection_to_anchor_selection(
+    selection: Selection<usize>,
     buffer: &MultiBufferSnapshot,
-) -> Selection<Anchor>
-where
-    T: ToOffset + Ord,
-{
-    let end_bias = if selection.end > selection.start {
-        Bias::Left
-    } else {
+) -> Selection<Anchor> {
+    let end_bias = if selection.start == selection.end {
         Bias::Right
+    } else {
+        Bias::Left
     };
     Selection {
         id: selection.id,
@@ -905,71 +998,19 @@ where
     }
 }
 
-// Panics if passed selections are not in order
-fn resolve_selections_display<'a>(
+fn resolve_selections_point<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
-) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
+) -> impl 'a + Iterator<Item = Selection<Point>> {
     let (to_summarize, selections) = selections.into_iter().tee();
     let mut summaries = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .summaries_for_anchors::<Point, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
         .into_iter();
-    let mut selections = selections
-        .map(move |s| {
-            let start = summaries.next().unwrap();
-            let end = summaries.next().unwrap();
-
-            let display_start = map.point_to_display_point(start, Bias::Left);
-            let display_end = if start == end {
-                map.point_to_display_point(end, Bias::Right)
-            } else {
-                map.point_to_display_point(end, Bias::Left)
-            };
-
-            Selection {
-                id: s.id,
-                start: display_start,
-                end: display_end,
-                reversed: s.reversed,
-                goal: s.goal,
-            }
-        })
-        .peekable();
-    iter::from_fn(move || {
-        let mut selection = selections.next()?;
-        while let Some(next_selection) = selections.peek() {
-            if selection.end >= next_selection.start {
-                selection.end = cmp::max(selection.end, next_selection.end);
-                selections.next();
-            } else {
-                break;
-            }
-        }
-        Some(selection)
-    })
-}
-
-// Panics if passed selections are not in order
-pub(crate) fn resolve_selections<'a, D, I>(
-    selections: I,
-    map: &'a DisplaySnapshot,
-) -> impl 'a + Iterator<Item = Selection<D>>
-where
-    D: TextDimension + Ord + Sub<D, Output = D>,
-    I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
-{
-    let (to_convert, selections) = resolve_selections_display(selections, map).tee();
-    let mut converted_endpoints =
-        map.buffer_snapshot
-            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
-                let start = map.display_point_to_point(s.start, Bias::Left);
-                let end = map.display_point_to_point(s.end, Bias::Right);
-                [start, end]
-            }));
     selections.map(move |s| {
-        let start = converted_endpoints.next().unwrap();
-        let end = converted_endpoints.next().unwrap();
+        let start = summaries.next().unwrap();
+        let end = summaries.next().unwrap();
+        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
         Selection {
             id: s.id,
             start,
@@ -977,5 +1018,107 @@ where
             reversed: s.reversed,
             goal: s.goal,
         }
+    })
+}
+
+/// Panics if passed selections are not in order
+/// Resolves the anchors to display positions
+fn resolve_selections_display<'a>(
+    selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
+    map: &'a DisplaySnapshot,
+) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
+    let selections = resolve_selections_point(selections, map).map(move |s| {
+        let display_start = map.point_to_display_point(s.start, Bias::Left);
+        let display_end = map.point_to_display_point(
+            s.end,
+            if s.start == s.end {
+                Bias::Right
+            } else {
+                Bias::Left
+            },
+        );
+        assert!(
+            display_start <= display_end,
+            "display_start: {:?}, display_end: {:?}",
+            display_start,
+            display_end
+        );
+        Selection {
+            id: s.id,
+            start: display_start,
+            end: display_end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
+    });
+    coalesce_selections(selections)
+}
+
+/// Resolves the passed in anchors to [`TextDimension`]s `D`
+/// wrapping around blocks inbetween.
+///
+/// # Panics
+///
+/// Panics if passed selections are not in order
+pub(crate) fn resolve_selections_wrapping_blocks<'a, D, I>(
+    selections: I,
+    map: &'a DisplaySnapshot,
+) -> impl 'a + Iterator<Item = Selection<D>>
+where
+    D: TextDimension + Ord + Sub<D, Output = D>,
+    I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
+{
+    // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
+    // todo(lw): We should be able to short circuit the `Anchor -> DisplayPoint -> Point` to `Anchor -> Point`
+    let (to_convert, selections) = resolve_selections_display(selections, map).tee();
+    let mut converted_endpoints =
+        map.buffer_snapshot()
+            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
+                let start = map.display_point_to_point(s.start, Bias::Left);
+                let end = map.display_point_to_point(s.end, Bias::Right);
+                assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+                [start, end]
+            }));
+    selections.map(move |s| {
+        let start = converted_endpoints.next().unwrap();
+        let end = converted_endpoints.next().unwrap();
+        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+        Selection {
+            id: s.id,
+            start,
+            end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
+    })
+}
+
+fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
+    selections: impl Iterator<Item = Selection<D>>,
+) -> impl Iterator<Item = Selection<D>> {
+    let mut selections = selections.peekable();
+    iter::from_fn(move || {
+        let mut selection = selections.next()?;
+        while let Some(next_selection) = selections.peek() {
+            if selection.end >= next_selection.start {
+                if selection.reversed == next_selection.reversed {
+                    selection.end = cmp::max(selection.end, next_selection.end);
+                    selections.next();
+                } else {
+                    selection.end = cmp::max(selection.start, next_selection.start);
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        assert!(
+            selection.start <= selection.end,
+            "selection.start: {:?}, selection.end: {:?}, selection.reversed: {:?}",
+            selection.start,
+            selection.end,
+            selection.reversed
+        );
+        Some(selection)
     })
 }

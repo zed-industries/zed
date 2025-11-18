@@ -1,109 +1,175 @@
 use std::{
+    sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use async_task::Runnable;
 use flume::Sender;
-use parking::Parker;
-use parking_lot::Mutex;
 use util::ResultExt;
 use windows::{
-    Foundation::TimeSpan,
     System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
-        WorkItemPriority,
+        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
-        UI::WindowsAndMessaging::PostThreadMessageW,
+        UI::WindowsAndMessaging::PostMessageW,
     },
 };
 
-use crate::{PlatformDispatcher, TaskLabel, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
+use crate::{
+    GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, RunnableVariant, SafeHwnd, THREAD_TIMINGS,
+    TaskLabel, TaskTiming, ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+};
 
 pub(crate) struct WindowsDispatcher {
-    main_sender: Sender<Runnable>,
-    parker: Mutex<Parker>,
+    pub(crate) wake_posted: AtomicBool,
+    main_sender: Sender<RunnableVariant>,
     main_thread_id: ThreadId,
-    main_thread_id_win32: u32,
+    platform_window_handle: SafeHwnd,
     validation_number: usize,
 }
 
 impl WindowsDispatcher {
     pub(crate) fn new(
-        main_sender: Sender<Runnable>,
-        main_thread_id_win32: u32,
+        main_sender: Sender<RunnableVariant>,
+        platform_window_handle: HWND,
         validation_number: usize,
     ) -> Self {
-        let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
+        let platform_window_handle = platform_window_handle.into();
 
         WindowsDispatcher {
             main_sender,
-            parker,
             main_thread_id,
-            main_thread_id_win32,
+            platform_window_handle,
             validation_number,
+            wake_posted: AtomicBool::new(false),
         }
     }
 
-    fn dispatch_on_threadpool(&self, runnable: Runnable) {
+    fn dispatch_on_threadpool(&self, runnable: RunnableVariant) {
         let handler = {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
-                task_wrapper.take().unwrap().run();
+                Self::execute_runnable(task_wrapper.take().unwrap());
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAndOptionsAsync(
-            &handler,
-            WorkItemPriority::High,
-            WorkItemOptions::TimeSliced,
-        )
-        .log_err();
+        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High).log_err();
     }
 
-    fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
+    fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
         let handler = {
             let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
-                task_wrapper.take().unwrap().run();
+                Self::execute_runnable(task_wrapper.take().unwrap());
                 Ok(())
             })
         };
-        let delay = TimeSpan {
-            // A time period expressed in 100-nanosecond units.
-            // 10,000,000 ticks per second
-            Duration: (duration.as_nanos() / 100) as i64,
+        ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
+    }
+
+    #[inline(always)]
+    pub(crate) fn execute_runnable(runnable: RunnableVariant) {
+        let start = Instant::now();
+
+        let mut timing = match runnable {
+            RunnableVariant::Meta(runnable) => {
+                let location = runnable.metadata().location;
+                let timing = TaskTiming {
+                    location,
+                    start,
+                    end: None,
+                };
+                Self::add_task_timing(timing);
+
+                runnable.run();
+
+                timing
+            }
+            RunnableVariant::Compat(runnable) => {
+                let timing = TaskTiming {
+                    location: core::panic::Location::caller(),
+                    start,
+                    end: None,
+                };
+                Self::add_task_timing(timing);
+
+                runnable.run();
+
+                timing
+            }
         };
-        ThreadPoolTimer::CreateTimer(&handler, delay).log_err();
+
+        let end = Instant::now();
+        timing.end = Some(end);
+
+        Self::add_task_timing(timing);
+    }
+
+    pub(crate) fn add_task_timing(timing: TaskTiming) {
+        THREAD_TIMINGS.with(|timings| {
+            let mut timings = timings.lock();
+            let timings = &mut timings.timings;
+
+            if let Some(last_timing) = timings.iter_mut().rev().next() {
+                if last_timing.location == timing.location {
+                    last_timing.end = timing.end;
+                    return;
+                }
+            }
+
+            timings.push_back(timing);
+        });
     }
 }
 
 impl PlatformDispatcher for WindowsDispatcher {
+    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
+        let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+        ThreadTaskTimings::convert(&global_thread_timings)
+    }
+
+    fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
+        THREAD_TIMINGS.with(|timings| {
+            let timings = timings.lock();
+            let timings = &timings.timings;
+
+            let mut vec = Vec::with_capacity(timings.len());
+
+            let (s1, s2) = timings.as_slices();
+            vec.extend_from_slice(s1);
+            vec.extend_from_slice(s2);
+            vec
+        })
+    }
+
     fn is_main_thread(&self) -> bool {
         current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>) {
         self.dispatch_on_threadpool(runnable);
         if let Some(label) = label {
             log::debug!("TaskLabel: {label:?}");
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: Runnable) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
         match self.main_sender.send(runnable) {
-            Ok(_) => unsafe {
-                PostThreadMessageW(
-                    self.main_thread_id_win32,
-                    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
-                    WPARAM(self.validation_number),
-                    LPARAM(0),
-                )
-                .log_err();
-            },
+            Ok(_) => {
+                if !self.wake_posted.swap(true, Ordering::AcqRel) {
+                    unsafe {
+                        PostMessageW(
+                            Some(self.platform_window_handle.as_raw()),
+                            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                            WPARAM(self.validation_number),
+                            LPARAM(0),
+                        )
+                        .log_err();
+                    }
+                }
+            }
             Err(runnable) => {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
@@ -118,20 +184,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         }
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
-    }
-
-    fn park(&self, timeout: Option<Duration>) -> bool {
-        if let Some(timeout) = timeout {
-            self.parker.lock().park_timeout(timeout)
-        } else {
-            self.parker.lock().park();
-            true
-        }
-    }
-
-    fn unparker(&self) -> parking::Unparker {
-        self.parker.lock().unparker()
     }
 }

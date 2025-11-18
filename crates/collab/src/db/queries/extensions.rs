@@ -87,10 +87,10 @@ impl Database {
                 continue;
             };
 
-            if let Some((_, max_extension_version)) = &max_versions.get(&version.extension_id) {
-                if max_extension_version > &extension_version {
-                    continue;
-                }
+            if let Some((_, max_extension_version)) = &max_versions.get(&version.extension_id)
+                && max_extension_version > &extension_version
+            {
+                continue;
             }
 
             if let Some(constraints) = constraints {
@@ -255,7 +255,7 @@ impl Database {
 
                 let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
-                    external_id: ActiveValue::Set(external_id.to_string()),
+                    external_id: ActiveValue::Set((*external_id).to_owned()),
                     id: ActiveValue::NotSet,
                     latest_version: ActiveValue::Set(latest_version.version.to_string()),
                     total_download_count: ActiveValue::NotSet,
@@ -310,6 +310,9 @@ impl Database {
                                 .provides
                                 .contains(&ExtensionProvides::ContextServers),
                         ),
+                        provides_agent_servers: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::AgentServers),
+                        ),
                         provides_slash_commands: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::SlashCommands),
                         ),
@@ -331,10 +334,10 @@ impl Database {
                 .exec_without_returning(&*tx)
                 .await?;
 
-                if let Ok(db_version) = semver::Version::parse(&extension.latest_version) {
-                    if db_version >= latest_version.version {
-                        continue;
-                    }
+                if let Ok(db_version) = semver::Version::parse(&extension.latest_version)
+                    && db_version >= latest_version.version
+                {
+                    continue;
                 }
 
                 let mut extension = extension.into_active_model();
@@ -420,6 +423,10 @@ fn apply_provides_filter(
 
     if provides_filter.contains(&ExtensionProvides::ContextServers) {
         condition = condition.add(extension_version::Column::ProvidesContextServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::AgentServers) {
+        condition = condition.add(extension_version::Column::ProvidesAgentServers.eq(true));
     }
 
     if provides_filter.contains(&ExtensionProvides::SlashCommands) {

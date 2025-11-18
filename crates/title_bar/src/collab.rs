@@ -2,19 +2,22 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
+use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
     AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
     canvas, point,
 };
 use gpui::{App, Task, Window, actions};
+use project::WorktreeSettings;
 use rpc::proto::{self};
+use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
 use ui::{
     Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, DividerColor,
     Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
-use util::maybe;
+use util::rel_path::RelPath;
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
@@ -32,52 +35,59 @@ actions!(
 );
 
 fn toggle_screen_sharing(
-    screen: Option<Rc<dyn ScreenCaptureSource>>,
+    screen: anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>,
     window: &mut Window,
     cx: &mut App,
 ) {
     let call = ActiveCall::global(cx).read(cx);
-    if let Some(room) = call.room().cloned() {
-        let toggle_screen_sharing = room.update(cx, |room, cx| {
-            let clicked_on_currently_shared_screen =
-                room.shared_screen_id().is_some_and(|screen_id| {
-                    Some(screen_id)
-                        == screen
-                            .as_deref()
-                            .and_then(|s| s.metadata().ok().map(|meta| meta.id))
-                });
-            let should_unshare_current_screen = room.is_sharing_screen();
-            let unshared_current_screen = should_unshare_current_screen.then(|| {
-                telemetry::event!(
-                    "Screen Share Disabled",
-                    room_id = room.id(),
-                    channel_id = room.channel_id(),
-                );
-                room.unshare_screen(clicked_on_currently_shared_screen || screen.is_none(), cx)
-            });
-            if let Some(screen) = screen {
-                if !should_unshare_current_screen {
+    let toggle_screen_sharing = match screen {
+        Ok(screen) => {
+            let Some(room) = call.room().cloned() else {
+                return;
+            };
+
+            room.update(cx, |room, cx| {
+                let clicked_on_currently_shared_screen =
+                    room.shared_screen_id().is_some_and(|screen_id| {
+                        Some(screen_id)
+                            == screen
+                                .as_deref()
+                                .and_then(|s| s.metadata().ok().map(|meta| meta.id))
+                    });
+                let should_unshare_current_screen = room.is_sharing_screen();
+                let unshared_current_screen = should_unshare_current_screen.then(|| {
                     telemetry::event!(
-                        "Screen Share Enabled",
+                        "Screen Share Disabled",
                         room_id = room.id(),
                         channel_id = room.channel_id(),
                     );
-                }
-                cx.spawn(async move |room, cx| {
-                    unshared_current_screen.transpose()?;
-                    if !clicked_on_currently_shared_screen {
-                        room.update(cx, |room, cx| room.share_screen(screen, cx))?
-                            .await
-                    } else {
-                        Ok(())
+                    room.unshare_screen(clicked_on_currently_shared_screen || screen.is_none(), cx)
+                });
+                if let Some(screen) = screen {
+                    if !should_unshare_current_screen {
+                        telemetry::event!(
+                            "Screen Share Enabled",
+                            room_id = room.id(),
+                            channel_id = room.channel_id(),
+                        );
                     }
-                })
-            } else {
-                Task::ready(Ok(()))
-            }
-        });
-        toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
-    }
+                    cx.spawn(async move |room, cx| {
+                        unshared_current_screen.transpose()?;
+                        if !clicked_on_currently_shared_screen {
+                            room.update(cx, |room, cx| room.share_screen(screen, cx))?
+                                .await
+                        } else {
+                            Ok(())
+                        }
+                    })
+                } else {
+                    Task::ready(Ok(()))
+                }
+            })
+        }
+        Err(e) => Task::ready(Err(e)),
+    };
+    toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
 }
 
 fn toggle_mute(_: &ToggleMute, cx: &mut App) {
@@ -112,7 +122,7 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
         move |bounds, _, window, _| {
             let height = bounds.size.height;
             let horizontal_offset = height;
-            let vertical_offset = px(height.0 / 2.0);
+            let vertical_offset = height / 2.0;
             let mut path = Path::new(bounds.bottom_left());
             path.curve_to(
                 bounds.origin + point(horizontal_offset, vertical_offset),
@@ -149,7 +159,7 @@ impl TitleBar {
             .gap_1()
             .overflow_x_scroll()
             .when_some(
-                current_user.clone().zip(client.peer_id()).zip(room.clone()),
+                current_user.zip(client.peer_id()).zip(room),
                 |this, ((current_user, peer_id), room)| {
                     let player_colors = cx.theme().players();
                     let room = room.read(cx);
@@ -183,7 +193,7 @@ impl TitleBar {
                             .as_ref()?
                             .read(cx)
                             .is_being_followed(collaborator.peer_id);
-                        let is_present = project_id.map_or(false, |project_id| {
+                        let is_present = project_id.is_some_and(|project_id| {
                             collaborator.location
                                 == ParticipantLocation::SharedProject { project_id }
                         });
@@ -210,6 +220,8 @@ impl TitleBar {
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
                                     cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+
                                         this.workspace
                                             .update(cx, |workspace, cx| {
                                                 if is_following {
@@ -331,7 +343,7 @@ impl TitleBar {
 
         let room = room.read(cx);
         let project = self.project.read(cx);
-        let is_local = project.is_local() || project.is_via_ssh();
+        let is_local = project.is_local() || project.is_via_remote_server();
         let is_shared = is_local && project.is_shared();
         let is_muted = room.is_muted();
         let muted_by_user = room.muted_by_user();
@@ -340,6 +352,11 @@ impl TitleBar {
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = cx.is_screen_capture_supported();
+
+        let channel_store = ChannelStore::global(cx);
+        let channel = room
+            .channel_id()
+            .and_then(|channel_id| channel_store.read(cx).channel_for_id(channel_id).cloned());
 
         let mut children = Vec::new();
 
@@ -362,6 +379,20 @@ impl TitleBar {
         );
 
         if is_local && can_share_projects && !is_connecting_to_project {
+            let is_sharing_disabled = channel.is_some_and(|channel| match channel.visibility {
+                proto::ChannelVisibility::Public => project.visible_worktrees(cx).any(|worktree| {
+                    let worktree_id = worktree.read(cx).id();
+
+                    let settings_location = Some(SettingsLocation {
+                        worktree_id,
+                        path: RelPath::empty(),
+                    });
+
+                    WorktreeSettings::get(settings_location, cx).prevent_sharing_in_public_channels
+                }),
+                proto::ChannelVisibility::Members => false,
+            });
+
             children.push(
                 Button::new(
                     "toggle_sharing",
@@ -376,6 +407,11 @@ impl TitleBar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
+                .when(is_sharing_disabled, |parent| {
+                    parent.disabled(true).tooltip(Tooltip::text(
+                        "This project may not be shared in a public channel.",
+                    ))
+                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
                         this.unshare_project(window, cx);
@@ -397,14 +433,13 @@ impl TitleBar {
                         IconName::Mic
                     },
                 )
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     if is_muted {
                         if is_deafened {
                             Tooltip::with_meta(
                                 "Unmute Microphone",
                                 None,
                                 "Audio will be unmuted",
-                                window,
                                 cx,
                             )
                         } else {
@@ -438,12 +473,12 @@ impl TitleBar {
             .selected_style(ButtonStyle::Tinted(TintColor::Error))
             .icon_size(IconSize::Small)
             .toggle_state(is_deafened)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 if is_deafened {
                     let label = "Unmute Audio";
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
+                        Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
@@ -451,7 +486,7 @@ impl TitleBar {
                     let label = "Mute Audio";
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
+                        Tooltip::with_meta(label, None, "Microphone will be muted", cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
@@ -483,9 +518,8 @@ impl TitleBar {
                             let screen = if should_share {
                                 cx.update(|_, cx| pick_default_screen(cx))?.await
                             } else {
-                                None
+                                Ok(None)
                             };
-
                             cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
 
                             Result::<_, anyhow::Error>::Ok(())
@@ -571,7 +605,7 @@ impl TitleBar {
                                     selectable: true,
                                     documentation_aside: None,
                                     handler: Rc::new(move |_, window, cx| {
-                                        toggle_screen_sharing(Some(screen.clone()), window, cx);
+                                        toggle_screen_sharing(Ok(Some(screen.clone())), window, cx);
                                     }),
                                 });
                             }
@@ -585,18 +619,18 @@ impl TitleBar {
 }
 
 /// Picks the screen to share when clicking on the main screen sharing button.
-fn pick_default_screen(cx: &App) -> Task<Option<Rc<dyn ScreenCaptureSource>>> {
+fn pick_default_screen(cx: &App) -> Task<anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>> {
     let source = cx.screen_capture_sources();
     cx.spawn(async move |_| {
-        let available_sources = maybe!(async move { source.await? }).await.ok()?;
-        available_sources
+        let available_sources = source.await??;
+        Ok(available_sources
             .iter()
             .find(|it| {
                 it.as_ref()
                     .metadata()
                     .is_ok_and(|meta| meta.is_main.unwrap_or_default())
             })
-            .or_else(|| available_sources.iter().next())
-            .cloned()
+            .or_else(|| available_sources.first())
+            .cloned())
     })
 }

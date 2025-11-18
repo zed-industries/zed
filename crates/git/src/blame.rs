@@ -1,4 +1,5 @@
 use crate::commit::get_messages;
+use crate::repository::RepoPath;
 use crate::{GitRemote, Oid};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -33,7 +34,7 @@ impl Blame {
     pub async fn for_path(
         git_binary: &Path,
         working_directory: &Path,
-        path: &Path,
+        path: &RepoPath,
         content: &Rope,
         remote_url: Option<String>,
     ) -> Result<Self> {
@@ -66,16 +67,17 @@ const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 async fn run_git_blame(
     git_binary: &Path,
     working_directory: &Path,
-    path: &Path,
+    path: &RepoPath,
     contents: &Rope,
 ) -> Result<String> {
     let mut child = util::command::new_smol_command(git_binary)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
+        .arg("-w")
         .arg("--contents")
         .arg("-")
-        .arg(path.as_os_str())
+        .arg(path.as_unix_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -288,14 +290,12 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
             }
         };
 
-        if done {
-            if let Some(entry) = current_entry.take() {
-                index.insert(entry.sha, entries.len());
+        if done && let Some(entry) = current_entry.take() {
+            index.insert(entry.sha, entries.len());
 
-                // We only want annotations that have a commit.
-                if !entry.sha.is_zero() {
-                    entries.push(entry);
-                }
+            // We only want annotations that have a commit.
+            if !entry.sha.is_zero() {
+                entries.push(entry);
             }
         }
     }

@@ -35,7 +35,7 @@ where
     let project = editor.project.clone()?;
     editor
         .selections
-        .disjoint_anchors()
+        .disjoint_anchors_arc()
         .iter()
         .filter_map(|selection| Some((selection.head(), selection.head().buffer_id?)))
         .unique_by(|(_, buffer_id)| *buffer_id)
@@ -60,8 +60,10 @@ async fn lsp_task_context(
     buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Option<TaskContext> {
-    let worktree_store = project
-        .read_with(cx, |project, _| project.worktree_store())
+    let (worktree_store, environment) = project
+        .read_with(cx, |project, _| {
+            (project.worktree_store(), project.environment().clone())
+        })
         .ok()?;
 
     let worktree_abs_path = cx
@@ -74,9 +76,9 @@ async fn lsp_task_context(
         })
         .ok()?;
 
-    let project_env = project
-        .update(cx, |project, cx| {
-            project.buffer_environment(&buffer, &worktree_store, cx)
+    let project_env = environment
+        .update(cx, |environment, cx| {
+            environment.buffer_environment(buffer, &worktree_store, cx)
         })
         .ok()?
         .await;
@@ -147,16 +149,15 @@ pub fn lsp_tasks(
                             },
                             cx,
                         )
-                    }) {
-                        if let Some(new_runnables) = runnables_task.await.log_err() {
-                            new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
-                                |(location, runnable)| {
-                                    let resolved_task =
-                                        runnable.resolve_task(&id_base, &lsp_buffer_context)?;
-                                    Some((location, resolved_task))
-                                },
-                            ));
-                        }
+                    }) && let Some(new_runnables) = runnables_task.await.log_err()
+                    {
+                        new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
+                            |(location, runnable)| {
+                                let resolved_task =
+                                    runnable.resolve_task(&id_base, &lsp_buffer_context)?;
+                                Some((location, resolved_task))
+                            },
+                        ));
                     }
                     lsp_tasks
                         .entry(source_kind)

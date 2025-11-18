@@ -40,7 +40,7 @@ impl AgentOnboardingModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("http://zed.dev/blog/fastest-ai-code-editor");
+        cx.open_url("https://zed.dev/blog/fastest-ai-code-editor");
         cx.notify();
 
         agent_onboarding_event!("Blog Link Clicked");

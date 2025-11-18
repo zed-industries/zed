@@ -1,11 +1,21 @@
 mod base_keymap_setting;
 mod editable_setting_control;
-mod key_equivalents;
 mod keymap_file;
+pub mod merge_from;
+mod serde_helper;
+mod settings_content;
 mod settings_file;
-mod settings_json;
 mod settings_store;
 mod vscode_import;
+
+pub use settings_content::*;
+pub use settings_macros::RegisterSetting;
+
+#[doc(hidden)]
+pub mod private {
+    pub use crate::settings_store::{RegisteredSetting, SettingValue};
+    pub use inventory;
+}
 
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
@@ -14,25 +24,28 @@ use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
-pub use key_equivalents::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
+pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, MigrationStatus, ParseStatus, Settings, SettingsFile,
+    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsStore,
 };
+
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
+
+pub use keymap_file::ActionSequence;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);
 
 impl Global for ActiveSettingsProfileName {}
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct WorktreeId(usize);
 
 impl From<WorktreeId> for usize {
@@ -50,11 +63,11 @@ impl WorktreeId {
         Self(id as usize)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.0
     }
 }
@@ -73,12 +86,8 @@ impl fmt::Display for WorktreeId {
 pub struct SettingsAssets;
 
 pub fn init(cx: &mut App) {
-    let mut settings = SettingsStore::new(cx);
-    settings
-        .set_default_settings(&default_settings(), cx)
-        .unwrap();
+    let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
-    BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 
@@ -89,7 +98,10 @@ pub fn default_settings() -> Cow<'static, str> {
 #[cfg(target_os = "macos")]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-macos.json";
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-windows.json";
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-linux.json";
 
 pub fn default_keymap() -> Cow<'static, str> {

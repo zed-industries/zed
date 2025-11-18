@@ -56,7 +56,15 @@ pub struct SupermavenDownloadResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SupermavenUser {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     id: String,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     email: String,
     api_key: String,
 }
@@ -221,9 +229,7 @@ pub fn version_path(version: u64) -> PathBuf {
 }
 
 pub async fn has_version(version_path: &Path) -> bool {
-    fs::metadata(version_path)
-        .await
-        .map_or(false, |m| m.is_file())
+    fs::metadata(version_path).await.is_ok_and(|m| m.is_file())
 }
 
 pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<PathBuf> {

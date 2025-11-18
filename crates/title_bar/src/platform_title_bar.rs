@@ -1,28 +1,35 @@
 use gpui::{
-    AnyElement, Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton,
+    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
 use ui::prelude::*;
 
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
+use crate::{
+    platforms::{platform_linux, platform_mac, platform_windows},
+    system_window_tabs::SystemWindowTabs,
+};
 
 pub struct PlatformTitleBar {
     id: ElementId,
     platform_style: PlatformStyle,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
+    system_window_tabs: Entity<SystemWindowTabs>,
 }
 
 impl PlatformTitleBar {
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, cx: &mut Context<Self>) -> Self {
         let platform_style = PlatformStyle::platform();
+        let system_window_tabs = cx.new(|_cx| SystemWindowTabs::new());
+
         Self {
             id: id.into(),
             platform_style,
             children: SmallVec::new(),
             should_move: false,
+            system_window_tabs,
         }
     }
 
@@ -66,10 +73,51 @@ impl Render for PlatformTitleBar {
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
 
-        h_flex()
+        let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
+            .map(|this| {
+                this.on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
+                    this.should_move = false;
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, _ev, _window, _cx| {
+                        this.should_move = false;
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, _ev, _window, _cx| {
+                        this.should_move = true;
+                    }),
+                )
+                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
+                    if this.should_move {
+                        this.should_move = false;
+                        window.start_window_move();
+                    }
+                }))
+            })
+            .map(|this| {
+                // Note: On Windows the title bar behavior is handled by the platform implementation.
+                this.id(self.id.clone())
+                    .when(self.platform_style == PlatformStyle::Mac, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.click_count() == 2 {
+                                window.titlebar_double_click();
+                            }
+                        })
+                    })
+                    .when(self.platform_style == PlatformStyle::Linux, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.click_count() == 2 {
+                                window.zoom_window();
+                            }
+                        })
+                    })
+            })
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
@@ -90,6 +138,7 @@ impl Render for PlatformTitleBar {
                     })
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
+                    .mb(px(-1.))
                     .border(px(1.))
                     .border_color(titlebar_color),
             })
@@ -102,22 +151,8 @@ impl Render for PlatformTitleBar {
                     .flex_row()
                     .items_center()
                     .justify_between()
+                    .overflow_x_hidden()
                     .w_full()
-                    // Note: On Windows the title bar behavior is handled by the platform implementation.
-                    .when(self.platform_style == PlatformStyle::Mac, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.titlebar_double_click();
-                            }
-                        })
-                    })
-                    .when(self.platform_style == PlatformStyle::Linux, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.zoom_window();
-                            }
-                        })
-                    })
                     .children(children),
             )
             .when(!window.is_fullscreen(), |title_bar| {
@@ -133,27 +168,6 @@ impl Render for PlatformTitleBar {
                                             window.show_window_menu(ev.position)
                                         })
                                 })
-                                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
-                                    if this.should_move {
-                                        this.should_move = false;
-                                        window.start_window_move();
-                                    }
-                                }))
-                                .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                    this.should_move = false;
-                                }))
-                                .on_mouse_up(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = false;
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = true;
-                                    }),
-                                )
                         } else {
                             title_bar
                         }
@@ -162,7 +176,12 @@ impl Render for PlatformTitleBar {
                         title_bar.child(platform_windows::WindowsWindowControls::new(height))
                     }
                 }
-            })
+            });
+
+        v_flex()
+            .w_full()
+            .child(title_bar)
+            .child(self.system_window_tabs.clone().into_any_element())
     }
 }
 

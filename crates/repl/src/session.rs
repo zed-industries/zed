@@ -244,7 +244,7 @@ impl Session {
             repl_session_id = cx.entity_id().to_string(),
         );
 
-        let session_view = cx.entity().clone();
+        let session_view = cx.entity();
 
         let kernel = match self.kernel_specification.clone() {
             KernelSpecification::Jupyter(kernel_specification)
@@ -460,7 +460,6 @@ impl Session {
             Kernel::StartingKernel(task) => {
                 // Queue up the execution as a task to run after the kernel starts
                 let task = task.clone();
-                let message = message.clone();
 
                 cx.spawn(async move |this, cx| {
                     task.await;
@@ -568,7 +567,7 @@ impl Session {
 
         match kernel {
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx().clone();
+                let mut request_tx = kernel.request_tx();
 
                 let forced = kernel.force_shutdown(window, cx);
 
@@ -605,7 +604,7 @@ impl Session {
                 // Do nothing if already restarting
             }
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx().clone();
+                let mut request_tx = kernel.request_tx();
 
                 let forced = kernel.force_shutdown(window, cx);
 
@@ -674,6 +673,13 @@ impl Render for Session {
                 Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                     ExecutionState::Idle => Color::Success,
                     ExecutionState::Busy => Color::Modified,
+                    ExecutionState::Unknown => Color::Modified,
+                    ExecutionState::Starting => Color::Modified,
+                    ExecutionState::Restarting => Color::Modified,
+                    ExecutionState::Terminating => Color::Disabled,
+                    ExecutionState::AutoRestarting => Color::Modified,
+                    ExecutionState::Dead => Color::Disabled,
+                    ExecutionState::Other(_) => Color::Modified,
                 },
                 Kernel::StartingKernel(_) => Color::Modified,
                 Kernel::ErroredLaunch(_) => Color::Error,

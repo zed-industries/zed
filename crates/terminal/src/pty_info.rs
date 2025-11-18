@@ -15,6 +15,12 @@ pub struct ProcessIdGetter {
     fallback_pid: u32,
 }
 
+impl ProcessIdGetter {
+    pub fn fallback_pid(&self) -> Pid {
+        Pid::from_u32(self.fallback_pid)
+    }
+}
+
 #[cfg(unix)]
 impl ProcessIdGetter {
     fn new(pty: &Pty) -> ProcessIdGetter {
@@ -30,10 +36,6 @@ impl ProcessIdGetter {
             return Some(Pid::from_u32(self.fallback_pid));
         }
         Some(Pid::from_u32(pid as u32))
-    }
-
-    pub fn fallback_pid(&self) -> u32 {
-        self.fallback_pid
     }
 }
 
@@ -66,10 +68,6 @@ impl ProcessIdGetter {
         }
         Some(Pid::from_u32(pid))
     }
-
-    pub fn fallback_pid(&self) -> u32 {
-        self.fallback_pid
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -89,11 +87,11 @@ pub struct PtyProcessInfo {
 
 impl PtyProcessInfo {
     pub fn new(pty: &Pty) -> PtyProcessInfo {
-        let process_refresh_kind = ProcessRefreshKind::new()
+        let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
             .with_exe(UpdateKind::Always);
-        let refresh_kind = RefreshKind::new().with_processes(process_refresh_kind);
+        let refresh_kind = RefreshKind::nothing().with_processes(process_refresh_kind);
         let system = System::new_with_specifics(refresh_kind);
 
         PtyProcessInfo {
@@ -112,6 +110,7 @@ impl PtyProcessInfo {
         let pid = self.pid_getter.pid()?;
         if self.system.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::Some(&[pid]),
+            true,
             self.refresh_kind,
         ) == 1
         {
@@ -121,8 +120,17 @@ impl PtyProcessInfo {
         }
     }
 
+    fn get_child(&self) -> Option<&Process> {
+        let pid = self.pid_getter.fallback_pid();
+        self.system.process(pid)
+    }
+
     pub(crate) fn kill_current_process(&mut self) -> bool {
-        self.refresh().map_or(false, |process| process.kill())
+        self.refresh().is_some_and(|process| process.kill())
+    }
+
+    pub(crate) fn kill_child_process(&mut self) -> bool {
+        self.get_child().is_some_and(|process| process.kill())
     }
 
     fn load(&mut self) -> Option<ProcessInfo> {

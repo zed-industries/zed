@@ -7,6 +7,7 @@ pub struct OnboardingBanner {
     dismissed: bool,
     source: String,
     details: BannerDetails,
+    visible_when: Option<Box<dyn Fn(&mut App) -> bool>>,
 }
 
 #[derive(Clone)]
@@ -42,12 +43,18 @@ impl OnboardingBanner {
                 label: label.into(),
                 subtitle: subtitle.or(Some(SharedString::from("Introducing:"))),
             },
+            visible_when: None,
             dismissed: get_dismissed(source),
         }
     }
 
-    fn should_show(&self, _cx: &mut App) -> bool {
-        !self.dismissed
+    pub fn visible_when(mut self, predicate: impl Fn(&mut App) -> bool + 'static) -> Self {
+        self.visible_when = Some(Box::new(predicate));
+        self
+    }
+
+    fn should_show(&self, cx: &mut App) -> bool {
+        !self.dismissed && self.visible_when.as_ref().map_or(true, |f| f(cx))
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
@@ -73,7 +80,7 @@ fn get_dismissed(source: &str) -> bool {
     db::kvp::KEY_VALUE_STORE
         .read_kvp(&dismissed_at)
         .log_err()
-        .map_or(false, |dismissed| dismissed.is_some())
+        .is_some_and(|dismissed| dismissed.is_some())
 }
 
 fn persist_dismissed(source: &str, cx: &mut App) {
@@ -119,7 +126,7 @@ impl Render for OnboardingBanner {
                         h_flex()
                             .h_full()
                             .gap_1()
-                            .child(Icon::new(self.details.icon_name).size(IconSize::Small))
+                            .child(Icon::new(self.details.icon_name).size(IconSize::XSmall))
                             .child(
                                 h_flex()
                                     .gap_0p5()
@@ -147,12 +154,11 @@ impl Render for OnboardingBanner {
                             telemetry::event!("Banner Dismissed", source = this.source);
                             this.dismiss(cx)
                         }))
-                        .tooltip(|window, cx| {
+                        .tooltip(|_window, cx| {
                             Tooltip::with_meta(
                                 "Close Announcement Banner",
                                 None,
                                 "It won't show again for this feature",
-                                window,
                                 cx,
                             )
                         }),

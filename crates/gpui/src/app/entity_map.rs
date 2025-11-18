@@ -231,14 +231,15 @@ impl AnyEntity {
         Self {
             entity_id: id,
             entity_type,
-            entity_map: entity_map.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
             handle_id: entity_map
+                .clone()
                 .upgrade()
                 .unwrap()
                 .write()
                 .leak_detector
                 .handle_created(id),
+            entity_map,
         }
     }
 
@@ -377,11 +378,9 @@ pub struct Entity<T> {
     #[deref]
     #[deref_mut]
     pub(crate) any_entity: AnyEntity,
-    pub(crate) entity_type: PhantomData<T>,
+    pub(crate) entity_type: PhantomData<fn(T) -> T>,
 }
 
-unsafe impl<T> Send for Entity<T> {}
-unsafe impl<T> Sync for Entity<T> {}
 impl<T> Sealed for Entity<T> {}
 
 impl<T: 'static> Entity<T> {
@@ -656,20 +655,17 @@ pub struct WeakEntity<T> {
     #[deref]
     #[deref_mut]
     any_entity: AnyWeakEntity,
-    entity_type: PhantomData<T>,
+    entity_type: PhantomData<fn(T) -> T>,
 }
 
 impl<T> std::fmt::Debug for WeakEntity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(&type_name::<Self>())
+        f.debug_struct(type_name::<Self>())
             .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()
     }
 }
-
-unsafe impl<T> Send for WeakEntity<T> {}
-unsafe impl<T> Sync for WeakEntity<T> {}
 
 impl<T> Clone for WeakEntity<T> {
     fn clone(&self) -> Self {
@@ -786,7 +782,7 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
 
 #[cfg(any(test, feature = "leak-detection"))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
+    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
 #[cfg(any(test, feature = "leak-detection"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]

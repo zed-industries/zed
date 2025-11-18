@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use client::Client;
 use cloud_api_types::websocket_protocol::MessageToClient;
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
@@ -29,16 +29,31 @@ pub struct ModelRequestLimitReachedError {
 impl fmt::Display for ModelRequestLimitReachedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let message = match self.plan {
-            Plan::ZedFree => "Model request limit reached. Upgrade to Zed Pro for more requests.",
-            Plan::ZedPro => {
-                "Model request limit reached. Upgrade to usage-based billing for more requests."
-            }
-            Plan::ZedProTrial => {
+            Plan::V1(PlanV1::ZedFree) => {
                 "Model request limit reached. Upgrade to Zed Pro for more requests."
             }
+            Plan::V1(PlanV1::ZedPro) => {
+                "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+            Plan::V1(PlanV1::ZedProTrial) => {
+                "Model request limit reached. Upgrade to Zed Pro for more requests."
+            }
+            Plan::V2(_) => "Model request limit reached.",
         };
 
         write!(f, "{message}")
+    }
+}
+
+#[derive(Error, Debug)]
+pub struct ToolUseLimitReachedError;
+
+impl fmt::Display for ToolUseLimitReachedError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Consecutive tool use limit reached. Enable Burn Mode for unlimited tool use."
+        )
     }
 }
 
@@ -70,7 +85,7 @@ impl LlmApiToken {
 
         let response = client.cloud_client().create_llm_token(system_id).await?;
         *lock = Some(response.token.0.clone());
-        Ok(response.token.0.clone())
+        Ok(response.token.0)
     }
 }
 

@@ -1,4 +1,3 @@
-use crate::stripe_client::FakeStripeClient;
 use crate::{
     AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
@@ -27,7 +26,7 @@ use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use rpc::{
     RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
@@ -173,8 +172,8 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
-            client::init_settings(cx);
         });
 
         let clock = Arc::new(FakeSystemClock::new());
@@ -345,7 +344,6 @@ impl TestServer {
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
             client::init(&client, cx);
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
             call::init(client.clone(), user_store.clone(), cx);
@@ -358,8 +356,7 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_context::init(client.clone(), cx);
-            agent_settings::init(cx);
+            assistant_text_thread::init(client.clone(), cx);
         });
 
         client
@@ -371,8 +368,8 @@ impl TestServer {
         let client = TestClient {
             app_state,
             username: name.to_string(),
-            channel_store: cx.read(ChannelStore::global).clone(),
-            notification_store: cx.read(NotificationStore::global).clone(),
+            channel_store: cx.read(ChannelStore::global),
+            notification_store: cx.read(NotificationStore::global),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -566,12 +563,8 @@ impl TestServer {
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
-            llm_db: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
-            real_stripe_client: None,
-            stripe_client: Some(Arc::new(FakeStripeClient::new())),
-            stripe_billing: None,
             executor,
             kinesis_client: None,
             config: Config {
@@ -604,13 +597,10 @@ impl TestServer {
                 prediction_api_key: None,
                 prediction_model: None,
                 zed_client_checksum_seed: None,
-                slack_panics_webhook: None,
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
-                stripe_api_key: None,
                 supermaven_admin_api_key: None,
-                user_backfiller_github_access_token: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
@@ -771,11 +761,11 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Entity<SshRemoteClient>,
+        ssh: Entity<RemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
         let project = cx.update(|cx| {
-            Project::ssh(
+            Project::remote(
                 ssh,
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),
@@ -903,7 +893,7 @@ impl TestClient {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
         let entity = window.root(cx).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (entity, cx)
     }

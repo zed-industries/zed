@@ -414,42 +414,42 @@ impl SyntaxSnapshot {
             .collect::<Vec<_>>();
         self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
 
-        if let Some(registry) = registry {
-            if registry.version() != self.language_registry_version {
-                let mut resolved_injection_ranges = Vec::new();
-                let mut cursor = self
-                    .layers
-                    .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
+        if let Some(registry) = registry
+            && registry.version() != self.language_registry_version
+        {
+            let mut resolved_injection_ranges = Vec::new();
+            let mut cursor = self
+                .layers
+                .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
+            cursor.next();
+            while let Some(layer) = cursor.item() {
+                let SyntaxLayerContent::Pending { language_name } = &layer.content else {
+                    unreachable!()
+                };
+                if registry
+                    .language_for_name_or_extension(language_name)
+                    .now_or_never()
+                    .and_then(|language| language.ok())
+                    .is_some()
+                {
+                    let range = layer.range.to_offset(text);
+                    log::trace!("reparse range {range:?} for language {language_name:?}");
+                    resolved_injection_ranges.push(range);
+                }
+
                 cursor.next();
-                while let Some(layer) = cursor.item() {
-                    let SyntaxLayerContent::Pending { language_name } = &layer.content else {
-                        unreachable!()
-                    };
-                    if registry
-                        .language_for_name_or_extension(language_name)
-                        .now_or_never()
-                        .and_then(|language| language.ok())
-                        .is_some()
-                    {
-                        let range = layer.range.to_offset(text);
-                        log::trace!("reparse range {range:?} for language {language_name:?}");
-                        resolved_injection_ranges.push(range);
-                    }
-
-                    cursor.next();
-                }
-                drop(cursor);
-
-                if !resolved_injection_ranges.is_empty() {
-                    self.reparse_with_ranges(
-                        text,
-                        root_language,
-                        resolved_injection_ranges,
-                        Some(&registry),
-                    );
-                }
-                self.language_registry_version = registry.version();
             }
+            drop(cursor);
+
+            if !resolved_injection_ranges.is_empty() {
+                self.reparse_with_ranges(
+                    text,
+                    root_language,
+                    resolved_injection_ranges,
+                    Some(&registry),
+                );
+            }
+            self.language_registry_version = registry.version();
         }
 
         self.update_count += 1;
@@ -587,6 +587,8 @@ impl SyntaxSnapshot {
                     let changed_ranges;
 
                     let mut included_ranges = step.included_ranges;
+                    let is_combined = matches!(step.mode, ParseMode::Combined { .. });
+
                     for range in &mut included_ranges {
                         range.start_byte -= step_start_byte;
                         range.end_byte -= step_start_byte;
@@ -749,16 +751,20 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    let included_sub_ranges: Option<Vec<Range<Anchor>>> =
-                        (included_ranges.len() > 1).then_some(
+                    let included_sub_ranges: Option<Vec<Range<Anchor>>> = if is_combined {
+                        Some(
                             included_ranges
                                 .into_iter()
+                                .filter(|r| r.start_byte < r.end_byte)
                                 .map(|r| {
                                     text.anchor_before(r.start_byte + step_start_byte)
                                         ..text.anchor_after(r.end_byte + step_start_byte)
                                 })
                                 .collect(),
-                        );
+                        )
+                    } else {
+                        None
+                    };
                     SyntaxLayerContent::Parsed {
                         tree,
                         language,
@@ -832,7 +838,7 @@ impl SyntaxSnapshot {
         query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
-            range.clone(),
+            range,
             text,
             [SyntaxLayer {
                 language,
@@ -1065,10 +1071,10 @@ impl<'a> SyntaxMapCaptures<'a> {
     pub fn set_byte_range(&mut self, range: Range<usize>) {
         for layer in &mut self.layers {
             layer.captures.set_byte_range(range.clone());
-            if let Some(capture) = &layer.next_capture {
-                if capture.node.end_byte() > range.start {
-                    continue;
-                }
+            if let Some(capture) = &layer.next_capture
+                && capture.node.end_byte() > range.start
+            {
+                continue;
             }
             layer.advance();
         }
@@ -1277,11 +1283,11 @@ fn join_ranges(
             (None, None) => break,
         };
 
-        if let Some(last) = result.last_mut() {
-            if range.start <= last.end {
-                last.end = last.end.max(range.end);
-                continue;
-            }
+        if let Some(last) = result.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
         }
         result.push(range);
     }
@@ -1297,7 +1303,7 @@ fn parse_text(
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {
         let mut chunks = text.chunks_in_range(start_byte..text.len());
-        parser.set_included_ranges(&ranges)?;
+        parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
         parser
             .parse_with_options(
@@ -1330,14 +1336,13 @@ fn get_injections(
     // if there currently no matches for that injection.
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
-        if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_registry
+        if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined)
+            && let Some(language) = language_registry
                 .language_for_name_or_extension(language_name)
                 .now_or_never()
                 .and_then(|language| language.ok())
-            {
-                combined_injection_ranges.insert(language.id, (language, Vec::new()));
-            }
+        {
+            combined_injection_ranges.insert(language.id, (language, Vec::new()));
         }
     }
 
@@ -1357,10 +1362,11 @@ fn get_injections(
                 content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
 
             // Avoid duplicate matches if two changed ranges intersect the same injection.
-            if let Some((prev_pattern_ix, prev_range)) = &prev_match {
-                if mat.pattern_index == *prev_pattern_ix && content_range == *prev_range {
-                    continue;
-                }
+            if let Some((prev_pattern_ix, prev_range)) = &prev_match
+                && mat.pattern_index == *prev_pattern_ix
+                && content_range == *prev_range
+            {
+                continue;
             }
 
             prev_match = Some((mat.pattern_index, content_range.clone()));
@@ -1630,10 +1636,8 @@ impl<'a> SyntaxLayer<'a> {
                     if offset < range.start || offset > range.end {
                         continue;
                     }
-                } else {
-                    if offset <= range.start || offset >= range.end {
-                        continue;
-                    }
+                } else if offset <= range.start || offset >= range.end {
+                    continue;
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {
@@ -1777,13 +1781,13 @@ impl Default for SyntaxLayerSummary {
 }
 
 impl sum_tree::Summary for SyntaxLayerSummary {
-    type Context = BufferSnapshot;
+    type Context<'a> = &'a BufferSnapshot;
 
     fn zero(_cx: &BufferSnapshot) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
+    fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.max_depth > self.max_depth {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();

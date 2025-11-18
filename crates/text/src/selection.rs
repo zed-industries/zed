@@ -2,11 +2,15 @@ use crate::{Anchor, BufferSnapshot, TextDimension};
 use std::cmp::Ordering;
 use std::ops::Range;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq)]
 pub enum SelectionGoal {
+    #[default]
     None,
-    HorizontalPosition(f32),
-    HorizontalRange { start: f32, end: f32 },
+    HorizontalPosition(f64),
+    HorizontalRange {
+        start: f64,
+        end: f64,
+    },
     WrappedHorizontalPosition((u32, f32)),
 }
 
@@ -17,12 +21,6 @@ pub struct Selection<T> {
     pub end: T,
     pub reversed: bool,
     pub goal: SelectionGoal,
-}
-
-impl Default for SelectionGoal {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl<T: Clone> Selection<T> {
@@ -100,6 +98,19 @@ impl<T: Copy + Ord> Selection<T> {
                 self.reversed = true;
             }
             self.end = tail;
+        }
+        self.goal = new_goal;
+    }
+
+    pub fn set_head_tail(&mut self, head: T, tail: T, new_goal: SelectionGoal) {
+        if head < tail {
+            self.reversed = true;
+            self.start = head;
+            self.end = tail;
+        } else {
+            self.reversed = false;
+            self.start = tail;
+            self.end = head;
         }
         self.goal = new_goal;
     }

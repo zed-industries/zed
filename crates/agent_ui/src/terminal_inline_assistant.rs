@@ -1,12 +1,12 @@
-use crate::inline_prompt_editor::{
-    CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
-};
-use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
-use agent::{
+use crate::{
     context::load_context,
     context_store::ContextStore,
-    thread_store::{TextThreadStore, ThreadStore},
+    inline_prompt_editor::{
+        CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
+    },
+    terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
+use agent::HistoryStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -74,8 +74,7 @@ impl TerminalInlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -88,7 +87,7 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(project));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -101,7 +100,7 @@ impl TerminalInlineAssistant {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                text_thread_store.clone(),
+                prompt_store.as_ref().map(|s| s.downgrade()),
                 window,
                 cx,
             )
@@ -238,7 +237,7 @@ impl TerminalInlineAssistant {
                 let latest_output = terminal.last_n_non_empty_lines(DEFAULT_CONTEXT_LINES);
                 let working_directory = terminal
                     .working_directory()
-                    .map(|path| path.to_string_lossy().to_string());
+                    .map(|path| path.to_string_lossy().into_owned());
                 (latest_output, working_directory)
             })
             .ok()
@@ -282,7 +281,6 @@ impl TerminalInlineAssistant {
 
             context_load_task
                 .await
-                .loaded_context
                 .add_to_request_message(&mut request_message);
 
             request_message.content.push(prompt.into());
@@ -388,20 +386,20 @@ impl TerminalInlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(assist) = self.assists.get_mut(&assist_id) {
-            if let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
-                assist
-                    .terminal
-                    .update(cx, |terminal, cx| {
-                        terminal.clear_block_below_cursor(cx);
-                        let block = terminal_view::BlockProperties {
-                            height,
-                            render: Box::new(move |_| prompt_editor.clone().into_any_element()),
-                        };
-                        terminal.set_block_below_cursor(block, window, cx);
-                    })
-                    .log_err();
-            }
+        if let Some(assist) = self.assists.get_mut(&assist_id)
+            && let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned()
+        {
+            assist
+                .terminal
+                .update(cx, |terminal, cx| {
+                    terminal.clear_block_below_cursor(cx);
+                    let block = terminal_view::BlockProperties {
+                        height,
+                        render: Box::new(move |_| prompt_editor.clone().into_any_element()),
+                    };
+                    terminal.set_block_below_cursor(block, window, cx);
+                })
+                .log_err();
         }
     }
 }
@@ -432,7 +430,7 @@ impl TerminalInlineAssist {
             terminal: terminal.downgrade(),
             prompt_editor: Some(prompt_editor.clone()),
             codegen: codegen.clone(),
-            workspace: workspace.clone(),
+            workspace,
             context_store,
             prompt_store,
             _subscriptions: vec![
@@ -450,23 +448,20 @@ impl TerminalInlineAssist {
                                 return;
                             };
 
-                            if let CodegenStatus::Error(error) = &codegen.read(cx).status {
-                                if assist.prompt_editor.is_none() {
-                                    if let Some(workspace) = assist.workspace.upgrade() {
-                                        let error =
-                                            format!("Terminal inline assistant error: {}", error);
-                                        workspace.update(cx, |workspace, cx| {
-                                            struct InlineAssistantError;
+                            if let CodegenStatus::Error(error) = &codegen.read(cx).status
+                                && assist.prompt_editor.is_none()
+                                && let Some(workspace) = assist.workspace.upgrade()
+                            {
+                                let error = format!("Terminal inline assistant error: {}", error);
+                                workspace.update(cx, |workspace, cx| {
+                                    struct InlineAssistantError;
 
-                                            let id =
-                                                NotificationId::composite::<InlineAssistantError>(
-                                                    assist_id.0,
-                                                );
+                                    let id = NotificationId::composite::<InlineAssistantError>(
+                                        assist_id.0,
+                                    );
 
-                                            workspace.show_toast(Toast::new(id, error), cx);
-                                        })
-                                    }
-                                }
+                                    workspace.show_toast(Toast::new(id, error), cx);
+                                })
                             }
 
                             if assist.prompt_editor.is_none() {

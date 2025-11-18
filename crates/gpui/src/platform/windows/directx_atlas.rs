@@ -3,9 +3,8 @@ use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use windows::Win32::Graphics::{
     Direct3D11::{
-        D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CPU_ACCESS_WRITE, D3D11_TEXTURE2D_DESC,
-        D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView,
-        ID3D11Texture2D,
+        D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+        ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
     },
     Dxgi::Common::*,
 };
@@ -189,7 +188,7 @@ impl DirectXAtlasState {
             },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: bind_flag.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            CPUAccessFlags: 0,
             MiscFlags: 0,
         };
         let mut texture: Option<ID3D11Texture2D> = None;
@@ -235,11 +234,14 @@ impl DirectXAtlasState {
     }
 
     fn texture(&self, id: AtlasTextureId) -> &DirectXAtlasTexture {
-        let textures = match id.kind {
-            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
-            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-        };
-        textures[id.index as usize].as_ref().unwrap()
+        match id.kind {
+            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures[id.index as usize]
+                .as_ref()
+                .unwrap(),
+            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures[id.index as usize]
+                .as_ref()
+                .unwrap(),
+        }
     }
 }
 

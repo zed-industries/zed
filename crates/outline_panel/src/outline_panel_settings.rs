@@ -1,28 +1,14 @@
-use editor::ShowScrollbar;
-use gpui::Pixels;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use editor::EditorSettings;
+use gpui::{App, Pixels};
+use settings::RegisterSetting;
+pub use settings::{DockSide, Settings, ShowIndentGuides};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum OutlinePanelDockPosition {
-    Left,
-    Right,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowIndentGuides {
-    Always,
-    Never,
-}
-
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
-    pub dock: OutlinePanelDockPosition,
+    pub dock: DockSide,
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
@@ -34,7 +20,7 @@ pub struct OutlinePanelSettings {
     pub expand_outlines_with_depth: usize,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     /// When to show the scrollbar in the project panel.
     ///
@@ -42,97 +28,39 @@ pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ScrollbarSettingsContent {
-    /// When to show the scrollbar in the project panel.
-    ///
-    /// Default: inherits editor scrollbar settings
-    pub show: Option<Option<ShowScrollbar>>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct IndentGuidesSettings {
     pub show: ShowIndentGuides,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct IndentGuidesSettingsContent {
-    /// When to show the scrollbar in the outline panel.
-    pub show: Option<ShowIndentGuides>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct OutlinePanelSettingsContent {
-    /// Whether to show the outline panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Customize default width (in pixels) taken by outline panel
-    ///
-    /// Default: 240
-    pub default_width: Option<f32>,
-    /// The position of outline panel
-    ///
-    /// Default: left
-    pub dock: Option<OutlinePanelDockPosition>,
-    /// Whether to show file icons in the outline panel.
-    ///
-    /// Default: true
-    pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the outline panel.
-    ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
-    /// Whether to show the git status in the outline panel.
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
-    /// Amount of indentation (in pixels) for nested items.
-    ///
-    /// Default: 20
-    pub indent_size: Option<f32>,
-    /// Whether to reveal it in the outline panel automatically,
-    /// when a corresponding project entry becomes active.
-    /// Gitignored entries are never auto revealed.
-    ///
-    /// Default: true
-    pub auto_reveal_entries: Option<bool>,
-    /// Whether to fold directories automatically
-    /// when directory has only one directory inside.
-    ///
-    /// Default: true
-    pub auto_fold_dirs: Option<bool>,
-    /// Settings related to indent guides in the outline panel.
-    pub indent_guides: Option<IndentGuidesSettingsContent>,
-    /// Scrollbar-related settings
-    pub scrollbar: Option<ScrollbarSettingsContent>,
-    /// Default depth to expand outline items in the current file.
-    /// The default depth to which outline entries are expanded on reveal.
-    /// - Set to 0 to collapse all items that have children
-    /// - Set to 1 or higher to collapse items at that depth or deeper
-    ///
-    /// Default: 100
-    pub expand_outlines_with_depth: Option<usize>,
+impl ScrollbarVisibility for OutlinePanelSettings {
+    fn visibility(&self, cx: &App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
 }
 
 impl Settings for OutlinePanelSettings {
-    const KEY: Option<&'static str> = Some("outline_panel");
-
-    type FileContent = OutlinePanelSettingsContent;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::App,
-    ) -> anyhow::Result<Self> {
-        sources.json_merge()
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        if let Some(b) = vscode.read_bool("outline.icons") {
-            current.file_icons = Some(b);
-            current.folder_icons = Some(b);
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let panel = content.outline_panel.as_ref().unwrap();
+        Self {
+            button: panel.button.unwrap(),
+            default_width: panel.default_width.map(gpui::px).unwrap(),
+            dock: panel.dock.unwrap(),
+            file_icons: panel.file_icons.unwrap(),
+            folder_icons: panel.folder_icons.unwrap(),
+            git_status: panel.git_status.unwrap(),
+            indent_size: panel.indent_size.unwrap(),
+            indent_guides: IndentGuidesSettings {
+                show: panel.indent_guides.unwrap().show.unwrap(),
+            },
+            auto_reveal_entries: panel.auto_reveal_entries.unwrap(),
+            auto_fold_dirs: panel.auto_fold_dirs.unwrap(),
+            scrollbar: ScrollbarSettings {
+                show: panel.scrollbar.unwrap().show.map(Into::into),
+            },
+            expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
         }
-
-        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
     }
 }

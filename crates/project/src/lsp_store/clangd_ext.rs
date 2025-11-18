@@ -58,7 +58,7 @@ pub fn register_notifications(
 
     language_server
         .on_notification::<InactiveRegions, _>({
-            let adapter = adapter.clone();
+            let adapter = adapter;
             let this = lsp_store;
 
             move |params: InactiveRegionsParams, cx| {

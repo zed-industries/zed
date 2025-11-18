@@ -8,6 +8,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::http::{self, HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
 use serde::{Deserialize, Serialize};
+pub use settings::{AnthropicAvailableModel as AvailableModel, ModelMode};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
@@ -31,6 +32,24 @@ pub enum AnthropicModelMode {
     },
 }
 
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<AnthropicModelMode> for ModelMode {
+    fn from(value: AnthropicModelMode) -> Self {
+        match value {
+            AnthropicModelMode::Default => ModelMode::Default,
+            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
@@ -48,7 +67,6 @@ pub enum Model {
         alias = "claude-opus-4-1-thinking-latest"
     )]
     ClaudeOpus4_1Thinking,
-    #[default]
     #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
     ClaudeSonnet4,
     #[serde(
@@ -56,6 +74,14 @@ pub enum Model {
         alias = "claude-sonnet-4-thinking-latest"
     )]
     ClaudeSonnet4Thinking,
+    #[default]
+    #[serde(rename = "claude-sonnet-4-5", alias = "claude-sonnet-4-5-latest")]
+    ClaudeSonnet4_5,
+    #[serde(
+        rename = "claude-sonnet-4-5-thinking",
+        alias = "claude-sonnet-4-5-thinking-latest"
+    )]
+    ClaudeSonnet4_5Thinking,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_7Sonnet,
     #[serde(
@@ -65,6 +91,13 @@ pub enum Model {
     Claude3_7SonnetThinking,
     #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
+    #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
+    ClaudeHaiku4_5,
+    #[serde(
+        rename = "claude-haiku-4-5-thinking",
+        alias = "claude-haiku-4-5-thinking-latest"
+    )]
+    ClaudeHaiku4_5Thinking,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -114,6 +147,14 @@ impl Model {
             return Ok(Self::ClaudeOpus4);
         }
 
+        if id.starts_with("claude-sonnet-4-5-thinking") {
+            return Ok(Self::ClaudeSonnet4_5Thinking);
+        }
+
+        if id.starts_with("claude-sonnet-4-5") {
+            return Ok(Self::ClaudeSonnet4_5);
+        }
+
         if id.starts_with("claude-sonnet-4-thinking") {
             return Ok(Self::ClaudeSonnet4Thinking);
         }
@@ -132,6 +173,14 @@ impl Model {
 
         if id.starts_with("claude-3-5-sonnet") {
             return Ok(Self::Claude3_5Sonnet);
+        }
+
+        if id.starts_with("claude-haiku-4-5-thinking") {
+            return Ok(Self::ClaudeHaiku4_5Thinking);
+        }
+
+        if id.starts_with("claude-haiku-4-5") {
+            return Ok(Self::ClaudeHaiku4_5);
         }
 
         if id.starts_with("claude-3-5-haiku") {
@@ -161,9 +210,13 @@ impl Model {
             Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
+            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
+            Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-thinking-latest",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Self::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
             Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
+            Self::ClaudeHaiku4_5 => "claude-haiku-4-5-latest",
+            Self::ClaudeHaiku4_5Thinking => "claude-haiku-4-5-thinking-latest",
             Self::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Self::Claude3Opus => "claude-3-opus-latest",
             Self::Claude3Sonnet => "claude-3-sonnet-20240229",
@@ -178,8 +231,10 @@ impl Model {
             Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
             Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-20250805",
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
+            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-20250929",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
+            Self::ClaudeHaiku4_5 | Self::ClaudeHaiku4_5Thinking => "claude-haiku-4-5-20251001",
             Self::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Self::Claude3Opus => "claude-3-opus-latest",
             Self::Claude3Sonnet => "claude-3-sonnet-20240229",
@@ -196,9 +251,13 @@ impl Model {
             Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
+            Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
+            Self::ClaudeSonnet4_5Thinking => "Claude Sonnet 4.5 Thinking",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
+            Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
+            Self::ClaudeHaiku4_5Thinking => "Claude Haiku 4.5 Thinking",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
@@ -217,7 +276,11 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
             | Self::Claude3_5Sonnet
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -242,7 +305,11 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
             | Self::Claude3_5Sonnet
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -261,10 +328,13 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::Claude3_5Haiku => 8_192,
+            Self::ClaudeHaiku4_5 | Self::ClaudeHaiku4_5Thinking => 64_000,
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
@@ -280,9 +350,13 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
@@ -299,8 +373,10 @@ impl Model {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4_5
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
+            | Self::ClaudeHaiku4_5
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
@@ -308,6 +384,8 @@ impl Model {
             Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
             },
@@ -363,17 +441,15 @@ pub async fn complete(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<Response, AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
         .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
+        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
 
     let serialized_request =
@@ -409,8 +485,9 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request)
+    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
         .await
         .map(|output| output.0)
 }
@@ -506,6 +583,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -518,15 +596,13 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
     let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.base.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
         .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
+        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;

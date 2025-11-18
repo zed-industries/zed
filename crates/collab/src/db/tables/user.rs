@@ -29,48 +29,19 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::access_token::Entity")]
     AccessToken,
-    #[sea_orm(has_one = "super::billing_customer::Entity")]
-    BillingCustomer,
     #[sea_orm(has_one = "super::room_participant::Entity")]
     RoomParticipant,
     #[sea_orm(has_many = "super::project::Entity")]
     HostedProjects,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     ChannelMemberships,
-    #[sea_orm(has_many = "super::user_feature::Entity")]
-    UserFeatures,
     #[sea_orm(has_one = "super::contributor::Entity")]
     Contributor,
-}
-
-impl Model {
-    /// Returns the timestamp of when the user's account was created.
-    ///
-    /// This will be the earlier of the `created_at` and `github_user_created_at` timestamps.
-    pub fn account_created_at(&self) -> NaiveDateTime {
-        let mut account_created_at = self.created_at;
-        if let Some(github_created_at) = self.github_user_created_at {
-            account_created_at = account_created_at.min(github_created_at);
-        }
-
-        account_created_at
-    }
-
-    /// Returns the age of the user's account.
-    pub fn account_age(&self) -> chrono::Duration {
-        chrono::Utc::now().naive_utc() - self.account_created_at()
-    }
 }
 
 impl Related<super::access_token::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AccessToken.def()
-    }
-}
-
-impl Related<super::billing_customer::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::BillingCustomer.def()
     }
 }
 
@@ -92,25 +63,4 @@ impl Related<super::channel_member::Entity> for Entity {
     }
 }
 
-impl Related<super::user_feature::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::UserFeatures.def()
-    }
-}
-
 impl ActiveModelBehavior for ActiveModel {}
-
-pub struct UserFlags;
-
-impl Linked for UserFlags {
-    type FromEntity = Entity;
-
-    type ToEntity = super::feature_flag::Entity;
-
-    fn link(&self) -> Vec<RelationDef> {
-        vec![
-            super::user_feature::Relation::User.def().rev(),
-            super::user_feature::Relation::Flag.def(),
-        ]
-    }
-}

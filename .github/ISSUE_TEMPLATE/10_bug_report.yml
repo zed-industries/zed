@@ -14,7 +14,7 @@ body:
         ### Description
         <!--  Describe with sufficient detail to reproduce from a clean Zed install.
           - Any code must be sufficient to reproduce (include context!)
-          - Code must as text, not just as a screenshot.
+          - Include code as text, not just as a screenshot.
           - Issues with insufficient detail may be summarily closed.
         -->
 
@@ -56,3 +56,20 @@ body:
         Output of "zed: copy system specs into clipboard"
     validations:
       required: true
+  - type: textarea
+    attributes:
+      label: If applicable, attach your `Zed.log` file to this issue.
+      description: |
+        From the command palette, run `zed: open log` to see the last 1000 lines.
+        Or run `zed: reveal log in file manager` to reveal the log file itself.
+      value: |
+        <details><summary>Zed.log</summary>
+
+        <!-- Paste your log inside the code block. -->
+        ```log
+
+        ```
+
+        </details>
+    validations:
+      required: false

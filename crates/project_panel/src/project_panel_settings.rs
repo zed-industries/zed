@@ -1,40 +1,23 @@
-use editor::ShowScrollbar;
+use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use serde::{Deserialize, Serialize};
+use settings::{
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
+    ShowDiagnostics, ShowIndentGuides,
+};
+use ui::{
+    px,
+    scrollbars::{ScrollbarVisibility, ShowScrollbar},
+};
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectPanelDockPosition {
-    Left,
-    Right,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowIndentGuides {
-    Always,
-    Never,
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EntrySpacing {
-    /// Comfortable spacing of entries.
-    #[default]
-    Comfortable,
-    /// The standard spacing of entries.
-    Standard,
-}
-
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
     pub default_width: Pixels,
-    pub dock: ProjectPanelDockPosition,
-    pub entry_spacing: EntrySpacing,
+    pub dock: DockSide,
+    pub entry_spacing: ProjectPanelEntrySpacing,
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
@@ -47,17 +30,15 @@ pub struct ProjectPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub hide_hidden: bool,
+    pub drag_and_drop: bool,
+    pub auto_open: AutoOpenSettings,
+    pub sort_mode: ProjectPanelSortMode,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct IndentGuidesSettings {
     pub show: ShowIndentGuides,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct IndentGuidesSettingsContent {
-    /// When to show the scrollbar in the project panel.
-    pub show: Option<ShowIndentGuides>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -69,128 +50,75 @@ pub struct ScrollbarSettings {
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ScrollbarSettingsContent {
-    /// When to show the scrollbar in the project panel.
-    ///
-    /// Default: inherits editor scrollbar settings
-    pub show: Option<Option<ShowScrollbar>>,
+pub struct AutoOpenSettings {
+    pub on_create: bool,
+    pub on_paste: bool,
+    pub on_drop: bool,
 }
 
-/// Whether to indicate diagnostic errors and/or warnings in project panel items.
-///
-/// Default: all
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowDiagnostics {
-    /// Never mark the diagnostic errors/warnings in the project panel.
-    Off,
-    /// Mark files containing only diagnostic errors in the project panel.
-    Errors,
-    #[default]
-    /// Mark files containing diagnostic errors or warnings in the project panel.
-    All,
+impl AutoOpenSettings {
+    #[inline]
+    pub fn should_open_on_create(self) -> bool {
+        self.on_create
+    }
+
+    #[inline]
+    pub fn should_open_on_paste(self) -> bool {
+        self.on_paste
+    }
+
+    #[inline]
+    pub fn should_open_on_drop(self) -> bool {
+        self.on_drop
+    }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct ProjectPanelSettingsContent {
-    /// Whether to show the project panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Whether to hide gitignore files in the project panel.
-    ///
-    /// Default: false
-    pub hide_gitignore: Option<bool>,
-    /// Customize default width (in pixels) taken by project panel
-    ///
-    /// Default: 240
-    pub default_width: Option<f32>,
-    /// The position of project panel
-    ///
-    /// Default: left
-    pub dock: Option<ProjectPanelDockPosition>,
-    /// Spacing between worktree entries in the project panel.
-    ///
-    /// Default: comfortable
-    pub entry_spacing: Option<EntrySpacing>,
-    /// Whether to show file icons in the project panel.
-    ///
-    /// Default: true
-    pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the project panel.
-    ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
-    /// Whether to show the git status in the project panel.
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
-    /// Amount of indentation (in pixels) for nested items.
-    ///
-    /// Default: 20
-    pub indent_size: Option<f32>,
-    /// Whether to reveal it in the project panel automatically,
-    /// when a corresponding project entry becomes active.
-    /// Gitignored entries are never auto revealed.
-    ///
-    /// Default: true
-    pub auto_reveal_entries: Option<bool>,
-    /// Whether to fold directories automatically
-    /// when directory has only one directory inside.
-    ///
-    /// Default: true
-    pub auto_fold_dirs: Option<bool>,
-    /// Whether the project panel should open on startup.
-    ///
-    /// Default: true
-    pub starts_open: Option<bool>,
-    /// Scrollbar-related settings
-    pub scrollbar: Option<ScrollbarSettingsContent>,
-    /// Which files containing diagnostic errors/warnings to mark in the project panel.
-    ///
-    /// Default: all
-    pub show_diagnostics: Option<ShowDiagnostics>,
-    /// Settings related to indent guides in the project panel.
-    pub indent_guides: Option<IndentGuidesSettingsContent>,
-    /// Whether to hide the root entry when only one folder is open in the window.
-    ///
-    /// Default: false
-    pub hide_root: Option<bool>,
-    /// Whether to stick parent directories at top of the project panel.
-    ///
-    /// Default: true
-    pub sticky_scroll: Option<bool>,
+impl ScrollbarVisibility for ProjectPanelSettings {
+    fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
 }
 
 impl Settings for ProjectPanelSettings {
-    const KEY: Option<&'static str> = Some("project_panel");
-
-    type FileContent = ProjectPanelSettingsContent;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::App,
-    ) -> anyhow::Result<Self> {
-        sources.json_merge()
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.bool_setting("explorer.excludeGitIgnore", &mut current.hide_gitignore);
-        vscode.bool_setting("explorer.autoReveal", &mut current.auto_reveal_entries);
-        vscode.bool_setting("explorer.compactFolders", &mut current.auto_fold_dirs);
-
-        if Some(false) == vscode.read_bool("git.decorations.enabled") {
-            current.git_status = Some(false);
-        }
-        if Some(false) == vscode.read_bool("problems.decorations.enabled") {
-            current.show_diagnostics = Some(ShowDiagnostics::Off);
-        }
-        if let (Some(false), Some(false)) = (
-            vscode.read_bool("explorer.decorations.badges"),
-            vscode.read_bool("explorer.decorations.colors"),
-        ) {
-            current.git_status = Some(false);
-            current.show_diagnostics = Some(ShowDiagnostics::Off);
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let project_panel = content.project_panel.clone().unwrap();
+        Self {
+            button: project_panel.button.unwrap(),
+            hide_gitignore: project_panel.hide_gitignore.unwrap(),
+            default_width: px(project_panel.default_width.unwrap()),
+            dock: project_panel.dock.unwrap(),
+            entry_spacing: project_panel.entry_spacing.unwrap(),
+            file_icons: project_panel.file_icons.unwrap(),
+            folder_icons: project_panel.folder_icons.unwrap(),
+            git_status: project_panel.git_status.unwrap(),
+            indent_size: project_panel.indent_size.unwrap(),
+            indent_guides: IndentGuidesSettings {
+                show: project_panel.indent_guides.unwrap().show.unwrap(),
+            },
+            sticky_scroll: project_panel.sticky_scroll.unwrap(),
+            auto_reveal_entries: project_panel.auto_reveal_entries.unwrap(),
+            auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
+            starts_open: project_panel.starts_open.unwrap(),
+            scrollbar: ScrollbarSettings {
+                show: project_panel.scrollbar.unwrap().show.map(Into::into),
+            },
+            show_diagnostics: project_panel.show_diagnostics.unwrap(),
+            hide_root: project_panel.hide_root.unwrap(),
+            hide_hidden: project_panel.hide_hidden.unwrap(),
+            drag_and_drop: project_panel.drag_and_drop.unwrap(),
+            auto_open: {
+                let auto_open = project_panel.auto_open.unwrap();
+                AutoOpenSettings {
+                    on_create: auto_open.on_create.unwrap(),
+                    on_paste: auto_open.on_paste.unwrap(),
+                    on_drop: auto_open.on_drop.unwrap(),
+                }
+            },
+            sort_mode: project_panel
+                .sort_mode
+                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
         }
     }
 }

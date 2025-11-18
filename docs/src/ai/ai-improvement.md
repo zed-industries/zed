@@ -4,18 +4,26 @@
 
 ### Opt-In
 
-When using the Agent Panel, whether through Zed's hosted AI service or via connecting a non-Zed AI service via API key, Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed. Each share is opt-in, and sharing once will not cause future content or data to be shared again.
+When you use the Agent Panel through any of these means:
+
+- [Zed's hosted models](./subscription.md)
+- [connecting a non-Zed AI service via API key](./llm-providers.md)
+- using an [external agent](./external-agents.md)
+
+Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed. Each share is opt-in, and sharing once will not cause future content or data to be shared again.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
 > **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
-When using upstream services through Zed AI, we require assurances from our service providers that your user content won't be used for training models. For example, usage of Anthropic Claude 3.5 via Zed AI in the Assistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
+When using upstream services through Zed's hosted models, we require assurances from our service providers that your user content won't be used for training models.
 
-> "Anthropic may not train models on Customer Content from paid Services."
+| Provider  | No Training Guarantee                                   | Zero-Data Retention (ZDR)                                                                                                                     |
+| --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anthropic | [Yes](https://www.anthropic.com/legal/commercial-terms) | [Yes](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) |
+| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | [Yes](https://cloud.google.com/terms/service-terms), see Service Terms sections 17 and 19h                                                    |
+| OpenAI    | [Yes](https://openai.com/enterprise-privacy/)           | [Yes](https://platform.openai.com/docs/guides/your-data)                                                                                      |
 
-We also have a [zero-data retention agreement](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) with Anthropic.
-
-When you directly connect Zed with a non Zed AI service (e.g., via API key) Zed does not have control over how your data is used by that service provider.
+When you use your own API keys or external agents, **Zed does not have control over how your data is used by that service provider.**
 You should reference your agreement with each service provider to understand what terms and conditions apply.
 
 ### Data we collect
@@ -51,7 +59,7 @@ Zed will intentionally exclude certain files from Predictive Edits entirely, eve
 
 You can inspect this exclusion list by opening `zed: open default settings` from the command palette:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     // A list of globs representing files that edit predictions should be disabled for.
@@ -71,7 +79,7 @@ You can inspect this exclusion list by opening `zed: open default settings` from
 
 Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/configuring-zed#edit-predictions) in their Zed settings.json:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     "disabled_globs": ["secret_dir/*", "**/*.log"]

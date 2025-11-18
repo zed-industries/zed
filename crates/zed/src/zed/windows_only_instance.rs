@@ -25,7 +25,8 @@ use windows::{
 
 use crate::{Args, OpenListener, RawOpenRequest};
 
-pub fn is_first_instance() -> bool {
+#[inline]
+fn is_first_instance() -> bool {
     unsafe {
         CreateMutexW(
             None,
@@ -37,17 +38,21 @@ pub fn is_first_instance() -> bool {
     unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
 }
 
-pub fn handle_single_instance(opener: OpenListener, args: &Args, is_first_instance: bool) -> bool {
+pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
+    let is_first_instance = is_first_instance();
     if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
-        std::thread::spawn(move || {
-            with_pipe(|url| {
-                opener.open(RawOpenRequest {
-                    urls: vec![url],
-                    ..Default::default()
+        std::thread::Builder::new()
+            .name("EnsureSingleton".to_owned())
+            .spawn(move || {
+                with_pipe(|url| {
+                    opener.open(RawOpenRequest {
+                        urls: vec![url],
+                        ..Default::default()
+                    })
                 })
             })
-        });
+            .unwrap();
     } else if !args.foreground {
         // We are not the first instance, send args to the first instance
         send_args_to_instance(args).log_err();
@@ -99,7 +104,7 @@ fn retrieve_message_from_pipe_inner(pipe: HANDLE) -> anyhow::Result<String> {
         ReadFile(pipe, Some(&mut buffer), None, None)?;
     }
     let message = std::ffi::CStr::from_bytes_until_nul(&buffer)?;
-    Ok(message.to_string_lossy().to_string())
+    Ok(message.to_string_lossy().into_owned())
 }
 
 // This part of code is mostly from crates/cli/src/main.rs
@@ -119,7 +124,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
         let mut diff_paths = vec![];
         for path in args.paths_or_urls.iter() {
             match std::fs::canonicalize(&path) {
-                Ok(path) => paths.push(path.to_string_lossy().to_string()),
+                Ok(path) => paths.push(path.to_string_lossy().into_owned()),
                 Err(error) => {
                     if path.starts_with("zed://")
                         || path.starts_with("http://")
@@ -140,8 +145,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             let new = std::fs::canonicalize(&path[1]).log_err();
             if let Some((old, new)) = old.zip(new) {
                 diff_paths.push([
-                    old.to_string_lossy().to_string(),
-                    new.to_string_lossy().to_string(),
+                    old.to_string_lossy().into_owned(),
+                    new.to_string_lossy().into_owned(),
                 ]);
             }
         }
@@ -151,35 +156,40 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             urls,
             diff_paths,
             wait: false,
+            wsl: args.wsl.clone(),
             open_new_workspace: None,
+            reuse: false,
             env: None,
             user_data_dir: args.user_data_dir.clone(),
         }
     };
 
     let exit_status = Arc::new(Mutex::new(None));
-    let sender: JoinHandle<anyhow::Result<()>> = std::thread::spawn({
-        let exit_status = exit_status.clone();
-        move || {
-            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-            let (tx, rx) = (handshake.requests, handshake.responses);
+    let sender: JoinHandle<anyhow::Result<()>> = std::thread::Builder::new()
+        .name("CliReceiver".to_owned())
+        .spawn({
+            let exit_status = exit_status.clone();
+            move || {
+                let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+                let (tx, rx) = (handshake.requests, handshake.responses);
 
-            tx.send(request)?;
+                tx.send(request)?;
 
-            while let Ok(response) = rx.recv() {
-                match response {
-                    CliResponse::Ping => {}
-                    CliResponse::Stdout { message } => log::info!("{message}"),
-                    CliResponse::Stderr { message } => log::error!("{message}"),
-                    CliResponse::Exit { status } => {
-                        exit_status.lock().replace(status);
-                        return Ok(());
+                while let Ok(response) = rx.recv() {
+                    match response {
+                        CliResponse::Ping => {}
+                        CliResponse::Stdout { message } => log::info!("{message}"),
+                        CliResponse::Stderr { message } => log::error!("{message}"),
+                        CliResponse::Exit { status } => {
+                            exit_status.lock().replace(status);
+                            return Ok(());
+                        }
                     }
                 }
+                Ok(())
             }
-            Ok(())
-        }
-    });
+        })
+        .unwrap();
 
     write_message_to_instance_pipe(url.as_bytes())?;
     sender.join().unwrap()?;

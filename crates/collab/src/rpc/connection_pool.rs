@@ -30,7 +30,19 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 157, 0)
+        // v0.204.1 was the first version after the auto-update bug.
+        // We reject any clients older than that to hope we can persuade them to upgrade.
+        if self.0 < SemanticVersion::new(0, 204, 1) {
+            return false;
+        }
+
+        // Since we hotfixed the changes to no longer connect to Collab automatically to Preview, we also need to reject
+        // versions in the range [v0.199.0, v0.199.1].
+        if self.0 >= SemanticVersion::new(0, 199, 0) && self.0 < SemanticVersion::new(0, 199, 2) {
+            return false;
+        }
+
+        true
     }
 }
 

@@ -85,7 +85,11 @@ pub fn run(
 
     let editor = editor.upgrade().context("editor was dropped")?;
     let selected_range = editor
-        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))
+        .update(cx, |editor, cx| {
+            editor
+                .selections
+                .newest_adjusted(&editor.display_snapshot(cx))
+        })
         .range();
     let multibuffer = editor.read(cx).buffer().clone();
     let Some(buffer) = multibuffer.read(cx).as_singleton() else {
@@ -202,7 +206,7 @@ pub fn session(editor: WeakEntity<Editor>, cx: &mut App) -> SessionSupport {
         return SessionSupport::Unsupported;
     };
 
-    let worktree_id = worktree_id_for_editor(editor.clone(), cx);
+    let worktree_id = worktree_id_for_editor(editor, cx);
 
     let Some(worktree_id) = worktree_id else {
         return SessionSupport::Unsupported;
@@ -216,7 +220,7 @@ pub fn session(editor: WeakEntity<Editor>, cx: &mut App) -> SessionSupport {
         Some(kernelspec) => SessionSupport::Inactive(kernelspec),
         None => {
             // For language_supported, need to check available kernels for language
-            if language_supported(&language.clone(), cx) {
+            if language_supported(&language, cx) {
                 SessionSupport::RequiresSetup(language.name())
             } else {
                 SessionSupport::Unsupported
@@ -326,7 +330,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakEnti
 
     editor
         .register_action({
-            let editor_handle = editor_handle.clone();
+            let editor_handle = editor_handle;
             move |_: &Restart, window, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
@@ -417,10 +421,10 @@ fn runnable_ranges(
     range: Range<Point>,
     cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
-    if let Some(language) = buffer.language() {
-        if language.name() == "Markdown".into() {
-            return (markdown_code_blocks(buffer, range.clone(), cx), None);
-        }
+    if let Some(language) = buffer.language()
+        && language.name() == "Markdown".into()
+    {
+        return (markdown_code_blocks(buffer, range, cx), None);
     }
 
     let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
@@ -434,7 +438,7 @@ fn runnable_ranges(
 
     if start_language
         .zip(end_language)
-        .map_or(false, |(start, end)| start == end)
+        .is_some_and(|(start, end)| start == end)
     {
         (vec![snippet_range], None)
     } else {
@@ -473,9 +477,12 @@ fn language_supported(language: &Arc<Language>, cx: &mut App) -> bool {
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
-            buffer.language_at(selection.head()).cloned()
+            let display_snapshot = editor.display_snapshot(cx);
+            let selection = editor.selections.newest::<usize>(&display_snapshot);
+            display_snapshot
+                .buffer_snapshot()
+                .language_at(selection.head())
+                .cloned()
         })
         .ok()
         .flatten()
@@ -685,8 +692,8 @@ mod tests {
         let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
         let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         language_registry.add(markdown.clone());
-        language_registry.add(typescript.clone());
-        language_registry.add(python.clone());
+        language_registry.add(typescript);
+        language_registry.add(python);
 
         // Two code blocks intersecting with selection
         let buffer = cx.new(|cx| {

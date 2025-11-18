@@ -2,9 +2,9 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
     Animation, AnimationExt, App, Application, Asset, AssetLogger, AssetSource, Bounds, Context,
-    Hsla, ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, Pixels,
-    RenderImage, Resource, SharedString, Window, WindowBounds, WindowOptions, black, div, img,
-    prelude::*, pulsating_between, px, red, size,
+    Hsla, ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, RenderImage,
+    Resource, SharedString, Window, WindowBounds, WindowOptions, black, div, img, prelude::*,
+    pulsating_between, px, red, size,
 };
 
 struct Assets {}
@@ -21,7 +21,7 @@ impl AssetSource for Assets {
         Ok(std::fs::read_dir(path)?
             .filter_map(|entry| {
                 Some(SharedString::from(
-                    entry.ok()?.path().to_string_lossy().to_string(),
+                    entry.ok()?.path().to_string_lossy().into_owned(),
                 ))
             })
             .collect::<Vec<_>>())
@@ -105,7 +105,7 @@ impl Render for ImageLoadingExample {
                 div()
                     .flex()
                     .bg(gpui::white())
-                    .size(Length::Definite(Pixels(300.0).into()))
+                    .size(Length::Definite(px(300.0).into()))
                     .justify_center()
                     .items_center()
                     .child({
@@ -199,7 +199,7 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
-                    size(px(300.), Pixels(300.)),
+                    size(px(300.), px(300.)),
                     cx,
                 ))),
                 ..Default::default()

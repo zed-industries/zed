@@ -46,27 +46,25 @@ fn find_target_files_recursive(
                 max_depth,
                 found_files,
             )?;
-        } else if path.is_file() {
-            if let Some(filename_osstr) = path.file_name() {
-                if let Some(filename_str) = filename_osstr.to_str() {
-                    if filename_str == target_filename {
-                        found_files.push(path);
-                    }
-                }
-            }
+        } else if path.is_file()
+            && let Some(filename_osstr) = path.file_name()
+            && let Some(filename_str) = filename_osstr.to_str()
+            && filename_str == target_filename
+        {
+            found_files.push(path);
         }
     }
     Ok(())
 }
 
 pub fn generate_explorer_html(input_paths: &[PathBuf], output_path: &PathBuf) -> Result<String> {
-    if let Some(parent) = output_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).context(format!(
-                "Failed to create output directory: {}",
-                parent.display()
-            ))?;
-        }
+    if let Some(parent) = output_path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).context(format!(
+            "Failed to create output directory: {}",
+            parent.display()
+        ))?;
     }
 
     let template_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/explorer.html");

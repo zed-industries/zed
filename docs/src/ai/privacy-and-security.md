@@ -8,7 +8,7 @@ We believe in opt-in data sharing as the default in building AI products, rather
 
 As an open-source product, we believe in maximal transparency, and invite you to examine our codebase. If you find issues, we encourage you to share them with us.
 
-It is entirely possible to use Zed without sharing any data with us and without authenticating into the product. We're happy to always support this desired use pattern.
+It is entirely possible to use Zed, including Zed's AI capabilities, without sharing any data with us and without authenticating into the product. We're happy to always support this desired use pattern.
 
 ## Documentation
 
@@ -16,7 +16,9 @@ It is entirely possible to use Zed without sharing any data with us and without 
 
 - [AI Improvement](./ai-improvement.md): Zed's opt-in-only approach to data collection for AI improvement, whether our Agentic offering or Edit Predictions.
 
-- [Accounts](../accounts.md): When and why you'd need to authenticate into Zed, how to do so, and what scope we need from you.
+- [Accounts](../authentication.md): When and why you'd need to authenticate into Zed, how to do so, and what scope we need from you.
+
+- [Collab](https://zed.dev/faq#data-and-privacy): How Zed's live collaboration works, and how data flows to provide the experience (we don't store your code!).
 
 ## Legal Links
 

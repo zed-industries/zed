@@ -1,15 +1,14 @@
 use crate::{
-    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
-    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
-    RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement,
-    Styled, SvgSize, Task, Window, px, swap_rgba_pa_to_bgra,
+    AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
+    Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
 };
 use anyhow::{Context as _, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{
-    AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
+    AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
 use smallvec::SmallVec;
@@ -160,13 +159,15 @@ pub trait StyledImage: Sized {
         self
     }
 
-    /// Set the object fit for the image.
+    /// Set a fallback function that will be invoked to render an error view should
+    /// the image fail to load.
     fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
         self.image_style().fallback = Some(Box::new(fallback));
         self
     }
 
-    /// Set the object fit for the image.
+    /// Set a fallback function that will be invoked to render a view while the image
+    /// is still being loaded.
     fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
         self.image_style().loading = Some(Box::new(loading));
         self
@@ -332,33 +333,34 @@ impl Element for Img {
                                 state.started_loading = None;
                             }
 
-                            let image_size = data.size(frame_index);
-                            style.aspect_ratio =
-                                Some(image_size.width.0 as f32 / image_size.height.0 as f32);
+                            let image_size = data.render_size(frame_index);
+                            style.aspect_ratio = Some(image_size.width / image_size.height);
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
-                                    Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(height),
-                                    )) => Length::Definite(
-                                        px(image_size.width.0 as f32 * height.0
-                                            / image_size.height.0 as f32)
-                                        .into(),
-                                    ),
-                                    _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                                    Length::Definite(DefiniteLength::Absolute(abs_length)) => {
+                                        let height_px = abs_length.to_pixels(window.rem_size());
+                                        Length::Definite(
+                                            px(image_size.width.0 * height_px.0
+                                                / image_size.height.0)
+                                            .into(),
+                                        )
+                                    }
+                                    _ => Length::Definite(image_size.width.into()),
                                 };
                             }
 
                             if let Length::Auto = style.size.height {
                                 style.size.height = match style.size.width {
-                                    Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(width),
-                                    )) => Length::Definite(
-                                        px(image_size.height.0 as f32 * width.0
-                                            / image_size.width.0 as f32)
-                                        .into(),
-                                    ),
-                                    _ => Length::Definite(px(image_size.height.0 as f32).into()),
+                                    Length::Definite(DefiniteLength::Absolute(abs_length)) => {
+                                        let width_px = abs_length.to_pixels(window.rem_size());
+                                        Length::Definite(
+                                            px(image_size.height.0 * width_px.0
+                                                / image_size.width.0)
+                                            .into(),
+                                        )
+                                    }
+                                    _ => Length::Definite(image_size.height.into()),
                                 };
                             }
 
@@ -379,13 +381,12 @@ impl Element for Img {
                         None => {
                             if let Some(state) = &mut state {
                                 if let Some((started_loading, _)) = state.started_loading {
-                                    if started_loading.elapsed() > LOADING_DELAY {
-                                        if let Some(loading) = self.style.loading.as_ref() {
-                                            let mut element = loading();
-                                            replacement_id =
-                                                Some(element.request_layout(window, cx));
-                                            layout_state.replacement = Some(element);
-                                        }
+                                    if started_loading.elapsed() > LOADING_DELAY
+                                        && let Some(loading) = self.style.loading.as_ref()
+                                    {
+                                        let mut element = loading();
+                                        replacement_id = Some(element.request_layout(window, cx));
+                                        layout_state.replacement = Some(element);
                                     }
                                 } else {
                                     let current_view = window.current_view();
@@ -476,7 +477,7 @@ impl Element for Img {
                         .paint_image(
                             new_bounds,
                             corner_radii,
-                            data.clone(),
+                            data,
                             layout_state.frame_index,
                             self.style.grayscale,
                         )
@@ -631,7 +632,7 @@ impl Asset for ImageAssetLoader {
                 }
             };
 
-            let data = if let Ok(format) = image::guess_format(&bytes) {
+            if let Ok(format) = image::guess_format(&bytes) {
                 let data = match format {
                     ImageFormat::Gif => {
                         let decoder = GifDecoder::new(Cursor::new(&bytes))?;
@@ -689,23 +690,12 @@ impl Asset for ImageAssetLoader {
                     }
                 };
 
-                RenderImage::new(data)
+                Ok(Arc::new(RenderImage::new(data)))
             } else {
-                let pixmap =
-                    // TODO: Can we make svgs always rescale?
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR))?;
-
-                let mut buffer =
-                    ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
-
-                for pixel in buffer.chunks_exact_mut(4) {
-                    swap_rgba_pa_to_bgra(pixel);
-                }
-
-                RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
-            };
-
-            Ok(Arc::new(data))
+                svg_renderer
+                    .render_single_frame(&bytes, 1.0, true)
+                    .map_err(Into::into)
+            }
         }
     }
 }

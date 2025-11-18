@@ -1,10 +1,8 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::{
-        OnceLock, RwLock,
-        atomic::{AtomicU8, Ordering},
-    },
-    usize,
+use collections::HashMap;
+use std::collections::VecDeque;
+use std::sync::{
+    OnceLock, RwLock,
+    atomic::{AtomicU8, Ordering},
 };
 
 use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
@@ -23,7 +21,7 @@ pub const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// crate that the max level is everything, so that we can dynamically enable
 /// logs that are more verbose than this level without the `log` crate throwing
 /// them away before we see them
-static mut LEVEL_ENABLED_MAX_STATIC: log::LevelFilter = LEVEL_ENABLED_MAX_DEFAULT;
+static LEVEL_ENABLED_MAX_STATIC: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
 /// A cache of the true maximum log level that _could_ be printed. This is based
 /// on the maximally verbose level that is configured by the user, and is used
@@ -43,11 +41,14 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     ("blade_graphics", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Warn),
+    // usvg prints a lot of warnings on rendering an SVG with partial errors, which
+    // can happen a lot with the SVG preview
+    ("usvg::parser::style", log::LevelFilter::Error),
 ];
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
     if let Some(level_max) = filter.level_global {
-        unsafe { LEVEL_ENABLED_MAX_STATIC = level_max }
+        LEVEL_ENABLED_MAX_STATIC.store(level_max as u8, Ordering::Release)
     }
     if ENV_FILTER.set(filter).is_err() {
         panic!("Environment filter cannot be initialized twice");
@@ -55,7 +56,7 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
 }
 
 pub fn is_possibly_enabled_level(level: log::Level) -> bool {
-    return level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed);
+    level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Acquire)
 }
 
 pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
@@ -67,10 +68,10 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
         // scope map
         return false;
     }
-    let is_enabled_by_default = level <= unsafe { LEVEL_ENABLED_MAX_STATIC };
+    let is_enabled_by_default = level as u8 <= LEVEL_ENABLED_MAX_STATIC.load(Ordering::Acquire);
     let global_scope_map = SCOPE_MAP.read().unwrap_or_else(|err| {
         SCOPE_MAP.clear_poison();
-        return err.into_inner();
+        err.into_inner()
     });
 
     let Some(map) = global_scope_map.as_ref() else {
@@ -82,24 +83,24 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
         // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
         return is_enabled_by_default;
     }
-    let enabled_status = map.is_enabled(&scope, module_path, level);
-    return match enabled_status {
+    let enabled_status = map.is_enabled(scope, module_path, level);
+    match enabled_status {
         EnabledStatus::NotConfigured => is_enabled_by_default,
         EnabledStatus::Enabled => true,
         EnabledStatus::Disabled => false,
-    };
+    }
 }
 
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     let env_config = ENV_FILTER.get();
     let map_new = ScopeMap::new_from_settings_and_env(settings, env_config, DEFAULT_FILTERS);
-    let mut level_enabled_max = unsafe { LEVEL_ENABLED_MAX_STATIC };
+    let mut level_enabled_max = LEVEL_ENABLED_MAX_STATIC.load(Ordering::Acquire);
     for entry in &map_new.entries {
         if let Some(level) = entry.enabled {
-            level_enabled_max = level_enabled_max.max(level);
+            level_enabled_max = level_enabled_max.max(level as u8);
         }
     }
-    LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max as u8, Ordering::Release);
+    LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max, Ordering::Release);
 
     {
         let mut global_map = SCOPE_MAP.write().unwrap_or_else(|err| {
@@ -132,7 +133,7 @@ fn level_filter_from_str(level_str: &str) -> Option<log::LevelFilter> {
             return None;
         }
     };
-    return Some(level);
+    Some(level)
 }
 
 fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
@@ -143,7 +144,7 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
         let Some(scope) = scope_iter.next() else {
             break;
         };
-        if scope == "" {
+        if scope.is_empty() {
             continue;
         }
         scope_buf[index] = scope;
@@ -152,14 +153,14 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
     if index == 0 {
         return None;
     }
-    if let Some(_) = scope_iter.next() {
+    if scope_iter.next().is_some() {
         crate::warn!(
             "Invalid scope key, too many nested scopes: '{scope_str}'. Max depth is {SCOPE_DEPTH_MAX}",
         );
         return None;
     }
     let scope = scope_buf.map(|s| s.to_string());
-    return Some(scope);
+    Some(scope)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -204,12 +205,10 @@ impl ScopeMap {
                 .map(|(scope_str, level_filter)| (scope_str.as_str(), *level_filter))
         });
 
-        let new_filters = items_input_map
-            .into_iter()
-            .filter_map(|(scope_str, level_str)| {
-                let level_filter = level_filter_from_str(level_str)?;
-                Some((scope_str.as_str(), level_filter))
-            });
+        let new_filters = items_input_map.iter().filter_map(|(scope_str, level_str)| {
+            let level_filter = level_filter_from_str(level_str)?;
+            Some((scope_str.as_str(), level_filter))
+        });
 
         let all_filters = default_filters
             .iter()
@@ -280,7 +279,7 @@ impl ScopeMap {
                     cursor += 1;
                 }
                 let sub_items_end = cursor;
-                if scope_name == "" {
+                if scope_name.is_empty() {
                     assert_eq!(sub_items_start + 1, sub_items_end);
                     assert_ne!(depth, 0);
                     assert_ne!(parent_index, usize::MAX);
@@ -288,7 +287,7 @@ impl ScopeMap {
                     this.entries[parent_index].enabled = Some(items[sub_items_start].1);
                     continue;
                 }
-                let is_valid_scope = scope_name != "";
+                let is_valid_scope = !scope_name.is_empty();
                 let is_last = depth + 1 == SCOPE_DEPTH_MAX || !is_valid_scope;
                 let mut enabled = None;
                 if is_last {
@@ -296,7 +295,7 @@ impl ScopeMap {
                         sub_items_start + 1,
                         sub_items_end,
                         "Expected one item: got: {:?}",
-                        &items[items_range.clone()]
+                        &items[items_range]
                     );
                     enabled = Some(items[sub_items_start].1);
                 } else {
@@ -321,7 +320,7 @@ impl ScopeMap {
             }
         }
 
-        return this;
+        this
     }
 
     pub fn is_empty(&self) -> bool {
@@ -358,7 +357,7 @@ impl ScopeMap {
                 }
                 break 'search;
             }
-            return enabled;
+            enabled
         }
 
         let mut enabled = search(self, scope);
@@ -394,7 +393,7 @@ impl ScopeMap {
             }
             return EnabledStatus::Disabled;
         }
-        return EnabledStatus::NotConfigured;
+        EnabledStatus::NotConfigured
     }
 }
 
@@ -456,7 +455,7 @@ mod tests {
             let Some(scope) = scope_iter.next() else {
                 break;
             };
-            if scope == "" {
+            if scope.is_empty() {
                 continue;
             }
             scope_buf[index] = scope;
@@ -464,7 +463,7 @@ mod tests {
         }
         assert_ne!(index, 0);
         assert!(scope_iter.next().is_none());
-        return scope_buf;
+        scope_buf
     }
 
     #[test]

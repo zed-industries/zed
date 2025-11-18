@@ -23,7 +23,6 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::Project;
 use project::project_settings::ProjectSettings;
 use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
@@ -61,9 +60,22 @@ struct Args {
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "4")]
     concurrency: usize,
+    /// Output current environment variables as JSON to stdout
+    #[arg(long, hide = true)]
+    printenv: bool,
 }
 
 fn main() {
+    let args = Args::parse();
+
+    // This prevents errors showing up in the logs, because
+    // project::environment::load_shell_environment() calls
+    // std::env::current_exe().unwrap() --printenv
+    if args.printenv {
+        util::shell_env::print_env();
+        return;
+    }
+
     dotenvy::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
 
     env_logger::init();
@@ -99,11 +111,10 @@ fn main() {
 
     let zed_commit_sha = commit_sha_for_path(&root_dir);
     let zed_branch_name = git_branch_for_path(&root_dir);
-    let args = Args::parse();
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client.clone());
+    let app = Application::headless().with_http_client(http_client);
     let all_threads = examples::all(&examples_dir);
 
     app.run(move |cx| {
@@ -112,7 +123,7 @@ fn main() {
         let telemetry = app_state.client.telemetry();
         telemetry.start(system_id, installation_id, session_id, cx);
 
-        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").is_ok_and(|value| value == "1")
             && telemetry.has_checksum_seed();
         if enable_telemetry {
             println!("Telemetry enabled");
@@ -126,19 +137,20 @@ fn main() {
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
 
-        let agent_model = load_model(&args.model, cx).unwrap();
-        let judge_model = load_model(&args.judge_model, cx).unwrap();
-
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_default_model(Some(agent_model.clone()), cx);
+        let tasks = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.providers().iter().map(|p| p.authenticate(cx)).collect::<Vec<_>>()
         });
 
-        let auth1 = agent_model.provider.authenticate(cx);
-        let auth2 = judge_model.provider.authenticate(cx);
-
         cx.spawn(async move |cx| {
-            auth1.await?;
-            auth2.await?;
+            future::join_all(tasks).await;
+            let judge_model = cx.update(|cx| {
+                let agent_model = load_model(&args.model, cx).unwrap();
+                let judge_model = load_model(&args.judge_model, cx).unwrap();
+                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry.set_default_model(Some(agent_model.clone()), cx);
+                });
+                judge_model
+            })?;
 
             let mut examples = Vec::new();
 
@@ -167,15 +179,14 @@ fn main() {
                     continue;
                 }
 
-                if let Some(language) = meta.language_server {
-                    if !languages.contains(&language.file_extension) {
+                if let Some(language) = meta.language_server
+                    && !languages.contains(&language.file_extension) {
                         panic!(
                             "Eval for {:?} could not be run because no language server was found for extension {:?}",
                             meta.name,
                             language.file_extension
                         );
                     }
-                }
 
                 // TODO: This creates a worktree per repetition. Ideally these examples should
                 // either be run sequentially on the same worktree, or reuse worktrees when there
@@ -269,7 +280,6 @@ fn main() {
 
             future::join_all((0..args.concurrency).map(|_| {
                 let app_state = app_state.clone();
-                let model = agent_model.model.clone();
                 let judge_model = judge_model.model.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
                 let zed_branch_name = zed_branch_name.clone();
@@ -284,7 +294,7 @@ fn main() {
                         let result = async {
                             example.setup().await?;
                             let run_output = cx
-                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                .update(|cx| example.run(app_state.clone(), cx))?
                                 .await?;
                             let judge_output = judge_example(
                                 example.clone(),
@@ -341,12 +351,8 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
-    let mut settings_store = SettingsStore::new(cx);
-    settings_store
-        .set_default_settings(settings::default_settings().as_ref(), cx)
-        .unwrap();
+    let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
-    client::init_settings(cx);
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
@@ -367,8 +373,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
             .expect("could not start HTTP client")
     };
     cx.set_http_client(Arc::new(http));
-
-    Project::init_settings(cx);
 
     let client = Client::production(cx);
     cx.set_http_client(client.http_client());
@@ -414,17 +418,11 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let node_runtime = NodeRuntime::new(client.http_client(), None, rx);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
-
-    language::init(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-    language_extension::init(
-        LspAccess::Noop,
-        extension_host_proxy.clone(),
-        languages.clone(),
-    );
+    language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
-    languages::init(languages.clone(), node_runtime.clone(), cx);
+    languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
     let stdout_is_a_pty = false;
@@ -437,7 +435,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         true,
         cx,
     );
-    assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(include_str!("../runner_settings.json"), cx)
@@ -466,8 +463,8 @@ pub fn find_model(
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "No language model with ID {}/{} was available. Available models: {}",
-                selected.model.0,
                 selected.provider.0,
+                selected.model.0,
                 model_registry
                     .available_models(cx)
                     .map(|model| format!("{}/{}", model.provider_id().0, model.id().0))
@@ -520,7 +517,7 @@ async fn judge_example(
     enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> JudgeOutput {
-    let judge_output = example.judge(model.clone(), &run_output, cx).await;
+    let judge_output = example.judge(model.clone(), run_output, cx).await;
 
     if enable_telemetry {
         telemetry::event!(
@@ -531,9 +528,8 @@ async fn judge_example(
             example_name = example.name.clone(),
             example_repetition = example.repetition,
             diff_evaluation = judge_output.diff.clone(),
-            thread_evaluation = judge_output.thread.clone(),
+            thread_evaluation = judge_output.thread,
             tool_metrics = run_output.tool_metrics,
-            response_count = run_output.response_count,
             token_usage = run_output.token_usage,
             model = model.telemetry_id(),
             model_provider = model.provider_id().to_string(),
@@ -711,7 +707,7 @@ fn print_report(
             println!("Average thread score: {average_thread_score}%");
         }
 
-        println!("");
+        println!();
 
         print_h2("CUMULATIVE TOOL METRICS");
         println!("{}", cumulative_tool_metrics);

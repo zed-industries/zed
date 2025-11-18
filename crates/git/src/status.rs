@@ -1,8 +1,10 @@
-use crate::repository::RepoPath;
-use anyhow::Result;
+use crate::{Oid, repository::RepoPath};
+use anyhow::{Result, anyhow};
+use collections::HashMap;
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
-use std::{path::Path, str::FromStr, sync::Arc};
-use util::ResultExt;
+use std::{str::FromStr, sync::Arc};
+use util::{ResultExt, rel_path::RelPath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FileStatus {
@@ -62,23 +64,23 @@ pub enum StageStatus {
 }
 
 impl StageStatus {
-    pub fn is_fully_staged(&self) -> bool {
+    pub const fn is_fully_staged(&self) -> bool {
         matches!(self, StageStatus::Staged)
     }
 
-    pub fn is_fully_unstaged(&self) -> bool {
+    pub const fn is_fully_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged)
     }
 
-    pub fn has_staged(&self) -> bool {
+    pub const fn has_staged(&self) -> bool {
         matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
     }
 
-    pub fn has_unstaged(&self) -> bool {
+    pub const fn has_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
     }
 
-    pub fn as_bool(self) -> Option<bool> {
+    pub const fn as_bool(self) -> Option<bool> {
         match self {
             StageStatus::Staged => Some(true),
             StageStatus::Unstaged => Some(false),
@@ -153,17 +155,11 @@ impl FileStatus {
     }
 
     pub fn is_conflicted(self) -> bool {
-        match self {
-            FileStatus::Unmerged { .. } => true,
-            _ => false,
-        }
+        matches!(self, FileStatus::Unmerged { .. })
     }
 
     pub fn is_ignored(self) -> bool {
-        match self {
-            FileStatus::Ignored => true,
-            _ => false,
-        }
+        matches!(self, FileStatus::Ignored)
     }
 
     pub fn has_changes(&self) -> bool {
@@ -176,40 +172,43 @@ impl FileStatus {
 
     pub fn is_modified(self) -> bool {
         match self {
-            FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Modified, _) | (_, StatusCode::Modified) => true,
-                _ => false,
-            },
+            FileStatus::Tracked(tracked) => matches!(
+                (tracked.index_status, tracked.worktree_status),
+                (StatusCode::Modified, _) | (_, StatusCode::Modified)
+            ),
             _ => false,
         }
     }
 
     pub fn is_created(self) -> bool {
         match self {
-            FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Added, _) | (_, StatusCode::Added) => true,
-                _ => false,
-            },
+            FileStatus::Tracked(tracked) => matches!(
+                (tracked.index_status, tracked.worktree_status),
+                (StatusCode::Added, _) | (_, StatusCode::Added)
+            ),
             FileStatus::Untracked => true,
             _ => false,
         }
     }
 
     pub fn is_deleted(self) -> bool {
-        match self {
-            FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Deleted, _) | (_, StatusCode::Deleted) => true,
-                _ => false,
-            },
-            _ => false,
-        }
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Deleted && tracked.worktree_status != StatusCode::Added
+            || tracked.worktree_status == StatusCode::Deleted
     }
 
     pub fn is_untracked(self) -> bool {
-        match self {
-            FileStatus::Untracked => true,
-            _ => false,
-        }
+        matches!(self, FileStatus::Untracked)
+    }
+
+    pub fn is_renamed(self) -> bool {
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Renamed
+            || tracked.worktree_status == StatusCode::Renamed
     }
 
     pub fn summary(self) -> GitSummary {
@@ -393,14 +392,12 @@ impl From<FileStatus> for GitSummary {
     }
 }
 
-impl sum_tree::Summary for GitSummary {
-    type Context = ();
-
-    fn zero(_: &Self::Context) -> Self {
+impl sum_tree::ContextLessSummary for GitSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
+    fn add_summary(&mut self, rhs: &Self) {
         *self += *rhs;
     }
 }
@@ -441,34 +438,80 @@ impl std::ops::Sub for GitSummary {
 #[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
 }
 
 impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
-                let sep = entry.get(2..3)?;
-                if sep != " " {
-                    return None;
+        let mut parts = s.split('\0').peekable();
+        let mut entries = Vec::new();
+        let mut renamed_paths = HashMap::default();
+
+        while let Some(entry) = parts.next() {
+            if entry.is_empty() {
+                continue;
+            }
+
+            if !matches!(entry.get(2..3), Some(" ")) {
+                continue;
+            }
+
+            let path_or_old_path = &entry[3..];
+
+            if path_or_old_path.ends_with('/') {
+                continue;
+            }
+
+            let status = match entry.as_bytes()[0..2].try_into() {
+                Ok(bytes) => match FileStatus::from_bytes(bytes).log_err() {
+                    Some(s) => s,
+                    None => continue,
+                },
+                Err(_) => continue,
+            };
+
+            let is_rename = matches!(
+                status,
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                }) | FileStatus::Tracked(TrackedStatus {
+                    worktree_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                })
+            );
+
+            let (old_path_str, new_path_str) = if is_rename {
+                let new_path = match parts.next() {
+                    Some(new_path) if !new_path.is_empty() => new_path,
+                    _ => continue,
                 };
-                let path = &entry[3..];
-                // The git status output includes untracked directories as well as untracked files.
-                // We do our own processing to compute the "summary" status of each directory,
-                // so just skip any directories in the output, since they'll otherwise interfere
-                // with our handling of nested repositories.
-                if path.ends_with('/') {
-                    return None;
+                (path_or_old_path, new_path)
+            } else {
+                (path_or_old_path, path_or_old_path)
+            };
+
+            if new_path_str.ends_with('/') {
+                continue;
+            }
+
+            let new_path = match RelPath::unix(new_path_str).log_err() {
+                Some(p) => RepoPath::from_rel_path(p),
+                None => continue,
+            };
+
+            if is_rename {
+                if let Some(old_path_rel) = RelPath::unix(old_path_str).log_err() {
+                    let old_path_repo = RepoPath::from_rel_path(old_path_rel);
+                    renamed_paths.insert(new_path.clone(), old_path_repo);
                 }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
-                let status = FileStatus::from_bytes(status).log_err()?;
-                let path = RepoPath(Path::new(path).into());
-                Some((path, status))
-            })
-            .collect::<Vec<_>>();
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
+            }
+
+            entries.push((new_path, status));
+        }
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
         // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.
@@ -491,6 +534,7 @@ impl FromStr for GitStatus {
         });
         Ok(Self {
             entries: entries.into(),
+            renamed_paths,
         })
     }
 }
@@ -499,6 +543,132 @@ impl Default for GitStatus {
     fn default() -> Self {
         Self {
             entries: Arc::new([]),
+            renamed_paths: HashMap::default(),
         }
+    }
+}
+
+pub enum DiffTreeType {
+    MergeBase {
+        base: SharedString,
+        head: SharedString,
+    },
+    Since {
+        base: SharedString,
+        head: SharedString,
+    },
+}
+
+impl DiffTreeType {
+    pub fn base(&self) -> &SharedString {
+        match self {
+            DiffTreeType::MergeBase { base, .. } => base,
+            DiffTreeType::Since { base, .. } => base,
+        }
+    }
+
+    pub fn head(&self) -> &SharedString {
+        match self {
+            DiffTreeType::MergeBase { head, .. } => head,
+            DiffTreeType::Since { head, .. } => head,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TreeDiff {
+    pub entries: HashMap<RepoPath, TreeDiffStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TreeDiffStatus {
+    Added,
+    Modified { old: Oid },
+    Deleted { old: Oid },
+}
+
+impl FromStr for TreeDiff {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let mut fields = s.split('\0');
+        let mut parsed = HashMap::default();
+        while let Some((status, path)) = fields.next().zip(fields.next()) {
+            let path = RepoPath::from_rel_path(RelPath::unix(path)?);
+
+            let mut fields = status.split(" ").skip(2);
+            let old_sha = fields
+                .next()
+                .ok_or_else(|| anyhow!("expected to find old_sha"))?
+                .to_owned()
+                .parse()?;
+            let _new_sha = fields
+                .next()
+                .ok_or_else(|| anyhow!("expected to find new_sha"))?;
+            let status = fields
+                .next()
+                .and_then(|s| {
+                    if s.len() == 1 {
+                        s.as_bytes().first()
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| anyhow!("expected to find status"))?;
+
+            let result = match StatusCode::from_byte(*status)? {
+                StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
+                StatusCode::Added => TreeDiffStatus::Added,
+                StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
+                _status => continue,
+            };
+
+            parsed.insert(path, result);
+        }
+
+        Ok(Self { entries: parsed })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::{
+        repository::RepoPath,
+        status::{TreeDiff, TreeDiffStatus},
+    };
+
+    #[test]
+    fn test_tree_diff_parsing() {
+        let input = ":000000 100644 0000000000000000000000000000000000000000 0062c311b8727c3a2e3cd7a41bc9904feacf8f98 A\x00.zed/settings.json\x00".to_owned() +
+            ":100644 000000 bb3e9ed2e97a8c02545bae243264d342c069afb3 0000000000000000000000000000000000000000 D\x00README.md\x00" +
+            ":100644 100644 42f097005a1f21eb2260fad02ec8c991282beee8 a437d85f63bb8c62bd78f83f40c506631fabf005 M\x00parallel.go\x00";
+
+        let output: TreeDiff = input.parse().unwrap();
+        assert_eq!(
+            output,
+            TreeDiff {
+                entries: [
+                    (
+                        RepoPath::new(".zed/settings.json").unwrap(),
+                        TreeDiffStatus::Added,
+                    ),
+                    (
+                        RepoPath::new("README.md").unwrap(),
+                        TreeDiffStatus::Deleted {
+                            old: "bb3e9ed2e97a8c02545bae243264d342c069afb3".parse().unwrap()
+                        }
+                    ),
+                    (
+                        RepoPath::new("parallel.go").unwrap(),
+                        TreeDiffStatus::Modified {
+                            old: "42f097005a1f21eb2260fad02ec8c991282beee8".parse().unwrap(),
+                        }
+                    ),
+                ]
+                .into_iter()
+                .collect()
+            }
+        )
     }
 }

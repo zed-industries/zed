@@ -1,6 +1,6 @@
 use assets::Assets;
 use gpui::{Application, Entity, KeyBinding, StyleRefinement, WindowOptions, prelude::*, rgb};
-use language::{LanguageRegistry, language_settings::AllLanguageSettings};
+use language::LanguageRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
@@ -38,19 +38,16 @@ pub fn main() {
     Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        language::init(cx);
-        SettingsStore::update(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-        });
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = NodeRuntime::unavailable();
         theme::init(LoadThemes::JustBase, cx);
 
+        let fs = fs::FakeFs::new(cx.background_executor().clone());
         let language_registry = LanguageRegistry::new(cx.background_executor().clone());
         language_registry.set_theme(cx.theme().clone());
         let language_registry = Arc::new(language_registry);
-        languages::init(language_registry.clone(), node_runtime, cx);
+        languages::init(language_registry.clone(), fs, node_runtime, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
@@ -77,16 +74,16 @@ impl Render for MarkdownExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let markdown_style = MarkdownStyle {
             base_text_style: gpui::TextStyle {
-                font_family: "Zed Plex Sans".into(),
+                font_family: ".ZedSans".into(),
                 color: cx.theme().colors().terminal_ansi_black,
                 ..Default::default()
             },
             code_block: StyleRefinement::default()
-                .font_family("Zed Plex Mono")
+                .font_family(".ZedMono")
                 .m(rems(1.))
                 .bg(rgb(0xAAAAAAA)),
             inline_code: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
+                font_family: Some(".ZedMono".into()),
                 color: Some(cx.theme().colors().editor_foreground),
                 background_color: Some(cx.theme().colors().editor_background),
                 ..Default::default()

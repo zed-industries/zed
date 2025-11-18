@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::context_store::ContextStore;
 use anyhow::{Context as _, Result, bail};
 use futures::AsyncReadExt as _;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
@@ -12,7 +11,7 @@ use picker::{Picker, PickerDelegate};
 use ui::{Context, ListItem, Window, prelude::*};
 use workspace::Workspace;
 
-use crate::context_picker::ContextPicker;
+use crate::{context_picker::ContextPicker, context_store::ContextStore};
 
 pub struct FetchContextPicker {
     picker: Entity<Picker<FetchContextPickerDelegate>>,
@@ -226,9 +225,10 @@ impl PickerDelegate for FetchContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).includes_url(&self.url)
-        });
+        let added = self
+            .context_store
+            .upgrade()
+            .is_some_and(|context_store| context_store.read(cx).includes_url(&self.url));
 
         Some(
             ListItem::new(ix)

@@ -1,8 +1,9 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
+    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -35,6 +36,7 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
+    pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
@@ -111,6 +113,7 @@ impl TestPlatform {
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
+            expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
@@ -187,24 +190,24 @@ impl TestPlatform {
             .push_back(TestPrompt {
                 msg: msg.to_string(),
                 detail: detail.map(|s| s.to_string()),
-                answers: answers.clone(),
+                answers,
                 tx,
             });
         rx
     }
 
     pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
-        let executor = self.foreground_executor().clone();
+        let executor = self.foreground_executor();
         let previous_window = self.active_window.borrow_mut().take();
         self.active_window.borrow_mut().clone_from(&window);
 
         executor
             .spawn(async move {
                 if let Some(previous_window) = previous_window {
-                    if let Some(window) = window.as_ref() {
-                        if Rc::ptr_eq(&previous_window.0, &window.0) {
-                            return;
-                        }
+                    if let Some(window) = window.as_ref()
+                        && Rc::ptr_eq(&previous_window.0, &window.0)
+                    {
+                        return;
                     }
                     previous_window.simulate_active_status_change(false);
                 }
@@ -237,6 +240,10 @@ impl Platform for TestPlatform {
         Box::new(TestKeyboardLayout)
     }
 
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(DummyKeyboardMapper)
+    }
+
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -245,8 +252,10 @@ impl Platform for TestPlatform {
 
     fn quit(&self) {}
 
-    fn restart(&self, _: Option<PathBuf>) {
-        //
+    fn restart(&self, path: Option<PathBuf>) {
+        if let Some(tx) = self.expect_restart.take() {
+            tx.send(path).unwrap();
+        }
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
@@ -336,6 +345,7 @@ impl Platform for TestPlatform {
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
+        _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
         self.background_executor()

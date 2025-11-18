@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_both_dbs;
 use chrono::Utc;
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
 test_both_dbs!(
@@ -458,53 +458,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
 }
 
 test_both_dbs!(
-    test_metrics_id,
-    test_metrics_id_postgres,
-    test_metrics_id_sqlite
-);
-
-async fn test_metrics_id(db: &Arc<Database>) {
-    let NewUserResult {
-        user_id: user1,
-        metrics_id: metrics_id1,
-        ..
-    } = db
-        .create_user(
-            "person1@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "person1".into(),
-                github_user_id: 101,
-            },
-        )
-        .await
-        .unwrap();
-    let NewUserResult {
-        user_id: user2,
-        metrics_id: metrics_id2,
-        ..
-    } = db
-        .create_user(
-            "person2@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "person2".into(),
-                github_user_id: 102,
-            },
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(db.get_user_metrics_id(user1).await.unwrap(), metrics_id1);
-    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id2);
-    assert_eq!(metrics_id1.len(), 36);
-    assert_eq!(metrics_id2.len(), 36);
-    assert_ne!(metrics_id1, metrics_id2);
-}
-
-test_both_dbs!(
     test_project_count,
     test_project_count_postgres,
     test_project_count_sqlite
@@ -558,18 +511,18 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, false)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, false)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
     // Projects shared by admins aren't counted.
-    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], false)
+    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], false, false)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);

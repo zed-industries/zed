@@ -1,19 +1,7 @@
 use dap_types::SteppingGranularity;
-use gpui::{App, Global};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{RegisterSetting, Settings, SettingsContent};
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DebugPanelDockPosition {
-    Left,
-    Bottom,
-    Right,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy)]
-#[serde(default)]
+#[derive(Debug, RegisterSetting)]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.
     ///
@@ -42,33 +30,32 @@ pub struct DebuggerSettings {
     /// The dock position of the debug panel
     ///
     /// Default: Bottom
-    pub dock: DebugPanelDockPosition,
+    pub dock: settings::DockPosition,
 }
 
-impl Default for DebuggerSettings {
-    fn default() -> Self {
+impl Settings for DebuggerSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        let content = content.debugger.clone().unwrap();
         Self {
-            button: true,
-            save_breakpoints: true,
-            stepping_granularity: SteppingGranularity::Line,
-            timeout: 2000,
-            log_dap_communications: true,
-            format_dap_log_messages: true,
-            dock: DebugPanelDockPosition::Bottom,
+            stepping_granularity: dap_granularity_from_settings(
+                content.stepping_granularity.unwrap(),
+            ),
+            save_breakpoints: content.save_breakpoints.unwrap(),
+            button: content.button.unwrap(),
+            timeout: content.timeout.unwrap(),
+            log_dap_communications: content.log_dap_communications.unwrap(),
+            format_dap_log_messages: content.format_dap_log_messages.unwrap(),
+            dock: content.dock.unwrap(),
         }
     }
 }
 
-impl Settings for DebuggerSettings {
-    const KEY: Option<&'static str> = Some("debugger");
-
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        sources.json_merge()
+fn dap_granularity_from_settings(
+    granularity: settings::SteppingGranularity,
+) -> dap_types::SteppingGranularity {
+    match granularity {
+        settings::SteppingGranularity::Instruction => dap_types::SteppingGranularity::Instruction,
+        settings::SteppingGranularity::Line => dap_types::SteppingGranularity::Line,
+        settings::SteppingGranularity::Statement => dap_types::SteppingGranularity::Statement,
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
-
-impl Global for DebuggerSettings {}

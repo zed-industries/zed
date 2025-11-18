@@ -1,12 +1,10 @@
-use std::collections::HashMap;
+use collections::HashMap;
 
 use editor::EditorSettings;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{RegisterSetting, Settings};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, RegisterSetting)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
 }
@@ -20,46 +18,11 @@ impl JupyterSettings {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct JupyterSettingsContent {
-    /// Default kernels to select for each language.
-    ///
-    /// Default: `{}`
-    pub kernel_selections: Option<HashMap<String, String>>,
-}
-
-impl Default for JupyterSettingsContent {
-    fn default() -> Self {
-        JupyterSettingsContent {
-            kernel_selections: Some(HashMap::new()),
-        }
-    }
-}
-
 impl Settings for JupyterSettings {
-    const KEY: Option<&'static str> = Some("jupyter");
-
-    type FileContent = JupyterSettingsContent;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _cx: &mut gpui::App,
-    ) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
-        let mut settings = JupyterSettings::default();
-
-        for value in sources.defaults_and_customizations() {
-            if let Some(source) = &value.kernel_selections {
-                for (k, v) in source {
-                    settings.kernel_selections.insert(k.clone(), v.clone());
-                }
-            }
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let jupyter = content.editor.jupyter.clone().unwrap();
+        Self {
+            kernel_selections: jupyter.kernel_selections.unwrap_or_default(),
         }
-
-        Ok(settings)
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

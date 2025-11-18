@@ -152,6 +152,36 @@ impl Render for WindowDemo {
                 )
                 .unwrap();
             }))
+            .child(button("Unresizable", move |_, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        is_resizable: false,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Unminimizable", move |_, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        is_minimizable: false,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
+            }))
             .child(button("Hide Application", |window, cx| {
                 cx.hide();
 

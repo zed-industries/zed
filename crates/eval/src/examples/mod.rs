@@ -106,7 +106,7 @@ impl DeclarativeExample {
     }
 
     pub fn name_from_path(path: &Path) -> String {
-        path.file_stem().unwrap().to_string_lossy().to_string()
+        path.file_stem().unwrap().to_string_lossy().into_owned()
     }
 }
 
@@ -115,6 +115,10 @@ pub struct ExampleToml {
     pub url: String,
     pub revision: String,
     pub language_extension: Option<String>,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     pub insert_id: Option<String>,
     #[serde(default = "default_true")]
     pub require_lsp: bool,
@@ -140,9 +144,8 @@ impl Example for DeclarativeExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(&self.prompt);
         let max_turns = self.metadata.max_turns.unwrap_or(1000);
-        let _ = cx.run_turns(max_turns).await;
+        let _ = cx.prompt_with_max_turns(&self.prompt, max_turns).await;
         Ok(())
     }
 

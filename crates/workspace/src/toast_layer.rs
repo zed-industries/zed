@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
+use gpui::{AnyView, DismissEvent, Entity, EntityId, FocusHandle, ManagedView, Subscription, Task};
 use ui::{animation::DefaultAnimations, prelude::*};
 use zed_actions::toast;
 
@@ -76,6 +76,7 @@ impl<V: ToastView> ToastViewHandle for Entity<V> {
 }
 
 pub struct ActiveToast {
+    id: EntityId,
     toast: Box<dyn ToastViewHandle>,
     action: Option<ToastAction>,
     _subscriptions: [Subscription; 1],
@@ -113,9 +114,9 @@ impl ToastLayer {
         V: ToastView,
     {
         if let Some(active_toast) = &self.active_toast {
-            let is_close = active_toast.toast.view().downcast::<V>().is_ok();
-            let did_close = self.hide_toast(cx);
-            if is_close || !did_close {
+            let show_new = active_toast.id != new_toast.entity_id();
+            self.hide_toast(cx);
+            if !show_new {
                 return;
             }
         }
@@ -130,11 +131,12 @@ impl ToastLayer {
         let focus_handle = cx.focus_handle();
 
         self.active_toast = Some(ActiveToast {
-            toast: Box::new(new_toast.clone()),
-            action,
             _subscriptions: [cx.subscribe(&new_toast, |this, _, _: &DismissEvent, cx| {
                 this.hide_toast(cx);
             })],
+            id: new_toast.entity_id(),
+            toast: Box::new(new_toast),
+            action,
             focus_handle,
         });
 
@@ -143,11 +145,9 @@ impl ToastLayer {
         cx.notify();
     }
 
-    pub fn hide_toast(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn hide_toast(&mut self, cx: &mut Context<Self>) {
         self.active_toast.take();
         cx.notify();
-
-        true
     }
 
     pub fn active_toast<V>(&self) -> Option<Entity<V>>
@@ -218,11 +218,10 @@ impl Render for ToastLayer {
         let Some(active_toast) = &self.active_toast else {
             return div();
         };
-        let handle = cx.weak_entity();
 
         div().absolute().size_full().bottom_0().left_0().child(
             v_flex()
-                .id("toast-layer-container")
+                .id(("toast-layer-container", active_toast.id))
                 .absolute()
                 .w_full()
                 .bottom(px(0.))
@@ -234,17 +233,14 @@ impl Render for ToastLayer {
                     h_flex()
                         .id("active-toast-container")
                         .occlude()
-                        .on_hover(move |hover_start, _window, cx| {
-                            let Some(this) = handle.upgrade() else {
-                                return;
-                            };
+                        .on_hover(cx.listener(|this, hover_start, _window, cx| {
                             if *hover_start {
-                                this.update(cx, |this, _| this.pause_dismiss_timer());
+                                this.pause_dismiss_timer();
                             } else {
-                                this.update(cx, |this, cx| this.restart_dismiss_timer(cx));
+                                this.restart_dismiss_timer(cx);
                             }
                             cx.stop_propagation();
-                        })
+                        }))
                         .on_click(|_, _, cx| {
                             cx.stop_propagation();
                         })

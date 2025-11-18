@@ -2,12 +2,12 @@ mod color;
 mod vscode;
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use indexmap::IndexMap;
+use collections::IndexMap;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::ColorChoice;
@@ -18,21 +18,6 @@ use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
 
 const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.0.json";
-
-#[derive(Debug, Deserialize)]
-struct FamilyMetadata {
-    pub name: String,
-    pub author: String,
-    pub themes: Vec<ThemeMetadata>,
-
-    /// Overrides for specific syntax tokens.
-    ///
-    /// Use this to ensure certain Zed syntax tokens are matched
-    /// to an exact set of scopes when it is not otherwise possible
-    /// to rely on the default mappings in the theme importer.
-    #[serde(default)]
-    pub syntax: IndexMap<String, Vec<String>>,
-}
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,15 +89,16 @@ fn main() -> Result<()> {
 
     let theme_file_path = args.theme_path;
 
-    let theme_file = match File::open(&theme_file_path) {
-        Ok(file) => file,
+    let mut buffer = Vec::new();
+    match File::open(&theme_file_path).and_then(|mut file| file.read_to_end(&mut buffer)) {
+        Ok(_) => {}
         Err(err) => {
             log::info!("Failed to open file at path: {:?}", theme_file_path);
             return Err(err)?;
         }
     };
 
-    let vscode_theme: VsCodeTheme = serde_json_lenient::from_reader(theme_file)
+    let vscode_theme: VsCodeTheme = serde_json_lenient::from_slice(&buffer)
         .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
     let theme_metadata = ThemeMetadata {
@@ -121,7 +107,7 @@ fn main() -> Result<()> {
         file_name: "".to_string(),
     };
 
-    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::new());
+    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::default());
 
     let theme = converter.convert()?;
     let mut theme = serde_json::to_value(theme).unwrap();

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance, hsla};
 
 use crate::{
-    AccentColors, Appearance, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeColorsRefinement, ThemeFamily, ThemeStyles,
-    default_color_scales,
+    AccentColors, Appearance, DEFAULT_DARK_THEME, PlayerColors, StatusColors,
+    StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeColorsRefinement,
+    ThemeFamily, ThemeStyles, default_color_scales,
 };
 
 /// The default theme family for Zed.
@@ -34,10 +34,10 @@ pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
         (&status.error, &mut status.error_background),
         (&status.hidden, &mut status.hidden_background),
     ] {
-        if bg_color.is_none() {
-            if let Some(fg_color) = fg_color {
-                *bg_color = Some(fg_color.opacity(0.25));
-            }
+        if bg_color.is_none()
+            && let Some(fg_color) = fg_color
+        {
+            *bg_color = Some(fg_color.opacity(0.25));
         }
     }
 }
@@ -92,7 +92,7 @@ pub(crate) fn zed_default_dark() -> Theme {
     let player = PlayerColors::dark();
     Theme {
         id: "one_dark".to_string(),
-        name: "One Dark".into(),
+        name: DEFAULT_DARK_THEME.into(),
         appearance: Appearance::Dark,
         styles: ThemeStyles {
             window_background_appearance: WindowBackgroundAppearance::Opaque,
@@ -115,6 +115,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 element_disabled: SystemColors::default().transparent,
                 element_selection_background: player.local().selection.alpha(0.25),
                 drop_target_background: hsla(220.0 / 360., 8.3 / 100., 21.4 / 100., 1.0),
+                drop_target_border: hsla(221. / 360., 11. / 100., 86. / 100., 1.0),
                 ghost_element_background: SystemColors::default().transparent,
                 ghost_element_hover: hover,
                 ghost_element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
@@ -232,6 +233,16 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_ignored: crate::gray().light().step_12(),
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
                 version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
+
+                vim_normal_background: SystemColors::default().transparent,
+                vim_insert_background: SystemColors::default().transparent,
+                vim_replace_background: SystemColors::default().transparent,
+                vim_visual_background: SystemColors::default().transparent,
+                vim_visual_line_background: SystemColors::default().transparent,
+                vim_visual_block_background: SystemColors::default().transparent,
+                vim_helix_normal_background: SystemColors::default().transparent,
+                vim_helix_select_background: SystemColors::default().transparent,
+                vim_mode_text: SystemColors::default().transparent,
             },
             status: StatusColors {
                 conflict: yellow,

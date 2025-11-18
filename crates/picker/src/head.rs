@@ -23,7 +23,7 @@ impl Head {
     ) -> Self {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(placeholder_text, cx);
+            editor.set_placeholder_text(placeholder_text.as_ref(), window, cx);
             editor
         });
         cx.subscribe_in(&editor, window, edit_handler).detach();

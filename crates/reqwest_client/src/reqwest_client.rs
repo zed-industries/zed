@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
-use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
+use std::{borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -80,20 +80,22 @@ impl ReqwestClient {
     }
 }
 
+pub fn runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            // Since we now have two executors, let's try to keep our footprint small
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("Failed to initialize HTTP client")
+    })
+}
+
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
         let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
             log::debug!("no tokio runtime found, creating one for Reqwest...");
-            let runtime = RUNTIME.get_or_init(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    // Since we now have two executors, let's try to keep our footprint small
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()
-                    .expect("Failed to initialize HTTP client")
-            });
-
-            runtime.handle().clone()
+            runtime().handle().clone()
         });
         Self {
             client,
@@ -201,12 +203,11 @@ pub fn poll_read_buf(
 }
 
 fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
-    if let Some(url) = error.url_mut() {
-        if let Some(query) = url.query() {
-            if let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED") {
-                url.set_query(Some(redacted.as_str()));
-            }
-        }
+    if let Some(url) = error.url_mut()
+        && let Some(query) = url.query()
+        && let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED")
+    {
+        url.set_query(Some(redacted.as_str()));
     }
     error
 }
@@ -214,10 +215,6 @@ fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     fn user_agent(&self) -> Option<&HeaderValue> {
@@ -265,7 +262,7 @@ impl http_client::HttpClient for ReqwestClient {
 
             let bytes = response
                 .bytes_stream()
-                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .map_err(futures::io::Error::other)
                 .into_async_read();
             let body = http_client::AsyncBody::from_reader(bytes);
 

@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
-    ShapedGlyph, ShapedRun, SharedString, Size, point, size,
+    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, point, size,
 };
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
@@ -213,11 +213,7 @@ impl CosmicTextSystemState {
         features: &FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         // TODO: Determine the proper system UI font.
-        let name = if name == ".SystemUIFont" {
-            "Zed Plex Sans"
-        } else {
-            name
-        };
+        let name = crate::text_system::font_name_with_fallbacks(name, "IBM Plex Sans");
 
         let families = self
             .font_system
@@ -278,9 +274,10 @@ impl CosmicTextSystemState {
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.loaded_fonts[params.font_id.0].font;
-        let subpixel_shift = params
-            .subpixel_variant
-            .map(|v| v as f32 / (SUBPIXEL_VARIANTS as f32 * params.scale_factor));
+        let subpixel_shift = point(
+            params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
+            params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
+        );
         let image = self
             .swash_cache
             .get_image(
@@ -313,9 +310,10 @@ impl CosmicTextSystemState {
         } else {
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts[params.font_id.0].font;
-            let subpixel_shift = params
-                .subpixel_variant
-                .map(|v| v as f32 / (SUBPIXEL_VARIANTS as f32 * params.scale_factor));
+            let subpixel_shift = point(
+                params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
+                params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
+            );
             let mut image = self
                 .swash_cache
                 .get_image(

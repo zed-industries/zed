@@ -1,10 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use client::{
-    TypedEnvelope,
-    proto::{self, FromProto},
-};
+use client::{TypedEnvelope, proto};
 use collections::{HashMap, HashSet};
 use extension::{
     Extension, ExtensionDebugAdapterProviderProxy, ExtensionHostProxy, ExtensionLanguageProxy,
@@ -163,6 +160,7 @@ impl HeadlessExtensionStore {
                             queries: LanguageQueries::default(),
                             context_provider: None,
                             toolchain_provider: None,
+                            manifest_name: None,
                         })
                     }),
                 );
@@ -174,7 +172,7 @@ impl HeadlessExtensionStore {
         }
 
         let wasm_extension: Arc<dyn Extension> =
-            Arc::new(WasmExtension::load(&extension_dir, &manifest, wasm_host.clone(), &cx).await?);
+            Arc::new(WasmExtension::load(&extension_dir, &manifest, wasm_host.clone(), cx).await?);
 
         for (language_server_id, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
@@ -281,7 +279,8 @@ impl HeadlessExtensionStore {
             }
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
-                .await?;
+                .await
+                .context("Failed to rename {tmp_path:?} to {path:?}")?;
 
             Self::load_extension(this, extension, cx).await
         })
@@ -341,7 +340,7 @@ impl HeadlessExtensionStore {
                         version: extension.version,
                         dev: extension.dev,
                     },
-                    PathBuf::from_proto(envelope.payload.tmp_dir),
+                    PathBuf::from(envelope.payload.tmp_dir),
                     cx,
                 )
             })?

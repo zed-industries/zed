@@ -2,8 +2,9 @@
 name = "media"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = false
 license = "Apache-2.0"
+description = "Bindings to macos media handling APIs for Zed"
 
 [lints]
 workspace = true
@@ -14,7 +15,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

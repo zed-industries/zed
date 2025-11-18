@@ -43,7 +43,7 @@ If you wanted to only search Markdown files add `*.md` to the "Include" search f
 
 ### Case insensitive matching
 
-Globs in Zed are case-sensitive, so `*.c` will not match `main.C` (even on case-insensitive filesystems like HFS+/APFS on MacOS). Instead use brackets to match characters. So instead of `*.c` use `*.[cC]`.
+Globs in Zed are case-sensitive, so `*.c` will not match `main.C` (even on case-insensitive filesystems like HFS+/APFS on macOS). Instead use brackets to match characters. So instead of `*.c` use `*.[cC]`.
 
 ### Matching directories
 
@@ -53,11 +53,11 @@ If instead you wanted to restrict yourself only to [Zed Language-Specific Docume
 
 ### Implicit Wildcards
 
-When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
+When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
 
 Alternatively, if in your Zed settings you wanted a [`file_types`](./configuring-zed.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as Jinja2 template you could use the following:
 
-```json
+```json [settings]
 {
   "file_types": {
     "C++": ["[cC]"],
@@ -70,7 +70,7 @@ Alternatively, if in your Zed settings you wanted a [`file_types`](./configuring
 
 While globs in Zed are implemented as described above, when writing code using globs in other languages, please reference your platform's glob documentation:
 
-- [MacOS fnmatch](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/fnmatch.3.html) (BSD C Standard Library)
+- [macOS fnmatch](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/fnmatch.3.html) (BSD C Standard Library)
 - [Linux fnmatch](https://www.gnu.org/software/libc/manual/html_node/Wildcard-Matching.html) (GNU C Standard Library)
 - [POSIX fnmatch](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fnmatch.html) (POSIX Specification)
 - [node-glob](https://github.com/isaacs/node-glob) (Node.js `glob` package)

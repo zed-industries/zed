@@ -3,9 +3,7 @@ use crate::{
     parse_wasm_extension_version,
 };
 use anyhow::{Context as _, Result, bail};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
-use futures::io::BufReader;
+use futures::AsyncReadExt;
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
@@ -142,7 +140,7 @@ impl ExtensionBuilder {
         manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> anyhow::Result<()> {
-        self.install_rust_wasm_target_if_needed()?;
+        self.install_rust_wasm_target_if_needed().await?;
 
         let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
@@ -151,7 +149,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_std_command("cargo")
+        let output = util::command::new_smol_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -160,6 +158,7 @@ impl ExtensionBuilder {
             .env("RUSTC_WRAPPER", "")
             .current_dir(extension_dir)
             .output()
+            .await
             .context("failed to run `cargo`")?;
         if !output.status.success() {
             bail!(
@@ -235,7 +234,8 @@ impl ExtensionBuilder {
             &grammar_repo_dir,
             &grammar_metadata.repository,
             &grammar_metadata.rev,
-        )?;
+        )
+        .await?;
 
         let base_grammar_path = grammar_metadata
             .path
@@ -248,7 +248,7 @@ impl ExtensionBuilder {
         let scanner_path = src_path.join("scanner.c");
 
         log::info!("compiling {grammar_name} parser");
-        let clang_output = util::command::new_std_command(&clang_path)
+        let clang_output = util::command::new_smol_command(&clang_path)
             .args(["-fPIC", "-shared", "-Os"])
             .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
             .arg("-o")
@@ -258,6 +258,7 @@ impl ExtensionBuilder {
             .arg(&parser_path)
             .args(scanner_path.exists().then_some(scanner_path))
             .output()
+            .await
             .context("failed to run clang")?;
 
         if !clang_output.status.success() {
@@ -271,15 +272,16 @@ impl ExtensionBuilder {
         Ok(())
     }
 
-    fn checkout_repo(&self, directory: &Path, url: &str, rev: &str) -> Result<()> {
+    async fn checkout_repo(&self, directory: &Path, url: &str, rev: &str) -> Result<()> {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = util::command::new_std_command("git")
+            let remotes_output = util::command::new_smol_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "-v"])
-                .output()?;
+                .output()
+                .await?;
             let has_remote = remotes_output.status.success()
                 && String::from_utf8_lossy(&remotes_output.stdout)
                     .lines()
@@ -298,10 +300,11 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = util::command::new_std_command("git")
+            let init_output = util::command::new_smol_command("git")
                 .arg("init")
                 .current_dir(directory)
-                .output()?;
+                .output()
+                .await?;
             if !init_output.status.success() {
                 bail!(
                     "failed to run `git init` in directory '{}'",
@@ -309,11 +312,12 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = util::command::new_std_command("git")
+            let remote_add_output = util::command::new_smol_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
                 .output()
+                .await
                 .context("failed to execute `git remote add`")?;
             if !remote_add_output.status.success() {
                 bail!(
@@ -323,19 +327,21 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = util::command::new_std_command("git")
+        let fetch_output = util::command::new_smol_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
             .output()
+            .await
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = util::command::new_std_command("git")
+        let checkout_output = util::command::new_smol_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
             .current_dir(directory)
             .output()
+            .await
             .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
             if !fetch_output.status.success() {
@@ -356,11 +362,12 @@ impl ExtensionBuilder {
         Ok(())
     }
 
-    fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_std_command("rustc")
+    async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
+        let rustc_output = util::command::new_smol_command("rustc")
             .arg("--print")
             .arg("sysroot")
             .output()
+            .await
             .context("failed to run rustc")?;
         if !rustc_output.status.success() {
             bail!(
@@ -374,11 +381,12 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = util::command::new_std_command("rustup")
+        let output = util::command::new_smol_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
             .output()
+            .await
             .context("failed to run `rustup target add`")?;
         if !output.status.success() {
             bail!(
@@ -401,25 +409,53 @@ impl ExtensionBuilder {
         let mut clang_path = wasi_sdk_dir.clone();
         clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
 
-        if fs::metadata(&clang_path).map_or(false, |metadata| metadata.is_file()) {
+        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
+
+        if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
             return Ok(clang_path);
         }
 
-        let mut tar_out_dir = wasi_sdk_dir.clone();
-        tar_out_dir.set_extension("archive");
+        let tar_out_dir = self.cache_dir.join("wasi-sdk-temp");
 
         fs::remove_dir_all(&wasi_sdk_dir).ok();
         fs::remove_dir_all(&tar_out_dir).ok();
+        fs::create_dir_all(&tar_out_dir).context("failed to create extraction directory")?;
 
-        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
-        let body = BufReader::new(response.body_mut());
-        let body = GzipDecoder::new(body);
-        let tar = Archive::new(body);
 
-        tar.unpack(&tar_out_dir)
+        // Write the response to a temporary file
+        let tar_gz_path = self.cache_dir.join("wasi-sdk.tar.gz");
+        let mut tar_gz_file =
+            fs::File::create(&tar_gz_path).context("failed to create temporary tar.gz file")?;
+        let response_body = response.body_mut();
+        let mut body_bytes = Vec::new();
+        response_body.read_to_end(&mut body_bytes).await?;
+        std::io::Write::write_all(&mut tar_gz_file, &body_bytes)?;
+        drop(tar_gz_file);
+
+        log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
+
+        // Shell out to tar to extract the archive
+        let tar_output = util::command::new_smol_command("tar")
+            .arg("-xzf")
+            .arg(&tar_gz_path)
+            .arg("-C")
+            .arg(&tar_out_dir)
+            .output()
             .await
-            .context("failed to unpack wasi-sdk archive")?;
+            .context("failed to run tar")?;
+
+        if !tar_output.status.success() {
+            bail!(
+                "failed to extract wasi-sdk archive: {}",
+                String::from_utf8_lossy(&tar_output.stderr)
+            );
+        }
+
+        log::info!("finished downloading wasi-sdk");
+
+        // Clean up the temporary tar.gz file
+        fs::remove_file(&tar_gz_path).ok();
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()
@@ -452,7 +488,7 @@ impl ExtensionBuilder {
         let mut output = Vec::new();
         let mut stack = Vec::new();
 
-        for payload in Parser::new(0).parse_all(&input) {
+        for payload in Parser::new(0).parse_all(input) {
             let payload = payload?;
 
             // Track nesting depth, so that we don't mess with inner producer sections:
@@ -484,14 +520,10 @@ impl ExtensionBuilder {
                 _ => {}
             }
 
-            match &payload {
-                CustomSection(c) => {
-                    if strip_custom_section(c.name()) {
-                        continue;
-                    }
-                }
-
-                _ => {}
+            if let CustomSection(c) = &payload
+                && strip_custom_section(c.name())
+            {
+                continue;
             }
             if let Some((id, range)) = payload.as_section() {
                 RawSection {

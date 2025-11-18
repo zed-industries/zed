@@ -9,6 +9,7 @@ use ui::{h_flex, prelude::*};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
+    /// Event callback that is triggered when the active pane item changes.
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -108,7 +109,7 @@ impl StatusBar {
         self.left_items
             .iter()
             .chain(self.right_items.iter())
-            .find_map(|item| item.to_any().clone().downcast().log_err())
+            .find_map(|item| item.to_any().downcast().log_err())
     }
 
     pub fn position_of_item<T>(&self) -> Option<usize>
@@ -217,6 +218,6 @@ impl<T: StatusItemView> StatusItemViewHandle for Entity<T> {
 
 impl From<&dyn StatusItemViewHandle> for AnyView {
     fn from(val: &dyn StatusItemViewHandle) -> Self {
-        val.to_any().clone()
+        val.to_any()
     }
 }

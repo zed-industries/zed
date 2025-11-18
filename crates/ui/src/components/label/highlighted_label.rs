@@ -15,11 +15,26 @@ impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+        let label = label.into();
+        for &run in &highlight_indices {
+            assert!(
+                label.is_char_boundary(run),
+                "highlight index {run} is not a valid UTF-8 boundary"
+            );
+        }
         Self {
             base: LabelLike::new(),
-            label: label.into(),
+            label,
             highlight_indices,
         }
+    }
+
+    pub fn text(&self) -> &str {
+        self.label.as_str()
+    }
+
+    pub fn highlight_indices(&self) -> &[usize] {
+        &self.highlight_indices
     }
 }
 
@@ -97,15 +112,10 @@ pub fn highlight_ranges(
         let mut end_ix = start_ix;
 
         loop {
-            end_ix = end_ix + text[end_ix..].chars().next().unwrap().len_utf8();
-            if let Some(&next_ix) = highlight_indices.peek() {
-                if next_ix == end_ix {
-                    end_ix = next_ix;
-                    highlight_indices.next();
-                    continue;
-                }
+            end_ix += text[end_ix..].chars().next().map_or(0, |c| c.len_utf8());
+            if highlight_indices.next_if(|&ix| ix == end_ix).is_none() {
+                break;
             }
-            break;
         }
 
         highlights.push((start_ix..end_ix, style));

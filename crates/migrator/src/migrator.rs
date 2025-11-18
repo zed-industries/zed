@@ -15,6 +15,7 @@
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
 use anyhow::{Context as _, Result};
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
@@ -28,7 +29,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
     let syntax_tree = parser
-        .parse(&text, None)
+        .parse(text, None)
         .context("failed to parse settings")?;
 
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -37,7 +38,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     let mut edits = vec![];
     while let Some(mat) = matches.next() {
         if let Some((_, callback)) = patterns.get(mat.pattern_index) {
-            edits.extend(callback(&text, &mat, query));
+            edits.extend(callback(text, mat, query));
         }
     }
 
@@ -65,14 +66,50 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     }
 }
 
-fn run_migrations(
-    text: &str,
-    migrations: &[(MigrationPatterns, &Query)],
-) -> Result<Option<String>> {
+/// Runs the provided migrations on the given text.
+/// Will automatically return `Ok(None)` if there's no content to migrate.
+fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<String>> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
-    for (patterns, query) in migrations.iter() {
-        if let Some(migrated_text) = migrate(&current_text, patterns, query)? {
+    let json_indent_size = infer_json_indent_size(&current_text);
+    for migration in migrations.iter() {
+        let migrated_text = match migration {
+            MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
+            MigrationType::Json(callback) => {
+                if current_text.trim().is_empty() {
+                    return Ok(None);
+                }
+                let old_content: serde_json_lenient::Value =
+                    parse_json_with_comments(&current_text)?;
+                let old_value = serde_json::to_value(&old_content).unwrap();
+                let mut new_value = old_value.clone();
+                callback(&mut new_value)?;
+                if new_value != old_value {
+                    let mut current = current_text.clone();
+                    let mut edits = vec![];
+                    update_value_in_json_text(
+                        &mut current,
+                        &mut vec![],
+                        json_indent_size,
+                        &old_value,
+                        &new_value,
+                        &mut edits,
+                    );
+                    let mut migrated_text = current_text.clone();
+                    for (range, replacement) in edits.into_iter() {
+                        migrated_text.replace_range(range, &replacement);
+                    }
+                    Some(migrated_text)
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(migrated_text) = migrated_text {
             current_text = migrated_text.clone();
             result = Some(migrated_text);
         }
@@ -81,24 +118,24 @@ fn run_migrations(
 }
 
 pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
-    let migrations: &[(MigrationPatterns, &Query)] = &[
-        (
+    let migrations: &[MigrationType] = &[
+        MigrationType::TreeSitter(
             migrations::m_2025_01_29::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_01_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_01_30::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_01_30,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_03_03::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_03_03,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_03_06::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_03_06,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_15::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_04_15,
         ),
@@ -106,63 +143,81 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
     run_migrations(text, migrations)
 }
 
+enum MigrationType<'a> {
+    TreeSitter(MigrationPatterns, &'a Query),
+    Json(fn(&mut serde_json::Value) -> Result<()>),
+}
+
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
-    let migrations: &[(MigrationPatterns, &Query)] = &[
-        (
+    let migrations: &[MigrationType] = &[
+        MigrationType::TreeSitter(
             migrations::m_2025_01_02::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_02,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_01_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_01_30::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_30,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_03_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_03_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_15,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_21::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_21,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_23::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_23,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_05_05::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_05,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_05_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_08,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_05_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_06_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_16,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_06_25::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_25,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_06_27::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_27,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_07_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_07_08,
+        ),
+        MigrationType::Json(migrations::m_2025_10_01::flatten_code_actions_formatters),
+        MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
+        MigrationType::TreeSitter(
+            migrations::m_2025_10_03::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_10_03,
+        ),
+        MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
+        MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
+        MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_12::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_12,
         ),
     ];
     run_migrations(text, migrations)
@@ -170,7 +225,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
 
 pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<String>> {
     migrate(
-        &text,
+        text,
         &[(
             SETTINGS_NESTED_KEY_VALUE_PATTERN,
             migrations::m_2025_01_29::replace_edit_prediction_provider_setting,
@@ -278,6 +333,14 @@ define_query!(
     SETTINGS_QUERY_2025_07_08,
     migrations::m_2025_07_08::SETTINGS_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2025_10_03,
+    migrations::m_2025_10_03::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_11_12,
+    migrations::m_2025_11_12::SETTINGS_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -291,24 +354,56 @@ static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unindent::Unindent as _;
+
+    #[track_caller]
+    fn assert_migrated_correctly(migrated: Option<String>, expected: Option<&str>) {
+        match (&migrated, &expected) {
+            (Some(migrated), Some(expected)) => {
+                pretty_assertions::assert_str_eq!(expected, migrated);
+            }
+            _ => {
+                pretty_assertions::assert_eq!(migrated.as_deref(), expected);
+            }
+        }
+    }
 
     fn assert_migrate_keymap(input: &str, output: Option<&str>) {
-        let migrated = migrate_keymap(&input).unwrap();
+        let migrated = migrate_keymap(input).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
+    #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
-        let migrated = migrate_settings(&input).unwrap();
-        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+        let migrated = migrate_settings(input).unwrap();
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = migrate_settings(&migrated).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
+    #[track_caller]
     fn assert_migrate_settings_with_migrations(
-        migrations: &[(MigrationPatterns, &Query)],
+        migrations: &[MigrationType],
         input: &str,
         output: Option<&str>,
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
-        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = run_migrations(&migrated, migrations).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
+    }
+
+    #[test]
+    fn test_empty_content() {
+        assert_migrate_settings("", None)
     }
 
     #[test]
@@ -899,7 +994,7 @@ mod tests {
     #[test]
     fn test_mcp_settings_migration() {
         assert_migrate_settings_with_migrations(
-            &[(
+            &[MigrationType::TreeSitter(
                 migrations::m_2025_06_16::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_06_16,
             )],
@@ -1088,7 +1183,7 @@ mod tests {
     }
 }"#;
         assert_migrate_settings_with_migrations(
-            &[(
+            &[MigrationType::TreeSitter(
                 migrations::m_2025_06_16::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_06_16,
             )],
@@ -1260,6 +1355,894 @@ mod tests {
         }
     }
 }"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_basic_array() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
+            &r#"{
+        "formatter": [
+          {
+            "code_actions": {
+              "included-1": true,
+              "included-2": true,
+              "excluded": false,
+            }
+          }
+        ]
+      }"#
+            .unindent(),
+            Some(
+                &r#"{
+        "formatter": [
+          {
+            "code_action": "included-1"
+          },
+          {
+            "code_action": "included-2"
+          }
+        ]
+      }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_basic_object() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
+            &r#"{
+        "formatter": {
+          "code_actions": {
+            "included-1": true,
+            "excluded": false,
+            "included-2": true
+          }
+        }
+      }"#
+            .unindent(),
+            Some(
+                &r#"{
+                  "formatter": [
+                    {
+                      "code_action": "included-1"
+                    },
+                    {
+                      "code_action": "included-2"
+                    }
+                  ]
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_array_with_multiple_action_blocks() {
+        assert_migrate_settings(
+            &r#"{
+          "formatter": [
+            {
+               "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
+               }
+            },
+            {
+              "language_server": "ruff"
+            },
+            {
+               "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+               }
+            }
+            // some comment
+            ,
+            {
+               "code_actions": {
+                "excluded": false,
+                "included-3": true,
+                "included-4": true,
+               }
+            },
+          ]
+        }"#
+            .unindent(),
+            Some(
+                &r#"{
+        "formatter": [
+          {
+            "code_action": "included-1"
+          },
+          {
+            "code_action": "included-2"
+          },
+          {
+            "language_server": "ruff"
+          },
+          {
+            "code_action": "included-3"
+          },
+          {
+            "code_action": "included-4"
+          }
+        ]
+      }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_languages() {
+        assert_migrate_settings(
+            &r#"{
+        "languages": {
+          "Rust": {
+            "formatter": [
+              {
+                "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
+                }
+              },
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          }
+        }
+      }"#
+            .unindent(),
+            Some(
+                &r#"{
+          "languages": {
+            "Rust": {
+              "formatter": [
+                {
+                  "code_action": "included-1"
+                },
+                {
+                  "code_action": "included-2"
+                },
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            }
+          }
+        }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_defaults_and_multiple_languages()
+     {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
+            &r#"{
+        "formatter": {
+          "code_actions": {
+            "default-1": true,
+            "default-2": true,
+            "default-3": true,
+            "default-4": true,
+          }
+        },
+        "languages": {
+          "Rust": {
+            "formatter": [
+              {
+                "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
+                }
+              },
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          },
+          "Python": {
+            "formatter": [
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          }
+        }
+      }"#
+            .unindent(),
+            Some(
+                &r#"{
+          "formatter": [
+            {
+              "code_action": "default-1"
+            },
+            {
+              "code_action": "default-2"
+            },
+            {
+              "code_action": "default-3"
+            },
+            {
+              "code_action": "default-4"
+            }
+          ],
+          "languages": {
+            "Rust": {
+              "formatter": [
+                {
+                  "code_action": "included-1"
+                },
+                {
+                  "code_action": "included-2"
+                },
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            },
+            "Python": {
+              "formatter": [
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            }
+          }
+        }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_array_with_format_on_save_and_multiple_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
+            &r#"{
+        "formatter": {
+          "code_actions": {
+            "default-1": true,
+            "default-2": true,
+            "default-3": true,
+            "default-4": true,
+          }
+        },
+        "format_on_save": [
+          {
+            "code_actions": {
+              "included-1": true,
+              "included-2": true,
+              "excluded": false,
+            }
+          },
+          {
+            "language_server": "ruff"
+          },
+          {
+            "code_actions": {
+              "excluded": false,
+              "excluded-2": false,
+            }
+          }
+          // some comment
+          ,
+          {
+            "code_actions": {
+              "excluded": false,
+              "included-3": true,
+              "included-4": true,
+            }
+          },
+        ],
+        "languages": {
+          "Rust": {
+            "format_on_save": "prettier",
+            "formatter": [
+              {
+                "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
+                }
+              },
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          },
+          "Python": {
+            "format_on_save": {
+              "code_actions": {
+                "on-save-1": true,
+                "on-save-2": true,
+              }
+            },
+            "formatter": [
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          }
+        }
+      }"#
+            .unindent(),
+            Some(
+                &r#"
+        {
+          "formatter": [
+            {
+              "code_action": "default-1"
+            },
+            {
+              "code_action": "default-2"
+            },
+            {
+              "code_action": "default-3"
+            },
+            {
+              "code_action": "default-4"
+            }
+          ],
+          "format_on_save": [
+            {
+              "code_action": "included-1"
+            },
+            {
+              "code_action": "included-2"
+            },
+            {
+              "language_server": "ruff"
+            },
+            {
+              "code_action": "included-3"
+            },
+            {
+              "code_action": "included-4"
+            }
+          ],
+          "languages": {
+            "Rust": {
+              "format_on_save": "prettier",
+              "formatter": [
+                {
+                  "code_action": "included-1"
+                },
+                {
+                  "code_action": "included-2"
+                },
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            },
+            "Python": {
+              "format_on_save": [
+                {
+                  "code_action": "on-save-1"
+                },
+                {
+                  "code_action": "on-save-2"
+                }
+              ],
+              "formatter": [
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            }
+          }
+        }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_basic() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                  "format_on_save": "prettier"
+              }"#
+            .unindent(),
+            Some(
+                &r#"{
+                      "formatter": "prettier",
+                      "format_on_save": "on"
+                  }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_array() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": ["prettier", {"language_server": "eslint"}]
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [
+                        "prettier",
+                        {
+                            "language_server": "eslint"
+                        }
+                    ],
+                    "format_on_save": "on"
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_on_off_unchanged() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": "on"
+            }"#
+            .unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": "off"
+            }"#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_in_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "languages": {
+                    "Rust": {
+                        "format_on_save": "rust-analyzer"
+                    },
+                    "Python": {
+                        "format_on_save": ["ruff", "black"]
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "languages": {
+                        "Rust": {
+                            "formatter": "rust-analyzer",
+                            "format_on_save": "on"
+                        },
+                        "Python": {
+                            "formatter": [
+                                "ruff",
+                                "black"
+                            ],
+                            "format_on_save": "on"
+                        }
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_mixed_global_and_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": "prettier",
+                "languages": {
+                    "Rust": {
+                        "format_on_save": "rust-analyzer"
+                    },
+                    "Python": {
+                        "format_on_save": "on"
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": "prettier",
+                    "format_on_save": "on",
+                    "languages": {
+                        "Rust": {
+                            "formatter": "rust-analyzer",
+                            "format_on_save": "on"
+                        },
+                        "Python": {
+                            "format_on_save": "on"
+                        }
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_no_migration_when_no_format_on_save() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "formatter": ["prettier"]
+            }"#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_restore_code_actions_on_format() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": {
+                    "code_action": "foo"
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "code_actions_on_format": {
+                        "foo": true
+                    },
+                    "formatter": []
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [
+                    { "code_action": "foo" },
+                    "auto"
+                ]
+            }"#
+            .unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": {
+                    "code_action": "foo"
+                },
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [],
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "bar": true,
+                        "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [
+                    { "code_action": "foo" },
+                    { "code_action": "qux" },
+                ],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [],
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "qux": true,
+                        "bar": true,
+                        "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_make_file_finder_include_ignored_an_enum() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "all"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "indexed"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": null
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "smart"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_project_panel_open_file_on_paste_migration() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": true }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": false }
+                    }
+                }
+                "#
+                .unindent(),
             ),
         );
     }

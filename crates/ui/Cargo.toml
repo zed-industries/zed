@@ -21,6 +21,7 @@ gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
 menu.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
@@ -29,7 +30,6 @@ strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

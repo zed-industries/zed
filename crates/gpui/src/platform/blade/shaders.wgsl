@@ -28,6 +28,38 @@ fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>)
 
 */
 
+// Contrast and gamma correction adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+fn color_brightness(color: vec3<f32>) -> f32 {
+    // REC. 601 luminance coefficients for perceived brightness
+    return dot(color, vec3<f32>(0.30, 0.59, 0.11));
+}
+
+fn light_on_dark_contrast(enhancedContrast: f32, color: vec3<f32>) -> f32 {
+    let brightness = color_brightness(color);
+    let multiplier = saturate(4.0 * (0.75 - brightness));
+    return enhancedContrast * multiplier;
+}
+
+fn enhance_contrast(alpha: f32, k: f32) -> f32 {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
+fn apply_alpha_correction(a: f32, b: f32, g: vec4<f32>) -> f32 {
+    let brightness_adjustment = g.x * b + g.y;
+    let correction = brightness_adjustment * a + (g.z * b + g.w);
+    return a + a * (1.0 - a) * correction;
+}
+
+fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> f32 {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+    let brightness = color_brightness(color);
+
+    let contrasted = enhance_contrast(sample, enhanced_contrast);
+    return apply_alpha_correction(contrasted, brightness, gamma_ratios);
+}
+
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
@@ -35,6 +67,8 @@ struct GlobalParams {
 }
 
 var<uniform> globals: GlobalParams;
+var<uniform> gamma_ratios: vec4<f32>;
+var<uniform> grayscale_enhanced_contrast: f32;
 var t_sprite: texture_2d<f32>;
 var s_sprite: sampler;
 
@@ -141,11 +175,24 @@ fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: 
     return distance_from_clip_rect_impl(position, clip_bounds);
 }
 
+fn distance_from_clip_rect_transformed(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
+    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+    let transformed = transpose(transform.rotation_scale) * position + transform.translation;
+    return distance_from_clip_rect_impl(transformed, clip_bounds);
+}
+
 // https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
 fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     let cutoff = srgb < vec3<f32>(0.04045);
     let higher = pow((srgb + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4));
     let lower = srgb / vec3<f32>(12.92);
+    return select(higher, lower, cutoff);
+}
+
+fn srgb_to_linear_component(a: f32) -> f32 {
+    let cutoff = a < 0.04045;
+    let higher = pow((a + 0.055) / 1.055, 2.4);
+    let lower = a / 12.92;
     return select(higher, lower, cutoff);
 }
 
@@ -198,12 +245,7 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
         color.b += x;
     }
 
-    // Input colors are assumed to be in sRGB space,
-    // but blending and rendering needs to happen in linear space.
-    // The output will be converted to sRGB by either the target
-    // texture format or the swapchain color space.
-    let linear = srgb_to_linear(color);
-    return vec4<f32>(linear, a);
+    return vec4<f32>(color, a);
 }
 
 /// Convert a linear sRGB to Oklab space.
@@ -644,7 +686,24 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let is_horizontal =
                         corner_center_to_point.x <
                         corner_center_to_point.y;
-                let border_width = select(border.y, border.x, is_horizontal);
+
+                // When applying dashed borders to just some, not all, the sides.
+                // The way we chose border widths above sometimes comes with a 0 width value.
+                // So we choose again to avoid division by zero.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
+                let dashed_border = vec2<f32>(
+                        max(
+                            quad.border_widths.bottom,
+                            quad.border_widths.top,
+                        ),
+                        max(
+                            quad.border_widths.right,
+                            quad.border_widths.left,
+                        )
+                   );
+
+                let border_width = select(dashed_border.y, dashed_border.x, is_horizontal);
                 dash_velocity = dv_numerator / border_width;
                 t = select(point.y, point.x, is_horizontal) * dash_velocity;
                 max_t = select(size.y, size.x, is_horizontal) * dash_velocity;
@@ -1057,6 +1116,9 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
 @fragment
 fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
+    const WAVE_FREQUENCY: f32 = 2.0;
+    const WAVE_HEIGHT_RATIO: f32 = 0.8;
+
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
@@ -1069,9 +1131,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     }
 
     let half_thickness = underline.thickness * 0.5;
+
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
-    let frequency = M_PI_F * 3.0 * underline.thickness / 3.0;
-    let amplitude = 1.0 / (4.0 * underline.thickness);
+    let frequency = M_PI_F * WAVE_FREQUENCY * underline.thickness / underline.bounds.size.y;
+    let amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
     let sine = sin(st.x * frequency) * amplitude;
     let dSine = cos(st.x * frequency) * amplitude * frequency;
     let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);
@@ -1112,18 +1176,22 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
 
 @fragment
 fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
+    let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
-    return blend_color(input.color, sample);
+
+    // convert to srgb space as the rest of the code (output swapchain) expects that
+    return blend_color(input.color, alpha_corrected);
 }
 
 // --- polychrome sprites --- //

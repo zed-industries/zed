@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
@@ -18,11 +21,11 @@ gpui.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 serde_json_lenient.workspace = true
 snippet.workspace = true
 util.workspace = true
 schemars.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

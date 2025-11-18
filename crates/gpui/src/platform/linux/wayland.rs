@@ -5,6 +5,9 @@ mod display;
 mod serial;
 mod window;
 
+/// Contains Types for configuring layer_shell surfaces.
+pub mod layer_shell;
+
 pub(crate) use client::*;
 
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
@@ -12,7 +15,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 use crate::CursorStyle;
 
 impl CursorStyle {
-    pub(super) fn to_shape(&self) -> Shape {
+    pub(super) fn to_shape(self) -> Shape {
         match self {
             CursorStyle::Arrow => Shape::Default,
             CursorStyle::IBeam => Shape::Text,

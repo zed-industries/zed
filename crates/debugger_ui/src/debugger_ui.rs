@@ -1,6 +1,5 @@
 use std::any::TypeId;
 
-use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::DebugPanel;
 use editor::Editor;
 use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
@@ -10,7 +9,6 @@ use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::Threa
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::DebugSession;
-use settings::Settings;
 use stack_trace_view::StackTraceView;
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
@@ -85,6 +83,10 @@ actions!(
         Rerun,
         /// Toggles expansion of the selected item in the debugger UI.
         ToggleExpandItem,
+        /// Toggle the user frame filter in the stack frame list
+        /// When toggled on, only frames from the user's code are shown
+        /// When toggled off, all frames are shown
+        ToggleUserFrames,
     ]
 );
 
@@ -111,7 +113,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    DebuggerSettings::register(cx);
     workspace::FollowableViewRegistry::register::<DebugSession>(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -279,6 +280,18 @@ pub fn init(cx: &mut App) {
                             .ok();
                     }
                 })
+                .on_action(move |_: &ToggleUserFrames, _, cx| {
+                    if let Some((thread_status, stack_frame_list)) = active_item
+                        .read_with(cx, |item, cx| {
+                            (item.thread_status(cx), item.stack_frame_list().clone())
+                        })
+                        .ok()
+                    {
+                        stack_frame_list.update(cx, |stack_frame_list, cx| {
+                            stack_frame_list.toggle_frame_filter(thread_status, cx);
+                        })
+                    }
+                })
             });
     })
     .detach();
@@ -293,9 +306,8 @@ pub fn init(cx: &mut App) {
                     let Some(debug_panel) = workspace.read(cx).panel::<DebugPanel>(cx) else {
                         return;
                     };
-                    let Some(active_session) = debug_panel
-                        .clone()
-                        .update(cx, |panel, _| panel.active_session())
+                    let Some(active_session) =
+                        debug_panel.update(cx, |panel, _| panel.active_session())
                     else {
                         return;
                     };
@@ -326,8 +338,10 @@ pub fn init(cx: &mut App) {
                                 maybe!({
                                     let (buffer, position, _) = editor
                                         .update(cx, |editor, cx| {
-                                            let cursor_point: language::Point =
-                                                editor.selections.newest(cx).head();
+                                            let cursor_point: language::Point = editor
+                                                .selections
+                                                .newest(&editor.display_snapshot(cx))
+                                                .head();
 
                                             editor
                                                 .buffer()
@@ -377,7 +391,10 @@ pub fn init(cx: &mut App) {
                                 let text = editor
                                     .update(cx, |editor, cx| {
                                         editor.text_for_range(
-                                            editor.selections.newest(cx).range(),
+                                            editor
+                                                .selections
+                                                .newest(&editor.display_snapshot(cx))
+                                                .range(),
                                             &mut None,
                                             window,
                                             cx,

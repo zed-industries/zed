@@ -19,7 +19,7 @@ fn replace_setting_value(
         .nodes_for_capture_index(setting_capture_ix)
         .next()?
         .byte_range();
-    let setting_name = contents.get(setting_name_range.clone())?;
+    let setting_name = contents.get(setting_name_range)?;
 
     if setting_name != "hide_mouse_while_typing" {
         return None;

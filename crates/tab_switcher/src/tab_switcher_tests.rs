@@ -4,8 +4,7 @@ use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
-use std::path::Path;
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::{AppState, Workspace};
 
 #[ctor::ctor]
@@ -285,11 +284,8 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
         super::init(cx);
         editor::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         state
     })
 }
@@ -331,7 +327,7 @@ async fn open_buffer(
     });
     let project_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new(file_path)),
+        path: rel_path(file_path).into(),
     };
     workspace
         .update_in(cx, move |workspace, window, cx| {

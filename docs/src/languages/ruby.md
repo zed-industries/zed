@@ -9,6 +9,7 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-ex
   - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
   - [solargraph](https://github.com/castwide/solargraph)
   - [rubocop](https://github.com/rubocop/rubocop)
+  - [Herb](https://herb-tools.dev)
 - Debug Adapter: [`rdbg`](https://github.com/ruby/debug)
 
 The Ruby extension also provides support for ERB files.
@@ -27,6 +28,7 @@ In addition to these two language servers, Zed also supports:
 - [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 - [sorbet](https://sorbet.org/) which is a static type checker for Ruby with a custom gradual type system.
 - [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that leverages Ruby Signature (RBS).
+- [Herb](https://herb-tools.dev) which is a language server for ERB files.
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
 
@@ -44,7 +46,7 @@ For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `s
 
 You can skip step 1 and force using the system executable by setting `use_bundler` to `false` in your settings:
 
-```json
+```json [settings]
 {
   "lsp": {
     "<SERVER_NAME>": {
@@ -64,11 +66,23 @@ You can skip step 1 and force using the system executable by setting `use_bundle
 
 To switch to `ruby-lsp`, add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
       "language_servers": ["ruby-lsp", "!solargraph", "!rubocop", "..."]
+    },
+    // Enable herb and ruby-lsp for *.html.erb files
+    "HTML+ERB": {
+      "language_servers": ["herb", "ruby-lsp", "..."]
+    },
+    // Enable ruby-lsp for *.js.erb files
+    "JS+ERB": {
+      "language_servers": ["ruby-lsp", "..."]
+    },
+    // Enable ruby-lsp for *.yaml.erb files
+    "YAML+ERB": {
+      "language_servers": ["ruby-lsp", "..."]
     }
   }
 }
@@ -82,7 +96,7 @@ The Ruby extension also provides support for `rubocop` language server for offen
 
 To enable it, add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -94,7 +108,7 @@ To enable it, add the following to your `settings.json`:
 
 Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop` by adding the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -108,7 +122,7 @@ Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop`
 
 Solargraph has formatting and diagnostics disabled by default. We can tell Zed to enable them by adding the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "solargraph": {
@@ -129,7 +143,7 @@ Solargraph reads its configuration from a file called `.solargraph.yml` in the r
 
 You can pass Ruby LSP configuration to `initialization_options`, e.g.
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -150,7 +164,7 @@ You can pass Ruby LSP configuration to `initialization_options`, e.g.
 
 LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
 
-```json
+```json [settings]
 {
   "lsp": {
     "ruby-lsp": {
@@ -167,7 +181,7 @@ LSP `settings` and `initialization_options` can also be project-specific. For ex
 
 Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable it by adding the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -198,7 +212,7 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 
 To enable Sorbet, add `\"sorbet\"` to the `language_servers` list for Ruby in your `settings.json`. You may want to disable other language servers if Sorbet is intended to be your primary LSP, or if you plan to use it alongside another LSP for specific features like type checking.
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -222,7 +236,7 @@ For all aspects of installing Sorbet, setting it up in your project, and configu
 
 To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your `settings.json`. You may need to adjust the order or disable other LSPs depending on your desired setup.
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -238,13 +252,17 @@ To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your
 }
 ```
 
+## Setting up Herb
+
+`Herb` is enabled by default for the `HTML+ERB` language.
+
 ## Using the Tailwind CSS Language Server with Ruby
 
 It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in Ruby and ERB files.
 
 In order to do that, you need to configure the language server so that it knows about where to look for CSS classes in Ruby/ERB files by adding the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "Ruby": {
@@ -254,10 +272,6 @@ In order to do that, you need to configure the language server so that it knows 
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
-        "includeLanguages": {
-          "html/erb": "html",
-          "ruby": "html"
-        },
         "experimental": {
           "classRegex": ["\\bclass:\\s*['\"]([^'\"]*)['\"]"]
         }
@@ -288,7 +302,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 
 ### Minitest with Rails
 
-```json
+```json [tasks]
 [
   {
     "label": "test $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
@@ -299,6 +313,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
       "-n",
       "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
     ],
+    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["ruby-test"]
   }
 ]
@@ -308,7 +323,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 
 Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_CUSTOM_RUBY_TEST_NAME` instead:
 
-```json
+```json [tasks]
 [
   {
     "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
@@ -321,6 +336,7 @@ Plain minitest does not support running tests by line number, only by name, so w
       "-n",
       "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
     ],
+    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["ruby-test"]
   }
 ]
@@ -328,12 +344,13 @@ Plain minitest does not support running tests by line number, only by name, so w
 
 ### RSpec
 
-```json
+```json [tasks]
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
     "command": "bundle",
     "args": ["exec", "rspec", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["ruby-test"]
   }
 ]
@@ -349,7 +366,7 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug a Ruby script
 
-```json
+```json [debug]
 [
   {
     "label": "Debug current file",
@@ -363,13 +380,13 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug Rails server
 
-```json
+```json [debug]
 [
   {
     "label": "Debug Rails server",
     "adapter": "rdbg",
     "request": "launch",
-    "command": "$ZED_WORKTREE_ROOT/bin/rails",
+    "command": "./bin/rails",
     "args": ["server"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "env": {
@@ -385,15 +402,15 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 To format ERB templates, you can use the `erb-formatter` formatter. This formatter uses the [`erb-formatter`](https://rubygems.org/gems/erb-formatter) gem to format ERB templates.
 
-```jsonc
+```json [settings]
 {
-  "HTML/ERB": {
+  "HTML+ERB": {
     "formatter": {
       "external": {
         "command": "erb-formatter",
-        "arguments": ["--stdin-filename", "{buffer_path}"],
-      },
-    },
-  },
+        "arguments": ["--stdin-filename", "{buffer_path}"]
+      }
+    }
+  }
 }
 ```

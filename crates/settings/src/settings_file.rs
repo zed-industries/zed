@@ -1,4 +1,4 @@
-use crate::{Settings, settings_store::SettingsStore};
+use crate::{settings_content::SettingsContent, settings_store::SettingsStore};
 use collections::HashSet;
 use fs::{Fs, PathEventKind};
 use futures::{StreamExt, channel::mpsc};
@@ -22,7 +22,7 @@ pub fn test_settings() -> String {
             "buffer_font_family": "Courier",
             "buffer_font_features": {},
             "buffer_font_size": 14,
-            "buffer_font_fallback": [],
+            "buffer_font_fallbacks": [],
             "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
@@ -37,7 +37,7 @@ pub fn test_settings() -> String {
             "buffer_font_family": "Courier New",
             "buffer_font_features": {},
             "buffer_font_size": 14,
-            "buffer_font_fallback": [],
+            "buffer_font_fallbacks": [],
             "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
@@ -67,10 +67,10 @@ pub fn watch_config_file(
                     break;
                 }
 
-                if let Ok(contents) = fs.load(&path).await {
-                    if tx.unbounded_send(contents).is_err() {
-                        break;
-                    }
+                if let Ok(contents) = fs.load(&path).await
+                    && tx.unbounded_send(contents).is_err()
+                {
+                    break;
                 }
             }
         })
@@ -88,12 +88,11 @@ pub fn watch_config_dir(
     executor
         .spawn(async move {
             for file_path in &config_paths {
-                if fs.metadata(file_path).await.is_ok_and(|v| v.is_some()) {
-                    if let Ok(contents) = fs.load(file_path).await {
-                        if tx.unbounded_send(contents).is_err() {
-                            return;
-                        }
-                    }
+                if fs.metadata(file_path).await.is_ok_and(|v| v.is_some())
+                    && let Ok(contents) = fs.load(file_path).await
+                    && tx.unbounded_send(contents).is_err()
+                {
+                    return;
                 }
             }
 
@@ -110,10 +109,10 @@ pub fn watch_config_dir(
                                 }
                             }
                             Some(PathEventKind::Created) | Some(PathEventKind::Changed) => {
-                                if let Ok(contents) = fs.load(&event.path).await {
-                                    if tx.unbounded_send(contents).is_err() {
-                                        return;
-                                    }
+                                if let Ok(contents) = fs.load(&event.path).await
+                                    && tx.unbounded_send(contents).is_err()
+                                {
+                                    return;
                                 }
                             }
                             _ => {}
@@ -127,10 +126,10 @@ pub fn watch_config_dir(
     rx
 }
 
-pub fn update_settings_file<T: Settings>(
+pub fn update_settings_file(
     fs: Arc<dyn Fs>,
     cx: &App,
-    update: impl 'static + Send + FnOnce(&mut T::FileContent, &App),
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    SettingsStore::global(cx).update_settings_file::<T>(fs, update);
+    SettingsStore::global(cx).update_settings_file(fs, update);
 }

@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-changed=proto");
     let mut build = prost_build::Config::new();
     build
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")

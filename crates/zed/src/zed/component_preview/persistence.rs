@@ -1,10 +1,17 @@
 use anyhow::Result;
-use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
+use db::{
+    query,
+    sqlez::{domain::Domain, statement::Statement, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
-define_connection! {
-    pub static ref COMPONENT_PREVIEW_DB: ComponentPreviewDb<WorkspaceDb> =
-        &[sql!(
+pub struct ComponentPreviewDb(ThreadSafeConnection);
+
+impl Domain for ComponentPreviewDb {
+    const NAME: &str = stringify!(ComponentPreviewDb);
+
+    const MIGRATIONS: &[&str] = &[sql!(
             CREATE TABLE component_previews (
                 workspace_id INTEGER,
                 item_id INTEGER UNIQUE,
@@ -13,8 +20,10 @@ define_connection! {
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                 ON DELETE CASCADE
             ) STRICT;
-        )];
+    )];
 }
+
+db::static_connection!(COMPONENT_PREVIEW_DB, ComponentPreviewDb, [WorkspaceDb]);
 
 impl ComponentPreviewDb {
     pub async fn save_active_page(

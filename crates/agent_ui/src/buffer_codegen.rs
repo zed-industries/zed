@@ -1,7 +1,5 @@
-use crate::inline_prompt_editor::CodegenStatus;
-use agent::{
-    ContextStore,
-    context::{ContextLoadResult, load_context},
+use crate::{
+    context::load_context, context_store::ContextStore, inline_prompt_editor::CodegenStatus,
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
@@ -352,12 +350,12 @@ impl CodegenAlternative {
         event: &multi_buffer::Event,
         cx: &mut Context<Self>,
     ) {
-        if let multi_buffer::Event::TransactionUndone { transaction_id } = event {
-            if self.transformation_transaction_id == Some(*transaction_id) {
-                self.transformation_transaction_id = None;
-                self.generation = Task::ready(());
-                cx.emit(CodegenEvent::Undone);
-            }
+        if let multi_buffer::Event::TransactionUndone { transaction_id } = event
+            && self.transformation_transaction_id == Some(*transaction_id)
+        {
+            self.transformation_transaction_id = None;
+            self.generation = Task::ready(());
+            cx.emit(CodegenEvent::Undone);
         }
     }
 
@@ -388,7 +386,7 @@ impl CodegenAlternative {
             } else {
                 let request = self.build_request(&model, user_prompt, cx)?;
                 cx.spawn(async move |_, cx| {
-                    Ok(model.stream_completion_text(request.await, &cx).await?)
+                    Ok(model.stream_completion_text(request.await, cx).await?)
                 })
                 .boxed_local()
             };
@@ -434,20 +432,20 @@ impl CodegenAlternative {
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .context("generating content prompt")?;
 
-        let context_task = self.context_store.as_ref().map(|context_store| {
+        let context_task = self.context_store.as_ref().and_then(|context_store| {
             if let Some(project) = self.project.upgrade() {
                 let context = context_store
                     .read(cx)
                     .context()
                     .cloned()
                     .collect::<Vec<_>>();
-                load_context(context, &project, &self.prompt_store, cx)
+                Some(load_context(context, &project, &self.prompt_store, cx))
             } else {
-                Task::ready(ContextLoadResult::default())
+                None
             }
         });
 
-        let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(model, cx);
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
@@ -459,7 +457,6 @@ impl CodegenAlternative {
             if let Some(context_task) = context_task {
                 context_task
                     .await
-                    .loaded_context
                     .add_to_request_message(&mut request_message);
             }
 
@@ -576,38 +573,34 @@ impl CodegenAlternative {
                                 let mut lines = chunk.split('\n').peekable();
                                 while let Some(line) = lines.next() {
                                     new_text.push_str(line);
-                                    if line_indent.is_none() {
-                                        if let Some(non_whitespace_ch_ix) =
+                                    if line_indent.is_none()
+                                        && let Some(non_whitespace_ch_ix) =
                                             new_text.find(|ch: char| !ch.is_whitespace())
-                                        {
-                                            line_indent = Some(non_whitespace_ch_ix);
-                                            base_indent = base_indent.or(line_indent);
+                                    {
+                                        line_indent = Some(non_whitespace_ch_ix);
+                                        base_indent = base_indent.or(line_indent);
 
-                                            let line_indent = line_indent.unwrap();
-                                            let base_indent = base_indent.unwrap();
-                                            let indent_delta =
-                                                line_indent as i32 - base_indent as i32;
-                                            let mut corrected_indent_len = cmp::max(
-                                                0,
-                                                suggested_line_indent.len as i32 + indent_delta,
-                                            )
-                                                as usize;
-                                            if first_line {
-                                                corrected_indent_len = corrected_indent_len
-                                                    .saturating_sub(
-                                                        selection_start.column as usize,
-                                                    );
-                                            }
-
-                                            let indent_char = suggested_line_indent.char();
-                                            let mut indent_buffer = [0; 4];
-                                            let indent_str =
-                                                indent_char.encode_utf8(&mut indent_buffer);
-                                            new_text.replace_range(
-                                                ..line_indent,
-                                                &indent_str.repeat(corrected_indent_len),
-                                            );
+                                        let line_indent = line_indent.unwrap();
+                                        let base_indent = base_indent.unwrap();
+                                        let indent_delta = line_indent as i32 - base_indent as i32;
+                                        let mut corrected_indent_len = cmp::max(
+                                            0,
+                                            suggested_line_indent.len as i32 + indent_delta,
+                                        )
+                                            as usize;
+                                        if first_line {
+                                            corrected_indent_len = corrected_indent_len
+                                                .saturating_sub(selection_start.column as usize);
                                         }
+
+                                        let indent_char = suggested_line_indent.char();
+                                        let mut indent_buffer = [0; 4];
+                                        let indent_str =
+                                            indent_char.encode_utf8(&mut indent_buffer);
+                                        new_text.replace_range(
+                                            ..line_indent,
+                                            &indent_str.repeat(corrected_indent_len),
+                                        );
                                     }
 
                                     if line_indent.is_some() {
@@ -1028,7 +1021,7 @@ where
                                 chunk.push('\n');
                             }
 
-                            chunk.push_str(&line);
+                            chunk.push_str(line);
                         }
 
                         consumed += line.len();
@@ -1089,10 +1082,7 @@ mod tests {
     };
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::{
-        Buffer, Language, LanguageConfig, LanguageMatcher, Point, language_settings,
-        tree_sitter_rust,
-    };
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, Point, tree_sitter_rust};
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1133,7 +1123,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -1143,7 +1133,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1200,7 +1190,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -1212,7 +1202,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1269,7 +1259,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -1281,7 +1271,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1338,7 +1328,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
         let new_text = concat!(
             "func main() {\n",
             "\tx := 0\n",
@@ -1395,7 +1385,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
         chunks_tx
             .unbounded_send("let mut x = 0;\nx += 1;".to_string())
             .unwrap();
@@ -1472,12 +1462,10 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) {
         cx.update(LanguageModelRegistry::test);
         cx.set_global(cx.update(SettingsStore::test));
-        cx.update(Project::init_settings);
-        cx.update(language_settings::init);
     }
 
     fn simulate_response_stream(
-        codegen: Entity<CodegenAlternative>,
+        codegen: &Entity<CodegenAlternative>,
         cx: &mut TestAppContext,
     ) -> mpsc::UnboundedSender<String> {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();

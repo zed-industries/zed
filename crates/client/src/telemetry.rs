@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -76,13 +76,17 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
 
 pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
     option_env!("ZED_MINIDUMP_ENDPOINT")
-        .map(|s| s.to_owned())
+        .map(str::to_string)
         .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
 });
 
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
+
+#[cfg(target_os = "macos")]
+static MACOS_VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap());
 
 pub fn os_name() -> String {
     #[cfg(target_os = "macos")]
@@ -108,19 +112,16 @@ pub fn os_name() -> String {
 pub fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::base::nil;
-        use cocoa::foundation::NSProcessInfo;
-
-        unsafe {
-            let process_info = cocoa::foundation::NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            gpui::SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            )
+        use objc2_foundation::NSProcessInfo;
+        let process_info = NSProcessInfo::processInfo();
+        let version_nsstring = unsafe { process_info.operatingSystemVersionString() };
+        // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
+        let version_string = version_nsstring.to_string().replace("Version ", "");
+        // "15.6.1 (Build 24G90)" -> "15.6.1"
+        // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
+        MACOS_VERSION_REGEX
+            .replace_all(&version_string, "")
             .to_string()
-        }
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -178,8 +179,6 @@ impl Telemetry {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
 
-        TelemetrySettings::register(cx);
-
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
@@ -208,7 +207,7 @@ impl Telemetry {
             let os_version = os_version();
             state.lock().os_version = Some(os_version);
             async move {
-                if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
+                if let Some(tempfile) = File::create(Self::log_file_path()).ok() {
                     state.lock().log_file = Some(tempfile);
                 }
             }
@@ -294,10 +293,11 @@ impl Telemetry {
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
-        let state = self.state.lock();
-        let enabled = state.settings.metrics;
-        drop(state);
-        enabled
+        self.state.lock().settings.metrics
+    }
+
+    pub fn diagnostics_enabled(self: &Arc<Self>) -> bool {
+        self.state.lock().settings.diagnostics
     }
 
     pub fn set_authenticated_user_info(
@@ -340,22 +340,35 @@ impl Telemetry {
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
+        static LAST_EVENT_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
 
-        if let Some((start, end, environment)) = period_data {
-            let duration = end
-                .saturating_duration_since(start)
-                .min(Duration::from_secs(60 * 60 * 24))
-                .as_millis() as i64;
+        if let Some(mut last_event) = LAST_EVENT_TIME.try_lock() {
+            let current_time = std::time::Instant::now();
+            let last_time = last_event.get_or_insert(current_time);
 
-            telemetry::event!(
-                "Editor Edited",
-                duration = duration,
-                environment = environment,
-                is_via_ssh = is_via_ssh
-            );
+            if current_time.duration_since(*last_time) > Duration::from_secs(60 * 10) {
+                *last_time = current_time;
+            } else {
+                return;
+            }
+
+            if let Some((start, end, environment)) = period_data {
+                let duration = end
+                    .saturating_duration_since(start)
+                    .min(Duration::from_secs(60 * 60 * 24))
+                    .as_millis() as i64;
+
+                telemetry::event!(
+                    "Editor Edited",
+                    duration = duration,
+                    environment = environment,
+                    is_via_ssh = is_via_ssh
+                );
+            }
         }
     }
 
@@ -391,7 +404,7 @@ impl Telemetry {
         let mut project_types: HashSet<&str> = HashSet::new();
 
         for (path, _, _) in updated_entries_set.iter() {
-            let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+            let Some(file_name) = path.file_name() else {
                 continue;
             };
 
@@ -423,7 +436,7 @@ impl Telemetry {
         Some(project_types)
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();
         // RUST_LOG=telemetry=trace to debug telemetry events
         log::trace!(target: "telemetry", "{:?}", event);
@@ -431,6 +444,12 @@ impl Telemetry {
         if !state.settings.metrics {
             return;
         }
+
+        match &mut event {
+            Event::Flexible(event) => event
+                .event_properties
+                .insert("event_source".into(), "zed".into()),
+        };
 
         if state.flush_events_task.is_none() {
             let this = self.clone();
@@ -587,6 +606,7 @@ mod tests {
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
+    use util::rel_path::RelPath;
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
@@ -726,7 +746,7 @@ mod tests {
         );
 
         // Third scan of worktree does not double report, as we already reported
-        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], None, worktree_id);
+        test_project_discovery_helper(telemetry, vec!["package.json"], None, worktree_id);
     }
 
     #[gpui::test]
@@ -738,7 +758,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "pnpm-lock.yaml"],
             Some(vec!["node", "pnpm"]),
             1,
@@ -754,7 +774,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "yarn.lock"],
             Some(vec!["node", "yarn"]),
             1,
@@ -773,7 +793,7 @@ mod tests {
         // project type for the same worktree multiple times
 
         test_project_discovery_helper(
-            telemetry.clone().clone(),
+            telemetry.clone(),
             vec!["global.json"],
             Some(vec!["dotnet"]),
             1,
@@ -841,12 +861,12 @@ mod tests {
         let entries: Vec<_> = file_paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| {
-                (
-                    Arc::from(std::path::Path::new(path)),
+            .filter_map(|(i, path)| {
+                Some((
+                    Arc::from(RelPath::unix(path).ok()?),
                     ProjectEntryId::from_proto(i as u64 + 1),
                     PathChange::Added,
-                )
+                ))
             })
             .collect();
         let updated_entries: UpdatedEntriesSet = Arc::from(entries.as_slice());

@@ -6,7 +6,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, shell::ShellKind};
 
 use crate::*;
 
@@ -52,12 +52,13 @@ impl JsDebugAdapter {
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let mut envs = HashMap::default();
+        let mut envs = user_env.unwrap_or_default();
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
@@ -66,7 +67,7 @@ impl JsDebugAdapter {
                     .get("type")
                     .filter(|value| value == &"node-terminal")?;
                 let command = configuration.get("command")?.as_str()?.to_owned();
-                let mut args = shlex::split(&command)?.into_iter();
+                let mut args = ShellKind::Posix.split(&command)?.into_iter();
                 let program = args.next()?;
                 configuration.insert("runtimeExecutable".to_owned(), program.into());
                 configuration.insert(
@@ -99,10 +100,10 @@ impl JsDebugAdapter {
                 }
             }
 
-            if let Some(env) = configuration.get("env").cloned() {
-                if let Ok(env) = serde_json::from_value(env) {
-                    envs = env;
-                }
+            if let Some(env) = configuration.get("env").cloned()
+                && let Ok(env) = serde_json::from_value::<HashMap<String, String>>(env)
+            {
+                envs.extend(env.into_iter());
             }
 
             configuration
@@ -120,6 +121,13 @@ impl JsDebugAdapter {
             configuration
                 .entry("sourceMapRenames")
                 .or_insert(true.into());
+
+            // Set up remote browser debugging
+            if delegate.is_headless() {
+                configuration
+                    .entry("browserLaunchLocation")
+                    .or_insert("ui".into());
+            }
         }
 
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
@@ -138,11 +146,11 @@ impl JsDebugAdapter {
         };
 
         let arguments = if let Some(mut args) = user_args {
-            args.insert(0, adapter_path.to_string_lossy().to_string());
+            args.insert(0, adapter_path.to_string_lossy().into_owned());
             args
         } else {
             vec![
-                adapter_path.to_string_lossy().to_string(),
+                adapter_path.to_string_lossy().into_owned(),
                 port.to_string(),
                 host.to_string(),
             ]
@@ -497,6 +505,7 @@ impl DebugAdapter for JsDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
@@ -514,8 +523,15 @@ impl DebugAdapter for JsDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, user_args, cx)
-            .await
+        self.get_installed_binary(
+            delegate,
+            config,
+            user_installed_path,
+            user_args,
+            user_env,
+            cx,
+        )
+        .await
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {

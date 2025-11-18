@@ -15,12 +15,15 @@ path = "src/agent_settings.rs"
 anyhow.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
+convert_case.workspace = true
+fs.workspace = true
 gpui.workspace = true
 language_model.workspace = true
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-workspace-hack.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 fs.workspace = true
