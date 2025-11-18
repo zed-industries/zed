@@ -304,7 +304,7 @@ impl RemoteConnection for SshRemoteConnection {
                 let mut child = sftp_command.spawn()?;
                 if let Some(mut stdin) = child.stdin.take() {
                     use futures::AsyncWriteExt;
-                    let sftp_batch = format!("put -r {src_path_display} {dest_path_str}\n");
+                    let sftp_batch = format!("put -r \"{src_path_display}\" \"{dest_path_str}\"\n");
                     stdin.write_all(sftp_batch.as_bytes()).await?;
                     stdin.flush().await?;
                 }
@@ -489,7 +489,7 @@ impl SshRemoteConnection {
         let ssh_shell = socket.shell().await;
         log::info!("Remote shell discovered: {}", ssh_shell);
         let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
-        log::info!("Remote platform discovered: {}", ssh_shell);
+        log::info!("Remote platform discovered: {:?}", ssh_platform);
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,

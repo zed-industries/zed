@@ -916,7 +916,6 @@ impl MessageEditor {
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };
-        cx.stop_propagation();
         cx.spawn_in(window, async move |this, cx| {
             use itertools::Itertools;
             let (mut images, paths) = clipboard
@@ -964,7 +963,10 @@ impl MessageEditor {
             }
 
             let replacement_text = MentionUri::PastedImage.as_link().to_string();
-            let Ok(editor) = this.update(cx, |this, _| this.editor.clone()) else {
+            let Ok(editor) = this.update(cx, |this, cx| {
+                cx.stop_propagation();
+                this.editor.clone()
+            }) else {
                 return;
             };
             for image in images {

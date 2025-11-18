@@ -6731,6 +6731,7 @@ impl LspStore {
     ) -> HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>> {
         let next_hint_id = self.next_hint_id.clone();
         let lsp_data = self.latest_lsp_data(&buffer, cx);
+        let query_version = lsp_data.buffer_version.clone();
         let mut lsp_refresh_requested = false;
         let for_server = if let InvalidationStrategy::RefreshRequested {
             server_id,
@@ -6827,6 +6828,7 @@ impl LspStore {
             for (chunk, range_to_query) in ranges_to_query.into_iter().flatten() {
                 let next_hint_id = next_hint_id.clone();
                 let buffer = buffer.clone();
+                let query_version = query_version.clone();
                 let new_inlay_hints = cx
                     .spawn(async move |lsp_store, cx| {
                         let new_fetch_task = lsp_store.update(cx, |lsp_store, cx| {
@@ -6837,9 +6839,7 @@ impl LspStore {
                             .and_then(|new_hints_by_server| {
                                 lsp_store.update(cx, |lsp_store, cx| {
                                     let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                                    let update_cache = !lsp_data
-                                        .buffer_version
-                                        .changed_since(&buffer.read(cx).version());
+                                    let update_cache = lsp_data.buffer_version == query_version;
                                     if new_hints_by_server.is_empty() {
                                         if update_cache {
                                             lsp_data.inlay_hints.invalidate_for_chunk(chunk);

@@ -3690,6 +3690,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "http_client",
  "log",
  "net",
  "parking_lot",
@@ -5314,6 +5315,7 @@ dependencies = [
  "serde_json",
  "settings",
  "supermaven",
+ "sweep_ai",
  "telemetry",
  "theme",
  "ui",
@@ -16591,6 +16593,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sweep_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "brotli",
+ "client",
+ "collections",
+ "edit_prediction",
+ "feature_flags",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "indoc",
+ "language",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "tree-sitter-rust",
+ "util",
+ "workspace",
+ "zlog",
+]
+
+[[package]]
 name = "symphonia"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21217,7 +21246,6 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
- "backtrace",
  "bincode 1.3.3",
  "breadcrumbs",
  "call",
@@ -21282,7 +21310,6 @@ dependencies = [
  "mimalloc",
  "miniprofiler_ui",
  "nc",
- "nix 0.29.0",
  "node_runtime",
  "notifications",
  "onboarding",
@@ -21318,13 +21345,13 @@ dependencies = [
  "snippets_ui",
  "supermaven",
  "svg_preview",
+ "sweep_ai",
  "sysinfo 0.37.2",
  "system_specs",
  "tab_switcher",
  "task",
  "tasks_ui",
  "telemetry",
- "telemetry_events",
  "terminal_view",
  "theme",
  "theme_extension",
