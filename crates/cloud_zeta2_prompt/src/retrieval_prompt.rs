@@ -48,46 +48,37 @@ fn deserialize_queries<'de, D>(deserializer: D) -> Result<Box<[SearchToolQuery]>
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de::{SeqAccess, Visitor};
-    use std::fmt;
+    use serde::de::Error;
 
-    struct QueriesVisitor;
-
-    impl<'de> Visitor<'de> for QueriesVisitor {
-        type Value = Box<[SearchToolQuery]>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter
-                .write_str("an array of SearchToolQuery or an array of arrays of SearchToolQuery")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut queries = Vec::new();
-
-            while let Some(value) = seq.next_element::<QueryOrQueries>()? {
-                match value {
-                    QueryOrQueries::Single(query) => queries.push(query),
-                    QueryOrQueries::Multiple(inner_queries) => {
-                        queries.extend(inner_queries.into_vec());
-                    }
-                }
-            }
-
-            Ok(queries.into_boxed_slice())
-        }
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum QueryCollection {
+        Array(Box<[SearchToolQuery]>),
+        DoubleArray(Box<[Box<[SearchToolQuery]>]>),
+        Single(SearchToolQuery),
     }
 
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum QueryOrQueries {
-        Multiple(Box<[SearchToolQuery]>),
-        Single(SearchToolQuery),
+    enum MaybeDoubleEncoded {
+        SingleEncoded(QueryCollection),
+        DoubleEncoded(String),
     }
 
-    deserializer.deserialize_seq(QueriesVisitor)
+    let result = MaybeDoubleEncoded::deserialize(deserializer)?;
+
+    let normalized = match result {
+        MaybeDoubleEncoded::SingleEncoded(value) => value,
+        MaybeDoubleEncoded::DoubleEncoded(value) => {
+            serde_json::from_str(&value).map_err(D::Error::custom)?
+        }
+    };
+
+    Ok(match normalized {
+        QueryCollection::Array(items) => items,
+        QueryCollection::Single(search_tool_query) => Box::new([search_tool_query]),
+        QueryCollection::DoubleArray(double_array) => double_array.into_iter().flatten().collect(),
+    })
 }
 
 /// Search for relevant code by path, syntax hierarchy, and content.
@@ -142,10 +133,26 @@ const TOOL_USE_REMINDER: &str = indoc! {"
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
     fn test_deserialize_queries() {
+        let single_query_json = indoc! {r#"{
+            "queries": {
+                "glob": "**/*.rs",
+                "syntax_node": ["fn test"],
+                "content": "assert"
+            },
+        }"#};
+
+        let flat_input: SearchToolInput = serde_json::from_str(single_query_json).unwrap();
+        assert_eq!(flat_input.queries.len(), 2);
+        assert_eq!(flat_input.queries[0].glob, "**/*.rs");
+        assert_eq!(flat_input.queries[0].syntax_node, vec!["fn test"]);
+        assert_eq!(flat_input.queries[0].content, Some("assert".to_string()));
+
         let flat_json = indoc! {r#"{
             "queries": [
                 {
@@ -199,5 +206,39 @@ mod tests {
         assert_eq!(nested_input.queries[1].glob, "**/*.ts");
         assert_eq!(nested_input.queries[1].syntax_node.len(), 0);
         assert_eq!(nested_input.queries[1].content, None);
+
+        let double_encoded_queries = serde_json::to_string(&json!({
+            "queries": serde_json::to_string(&json!([
+                {
+                    "glob": "**/*.rs",
+                    "syntax_node": ["fn test"],
+                    "content": "assert"
+                },
+                {
+                    "glob": "**/*.ts",
+                    "syntax_node": [],
+                    "content": null
+                }
+            ])).unwrap()
+        }))
+        .unwrap();
+
+        let double_encoded_input: SearchToolInput =
+            serde_json::from_str(&double_encoded_queries).unwrap();
+
+        assert_eq!(double_encoded_input.queries.len(), 2);
+
+        assert_eq!(double_encoded_input.queries[0].glob, "**/*.rs");
+        assert_eq!(double_encoded_input.queries[0].syntax_node, vec!["fn test"]);
+        assert_eq!(
+            double_encoded_input.queries[0].content,
+            Some("assert".to_string())
+        );
+        assert_eq!(double_encoded_input.queries[1].glob, "**/*.ts");
+        assert_eq!(double_encoded_input.queries[1].syntax_node.len(), 0);
+        assert_eq!(double_encoded_input.queries[1].content, None);
+
+        // ### ERROR Switching from var declarations to lexical declarations [RUN 073]
+        // invalid search json {"queries": ["express/lib/response.js", "var\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s*=.*;", "function.*\\(.*\\).*\\{.*\\}"]}
     }
 }

@@ -19,7 +19,5 @@ ordered-float.workspace = true
 rustc-hash.workspace = true
 schemars.workspace = true
 serde.workspace = true
-strum.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
+strum.workspace = true
