@@ -362,6 +362,7 @@ pub fn find_related_excerpts(
                 raw_input: serde_json::to_string(&input).unwrap_or_default(),
                 input,
                 is_input_complete: true,
+                thought_signature: None,
             }
         };
 
