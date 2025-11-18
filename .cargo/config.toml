@@ -18,3 +18,6 @@ rustflags = [
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+
+[target.'cfg(target_os = "macos")']
+rustflags = [ "-Clink-args=-Wl,-rpath,@loader_path" ]

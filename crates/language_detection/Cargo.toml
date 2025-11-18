@@ -1,0 +1,22 @@
+[package]
+name = "language_detection"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/language_detection.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+magika = "1.0.0"
+ort = { version = "=2.0.0-rc.10", features = ["download-binaries"] }
+project.workspace = true
+settings.workspace = true
