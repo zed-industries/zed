@@ -288,6 +288,7 @@ impl MultiBuffer {
             .get(&path)
             .cloned()
             .unwrap_or_default();
+        let snapshot = self.snapshot(cx);
         existing.sort_by_cached_key(|id| snapshot.excerpt_locator_for_id(*id).clone());
         let mut new_iter = new.into_iter().peekable();
         let mut existing_iter = existing.into_iter().peekable();
@@ -296,7 +297,6 @@ impl MultiBuffer {
         let mut to_remove = Vec::new();
         let mut to_insert: Vec<(ExcerptId, ExcerptRange<Point>)> = Vec::new();
         let mut added_a_new_excerpt = false;
-        let snapshot = self.snapshot(cx);
 
         let mut next_excerpt_id =
             // is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
