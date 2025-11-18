@@ -1052,8 +1052,10 @@ impl AcpThreadView {
                     .iter()
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
-                self.message_editor
-                    .update(cx, |editor, cx| editor.clear(window, cx));
+                if text == "/login" {
+                    self.message_editor
+                        .update(cx, |editor, cx| editor.clear(window, cx));
+                }
 
                 let this = cx.weak_entity();
                 let agent = self.agent.clone();
