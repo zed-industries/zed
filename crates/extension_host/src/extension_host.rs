@@ -1779,7 +1779,11 @@ impl ExtensionStore {
                     })?,
                 path_style,
             );
-            log::info!("Uploading extension {} to {:?}", missing_extension.clone().id, dest_dir);
+            log::info!(
+                "Uploading extension {} to {:?}",
+                missing_extension.clone().id,
+                dest_dir
+            );
 
             client
                 .update(cx, |client, cx| {
@@ -1802,7 +1806,11 @@ impl ExtensionStore {
                 .await;
 
             if let Err(e) = result {
-                log::error!("Failed to install extension {}: {}", missing_extension.id, e);
+                log::error!(
+                    "Failed to install extension {}: {}",
+                    missing_extension.id,
+                    e
+                );
             }
         }
 
@@ -1824,7 +1832,11 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, _cx: &mut Context<Self>) {
+    pub fn register_remote_client(
+        &mut self,
+        client: Entity<RemoteClient>,
+        _cx: &mut Context<Self>,
+    ) {
         self.remote_clients.push(client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
