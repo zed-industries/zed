@@ -667,17 +667,11 @@ impl AgentConfiguration {
             .tools_for_server(&context_server_id)
             .count();
 
-        let is_remote = server_configuration
-            .as_ref()
-            .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Remote { .. }))
-            .unwrap_or(false);
         let (source_icon, source_tooltip) = if provided_by_extension {
             (
                 IconName::ZedSrcExtension,
                 "This MCP server was installed from an extension.",
             )
-        } else if is_remote {
-            (IconName::Server, "This is a remote MCP server.")
         } else {
             (
                 IconName::ZedSrcCustom,

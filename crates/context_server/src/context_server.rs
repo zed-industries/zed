@@ -6,6 +6,7 @@ pub mod test;
 pub mod transport;
 pub mod types;
 
+use collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, path::PathBuf};
@@ -56,12 +57,11 @@ impl ContextServer {
     pub fn from_url(
         id: ContextServerId,
         endpoint: &Url,
-        auth: Option<transport::AuthType>,
+        headers: HashMap<String, String>,
         cx: &App,
     ) -> Result<Self> {
         let http_client = cx.http_client();
-        let config = auth.map(|auth| transport::TransportConfig { auth: Some(auth) });
-        let transport = transport::build_transport(http_client, endpoint, config, cx)?;
+        let transport = transport::build_transport(http_client, endpoint, headers, cx)?;
         Ok(Self::new(id, transport))
     }
 

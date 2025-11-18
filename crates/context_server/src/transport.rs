@@ -43,12 +43,6 @@ impl AuthType {
     }
 }
 
-/// Configuration for transport creation
-#[derive(Debug, Clone, Default)]
-pub struct TransportConfig {
-    pub auth: Option<AuthType>,
-}
-
 #[async_trait]
 pub trait Transport: Send + Sync {
     async fn send(&self, message: String) -> Result<()>;
@@ -59,26 +53,17 @@ pub trait Transport: Send + Sync {
 pub fn build_transport(
     http_client: Arc<dyn HttpClient>,
     endpoint: &Url,
-    config: Option<TransportConfig>,
+    headers: HashMap<String, String>,
     cx: &App,
 ) -> Result<Arc<dyn Transport>> {
     log::info!("Creating transport for endpoint: {}", endpoint);
-    
-    let auth_headers = config
-        .and_then(|c| c.auth)
-        .map(|auth| auth.to_headers())
-        .unwrap_or_default();
-    
+
     match endpoint.scheme() {
         "http" | "https" => {
             log::info!("Using HTTP transport for {}", endpoint);
-            let transport = HttpTransport::new(
-                http_client,
-                endpoint.to_string(),
-                cx,
-            );
-            let transport = if !auth_headers.is_empty() {
-                transport.with_auth_headers(auth_headers)
+            let transport = HttpTransport::new(http_client, endpoint.to_string(), cx);
+            let transport = if !headers.is_empty() {
+                transport.with_auth_headers(headers)
             } else {
                 transport
             };

@@ -9,7 +9,7 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
-use settings::{Settings as _, SettingsStore};
+use settings::{ContextServerAuth, Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
@@ -22,20 +22,19 @@ pub fn init(cx: &mut App) {
     extension::init(cx);
 }
 
-fn convert_auth_to_transport(auth: &settings::ContextServerAuth) -> context_server::transport::AuthType {
+fn headers_from_auth(auth: &settings::ContextServerAuth) -> HashMap<String, String> {
     match auth {
         settings::ContextServerAuth::Bearer { token } => {
-            context_server::transport::AuthType::Bearer(token.clone())
+            let mut headers = HashMap::default();
+            headers.insert("Authorization".to_string(), format!("Bearer {}", token));
+            headers
         }
         settings::ContextServerAuth::ApiKey { header, value } => {
-            context_server::transport::AuthType::ApiKey {
-                header_name: header.clone(),
-                value: value.clone(),
-            }
+            let mut headers = HashMap::default();
+            headers.insert(header.clone(), value.clone());
+            headers
         }
-        settings::ContextServerAuth::Custom { headers } => {
-            context_server::transport::AuthType::Custom(headers.clone())
-        }
+        settings::ContextServerAuth::Custom { headers } => headers.clone(),
     }
 }
 
@@ -164,7 +163,11 @@ impl ContextServerConfiguration {
                     }
                 }
             }
-            ContextServerSettings::Remote { enabled: _, url, auth } => {
+            ContextServerSettings::Remote {
+                enabled: _,
+                url,
+                auth,
+            } => {
                 let url = url::Url::parse(&url).log_err()?;
                 Some(ContextServerConfiguration::Remote { url, auth })
             }
@@ -530,8 +533,11 @@ impl ContextServerStore {
 
         match configuration.as_ref() {
             ContextServerConfiguration::Remote { url, auth } => {
-                let transport_auth = auth.as_ref().map(|a| convert_auth_to_transport(a));
-                match ContextServer::from_url(id.clone(), url, transport_auth, cx) {
+                let headers = auth
+                    .as_ref()
+                    .map(|a| headers_from_auth(a))
+                    .unwrap_or_default();
+                match ContextServer::from_url(id.clone(), url, headers, cx) {
                     Ok(server) => Arc::new(server),
                     Err(e) => {
                         log::error!("Failed to create remote context server {}: {}", id, e);
