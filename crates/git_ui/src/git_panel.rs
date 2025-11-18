@@ -5888,6 +5888,22 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_diff_truncate_long_lines() {
+        let long_line = "a".repeat(300);
+        let diff = indoc::formatdoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             context
+            +{}
+             more context
+        ", long_line};
+        let result = GitPanel::compress_commit_diff(&diff, 100);
+        assert!(result.contains("...[truncated]"));
+        assert!(result.len() < diff.len());
+    }
+
+    #[test]
     fn test_compress_diff_truncate_hunks() {
         let diff = indoc! {"
             --- a/file.txt
