@@ -271,7 +271,7 @@ fn context_server_http_input(
                 }
                 lines
                     .into_iter()
-                    .map(|line| format!("  {}", line.to_string()))
+                    .map(|line| format!("  {}", line))
                     .collect::<String>()
             };
             (id.0.to_string(), url, header)
@@ -288,7 +288,7 @@ fn context_server_http_input(
   /// The name of your remote MCP server
   "{name}": {{
     /// The URL of the remote MCP server
-    "url": "{url}"
+    "url": "{url}",
     "headers": {{
      /// Any headers to send along
      {headers}

@@ -741,7 +741,6 @@ impl AgentConfiguration {
                             let context_server_id = context_server_id.clone();
                             let language_registry = language_registry.clone();
                             let workspace = workspace.clone();
-                            let is_remote = is_remote;
                             move |window, cx| {
                                 if is_remote {
                                     crate::agent_configuration::configure_context_server_modal::ConfigureContextServerModal::show_modal_for_existing_server(

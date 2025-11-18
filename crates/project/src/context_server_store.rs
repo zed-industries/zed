@@ -498,12 +498,9 @@ impl ContextServerStore {
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Http { url, headers } => Ok(Arc::new(ContextServer::http(
-                id.clone(),
-                url,
-                headers.clone(),
-                cx,
-            )?)),
+            ContextServerConfiguration::Http { url, headers } => {
+                Ok(Arc::new(ContextServer::http(id, url, headers.clone(), cx)?))
+            }
             _ => {
                 let root_path = self
                     .project
