@@ -283,11 +283,12 @@ impl MultiBuffer {
             .and_then(|(_, value)| value.last().copied())
             .unwrap_or(ExcerptId::min());
 
-        let existing = self
+        let mut existing = self
             .excerpts_by_path
             .get(&path)
             .cloned()
             .unwrap_or_default();
+        existing.sort_by_cached_key(|id| snapshot.excerpt_locator_for_id(*id).clone());
         let mut new_iter = new.into_iter().peekable();
         let mut existing_iter = existing.into_iter().peekable();
 
