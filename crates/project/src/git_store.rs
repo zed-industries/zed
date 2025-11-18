@@ -227,7 +227,7 @@ impl sum_tree::Item for StatusEntry {
 
     fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
         PathSummary {
-            max_path: self.repo_path.0.clone(),
+            max_path: self.repo_path.as_ref().clone(),
             item_summary: self.status.summary(),
         }
     }
@@ -237,7 +237,7 @@ impl sum_tree::KeyedItem for StatusEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.0.clone())
+        PathKey(self.repo_path.as_ref().clone())
     }
 }
 
@@ -256,6 +256,7 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub pending_ops_by_path: SumTree<PendingOps>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -312,10 +313,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    StatusesChanged {
-        // TODO could report which statuses changed here
-        full_scan: bool,
-    },
+    StatusesChanged,
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
@@ -990,7 +988,7 @@ impl GitStore {
                     RepositoryState::Local { backend, .. } => backend
                         .blame(repo_path.clone(), content)
                         .await
-                        .with_context(|| format!("Failed to blame {:?}", repo_path.0))
+                        .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                         .map(Some),
                     RepositoryState::Remote { project_id, client } => {
                         let response = client
@@ -1399,7 +1397,44 @@ impl GitStore {
                     diffs.remove(buffer_id);
                 }
             }
+            BufferStoreEvent::BufferChangedFilePath { buffer, .. } => {
+                // Whenever a buffer's file path changes, it's possible that the
+                // new path is actually a path that is being tracked by a git
+                // repository. In that case, we'll want to update the buffer's
+                // `BufferDiffState`, in case it already has one.
+                let buffer_id = buffer.read(cx).remote_id();
+                let diff_state = self.diffs.get(&buffer_id);
+                let repo = self.repository_and_path_for_buffer_id(buffer_id, cx);
 
+                if let Some(diff_state) = diff_state
+                    && let Some((repo, repo_path)) = repo
+                {
+                    let buffer = buffer.clone();
+                    let diff_state = diff_state.clone();
+
+                    cx.spawn(async move |_git_store, cx| {
+                        async {
+                            let diff_bases_change = repo
+                                .update(cx, |repo, cx| {
+                                    repo.load_committed_text(buffer_id, repo_path, cx)
+                                })?
+                                .await?;
+
+                            diff_state.update(cx, |diff_state, cx| {
+                                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                                diff_state.diff_bases_changed(
+                                    buffer_snapshot,
+                                    Some(diff_bases_change),
+                                    cx,
+                                );
+                            })
+                        }
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                }
+            }
             _ => {}
         }
     }
@@ -2376,7 +2411,7 @@ impl GitStore {
                 .entries
                 .into_iter()
                 .map(|(path, status)| proto::TreeDiffStatus {
-                    path: path.0.to_proto(),
+                    path: path.as_ref().to_proto(),
                     status: match status {
                         TreeDiffStatus::Added {} => proto::tree_diff_status::Status::Added.into(),
                         TreeDiffStatus::Modified { .. } => {
@@ -3029,6 +3064,7 @@ impl RepositorySnapshot {
             id,
             statuses_by_path: Default::default(),
             pending_ops_by_path: Default::default(),
+            renamed_paths: HashMap::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3069,6 +3105,11 @@ impl RepositorySnapshot {
                 .entries
                 .iter()
                 .map(stash_to_proto)
+                .collect(),
+            renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
                 .collect(),
         }
     }
@@ -3139,6 +3180,11 @@ impl RepositorySnapshot {
                 .iter()
                 .map(stash_to_proto)
                 .collect(),
+            renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
+                .collect(),
         }
     }
 
@@ -3152,13 +3198,13 @@ impl RepositorySnapshot {
 
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
-            .get(&PathKey(path.0.clone()), ())
+            .get(&PathKey(path.as_ref().clone()), ())
             .cloned()
     }
 
     pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<PendingOps> {
         self.pending_ops_by_path
-            .get(&PathKey(path.0.clone()), ())
+            .get(&PathKey(path.as_ref().clone()), ())
             .cloned()
     }
 
@@ -4023,7 +4069,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_staged() {
+                } else if entry.status.staging().is_fully_staged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4043,7 +4089,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_unstaged() {
+                } else if entry.status.staging().is_fully_unstaged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4727,7 +4773,9 @@ impl Repository {
                                 }
                             };
                             Some((
-                                RepoPath(RelPath::from_proto(&entry.path).log_err()?),
+                                RepoPath::from_rel_path(
+                                    &RelPath::from_proto(&entry.path).log_err()?,
+                                ),
                                 status,
                             ))
                         })
@@ -4932,6 +4980,17 @@ impl Repository {
         }
         self.snapshot.stash_entries = new_stash_entries;
 
+        self.snapshot.renamed_paths = update
+            .renamed_paths
+            .into_iter()
+            .filter_map(|(new_path_str, old_path_str)| {
+                Some((
+                    RepoPath::from_proto(&new_path_str).log_err()?,
+                    RepoPath::from_proto(&old_path_str).log_err()?,
+                ))
+            })
+            .collect();
+
         let edits = update
             .removed_statuses
             .into_iter()
@@ -4950,7 +5009,7 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         if !edits.is_empty() {
-            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+            cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
@@ -5289,7 +5348,8 @@ impl Repository {
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
                         for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
-                                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
+                                changed_path_statuses
+                                    .push(Edit::Remove(PathKey(path.as_ref().clone())));
                             }
                         }
                         changed_path_statuses
@@ -5303,7 +5363,7 @@ impl Repository {
                     }
 
                     if !changed_path_statuses.is_empty() {
-                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
+                        cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
@@ -5435,10 +5495,8 @@ fn get_permalink_in_rust_registry_src(
         remote,
         BuildPermalinkParams::new(
             &cargo_vcs_info.git.sha1,
-            &RepoPath(
-                RelPath::new(&path, PathStyle::local())
-                    .context("invalid path")?
-                    .into_arc(),
+            &RepoPath::from_rel_path(
+                &RelPath::new(&path, PathStyle::local()).context("invalid path")?,
             ),
             Some(selection),
         ),
@@ -5640,7 +5698,11 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status(&[RelPath::empty().into()]).await?;
+    let statuses = backend
+        .status(&[RepoPath::from_rel_path(
+            &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
+        )])
+        .await?;
     let stash_entries = backend.stash_entries().await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
@@ -5683,7 +5745,7 @@ async fn compute_snapshot(
     }
 
     if statuses_by_path != prev_snapshot.statuses_by_path {
-        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
+        events.push(RepositoryEvent::StatusesChanged)
     }
 
     // Useful when branch is None in detached head state
@@ -5704,6 +5766,7 @@ async fn compute_snapshot(
         id,
         statuses_by_path,
         pending_ops_by_path,
+        renamed_paths: statuses.renamed_paths,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,

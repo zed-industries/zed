@@ -10,13 +10,16 @@ pub fn cherry_pick() -> Workflow {
     let branch = Input::string("branch", None);
     let commit = Input::string("commit", None);
     let channel = Input::string("channel", None);
+    let pr_number = Input::string("pr_number", None);
     let cherry_pick = run_cherry_pick(&branch, &commit, &channel);
     named::workflow()
+        .run_name(format!("cherry_pick to {channel} #{pr_number}"))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
                 .add_input(commit.name, commit.input())
                 .add_input(branch.name, branch.input())
-                .add_input(channel.name, channel.input()),
+                .add_input(channel.name, channel.input())
+                .add_input(pr_number.name, pr_number.input()),
         ))
         .add_job(cherry_pick.name, cherry_pick.job)
 }

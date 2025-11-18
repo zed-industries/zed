@@ -76,21 +76,26 @@ pub(crate) fn run_tests() -> Workflow {
     jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
 
     named::workflow()
-        .add_event(Event::default()
-            .push(
-                Push::default()
-                    .add_branch("main")
-                    .add_branch("v[0-9]+.[0-9]+.x")
-            )
-            .pull_request(PullRequest::default().add_branch("**"))
+        .add_event(
+            Event::default()
+                .push(
+                    Push::default()
+                        .add_branch("main")
+                        .add_branch("v[0-9]+.[0-9]+.x"),
+                )
+                .pull_request(PullRequest::default().add_branch("**")),
         )
-        .concurrency(Concurrency::default()
-            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
-            .cancel_in_progress(true)
+        .concurrency(
+            Concurrency::default()
+                .group(concat!(
+                    "${{ github.workflow }}-${{ github.ref_name }}-",
+                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
+                ))
+                .cancel_in_progress(true),
         )
-        .add_env(( "CARGO_TERM_COLOR", "always" ))
-        .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ))
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("RUST_BACKTRACE", 1))
+        .add_env(("CARGO_INCREMENTAL", 0))
         .map(|mut workflow| {
             for job in jobs {
                 workflow = workflow.add_job(job.name, job.job)
@@ -292,8 +297,8 @@ fn check_workspace_binaries() -> NamedJob {
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
-            .map(steps::install_linux_dependencies)
             .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
@@ -312,16 +317,18 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
+            .when(platform == Platform::Linux, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
-            .add_step(steps::cargo_install_nextest(platform))
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::cargo_install_nextest())
+            })
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
             .add_step(steps::cleanup_cargo_config(platform)),

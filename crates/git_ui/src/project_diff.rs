@@ -339,7 +339,7 @@ impl ProjectDiff {
         };
         let repo = git_repo.read(cx);
         let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
-        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
         self.move_to_path(path_key, window, cx)
     }
@@ -566,31 +566,14 @@ impl ProjectDiff {
         };
         let project = cx.read_entity(&branch_diff, |bd, _| bd.project.clone())?;
 
-        let cached_status: Vec<git_store::StatusEntry> =
-            cx.read_entity(&repo, |repo: &Repository, _| repo.cached_status().collect())?;
-
-        let mut previous_paths =
-            cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
-
-        let mut seen = HashSet::default();
-        for entry in cached_status {
-            seen.insert(entry.repo_path.clone());
-            let tree_diff_status = cx.read_entity(&branch_diff, |branch_diff, _| {
-                branch_diff
-                    .tree_diff
-                    .as_ref()
-                    .and_then(|t| t.entries.get(&entry.repo_path))
-                    .cloned()
-            })?;
-
-            let Some(status) = cx.read_entity(&branch_diff, |bd, _| {
-                bd.merge_statuses(Some(entry.status), tree_diff_status.as_ref())
-            })?
-            else {
-                continue;
-            };
-            if !status.has_changes() {
-                continue;
+                path_keys = Vec::with_capacity(buffers_to_load.len());
+                for entry in buffers_to_load.iter() {
+                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                    let path_key =
+                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+                    previous_paths.remove(&path_key);
+                    path_keys.push(path_key)
+                }
             }
 
             let Some(project_path) = cx.read_entity(&repo, |repo, cx| {

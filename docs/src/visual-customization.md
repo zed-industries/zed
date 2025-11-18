@@ -218,6 +218,10 @@ TBD: Centered layout related settings
     "active_line_width": 1,           // Width of active guide in pixels [1-10]
     "coloring": "fixed",              // disabled, fixed, indent_aware
     "background_coloring": "disabled" // disabled, indent_aware
+  },
+
+  "sticky_scroll": {
+    "enabled": false // Whether to stick scopes to the top of the editor. Disabled by default.
   }
 ```
 
@@ -453,6 +457,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       // When to show indent guides in the project panel. (always, never)
       "show": "always"
     },
+    // Sort order for entries (directories_first, mixed, files_first)
+    "sort_mode": "directories_first",
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
