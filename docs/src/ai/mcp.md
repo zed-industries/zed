@@ -47,7 +47,7 @@ You can connect them by adding their commands directly to your `settings.json`, 
     },
     "over-http": {
       "url": "custom",
-      "headers": {"Authorization": "Bearer <token>"}
+      "headers": { "Authorization": "Bearer <token>" }
     }
   }
 }
