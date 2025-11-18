@@ -5,7 +5,10 @@ use language::{Buffer, ServerHealth};
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use rpc::proto;
 
-use crate::{LspStore, LspStoreEvent, Project, ProjectPath, lsp_store};
+use crate::{
+    LspStore, LspStoreEvent, Project, ProjectPath, lsp_command::make_text_document_identifier,
+    lsp_store,
+};
 
 pub const RUST_ANALYZER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
@@ -134,6 +137,7 @@ pub fn run_flycheck(
     project: Entity<Project>,
     buffer_path: Option<ProjectPath>,
     cx: &mut App,
+    current_file_only: bool,
 ) -> Task<anyhow::Result<()>> {
     let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     let lsp_store = project.read(cx).lsp_store();
@@ -163,7 +167,7 @@ pub fn run_flycheck(
                 project_id,
                 buffer_id,
                 language_server_id: rust_analyzer_server.to_proto(),
-                current_file_only: false,
+                current_file_only,
             };
             client
                 .request(request)
@@ -171,11 +175,18 @@ pub fn run_flycheck(
                 .context("lsp ext run flycheck proto request")?;
         } else {
             lsp_store
-                .read_with(cx, |lsp_store, _| {
+                .read_with(cx, |lsp_store, cx| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
                         server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
                             lsp_store::lsp_ext_command::RunFlycheckParams {
-                                text_document: None,
+                                text_document: if current_file_only {
+                                    buffer.and_then(|buffer| {
+                                        let path = buffer.read(cx).file()?.as_local()?.abs_path(cx);
+                                        make_text_document_identifier(&path).ok()
+                                    })
+                                } else {
+                                    None
+                                },
                             },
                         )
                     } else {

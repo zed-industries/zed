@@ -17,8 +17,8 @@ use text::ToPointUtf16;
 
 use crate::{
     CancelFlycheck, ClearFlycheck, Editor, ExpandMacroRecursively, GoToParentModule,
-    GotoDefinitionKind, OpenDocs, RunFlycheck, element::register_action, hover_links::HoverLink,
-    lsp_ext::find_specific_language_server_in_selection,
+    GotoDefinitionKind, OpenDocs, RunFlycheck, RunFlycheckCurrentFile, element::register_action,
+    hover_links::HoverLink, lsp_ext::find_specific_language_server_in_selection,
 };
 
 fn is_rust_language(language: &Language) -> bool {
@@ -34,6 +34,7 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
     }) {
         register_action(editor, window, cancel_flycheck_action);
         register_action(editor, window, run_flycheck_action);
+        register_action(editor, window, run_flycheck_current_file_action);
         register_action(editor, window, clear_flycheck_action);
     }
 
@@ -337,12 +338,7 @@ fn cancel_flycheck_action(
     cancel_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }
 
-fn run_flycheck_action(
-    editor: &mut Editor,
-    _: &RunFlycheck,
-    _: &mut Window,
-    cx: &mut Context<Editor>,
-) {
+fn run_flycheck_inner(editor: &mut Editor, cx: &mut Context<Editor>, current_file_only: bool) {
     let Some(project) = &editor.project else {
         return;
     };
@@ -363,7 +359,25 @@ fn run_flycheck_action(
                 .entry_id(cx)?;
             project.path_for_entry(entry_id, cx)
         });
-    run_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
+    run_flycheck(project.clone(), buffer_id, cx, current_file_only).detach_and_log_err(cx);
+}
+
+fn run_flycheck_current_file_action(
+    editor: &mut Editor,
+    _: &RunFlycheckCurrentFile,
+    _: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    run_flycheck_inner(editor, cx, true);
+}
+
+fn run_flycheck_action(
+    editor: &mut Editor,
+    _: &RunFlycheck,
+    _: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    run_flycheck_inner(editor, cx, false);
 }
 
 fn clear_flycheck_action(
