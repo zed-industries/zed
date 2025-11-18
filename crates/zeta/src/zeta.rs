@@ -1764,6 +1764,7 @@ mod tests {
     use client::test::FakeServer;
     use clock::{FakeSystemClock, ReplicaId};
     use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
+    use edit_prediction::EditPredictionProvider;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
@@ -2381,6 +2382,77 @@ mod tests {
         });
 
         (zeta, captured_request, completion_response)
+    }
+
+    #[gpui::test]
+    async fn test_unauthenticated_user_blocked_without_custom_url(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Save and clear ZED_PREDICT_EDITS_URL to ensure test isolation
+        let original_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
+        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/test/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Create unauthenticated client (no FakeServer)
+        let http_client = FakeHttpClient::create(|_req| async move {
+            Ok(http_client::Response::builder()
+                .status(404)
+                .body("Not Found".into())
+                .unwrap())
+        });
+
+        let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+        cx.update(|cx| {
+            RefreshLlmTokenListener::register(client.clone(), cx);
+        });
+
+        // Create zeta without authentication
+        let zeta = cx.new(|cx| {
+            let mut zeta = Zeta::new(client, project.read(cx).user_store(), cx);
+            let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
+            for worktree in worktrees {
+                let worktree_id = worktree.read(cx).id();
+                zeta.license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
+            }
+            zeta
+        });
+
+        // Create provider
+        let provider = cx.new(|cx| {
+            ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx)
+        });
+
+        // Attempt to refresh - should be blocked
+        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)));
+        provider.update(cx, |provider, cx| {
+            provider.refresh(buffer.clone(), cursor, false, cx);
+        });
+
+        // Verify that no pending completions were created
+        provider.read_with(cx, |provider, _| {
+            assert!(
+                provider.pending_completions.is_empty(),
+                "Expected no pending completions for unauthenticated user without custom URL"
+            );
+        });
+
+        // Restore original environment variable
+        if let Some(url) = original_url {
+            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+        }
     }
 
     fn to_completion_edits(
