@@ -2945,8 +2945,6 @@ async fn test_lsp_pull_diagnostics(
                                     },
                             },
                         ),
-                        // TODO: This clears the pushed diagnostics and causes the next
-                        // editor_b_lib.update call's assertions to fail.
                         lsp::WorkspaceDocumentDiagnosticReport::Full(
                             lsp::WorkspaceFullDocumentDiagnosticReport {
                                 uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
