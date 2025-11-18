@@ -1,7 +1,9 @@
 use std::{
+    cell::LazyCell,
+    collections::BTreeSet,
     io::{BufRead, BufReader},
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     pin::pin,
     sync::Arc,
 };
@@ -22,7 +24,7 @@ use smol::{
 
 use text::BufferId;
 use util::{ResultExt, maybe, paths::compare_rel_paths};
-use worktree::{Entry, ProjectEntryId, Snapshot, Worktree};
+use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
@@ -178,7 +180,7 @@ impl Search {
 
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
-
+                let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
                         let Ok(open_buffers) = cx.update(|cx| self.all_loaded_buffers(&query, cx))
@@ -207,11 +209,12 @@ impl Search {
                         let (sorted_search_results_tx, sorted_search_results_rx) = unbounded();
 
                         let (input_paths_tx, input_paths_rx) = unbounded();
-
+                        // glob: src/rust/
+                        // path: src/
                         let tasks = vec![
                             cx.spawn(Self::provide_search_paths(
                                 std::mem::take(worktrees),
-                                query.include_ignored(),
+                                query.clone(),
                                 input_paths_tx,
                                 sorted_search_results_tx,
                             ))
@@ -366,26 +369,30 @@ impl Search {
 
     fn provide_search_paths(
         worktrees: Vec<Entity<Worktree>>,
-        include_ignored: bool,
+        query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
         results: Sender<oneshot::Receiver<ProjectPath>>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
             _ = maybe!(async move {
+                let gitignored_tracker = PathInclusionMatcher::new(query.clone());
                 for worktree in worktrees {
                     let (mut snapshot, worktree_settings) = worktree
                         .read_with(cx, |this, _| {
                             Some((this.snapshot(), this.as_local()?.settings()))
                         })?
                         .context("The worktree is not local")?;
-                    if include_ignored {
+                    if query.include_ignored() {
                         // Pre-fetch all of the ignored directories as they're going to be searched.
                         let mut entries_to_refresh = vec![];
-                        for entry in snapshot.entries(include_ignored, 0) {
-                            if entry.is_ignored && entry.kind.is_unloaded() {
-                                if !worktree_settings.is_path_excluded(&entry.path) {
-                                    entries_to_refresh.push(entry.path.clone());
-                                }
+
+                        for entry in snapshot.entries(query.include_ignored(), 0) {
+                            if gitignored_tracker.should_scan_gitignored_dir(
+                                entry,
+                                &snapshot,
+                                &worktree_settings,
+                            ) {
+                                entries_to_refresh.push(entry.path.clone());
                             }
                         }
                         let barrier = worktree.update(cx, |this, _| {
@@ -404,8 +411,9 @@ impl Search {
                     cx.background_executor()
                         .scoped(|scope| {
                             scope.spawn(async {
-                                for entry in snapshot.files(include_ignored, 0) {
+                                for entry in snapshot.files(query.include_ignored(), 0) {
                                     let (should_scan_tx, should_scan_rx) = oneshot::channel();
+
                                     let Ok(_) = tx
                                         .send(InputPath {
                                             entry: entry.clone(),
@@ -787,4 +795,79 @@ struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
     should_scan_tx: oneshot::Sender<ProjectPath>,
+}
+
+/// This struct encapsulates the logic to decide whether a given gitignored directory should be
+/// scanned based on include/exclude patterns of a search query (as include/exclude parameters may match paths inside it).
+/// It is kind-of doing an inverse of glob. Given a glob pattern like `src/**/` and a parent path like `src`, we need to decide whether the parent
+/// may contain glob hits.
+struct PathInclusionMatcher {
+    included: BTreeSet<PathBuf>,
+    excluded: BTreeSet<PathBuf>,
+    query: Arc<SearchQuery>,
+}
+
+impl PathInclusionMatcher {
+    fn new(query: Arc<SearchQuery>) -> Self {
+        let mut included = BTreeSet::new();
+        let mut excluded = BTreeSet::new();
+        if query.filters_path() {
+            included.extend(
+                query
+                    .files_to_include()
+                    .sources()
+                    .iter()
+                    .filter_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
+            );
+            excluded.extend(
+                query
+                    .files_to_exclude()
+                    .sources()
+                    .iter()
+                    .filter_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
+            );
+        }
+        Self {
+            included,
+            excluded,
+            query,
+        }
+    }
+
+    fn should_scan_gitignored_dir(
+        &self,
+        entry: &Entry,
+        snapshot: &Snapshot,
+        worktree_settings: &WorktreeSettings,
+    ) -> bool {
+        if !entry.is_ignored || !entry.kind.is_unloaded() {
+            return false;
+        }
+        if !self.query.include_ignored() {
+            return false;
+        }
+        if worktree_settings.is_path_excluded(&entry.path) {
+            return false;
+        }
+
+        let as_abs_path = LazyCell::new(move || snapshot.absolutize(&entry.path));
+        let descendant_might_match_glob = |prefix: &Path| {
+            if prefix.is_absolute() {
+                as_abs_path.starts_with(prefix)
+            } else {
+                entry.path.as_std_path().starts_with(prefix)
+            }
+        };
+        let matched_path = !self
+            .excluded
+            .iter()
+            .any(|prefix| descendant_might_match_glob(prefix))
+            && (self.included.is_empty()
+                || self
+                    .included
+                    .iter()
+                    .any(|prefix| descendant_might_match_glob(prefix)));
+
+        matched_path
+    }
 }
