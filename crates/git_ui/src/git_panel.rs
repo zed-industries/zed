@@ -5824,7 +5824,7 @@ impl RenderOnce for PanelRepoFooter {
         let primary_label = pr_link
             .as_ref()
             .map(|link| link.text.clone())
-            .unwrap_or_else(|| "Create PR".to_string());
+            .unwrap_or_else(|| "Create Pull Request".to_string());
 
         let branch_actual_len = branch_name.len();
         let repo_actual_len = active_repo_name.len();
