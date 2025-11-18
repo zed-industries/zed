@@ -1480,7 +1480,7 @@ impl SearchableItem for Editor {
         self.highlight_background_key::<BufferSearchHighlights>(
             ACTIVE_SEARCH_MATCH_KEY,
             &[],
-            |theme| theme.colors().element_selection_background,
+            |theme| theme.colors().search_active_match_background,
             cx,
         );
     }
@@ -1496,11 +1496,6 @@ impl SearchableItem for Editor {
             .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map(|(_, range)| range.as_ref());
         let updated = existing_range != Some(matches);
-        self.highlight_background::<BufferSearchHighlights>(
-            matches,
-            |theme| theme.colors().search_match_background,
-            cx,
-        );
 
         let active_ix = active_match_index(
             Direction::Next,
@@ -1508,13 +1503,32 @@ impl SearchableItem for Editor {
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
         );
+
+        let non_active_matches: Vec<_> = matches
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| {
+                if Some(i) == active_ix {
+                    None
+                } else {
+                    Some(m.clone())
+                }
+            })
+            .collect();
+
+        self.highlight_background::<BufferSearchHighlights>(
+            &non_active_matches,
+            |theme| theme.colors().search_match_background,
+            cx,
+        );
+
         match active_ix {
             Some(ix) => {
                 let range = &matches[ix];
                 self.highlight_background_key::<BufferSearchHighlights>(
                     ACTIVE_SEARCH_MATCH_KEY,
                     std::slice::from_ref(range),
-                    |theme| theme.colors().element_selection_background,
+                    |theme| theme.colors().search_active_match_background,
                     cx,
                 );
             }
@@ -1522,7 +1536,7 @@ impl SearchableItem for Editor {
                 self.highlight_background_key::<BufferSearchHighlights>(
                     ACTIVE_SEARCH_MATCH_KEY,
                     &[],
-                    |theme| theme.colors().element_selection_background,
+                    |theme| theme.colors().search_active_match_background,
                     cx,
                 );
             }
@@ -1637,7 +1651,7 @@ impl SearchableItem for Editor {
         self.highlight_background_key::<BufferSearchHighlights>(
             ACTIVE_SEARCH_MATCH_KEY,
             std::slice::from_ref(&matches[index]),
-            |theme| theme.colors().element_selection_background,
+            |theme| theme.colors().search_active_match_background,
             cx,
         );
     }
