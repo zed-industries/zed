@@ -2109,7 +2109,7 @@ impl AgentPanel {
                                     entry = entry
                                         .when(
                                             is_agent_selected(AgentType::Custom {
-                                                name: agent_name.0.clone().into(),
+                                                name: agent_name.0.clone(),
                                                 command: command.clone(),
                                             }),
                                             |this| {
