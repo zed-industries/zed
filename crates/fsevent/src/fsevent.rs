@@ -381,7 +381,12 @@ unsafe extern "C" {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, sync::mpsc, thread, time::{Duration, Instant}};
+    use std::{
+        fs,
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn test_event_stream_simple() {
