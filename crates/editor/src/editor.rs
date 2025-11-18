@@ -17112,13 +17112,13 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let selection_usize = selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot));
+        let selection_offset = selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot));
         let selection_point = selection.map(|anchor| anchor.to_point(&multi_buffer_snapshot));
-        let head = selection_usize.head();
+        let head = selection_offset.head();
 
         let head_anchor = multi_buffer_snapshot.anchor_at(
             head,
-            if head < selection_usize.tail() {
+            if head < selection_offset.tail() {
                 Bias::Right
             } else {
                 Bias::Left
@@ -17198,8 +17198,7 @@ impl Editor {
 
                 return editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range, false);
-                    let range = range.start..range.start; // don't select anything
+                    let range = editor.range_for_match(&range, true);
 
                     if Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                         editor.go_to_singleton_buffer_range(range, window, cx);
