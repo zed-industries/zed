@@ -910,6 +910,95 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let editor_clipboard_selections = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| {
+                if let ClipboardEntry::String(text) = entry {
+                    text.metadata_json::<Vec<editor::ClipboardSelection>>()
+                } else {
+                    None
+                }
+            });
+
+        let has_file_context = editor_clipboard_selections
+            .as_ref()
+            .map(|selections| {
+                selections
+                    .iter()
+                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
+            })
+            .unwrap_or(false);
+
+        if has_file_context {
+            if let Some(selections) = editor_clipboard_selections {
+                cx.stop_propagation();
+
+                for selection in selections {
+                    if let (Some(file_path), Some(line_range)) =
+                        (selection.file_path, selection.line_range)
+                    {
+                        let abs_path = PathBuf::from(&file_path);
+                        let start_line = *line_range.start();
+                        let end_line = *line_range.end();
+                        let range = start_line..=end_line;
+
+                        let path = Path::new(&file_path);
+                        let display_name =
+                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                if let Some(parent) = path
+                                    .parent()
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|p| p.to_str())
+                                {
+                                    format!("{}/{}", parent, filename)
+                                } else {
+                                    filename.to_string()
+                                }
+                            } else {
+                                file_path.clone()
+                            };
+
+                        let crease_text = if start_line == end_line {
+                            format!("{} ({})", display_name, start_line)
+                        } else {
+                            format!("{} ({}-{})", display_name, start_line, end_line)
+                        };
+
+                        let mention_uri = MentionUri::Symbol {
+                            abs_path,
+                            name: display_name.clone(),
+                            line_range: range,
+                        };
+
+                        let mention_text = mention_uri.as_link().to_string();
+                        let (start_anchor, content_len) = self.editor.update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let (_excerpt_id, _, buffer_snapshot) =
+                                snapshot.as_singleton().unwrap();
+                            let start_offset = buffer_snapshot.len();
+                            let start_anchor = buffer_snapshot.anchor_before(start_offset);
+
+                            editor.insert(&mention_text, window, cx);
+                            editor.insert(" ", window, cx);
+
+                            (start_anchor, mention_text.len())
+                        });
+
+                        let _ = self.confirm_mention_completion(
+                            crease_text.into(),
+                            start_anchor,
+                            content_len,
+                            mention_uri,
+                            window,
+                            cx,
+                        );
+                    }
+                }
+                return;
+            }
+        }
+
         if !self.prompt_capabilities.borrow().image {
             return;
         }

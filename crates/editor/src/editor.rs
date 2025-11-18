@@ -1571,6 +1571,10 @@ pub struct ClipboardSelection {
     pub is_entire_line: bool,
     /// The indentation of the first line when this content was originally copied.
     pub first_line_indent: u32,
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub line_range: Option<std::ops::RangeInclusive<u32>>,
 }
 
 // selections, scroll behavior, was newest selection reversed
@@ -12621,12 +12625,23 @@ impl Editor {
                     text.push_str(chunk);
                     len += chunk.len();
                 }
+                let file_path = buffer
+                    .file_at(selection.start)
+                    .map(|file| file.full_path(cx).to_string_lossy().into_owned());
+                let line_range = file_path.as_ref().map(|_| {
+                    let start_line = selection.start.row + 1;
+                    let end_line = selection.end.row + 1;
+                    start_line..=end_line
+                });
+
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
                     first_line_indent: buffer
                         .indent_size_for_line(MultiBufferRow(selection.start.row))
                         .len,
+                    file_path,
+                    line_range,
                 });
             }
         }
@@ -12770,12 +12785,23 @@ impl Editor {
                         text.push('\n');
                         len += 1;
                     }
+                    let file_path = buffer
+                        .file_at(trimmed_range.start)
+                        .map(|file| file.full_path(cx).to_string_lossy().into_owned());
+                    let line_range = file_path.as_ref().map(|_| {
+                        let start_line = trimmed_range.start.row + 1;
+                        let end_line = trimmed_range.end.row + 1;
+                        start_line..=end_line
+                    });
+
                     clipboard_selections.push(ClipboardSelection {
                         len,
                         is_entire_line,
                         first_line_indent: buffer
                             .indent_size_for_line(MultiBufferRow(trimmed_range.start.row))
                             .len,
+                        file_path,
+                        line_range,
                     });
                 }
             }
