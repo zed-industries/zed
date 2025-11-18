@@ -449,15 +449,19 @@ impl Prettier {
                             })
                             .collect();
 
-                        let mut prettier_parser = prettier_settings.parser.as_deref();
-                        if buffer_path.is_none() {
-                            prettier_parser = prettier_parser.or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
-                            if prettier_parser.is_none() {
+                        let prettier_parser = if buffer_path.is_none() {
+                            let parser = prettier_settings.parser.as_deref().or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+                            if parser.is_none() {
                                 log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
                                 anyhow::bail!("Cannot determine prettier parser for unsaved file");
                             }
-
-                        }
+                            parser
+                        } else if let (Some(buffer_language), Some(buffer_path)) = (buffer_language, &buffer_path)
+                            && buffer_path.extension().is_some_and(|extension| !buffer_language.config().matcher.path_suffixes.contains(&extension.to_string_lossy().into_owned())) {
+                                buffer_language.prettier_parser_name()
+                        } else {
+                            prettier_settings.parser.as_deref()
+                        };
 
                         let ignore_path = ignore_dir.and_then(|dir| {
                             let ignore_file = dir.join(".prettierignore");
