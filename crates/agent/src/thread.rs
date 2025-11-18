@@ -28,6 +28,7 @@ use futures::{
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
+use http_client::StatusCode;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
@@ -1252,9 +1253,17 @@ impl Thread {
                 log::trace!("Received completion event: {:?}", event);
                 match event {
                     Ok(event) => {
-                        tool_results.extend(this.update(cx, |this, cx| {
-                            this.handle_completion_event(event, event_stream, cx)
-                        })??);
+                        match this.update(cx, |this, cx| {
+                            this.handle_completion_event(event, event_stream, model.clone(), cx)
+                        })? {
+                            Ok(answer) => {
+                                tool_results.extend(answer);
+                            }
+                            Err(err) => {
+                                error = Some(err);
+                                break;
+                            }
+                        }
                     }
                     Err(err) => {
                         error = Some(err);
@@ -1383,8 +1392,10 @@ impl Thread {
         &mut self,
         event: LanguageModelCompletionEvent,
         event_stream: &ThreadEventStream,
+        model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
-    ) -> Result<Option<Task<LanguageModelToolResult>>> {
+    ) -> std::result::Result<Option<Task<LanguageModelToolResult>>, LanguageModelCompletionError>
+    {
         log::trace!("Handling streamed completion event: {:?}", event);
         use LanguageModelCompletionEvent::*;
 
@@ -1434,10 +1445,21 @@ impl Thread {
                 self.update_model_request_usage(amount, limit, cx);
             }
             StatusUpdate(
-                CompletionRequestStatus::Started
-                | CompletionRequestStatus::Queued { .. }
-                | CompletionRequestStatus::Failed { .. },
+                CompletionRequestStatus::Started | CompletionRequestStatus::Queued { .. },
             ) => {}
+            StatusUpdate(CompletionRequestStatus::Failed {
+                code,
+                message,
+                request_id,
+                retry_after,
+            }) => {
+                return Err(LanguageModelCompletionError::from_cloud_failure(
+                    model.provider_name(),
+                    code,
+                    message,
+                    retry_after.map(Duration::from_secs_f64),
+                ));
+            }
             StatusUpdate(CompletionRequestStatus::ToolUseLimitReached) => {
                 self.tool_use_limit_reached = true;
             }
