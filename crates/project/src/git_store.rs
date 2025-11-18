@@ -5404,18 +5404,27 @@ impl Repository {
         let ids = self.new_pending_ops_for_paths(paths, git_status);
 
         cx.spawn(async move |this, cx| {
-            let (job_status, result) = match f(this.clone(), cx).await {
-                Ok(()) => (pending_op::JobStatus::Finished, Ok(())),
-                Err(err) if err.is::<Canceled>() => (pending_op::JobStatus::Skipped, Ok(())),
-                Err(err) => (pending_op::JobStatus::Error, Err(err)),
+            let (finished, result) = match f(this.clone(), cx).await {
+                Ok(()) => (true, Ok(())),
+                Err(err) if err.is::<Canceled>() => (false, Ok(())),
+                Err(err) => (false, Err(err)),
             };
 
             this.update(cx, |this, _| {
                 let mut edits = Vec::with_capacity(ids.len());
                 for (id, entry) in ids {
                     if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
-                        if let Some(op) = ops.op_by_id_mut(id) {
-                            op.job_status = job_status;
+                        if finished {
+                            if let Some(op) = ops.op_by_id_mut(id) {
+                                op.finished = true;
+                            }
+                        } else {
+                            let idx = ops
+                                .ops
+                                .iter()
+                                .position(|op| op.id == id)
+                                .expect("pending operation must exist");
+                            ops.ops.remove(idx);
                         }
                         edits.push(sum_tree::Edit::Insert(ops));
                     }
@@ -5443,7 +5452,7 @@ impl Repository {
             ops.ops.push(PendingOp {
                 id,
                 git_status,
-                job_status: pending_op::JobStatus::Running,
+                finished: false,
             });
             edits.push(sum_tree::Edit::Insert(ops));
             ids.push((id, path));
@@ -5721,7 +5730,7 @@ async fn compute_snapshot(
     let pending_ops_by_path = SumTree::from_iter(
         prev_snapshot.pending_ops_by_path.iter().filter_map(|ops| {
             let inner_ops: Vec<PendingOp> =
-                ops.ops.iter().filter(|op| op.running()).cloned().collect();
+                ops.ops.iter().filter(|op| !op.finished).cloned().collect();
             if inner_ops.is_empty() {
                 None
             } else {
