@@ -1,6 +1,7 @@
 #![cfg(target_os = "macos")]
 
 use bitflags::bitflags;
+use core_foundation::runloop::CFRunLoopWakeUp;
 use fsevent_sys::{self as fs, core_foundation as cf};
 use parking_lot::Mutex;
 use std::{
@@ -259,6 +260,7 @@ impl Drop for Handle {
         if let Lifecycle::Running(run_loop) = *state {
             unsafe {
                 cf::CFRunLoopStop(run_loop);
+                CFRunLoopWakeUp(run_loop as _);
                 cf::CFRelease(run_loop)
             }
         }
