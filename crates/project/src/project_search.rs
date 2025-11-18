@@ -801,14 +801,12 @@ struct MatchingEntry {
 /// may contain glob hits.
 struct PathInclusionMatcher {
     included: BTreeSet<PathBuf>,
-    excluded: BTreeSet<PathBuf>,
     query: Arc<SearchQuery>,
 }
 
 impl PathInclusionMatcher {
     fn new(query: Arc<SearchQuery>) -> Self {
         let mut included = BTreeSet::new();
-        let mut excluded = BTreeSet::new();
         // To do an inverse glob match, we split each glob into it's prefix and the glob part.
         // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
         // Then, when checking whether a given directory should be scanned, we check whether it is a non-empty substring of any glob prefix.
@@ -820,19 +818,8 @@ impl PathInclusionMatcher {
                     .iter()
                     .flat_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
             );
-            excluded.extend(
-                query
-                    .files_to_exclude()
-                    .sources()
-                    .iter()
-                    .filter_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
-            );
         }
-        Self {
-            included,
-            excluded,
-            query,
-        }
+        Self { included, query }
     }
 
     fn should_scan_gitignored_dir(
@@ -850,18 +837,15 @@ impl PathInclusionMatcher {
         if worktree_settings.is_path_excluded(&entry.path) {
             return false;
         }
+        if !self.query.filters_path() {
+            return true;
+        }
 
         let as_abs_path = LazyCell::new(move || snapshot.absolutize(&entry.path));
         let entry_path = entry.path.as_std_path();
         // 3. Check Exclusions (Pruning)
         // If the current path is a child of an excluded path, we stop.
-        let is_excluded = self.excluded.iter().any(|prefix| {
-            if prefix.is_absolute() {
-                as_abs_path.starts_with(prefix)
-            } else {
-                entry_path.starts_with(prefix)
-            }
-        });
+        let is_excluded = self.path_is_definitely_excluded(entry_path, snapshot);
 
         if is_excluded {
             return false;
@@ -894,5 +878,25 @@ impl PathInclusionMatcher {
         });
 
         is_included
+    }
+    fn path_is_definitely_excluded(&self, path: &Path, snapshot: &Snapshot) -> bool {
+        if !self.query.files_to_exclude().sources().is_empty() {
+            let mut path = if self.query.match_full_paths() {
+                let mut full_path = snapshot.root_name().as_std_path().to_owned();
+                full_path.push(path);
+                full_path
+            } else {
+                path.to_owned()
+            };
+            loop {
+                if self.query.files_to_exclude().is_match(&path) {
+                    return true;
+                } else if !path.pop() {
+                    return false;
+                }
+            }
+        } else {
+            false
+        }
     }
 }
