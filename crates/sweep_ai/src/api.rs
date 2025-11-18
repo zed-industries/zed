@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AutocompleteRequest {
-    pub debug_info: String,
+    pub debug_info: Arc<str>,
     pub repo_name: String,
     pub branch: Option<String>,
     pub file_path: Arc<Path>,

@@ -2,13 +2,15 @@ mod api;
 
 use anyhow::{Context as _, Result};
 use arrayvec::ArrayVec;
+use client::telemetry;
 use collections::HashMap;
 use feature_flags::FeatureFlag;
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task, WeakEntity};
+use gpui::{App, AppContext, Context, Entity, EntityId, Global, Task, WeakEntity};
 use http_client::{AsyncBody, Method};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint, text_diff};
 use project::Project;
+use release_channel::{AppCommitSha, AppVersion};
 use std::collections::{VecDeque, hash_map};
 use std::fmt::{self, Display};
 use std::mem;
@@ -28,6 +30,8 @@ use crate::api::{AutocompleteRequest, AutocompleteResponse, FileChunk};
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_EVENT_COUNT: usize = 16;
+
+const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
 pub struct SweepFeatureFlag;
 
@@ -79,6 +83,7 @@ impl Display for EditPredictionId {
 
 pub struct SweepAi {
     projects: HashMap<EntityId, SweepAiProject>,
+    debug_info: Arc<str>,
 }
 
 struct SweepAiProject {
@@ -94,7 +99,7 @@ impl SweepAi {
 
     pub fn register(cx: &mut App) -> Entity<Self> {
         Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|_cx| Self::new());
+            let entity = cx.new(|cx| Self::new(cx));
             cx.set_global(SweepAiGlobal(entity.clone()));
             entity
         })
@@ -106,9 +111,16 @@ impl SweepAi {
         }
     }
 
-    fn new() -> Self {
+    fn new(cx: &mut Context<Self>) -> Self {
         Self {
             projects: HashMap::default(),
+            debug_info: format!(
+                "Zed v{version} ({sha}) - OS: {os} - Zed v{version}",
+                version = AppVersion::global(cx),
+                sha = AppCommitSha::try_global(cx).map_or("unknown".to_string(), |sha| sha.full()),
+                os = telemetry::os_name(),
+            )
+            .into(),
         }
     }
 
@@ -224,6 +236,7 @@ impl SweepAi {
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
         let snapshot = active_buffer.read(cx).snapshot();
+        let debug_info = self.debug_info.clone();
         let full_path: Arc<Path> = snapshot
             .file()
             .map(|file| file.full_path(cx))
@@ -301,7 +314,7 @@ impl SweepAi {
                     .collect();
 
                 let request_body = AutocompleteRequest {
-                    debug_info: "Zed".into(),
+                    debug_info,
                     repo_name,
                     file_path: full_path.clone(),
                     file_contents: text.clone(),
@@ -322,9 +335,6 @@ impl SweepAi {
                 let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
                 serde_json::to_writer(writer, &request_body)?;
                 let body: AsyncBody = buf.into();
-
-                const SWEEP_API_URL: &str =
-                    "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
                 let request = http_client::Request::builder()
                     .uri(SWEEP_API_URL)
