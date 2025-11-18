@@ -144,11 +144,11 @@ mod tests {
                 "glob": "**/*.rs",
                 "syntax_node": ["fn test"],
                 "content": "assert"
-            },
+            }
         }"#};
 
         let flat_input: SearchToolInput = serde_json::from_str(single_query_json).unwrap();
-        assert_eq!(flat_input.queries.len(), 2);
+        assert_eq!(flat_input.queries.len(), 1);
         assert_eq!(flat_input.queries[0].glob, "**/*.rs");
         assert_eq!(flat_input.queries[0].syntax_node, vec!["fn test"]);
         assert_eq!(flat_input.queries[0].content, Some("assert".to_string()));
