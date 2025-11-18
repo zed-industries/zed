@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt, executor};
-use gpui::{App, BackgroundExecutor};
+use futures::{Stream, StreamExt};
+use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
 use smol::channel;

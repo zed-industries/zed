@@ -14,7 +14,7 @@ use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
-use gpui::{App, AsyncApp};
+use gpui::AsyncApp;
 use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
 use url::Url;
