@@ -1477,12 +1477,8 @@ impl SearchableItem for Editor {
             cx.emit(SearchEvent::MatchesInvalidated);
         }
 
-        self.highlight_background_key::<BufferSearchHighlights>(
-            ACTIVE_SEARCH_MATCH_KEY,
-            &[],
-            |theme| theme.colors().search_active_match_background,
-            cx,
-        );
+        let _ = self
+            .clear_background_highlight_key::<BufferSearchHighlights>(ACTIVE_SEARCH_MATCH_KEY, cx);
     }
 
     fn update_matches(
@@ -1533,10 +1529,8 @@ impl SearchableItem for Editor {
                 );
             }
             None => {
-                self.highlight_background_key::<BufferSearchHighlights>(
+                let _ = self.clear_background_highlight_key::<BufferSearchHighlights>(
                     ACTIVE_SEARCH_MATCH_KEY,
-                    &[],
-                    |theme| theme.colors().search_active_match_background,
                     cx,
                 );
             }
