@@ -111,7 +111,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DisplayPoint,
+        DisplayPoint, MoveToBeginning, MoveToEnd, MoveUp,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
@@ -325,7 +325,7 @@ fn process_data«1()1» «1{
         );
 
         cx.update_editor(|editor, window, cx| {
-            editor.handle_input(", ()> = todo!();", window, cx);
+            editor.handle_input(", ()> = unimplemented!();", window, cx);
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
@@ -336,7 +336,7 @@ struct Foo«1<'a, T>1» «1{
 }1»
 
 fn process_data«1()1» «1{
-    let map: Result«2<Option«3<Foo«4<'_, «5()5»>4»>3», «3()3»>2» = todo!«2()2»;
+    let map: Result«2<Option«3<Foo«4<'_, «5()5»>4»>3», «3()3»>2» = unimplemented!«2()2»;
 }1»
 
 1 hsla(207.80, 16.20%, 69.19%, 1.00)
@@ -347,6 +347,168 @@ fn process_data«1()1» «1{
 "#},
             &mut cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_bracket_colorization_chunks(cx: &mut gpui::TestAppContext) {
+        let comment_lines = 100;
+
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        cx.set_state(&separate_with_comment_lines(
+            indoc! {r#"
+mod foo {
+    ˇfn process_data_1() {
+        let map: Option<Vec<()>> = None;
+    }
+"#},
+            indoc! {r#"
+    fn process_data_2() {
+        let map: Option<Vec<()>> = None;
+    }
+}
+"#},
+            comment_lines,
+        ));
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // First, the only visible, chunk is getting the bracket highlights.
+        assert_bracket_colors(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+"#},
+                indoc! {r#"
+    fn process_data_2() {
+        let map: Option<Vec<()>> = None;
+    }
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+                comment_lines,
+            ),
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.move_up(&MoveUp, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // When scrolled below, both chunks have the highlights now.
+        assert_bracket_colors(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+"#},
+                indoc! {r#"
+    fn process_data_2«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+                comment_lines,
+            ),
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input("{{}}}", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // When edited while having the other chunk visible,
+        // first chunk's data is invalidated.
+        assert_bracket_colors(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1() {
+        let map: Option<Vec<()>> = None;
+    }
+"#},
+                indoc! {r#"
+    fn process_data_2«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }
+    «3{«4{}4»}3»}2»}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+                comment_lines,
+            ),
+            &mut cx,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // When scrolled back to top, all brackets are re-highlighted.
+        assert_bracket_colors(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+"#},
+                indoc! {r#"
+    fn process_data_2«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }
+    «3{«4{}4»}3»}2»}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+                comment_lines,
+            ),
+            &mut cx,
+        );
+    }
+
+    fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
+        let mut result = head.to_string();
+        result.push_str("\n");
+        result.push_str(&"//\n".repeat(comment_lines));
+        result.push_str(tail);
+        result
     }
 
     #[track_caller]
@@ -386,6 +548,7 @@ fn process_data«1()1» «1{
                     }
                 })
             });
+            annotations.dedup();
 
             let mut text_with_annotations = editor_text;
             for (pos, text) in annotations {
