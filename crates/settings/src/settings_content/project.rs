@@ -8,7 +8,7 @@ use settings_macros::MergeFrom;
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, Maybe, ProjectTerminalSettingsContent,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
     SlashCommandSettings,
 };
 
@@ -61,8 +61,8 @@ pub struct WorktreeSettingsContent {
     ///
     /// Default: null
     #[serde(default)]
-    #[serde(skip_serializing_if = "Maybe::is_unset")]
-    pub project_name: Maybe<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
 
     /// Whether to prevent this project from being shared in public channels.
     ///
