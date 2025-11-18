@@ -18,7 +18,7 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
-use settings::{Settings, TerminalDockPosition};
+use settings::{Settings, TabBarOrientation, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
@@ -136,6 +136,7 @@ impl TerminalPanel {
     fn apply_tab_bar_buttons(&self, terminal_pane: &Entity<Pane>, cx: &mut Context<Self>) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
+            pane.set_tab_bar_orientation_override(Some(TabBarOrientation::Horizontal), cx);
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
                     .active_item()
@@ -1111,6 +1112,7 @@ pub fn new_terminal_pane(
         pane.display_nav_history_buttons(None);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_zoom_out_on_close(false);
+        pane.set_tab_bar_orientation_override(Some(TabBarOrientation::Horizontal), cx);
 
         let split_closure_terminal_panel = terminal_panel.downgrade();
         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {

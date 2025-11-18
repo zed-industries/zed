@@ -401,6 +401,7 @@ pub struct Pane {
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
     vertical_tab_column_width: Pixels,
+    tab_bar_orientation_override: Option<TabBarOrientation>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -551,6 +552,7 @@ impl Pane {
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             vertical_tab_column_width: DEFAULT_VERTICAL_TAB_COLUMN_WIDTH,
+            tab_bar_orientation_override: None,
         }
     }
 
@@ -789,6 +791,22 @@ impl Pane {
     {
         self.render_tab_bar_buttons = Rc::new(render);
         cx.notify();
+    }
+
+    pub fn set_tab_bar_orientation_override(
+        &mut self,
+        orientation: Option<TabBarOrientation>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tab_bar_orientation_override != orientation {
+            self.tab_bar_orientation_override = orientation;
+            cx.notify();
+        }
+    }
+
+    fn tab_bar_orientation(&self, cx: &mut Context<Self>) -> TabBarOrientation {
+        self.tab_bar_orientation_override
+            .unwrap_or_else(|| TabBarSettings::get_global(cx).orientation)
     }
 
     pub fn set_custom_drop_handle<F>(&mut self, cx: &mut Context<Self>, handle: F)
@@ -3072,7 +3090,7 @@ impl Pane {
 
     fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
         let focus_handle = self.focus_handle.clone();
-        let tab_bar_orientation = TabBarSettings::get_global(cx).orientation;
+        let tab_bar_orientation = self.tab_bar_orientation(cx);
         let tab_layout = match tab_bar_orientation {
             TabBarOrientation::Horizontal => TabLayout::Horizontal,
             TabBarOrientation::Vertical => TabLayout::Vertical,
@@ -3744,10 +3762,7 @@ fn default_render_tab_bar_buttons(
         None => (false, false),
     };
     let show_nav_history_buttons = pane.display_nav_history_buttons.unwrap_or_default()
-        && matches!(
-            TabBarSettings::get_global(cx).orientation,
-            TabBarOrientation::Vertical
-        );
+        && matches!(pane.tab_bar_orientation(cx), TabBarOrientation::Vertical);
 
     let mut right_children = h_flex()
         // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
@@ -3860,7 +3875,7 @@ impl Render for Pane {
             return div().track_focus(&self.focus_handle(cx));
         };
         let is_local = project.read(cx).is_local();
-        let tab_bar_orientation = TabBarSettings::get_global(cx).orientation;
+        let tab_bar_orientation = self.tab_bar_orientation(cx);
         let has_active_item = self.active_item().is_some();
         let show_tab_bar = has_active_item && display_tab_bar;
         let tab_bar = show_tab_bar.then(|| (self.render_tab_bar.clone())(self, window, cx));
