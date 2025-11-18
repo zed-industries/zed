@@ -246,6 +246,7 @@ impl EventStream {
     }
 }
 
+#[cfg(test)]
 impl Handle {
     fn lifecycle(&self) -> Arc<Mutex<Lifecycle>> {
         self.0.clone()
