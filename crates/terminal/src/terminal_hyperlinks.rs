@@ -240,7 +240,7 @@ fn path_match<T>(
     let line = line.trim_ascii_end();
 
     let found_from_range = |path_range: Range<usize>,
-                            link_range: Option<Range<usize>>,
+                            link_range: Range<usize>,
                             position: Option<(u32, Option<u32>)>| {
         let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {
@@ -261,7 +261,6 @@ fn path_match<T>(
             }
         };
 
-        let link_range = link_range.unwrap_or(path_range.clone());
         let link_start = advance_point_by_str(line_start, &line[..link_range.start]);
         let link_end = advance_point_by_str(link_start, &line[link_range]);
         let link_match = link_start
@@ -298,21 +297,25 @@ fn path_match<T>(
                 }
             };
 
-            let found = if let Some(path) = captures.name("path") {
+            let match_range = captures.get(0).unwrap().range();
+            let (path_range, line_column) = if let Some(path) = captures.name("path") {
                 let parse = |name: &str| {
                     captures
                         .name(name)
                         .and_then(|capture| capture.as_str().parse().ok())
                 };
 
-                found_from_range(
+                (
                     path.range(),
-                    captures.name("link").map(|link| link.range()),
                     parse("line").map(|line| (line, parse("column"))),
                 )
             } else {
-                found_from_range(captures.get(0).unwrap().range(), None, None)
+                (match_range.clone(), None)
             };
+            let link_range = captures
+                .name("link")
+                .map_or(match_range, |link| link.range());
+            let found = found_from_range(path_range, link_range, line_column);
 
             if let Some(found) = found {
                 path_found = true;
@@ -594,10 +597,10 @@ mod tests {
             test_path!("/test/cool.rs ‹«/👉test/cool.rs»›");
 
             test_path!(
-                "‹«🦀 multiple_👉same_line 🦀»› 🚣«4» 🏛️«2»: 🦀 multiple_same_line 🦀 🚣4 🏛️2:"
+                "‹«🦀 multiple_👉same_line 🦀» 🚣«4» 🏛️«2»›: 🦀 multiple_same_line 🦀 🚣4 🏛️2:"
             );
             test_path!(
-                "🦀 multiple_same_line 🦀 🚣4 🏛️2 ‹«🦀 multiple_👉same_line 🦀»› 🚣«4» 🏛️«2»:"
+                "🦀 multiple_same_line 🦀 🚣4 🏛️2 ‹«🦀 multiple_👉same_line 🦀» 🚣«4» 🏛️«2»›:"
             );
 
             // ls output (tab separated)
@@ -1598,11 +1601,13 @@ mod tests {
         hyperlink_kind: HyperlinkKind,
         source_location: &str,
     ) {
-        const CARGO_DIR_REGEX: &str = r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)"#;
-        const RUST_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|at) (?<path>.+?)(:$|$)"#;
-        const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)"#;
+        const CARGO_DIR_REGEX: &str =
+            r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<link>(?<path>.+))\)"#;
+        const RUST_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)"#;
+        const ISSUE_12338_REGEX: &str =
+            r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<link>(?<path>.+))"#;
         const MULTIPLE_SAME_LINE_REGEX: &str =
-            r#"(?<path>🦀 multiple_same_line 🦀) 🚣(?<line>[0-9]+) 🏛(?<column>[0-9]+):"#;
+            r#"(?<link>(?<path>🦀 multiple_same_line 🦀) 🚣(?<line>[0-9]+) 🏛(?<column>[0-9]+)):"#;
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {

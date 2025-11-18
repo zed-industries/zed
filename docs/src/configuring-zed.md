@@ -4126,7 +4126,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
   "terminal": {
     "path_hyperlink_regexes": [
       // Python-style diagnostics
-      "(?<link>File \"(?<path>[^\"]+)\", line (?<line>[0-9]+))",
+      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
       // Common path syntax with optional line, column, description, trailing punctuation, or
       // surrounding symbols or quotes
       [
@@ -4136,10 +4136,10 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
         "# which may be followed by an opening quote",
         "(?<quote>[\"'`])?",
         "# `path` is the shortest sequence of any non-space character",
-        "(?<path>[^ ]+?",
+        "(?<link>(?<path>[^ ]+?",
         "    # which may end with a line and optionally a column,",
         "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-        ")",
+        "))",
         "# which must be followed by a matching quote",
         "(?(<quote>)\\k<quote>)",
         "# and optionally a single closing symbol",
