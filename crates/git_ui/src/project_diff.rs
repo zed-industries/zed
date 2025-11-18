@@ -39,8 +39,8 @@ use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
-    CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    CloseActiveItem, ItemNavHistory, SerializableItem, SplitDirection, ToolbarItemEvent,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
@@ -55,7 +55,8 @@ actions!(
         Add,
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
-        BranchDiff
+        BranchDiff,
+        LeaderAndFollower,
     ]
 );
 
@@ -80,6 +81,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::leader_and_follower);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -127,6 +129,27 @@ impl ProjectDiff {
                 anyhow::Ok(())
             })
             .detach_and_notify_err(window, cx);
+    }
+
+    pub fn leader_and_follower(
+        workspace: &mut Workspace,
+        _: &LeaderAndFollower,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::deploy_at(workspace, None, window, cx);
+        let Some(this) = workspace.item_of_type::<Self>(cx) else {
+            dbg!("whoops");
+            return;
+        };
+        let follower = this.update(cx, |this, cx| {
+            this.multibuffer
+                .update(cx, |multibuffer, cx| multibuffer.get_or_create_follower(cx))
+        });
+        let project = this.read(cx).project.clone();
+        let follower_editor =
+            cx.new(|cx| Editor::for_multibuffer(follower, Some(project), window, cx));
+        workspace.split_item(SplitDirection::Right, Box::new(follower_editor), window, cx);
     }
 
     pub fn deploy_at(

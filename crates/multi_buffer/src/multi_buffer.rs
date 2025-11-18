@@ -89,6 +89,7 @@ pub struct MultiBuffer {
     /// The writing capability of the multi-buffer.
     capability: Capability,
     buffer_changed_since_sync: Rc<Cell<bool>>,
+    follower: Option<Entity<MultiBuffer>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -612,6 +613,7 @@ impl MultiBuffer {
             paths_by_excerpt: Default::default(),
             buffer_changed_since_sync: Default::default(),
             history: History::default(),
+            follower: None,
         }
     }
 
@@ -654,7 +656,20 @@ impl MultiBuffer {
             history: self.history.clone(),
             title: self.title.clone(),
             buffer_changed_since_sync,
+            follower: None,
         }
+    }
+
+    pub fn get_or_create_follower(&mut self, cx: &mut Context<Self>) -> Entity<MultiBuffer> {
+        use gpui::AppContext as _;
+
+        if let Some(follower) = &self.follower {
+            return follower.clone();
+        }
+
+        let follower = cx.new(|cx| self.clone(cx));
+        self.follower = Some(follower.clone());
+        follower
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
@@ -1136,7 +1151,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> Vec<ExcerptId>
     where
-        O: text::ToOffset,
+        O: text::ToOffset + Clone,
     {
         self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
@@ -1174,7 +1189,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> Vec<ExcerptId>
     where
-        O: text::ToOffset,
+        O: text::ToOffset + Clone,
     {
         let mut ids = Vec::new();
         let mut next_excerpt_id =
@@ -1203,10 +1218,13 @@ impl MultiBuffer {
         ranges: impl IntoIterator<Item = (ExcerptId, ExcerptRange<O>)>,
         cx: &mut Context<Self>,
     ) where
-        O: text::ToOffset,
+        O: text::ToOffset + Clone,
     {
+        // todo! see if it's worth time avoiding collecting here later
+        let collected_ranges: Vec<_> = ranges.into_iter().collect();
+
         assert_eq!(self.history.transaction_depth(), 0);
-        let mut ranges = ranges.into_iter().peekable();
+        let mut ranges = collected_ranges.iter().cloned().peekable();
         if ranges.peek().is_none() {
             return Default::default();
         }
@@ -1311,6 +1329,17 @@ impl MultiBuffer {
             self.subscriptions.publish(edits);
         }
 
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.insert_excerpts_with_ids_after(
+                    prev_excerpt_id,
+                    buffer.clone(),
+                    collected_ranges,
+                    cx,
+                );
+            })
+        }
+
         cx.emit(Event::Edited {
             edited_buffer: None,
         });
@@ -1363,6 +1392,12 @@ impl MultiBuffer {
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
+        }
+        // FIXME
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.clear(cx);
+            })
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
@@ -1656,6 +1691,13 @@ impl MultiBuffer {
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
+
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.remove_excerpts(ids.clone(), cx);
+            })
+        }
+
         cx.emit(Event::Edited {
             edited_buffer: None,
         });
@@ -2177,6 +2219,10 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| follower.resize_excerpt(id, range, cx));
+        }
+
         let edits = Self::sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2211,7 +2257,7 @@ impl MultiBuffer {
         let mut cursor = snapshot
             .excerpts
             .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
-        let mut edits = Vec::<Edit<ExcerptOffset>>::new();
+        let mut excerpt_edits = Vec::<Edit<ExcerptOffset>>::new();
 
         for locator in &locators {
             let prefix = cursor.slice(&Some(locator), Bias::Left);
@@ -2263,15 +2309,15 @@ impl MultiBuffer {
                 new: new_start_offset..new_start_offset + new_text_len,
             };
 
-            if let Some(last_edit) = edits.last_mut() {
+            if let Some(last_edit) = excerpt_edits.last_mut() {
                 if last_edit.old.end == edit.old.start {
                     last_edit.old.end = edit.old.end;
                     last_edit.new.end = edit.new.end;
                 } else {
-                    edits.push(edit);
+                    excerpt_edits.push(edit);
                 }
             } else {
-                edits.push(edit);
+                excerpt_edits.push(edit);
             }
 
             new_excerpts.push(excerpt, ());
@@ -2282,11 +2328,20 @@ impl MultiBuffer {
         new_excerpts.append(cursor.suffix(), ());
 
         drop(cursor);
-        snapshot.excerpts = new_excerpts;
+        snapshot.excerpts = new_excerpts.clone();
 
-        let edits = Self::sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
+        let edits = Self::sync_diff_transforms(
+            &mut snapshot,
+            excerpt_edits.clone(),
+            DiffChangeKind::BufferEdited,
+        );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
+        }
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.expand_excerpts(ids.clone(), line_count, direction, cx);
+            })
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
