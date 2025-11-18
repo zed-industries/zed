@@ -5314,6 +5314,7 @@ dependencies = [
  "serde_json",
  "settings",
  "supermaven",
+ "sweep_ai",
  "telemetry",
  "theme",
  "ui",
@@ -16591,6 +16592,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sweep_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "brotli",
+ "client",
+ "collections",
+ "edit_prediction",
+ "feature_flags",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "indoc",
+ "language",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "tree-sitter-rust",
+ "util",
+ "workspace",
+ "zlog",
+]
+
+[[package]]
 name = "symphonia"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21316,6 +21344,7 @@ dependencies = [
  "snippets_ui",
  "supermaven",
  "svg_preview",
+ "sweep_ai",
  "sysinfo 0.37.2",
  "system_specs",
  "tab_switcher",
