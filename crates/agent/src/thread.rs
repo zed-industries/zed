@@ -2158,6 +2158,14 @@ impl Thread {
                 delay: BASE_RETRY_DELAY,
                 max_attempts: 2,
             }),
+            Refusal => {
+                // If the model refused the request, we can reasonably assume it will refuse on retry too.
+                None
+            }
+            MaxTokens => {
+                // Retrying won't help with having exceeded max tokens
+                None
+            }
         }
     }
 }
