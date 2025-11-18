@@ -325,9 +325,9 @@ impl FileHunkInfo {
                 .ok();
                 for line in hunk.lines() {
                     match line {
-                        diffy::Line::Context(v) => writeln!(&mut out, " {}", v).ok(),
-                        diffy::Line::Insert(v) => writeln!(&mut out, "+{}", v).ok(),
-                        diffy::Line::Delete(v) => writeln!(&mut out, "-{}", v).ok(),
+                        diffy::Line::Context(v) => write!(&mut out, " {}", v).ok(),
+                        diffy::Line::Insert(v) => write!(&mut out, "+{}", v).ok(),
+                        diffy::Line::Delete(v) => write!(&mut out, "-{}", v).ok(),
                     };
                 }
             }
@@ -1966,7 +1966,7 @@ impl GitPanel {
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("");
 
         if compressed.len() <= max_bytes {
             return compressed;
@@ -5173,6 +5173,7 @@ mod tests {
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -5871,5 +5872,49 @@ mod tests {
                 expected_path.map(|s| s.to_string())
             );
         }
+    }
+
+    #[test]
+    fn test_compress_diff_no_truncation() {
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+            -old
+            +new
+        "};
+        let result = GitPanel::compress_commit_diff(diff, 1000);
+        assert_eq!(result, diff);
+    }
+
+    #[test]
+    fn test_compress_diff_truncate_hunks() {
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+             context
+            -old1
+            +new1
+            @@ -5,2 +5,2 @@
+             context 2
+            -old2
+            +new2
+            @@ -10,2 +10,2 @@
+             context 3
+            -old3
+            +new3
+        "};
+        let result = GitPanel::compress_commit_diff(diff, 100);
+        let expected = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+             context
+            -old1
+            +new1
+            [...skipped 2 hunks...]
+        "};
+        assert_eq!(result, expected);
     }
 }
