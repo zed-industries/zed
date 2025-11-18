@@ -1389,24 +1389,9 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
-    /// The Mica backdrop material used in Windows 11.
-    ///
-    /// This effect blends the window background with the desktop wallpaper
-    /// to produce a soft, tinted translucency that subtly tracks wallpaper
-    /// movement. It’s designed to provide depth and visual hierarchy while
-    /// remaining performance-friendly.
-    ///
-    /// Only available on Windows 11 (build ≥ 22000) and supported for
-    /// top-level windows.
+    /// The Mica backdrop material, supported on Windows 11.
     MicaBackdrop,
-    /// The Mica Alt (or Tabbed Mica) backdrop material used in Windows 11.
-    ///
-    /// A variant of Mica optimized for use in tabbed or layered interfaces.
-    /// It has a slightly stronger tint and reduced opacity to help distinguish
-    /// stacked surfaces such as document tabs or panels.
-    ///
-    /// Only available on Windows 11 (build ≥ 22621) and supported for
-    /// top-level windows.
+    /// The Mica Alt backdrop material, supported on Windows 11.
     MicaAltBackdrop
 }
 
