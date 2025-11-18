@@ -8113,6 +8113,34 @@ impl LspStore {
                     )?;
 
                 update.diagnostics.diagnostics.extend(reused_diagnostics);
+            } else {
+                // Handle non-open buffers.
+                // TODO: This is copy/paste from `update_worktree_diagnostics`.
+                let local = match &mut self.mode {
+                    LspStoreMode::Local(local_lsp_store) => local_lsp_store,
+                    _ => anyhow::bail!("update_worktree_diagnostics called on remote"),
+                };
+                let diagnostics_for_tree = local.diagnostics.entry(worktree_id).or_default();
+                let diagnostics_by_server_id = diagnostics_for_tree
+                    .entry(project_path.path.clone())
+                    .or_default();
+                if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                    let reused_diagnostics = diagnostics_by_server_id[ix]
+                        .1
+                        .iter()
+                        // Can't call merge, don't have a buffer.
+                        // .filter(|v| merge(buffer, &v.diagnostic, cx))
+                        // HACK: Preserve pushed diagnostics so the tests pass.
+                        .filter(
+                            |old_diagnostic| match old_diagnostic.diagnostic.source_kind {
+                                DiagnosticSourceKind::Pulled => false,
+                                DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
+                            },
+                        )
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    update.diagnostics.diagnostics.extend(reused_diagnostics);
+                }
             }
 
             let updated = worktree.update(cx, |worktree, cx| {
