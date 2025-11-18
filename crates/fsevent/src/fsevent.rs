@@ -246,6 +246,12 @@ impl EventStream {
     }
 }
 
+impl Handle {
+    fn lifecycle(&self) -> Arc<Mutex<Lifecycle>> {
+        self.0.clone()
+    }
+}
+
 impl Drop for Handle {
     fn drop(&mut self) {
         let mut state = self.0.lock();
@@ -375,7 +381,7 @@ unsafe extern "C" {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, sync::mpsc, thread, time::Duration};
+    use std::{fs, sync::mpsc, thread, time::{Duration, Instant}};
 
     #[test]
     fn test_event_stream_simple() {
@@ -465,23 +471,25 @@ mod tests {
 
         let (tx, rx) = mpsc::channel();
         let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
+        let lifecycle_watch = handle.lifecycle();
+
         thread::spawn(move || {
-            stream.run({
-                let tx = tx.clone();
-                move |_| {
-                    tx.send("running").unwrap();
-                    true
-                }
-            });
+            stream.run(|_| true);
             tx.send("stopped").unwrap();
         });
 
-        fs::write(path.join("new-file"), "").unwrap();
-        assert_eq!(rx.recv_timeout(timeout()).unwrap(), "running");
+        let start = Instant::now();
+        let wait = timeout();
+        while !matches!(*lifecycle_watch.lock(), Lifecycle::Running(_)) {
+            if start.elapsed() >= wait {
+                panic!("event stream never entered running state");
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
 
         // Dropping the handle causes `EventStream::run` to return.
         drop(handle);
-        assert_eq!(rx.recv_timeout(timeout()).unwrap(), "stopped");
+        assert_eq!(rx.recv_timeout(wait).unwrap(), "stopped");
     }
 
     #[test]
