@@ -6848,7 +6848,12 @@ impl LspStore {
                                         .buffer_version
                                         .changed_since(&buffer.read(cx).version());
                                     if new_hints_by_server.is_empty() {
-                                        if update_cache {
+                                        // Our chunk might be out of bounds at this point due to the previous await point
+                                        // allowing an interleaved update to the inlay hints lsp data shrinking the backing chunks
+                                        // In that case we don't have work to do anymore
+                                        if update_cache
+                                            && chunk.id < lsp_data.inlay_hints.buffer_chunks_len()
+                                        {
                                             lsp_data.inlay_hints.invalidate_for_chunk(chunk);
                                         }
                                         HashMap::default()
