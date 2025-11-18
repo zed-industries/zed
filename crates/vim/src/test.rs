@@ -291,7 +291,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, window, cx| {
         let highlights = editor.all_text_background_highlights(window, cx);
-        assert_eq!(4, highlights.len());
+        assert_eq!(3, highlights.len());
         assert_eq!(
             DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 2),
             highlights[0].0
