@@ -1,10 +1,9 @@
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
 use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
-use crate::{PromptFormat, Zeta2Args};
+use crate::{CacheMode, PredictArguments, PredictionsOutputFormat, PromptFormat};
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
-use clap::{Args, ValueEnum};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use collections::HashMap;
 use futures::StreamExt as _;
@@ -21,62 +20,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
 
-#[derive(Debug, Args)]
-pub struct PredictArguments {
-    #[clap(flatten)]
-    options: Zeta2Args,
-    #[arg(long)]
-    use_expected_context: bool,
-    #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
-    format: PredictionsOutputFormat,
-    example_path: PathBuf,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
-}
-
-#[derive(Debug, ValueEnum, Default, Clone, Copy, PartialEq)]
-pub enum CacheMode {
-    /// Use cached LLM requests and responses, except when multiple repetitions are requested
-    #[default]
-    Auto,
-    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
-    #[value(alias = "request")]
-    Requests,
-    /// Ignore existing cache entries for both LLM and search.
-    Skip,
-    /// Use cached LLM responses AND search results for full determinism. Fails if they haven't been cached yet.
-    /// Useful for reproducing results and fixing bugs outside of search queries
-    Force,
-}
-
-impl CacheMode {
-    fn use_cached_llm_responses(&self) -> bool {
-        self.assert_not_auto();
-        matches!(self, CacheMode::Requests | CacheMode::Force)
-    }
-
-    fn use_cached_search_results(&self) -> bool {
-        self.assert_not_auto();
-        matches!(self, CacheMode::Force)
-    }
-
-    fn assert_not_auto(&self) {
-        assert_ne!(
-            *self,
-            CacheMode::Auto,
-            "Cache mode should not be auto at this point!"
-        );
-    }
-}
-
-#[derive(clap::ValueEnum, Debug, Clone)]
-pub enum PredictionsOutputFormat {
-    Json,
-    Md,
-    Diff,
-}
-
-pub async fn run_zeta2_predict(
+pub async fn run_predict(
     args: PredictArguments,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
@@ -84,7 +28,7 @@ pub async fn run_zeta2_predict(
     let example = NamedExample::load(args.example_path).unwrap();
     let (project, mut zetas, _edited_buffers) =
         example.setup_project(app_state, 1, cx).await.unwrap();
-    let result = zeta2_predict(
+    let result = perform_predict(
         example,
         project,
         zetas.remove(0),
@@ -101,7 +45,7 @@ pub async fn run_zeta2_predict(
     print_run_data_dir(true, std::io::stdout().is_terminal());
 }
 
-pub async fn zeta2_predict(
+pub async fn perform_predict(
     example: NamedExample,
     project: Entity<Project>,
     zeta: Entity<Zeta>,

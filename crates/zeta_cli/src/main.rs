@@ -7,13 +7,18 @@ mod source_location;
 mod syntax_retrieval_stats;
 mod util;
 
-use crate::evaluate::{EvaluateArguments, run_evaluate};
-use crate::example::{ExampleFormat, NamedExample};
-use crate::predict::{PredictArguments, run_zeta2_predict};
-use crate::syntax_retrieval_stats::retrieval_stats;
+use crate::{
+    evaluate::run_evaluate,
+    example::{ExampleFormat, NamedExample},
+    headless::ZetaCliAppState,
+    predict::run_predict,
+    source_location::SourceLocation,
+    syntax_retrieval_stats::retrieval_stats,
+    util::{open_buffer, open_buffer_with_language_server},
+};
 use ::util::paths::PathStyle;
 use anyhow::{Result, anyhow};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use cloud_llm_client::predict_edits_v3;
 use edit_prediction_context::{
     EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions,
@@ -27,10 +32,6 @@ use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
 use zeta2::ContextMode;
-
-use crate::headless::ZetaCliAppState;
-use crate::source_location::SourceLocation;
-use crate::util::{open_buffer, open_buffer_with_language_server};
 
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
@@ -114,6 +115,76 @@ struct Zeta2Args {
     disable_imports_gathering: bool,
     #[arg(long, default_value_t = u8::MAX)]
     max_retrieved_definitions: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct PredictArguments {
+    #[clap(flatten)]
+    options: Zeta2Args,
+    #[arg(long)]
+    use_expected_context: bool,
+    #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
+    format: PredictionsOutputFormat,
+    example_path: PathBuf,
+    #[clap(long, value_enum, default_value_t = CacheMode::default())]
+    cache: CacheMode,
+}
+
+#[derive(Debug, ValueEnum, Default, Clone, Copy, PartialEq)]
+pub enum CacheMode {
+    /// Use cached LLM requests and responses, except when multiple repetitions are requested
+    #[default]
+    Auto,
+    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
+    #[value(alias = "request")]
+    Requests,
+    /// Ignore existing cache entries for both LLM and search.
+    Skip,
+    /// Use cached LLM responses AND search results for full determinism. Fails if they haven't been cached yet.
+    /// Useful for reproducing results and fixing bugs outside of search queries
+    Force,
+}
+
+impl CacheMode {
+    fn use_cached_llm_responses(&self) -> bool {
+        self.assert_not_auto();
+        matches!(self, CacheMode::Requests | CacheMode::Force)
+    }
+
+    fn use_cached_search_results(&self) -> bool {
+        self.assert_not_auto();
+        matches!(self, CacheMode::Force)
+    }
+
+    fn assert_not_auto(&self) {
+        assert_ne!(
+            *self,
+            CacheMode::Auto,
+            "Cache mode should not be auto at this point!"
+        );
+    }
+}
+
+#[derive(clap::ValueEnum, Debug, Clone)]
+pub enum PredictionsOutputFormat {
+    Json,
+    Md,
+    Diff,
+}
+
+#[derive(Debug, Args)]
+pub struct EvaluateArguments {
+    example_paths: Vec<PathBuf>,
+    #[clap(flatten)]
+    zeta2_args: Zeta2Args,
+    #[arg(long)]
+    use_expected_context: bool,
+    #[clap(long, value_enum, default_value_t = CacheMode::default())]
+    cache: CacheMode,
+    #[clap(short, long, default_value_t = 1, alias = "repeat")]
+    repetitions: u16,
+    #[arg(long)]
+    skip_prediction: bool,
 }
 
 fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
@@ -423,7 +494,7 @@ fn main() {
                     println!("{}", result);
                 }
                 Some(Command::Predict(arguments)) => {
-                    run_zeta2_predict(arguments, &app_state, cx).await;
+                    run_predict(arguments, &app_state, cx).await;
                 }
                 Some(Command::Eval(arguments)) => {
                     run_evaluate(arguments, &app_state, cx).await;

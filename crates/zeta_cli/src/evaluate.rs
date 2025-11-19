@@ -1,12 +1,10 @@
 use std::{
     collections::{BTreeSet, HashMap},
     io::{IsTerminal, Write},
-    path::PathBuf,
     sync::Arc,
 };
 
 use anyhow::Result;
-use clap::Args;
 use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
@@ -14,27 +12,12 @@ use util::ResultExt as _;
 use zeta2::{Zeta, udiff::DiffLine};
 
 use crate::{
-    PromptFormat, Zeta2Args,
+    CacheMode, EvaluateArguments, PromptFormat,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
-    predict::{CacheMode, PredictionDetails, zeta2_predict},
+    predict::{PredictionDetails, perform_predict},
 };
-
-#[derive(Debug, Args)]
-pub struct EvaluateArguments {
-    example_paths: Vec<PathBuf>,
-    #[clap(flatten)]
-    zeta2_args: Zeta2Args,
-    #[arg(long)]
-    use_expected_context: bool,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
-    #[clap(short, long, default_value_t = 1, alias = "repeat")]
-    repetitions: u16,
-    #[arg(long)]
-    skip_prediction: bool,
-}
 
 #[derive(Debug)]
 pub(crate) struct ExecutionData {
@@ -181,7 +164,7 @@ pub async fn run_evaluate_one(
     cache_mode: CacheMode,
     cx: &mut AsyncApp,
 ) -> Result<(EvaluationResult, ExecutionData)> {
-    let predict_result = zeta2_predict(
+    let predict_result = perform_predict(
         example.clone(),
         project,
         zeta,
