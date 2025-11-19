@@ -5494,6 +5494,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Change Counters",
+                    description: "When to show change counters in the git gutter.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.show_change_counters"),
+                        pick: |settings_content| settings_content.git.as_ref()?.show_change_counters.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git.get_or_insert_default().show_change_counters = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {

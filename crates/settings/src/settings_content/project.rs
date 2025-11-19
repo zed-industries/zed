@@ -311,6 +311,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// How file paths are displayed in the git gutter.
+    ///
+    /// Default: file_name_first
+    pub path_style: Option<GitPathStyle>,
 }
 
 #[derive(
@@ -404,6 +408,28 @@ pub enum GitHunkStyleSetting {
     StagedHollow,
     /// Show unstaged hunks hollow and staged hunks with a filled background.
     UnstagedHollow,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPathStyle {
+    /// Show file name first, then path
+    #[default]
+    FileNameFirst,
+    /// Show full path first
+    FilePathFirst,
 }
 
 #[skip_serializing_none]
