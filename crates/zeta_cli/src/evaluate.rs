@@ -14,7 +14,7 @@ use util::ResultExt as _;
 use zeta2::{Zeta, udiff::DiffLine};
 
 use crate::{
-    PromptFormat,
+    PromptFormat, Zeta2Args,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
@@ -24,8 +24,8 @@ use crate::{
 #[derive(Debug, Args)]
 pub struct EvaluateArguments {
     example_paths: Vec<PathBuf>,
-    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
-    prompt_format: PromptFormat,
+    #[clap(flatten)]
+    zeta2_args: Zeta2Args,
     #[arg(long)]
     use_expected_context: bool,
     #[clap(long, value_enum, default_value_t = CacheMode::default())]
@@ -74,7 +74,7 @@ pub async fn run_evaluate(
                         repetition_ix,
                         project,
                         zeta,
-                        args.prompt_format,
+                        args.zeta2_args.prompt_format,
                         args.use_expected_context,
                         !args.skip_prediction,
                         args.cache,

@@ -1,7 +1,7 @@
-use crate::PromptFormat;
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
 use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
+use crate::{PromptFormat, Zeta2Args};
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, ValueEnum};
@@ -23,8 +23,8 @@ use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
-    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
-    prompt_format: PromptFormat,
+    #[clap(flatten)]
+    options: Zeta2Args,
     #[arg(long)]
     use_expected_context: bool,
     #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
@@ -89,7 +89,7 @@ pub async fn run_zeta2_predict(
         project,
         zetas.remove(0),
         None,
-        args.prompt_format,
+        args.options.prompt_format,
         args.use_expected_context,
         args.cache,
         cx,
