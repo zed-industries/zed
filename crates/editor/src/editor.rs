@@ -4452,7 +4452,8 @@ impl Editor {
                     let classifier = snapshot
                         .char_classifier_at(start_anchor.to_offset(&snapshot))
                         .scope_context(Some(CharScopeContext::LinkedEdit));
-                    classifier.is_word(char)
+                    // Treat dash as word character for HTML/JSX tag names
+                    classifier.is_word(char) || char == '-'
                 });
 
                 if is_word_char {
