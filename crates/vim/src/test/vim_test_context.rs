@@ -22,6 +22,7 @@ impl VimTestContext {
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             project_panel::init(cx);
+            outline_panel::init(cx);
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
