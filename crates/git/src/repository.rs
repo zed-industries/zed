@@ -2956,6 +2956,20 @@ mod tests {
         )
     }
 
+    #[test]
+    fn test_parse_commit_graph() {
+        let raw = "a1b2c3d\x1fp1 p2\x1fAuthor Name\x1fauthor@example.com\x1f2 days ago\x1f2023-10-27T10:00:00+00:00\x1f1698393600\x1fCommit summary\x1fHEAD -> main, origin/main\x1e";
+        let entries = parse_commit_graph(raw).unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.oid, "a1b2c3d");
+        assert_eq!(entry.parents, vec!["p1", "p2"]);
+        assert_eq!(entry.author, "Author Name");
+        assert_eq!(entry.summary, "Commit summary");
+        assert_eq!(entry.decorations.head, Some("main".into()));
+        assert_eq!(entry.decorations.remote_branches, vec!["origin/main"]);
+    }
+
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
