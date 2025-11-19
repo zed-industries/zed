@@ -56,6 +56,10 @@ pub fn extension_tests() -> Workflow {
         })
 }
 
+fn run_clippy() -> Step<Run> {
+    named::bash("cargo clippy --release -all-targets --all-features -- --deny warnings")
+}
+
 fn check_rust() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
@@ -64,7 +68,7 @@ fn check_rust() -> NamedJob {
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
         .add_step(steps::cargo_fmt())
-        .add_step(steps::clippy(runners::Platform::Linux))
+        .add_step(run_clippy())
         .add_step(
             steps::cargo_install_nextest()
                 .if_condition(Expression::new(format!("inputs.{RUN_TESTS_INPUT}"))),
