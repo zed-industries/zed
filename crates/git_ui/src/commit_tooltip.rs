@@ -1,9 +1,10 @@
 use crate::commit_view::CommitView;
 use editor::hover_markdown_style;
 use futures::Future;
+use git::GitRemote;
 use git::blame::BlameEntry;
-use git::repository::CommitSummary;
-use git::{GitRemote, blame::ParsedCommitMessage};
+use git::commit::{CommitDetails, CommitSummary, ParsedCommitMessage};
+
 use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
@@ -16,15 +17,6 @@ use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
-
-#[derive(Clone, Debug)]
-pub struct CommitDetails {
-    pub sha: SharedString,
-    pub author_name: SharedString,
-    pub author_email: SharedString,
-    pub commit_time: OffsetDateTime,
-    pub message: Option<ParsedCommitMessage>,
-}
 
 pub struct CommitAvatar<'a> {
     sha: &'a SharedString,
@@ -39,10 +31,7 @@ impl<'a> CommitAvatar<'a> {
     pub fn from_commit_details(details: &'a CommitDetails) -> Self {
         Self {
             sha: &details.sha,
-            remote: details
-                .message
-                .as_ref()
-                .and_then(|details| details.remote.as_ref()),
+            remote: details.message.remote.as_ref(),
         }
     }
 }
@@ -123,22 +112,20 @@ impl CommitTooltip {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let commit_time = blame
-            .committer_time
-            .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
-            .unwrap_or(OffsetDateTime::now_utc());
-
         Self::new(
             CommitDetails {
                 sha: blame.sha.to_string().into(),
-                commit_time,
+                commit_time: blame
+                    .committer_time
+                    .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
+                    .unwrap_or(OffsetDateTime::now_utc()),
                 author_name: blame
                     .author
                     .clone()
                     .unwrap_or("<no name>".to_string())
                     .into(),
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
-                message: details,
+                message: details.unwrap_or_default(),
             },
             repository,
             workspace,
@@ -152,18 +139,7 @@ impl CommitTooltip {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let markdown = cx.new(|cx| {
-            Markdown::new(
-                commit
-                    .message
-                    .as_ref()
-                    .map(|message| message.message.clone())
-                    .unwrap_or_default(),
-                None,
-                None,
-                cx,
-            )
-        });
+        let markdown = cx.new(|cx| Markdown::new(commit.raw_message().clone(), None, None, cx));
         Self {
             commit,
             repository,
@@ -204,18 +180,9 @@ impl Render for CommitTooltip {
             style
         };
 
-        let message = self
-            .commit
-            .message
-            .as_ref()
-            .map(|_| MarkdownElement::new(self.markdown.clone(), markdown_style).into_any())
-            .unwrap_or("<no commit message>".into_any());
+        let message = MarkdownElement::new(self.markdown.clone(), markdown_style).into_any();
 
-        let pull_request = self
-            .commit
-            .message
-            .as_ref()
-            .and_then(|details| details.pull_request.clone());
+        let pull_request = self.commit.message.pull_request.clone();
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
@@ -225,18 +192,13 @@ impl Render for CommitTooltip {
             sha: self.commit.sha.clone(),
             subject: self
                 .commit
-                .message
-                .as_ref()
-                .map_or(Default::default(), |message| {
-                    message
-                        .message
-                        .split('\n')
-                        .next()
-                        .unwrap()
-                        .trim_end()
-                        .to_string()
-                        .into()
-                }),
+                .raw_message()
+                .split('\n')
+                .next()
+                .unwrap()
+                .trim_end()
+                .to_string()
+                .into(),
             commit_timestamp: self.commit.commit_time.unix_timestamp(),
             author_name: self.commit.author_name.clone(),
             has_parent: false,

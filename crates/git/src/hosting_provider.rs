@@ -34,6 +34,13 @@ impl std::fmt::Debug for GitRemote {
     }
 }
 
+impl PartialEq for GitRemote {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.host, &other.host)
+    }
+}
+impl Eq for GitRemote {}
+
 impl GitRemote {
     pub fn host_supports_avatars(&self) -> bool {
         self.host.supports_avatars()

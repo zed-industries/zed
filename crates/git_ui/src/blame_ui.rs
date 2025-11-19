@@ -4,8 +4,8 @@ use crate::{
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{
-    blame::{BlameEntry, ParsedCommitMessage},
-    repository::CommitSummary,
+    blame::BlameEntry,
+    commit::{CommitSummary, ParsedCommitMessage},
 };
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle,
