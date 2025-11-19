@@ -8,16 +8,15 @@ use anyhow::Result;
 use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
-use sweep_ai::SweepAi;
 use util::ResultExt as _;
 use zeta2::{Zeta, udiff::DiffLine};
 
 use crate::{
-    EvaluateArguments, PredictionOptions, PredictionProvider,
+    EvaluateArguments, PredictionOptions,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
-    predict::{PredictionDetails, perform_predict, setup_sweep, setup_zeta},
+    predict::{PredictionDetails, perform_predict, setup_zeta},
 };
 
 #[derive(Debug)]
@@ -46,46 +45,35 @@ pub async fn run_evaluate(
             let project = example.setup_project(&app_state, cx).await.unwrap();
 
             let providers = (0..args.repetitions)
-                .map(|_| {
-                    (
-                        setup_zeta(&project, &app_state, cx).unwrap(),
-                        if matches!(args.options.provider, PredictionProvider::Sweep) {
-                            Some(setup_sweep(&project, cx).unwrap())
-                        } else {
-                            None
-                        },
-                    )
-                })
+                .map(|_| setup_zeta(args.options.provider, &project, &app_state, cx).unwrap())
                 .collect::<Vec<_>>();
 
             let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
 
-            let tasks =
-                providers
-                    .into_iter()
-                    .enumerate()
-                    .map(move |(repetition_ix, (zeta, sweep))| {
-                        let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
-                        let example = example.clone();
-                        let project = project.clone();
-                        let options = options.clone();
+            let tasks = providers
+                .into_iter()
+                .enumerate()
+                .map(move |(repetition_ix, zeta)| {
+                    let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
+                    let example = example.clone();
+                    let project = project.clone();
+                    let options = options.clone();
 
-                        cx.spawn(async move |cx| {
-                            let name = example.name.clone();
-                            run_evaluate_one(
-                                example,
-                                repetition_ix,
-                                project,
-                                zeta,
-                                sweep,
-                                options,
-                                !args.skip_prediction,
-                                cx,
-                            )
-                            .await
-                            .map_err(|err| (err, name, repetition_ix))
-                        })
-                    });
+                    cx.spawn(async move |cx| {
+                        let name = example.name.clone();
+                        run_evaluate_one(
+                            example,
+                            repetition_ix,
+                            project,
+                            zeta,
+                            options,
+                            !args.skip_prediction,
+                            cx,
+                        )
+                        .await
+                        .map_err(|err| (err, name, repetition_ix))
+                    })
+                });
             futures::future::join_all(tasks).await
         })
     });
@@ -177,7 +165,6 @@ pub async fn run_evaluate_one(
     repetition_ix: Option<u16>,
     project: Entity<Project>,
     zeta: Entity<Zeta>,
-    sweep: Option<Entity<SweepAi>>,
     prediction_options: PredictionOptions,
     predict: bool,
     cx: &mut AsyncApp,
@@ -186,7 +173,6 @@ pub async fn run_evaluate_one(
         example.clone(),
         project,
         zeta,
-        sweep,
         repetition_ix,
         prediction_options,
         cx,
