@@ -1,40 +1,24 @@
 use std::{
     collections::{BTreeSet, HashMap},
     io::{IsTerminal, Write},
-    path::PathBuf,
     sync::Arc,
 };
 
 use anyhow::Result;
-use clap::Args;
 use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
+use sweep_ai::SweepAi;
 use util::ResultExt as _;
 use zeta2::{Zeta, udiff::DiffLine};
 
 use crate::{
-    PromptFormat,
+    EvaluateArguments, PredictionOptions, PredictionProvider,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
-    predict::{CacheMode, PredictionDetails, zeta2_predict},
+    predict::{PredictionDetails, perform_predict, setup_sweep, setup_zeta},
 };
-
-#[derive(Debug, Args)]
-pub struct EvaluateArguments {
-    example_paths: Vec<PathBuf>,
-    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
-    prompt_format: PromptFormat,
-    #[arg(long)]
-    use_expected_context: bool,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
-    #[clap(short, long, default_value_t = 1, alias = "repeat")]
-    repetitions: u16,
-    #[arg(long)]
-    skip_prediction: bool,
-}
 
 #[derive(Debug)]
 pub(crate) struct ExecutionData {
@@ -52,38 +36,56 @@ pub async fn run_evaluate(
         eprintln!("No examples provided");
         return;
     }
+
     let all_tasks = args.example_paths.into_iter().map(|path| {
+        let options = args.options.clone();
         let app_state = app_state.clone();
         let example = NamedExample::load(&path).expect("Failed to load example");
 
         cx.spawn(async move |cx| {
-            let (project, zetas, _edited_buffers) = example
-                .setup_project(&app_state, args.repetitions, cx)
-                .await
-                .unwrap();
+            let project = example.setup_project(&app_state, cx).await.unwrap();
 
-            let tasks = zetas.into_iter().enumerate().map(|(repetition_ix, zeta)| {
-                let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
-                let example = example.clone();
-                let project = project.clone();
-
-                cx.spawn(async move |cx| {
-                    let name = example.name.clone();
-                    run_evaluate_one(
-                        example,
-                        repetition_ix,
-                        project,
-                        zeta,
-                        args.prompt_format,
-                        args.use_expected_context,
-                        !args.skip_prediction,
-                        args.cache,
-                        cx,
+            let providers = (0..args.repetitions)
+                .map(|_| {
+                    (
+                        setup_zeta(&project, &app_state, cx).unwrap(),
+                        if matches!(args.options.provider, PredictionProvider::Sweep) {
+                            Some(setup_sweep(&project, cx).unwrap())
+                        } else {
+                            None
+                        },
                     )
-                    .await
-                    .map_err(|err| (err, name, repetition_ix))
                 })
-            });
+                .collect::<Vec<_>>();
+
+            let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
+
+            let tasks =
+                providers
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(repetition_ix, (zeta, sweep))| {
+                        let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
+                        let example = example.clone();
+                        let project = project.clone();
+                        let options = options.clone();
+
+                        cx.spawn(async move |cx| {
+                            let name = example.name.clone();
+                            run_evaluate_one(
+                                example,
+                                repetition_ix,
+                                project,
+                                zeta,
+                                sweep,
+                                options,
+                                !args.skip_prediction,
+                                cx,
+                            )
+                            .await
+                            .map_err(|err| (err, name, repetition_ix))
+                        })
+                    });
             futures::future::join_all(tasks).await
         })
     });
@@ -175,20 +177,18 @@ pub async fn run_evaluate_one(
     repetition_ix: Option<u16>,
     project: Entity<Project>,
     zeta: Entity<Zeta>,
-    prompt_format: PromptFormat,
-    use_expected_context: bool,
+    sweep: Option<Entity<SweepAi>>,
+    prediction_options: PredictionOptions,
     predict: bool,
-    cache_mode: CacheMode,
     cx: &mut AsyncApp,
 ) -> Result<(EvaluationResult, ExecutionData)> {
-    let predict_result = zeta2_predict(
+    let predict_result = perform_predict(
         example.clone(),
         project,
         zeta,
+        sweep,
         repetition_ix,
-        prompt_format,
-        use_expected_context,
-        cache_mode,
+        prediction_options,
         cx,
     )
     .await?;

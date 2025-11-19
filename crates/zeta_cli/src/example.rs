@@ -20,13 +20,13 @@ use futures::{
     lock::{Mutex, OwnedMutexGuard},
 };
 use futures::{FutureExt as _, future::Shared};
-use gpui::{AppContext as _, AsyncApp, Entity, Task, http_client::Url};
+use gpui::{AsyncApp, Entity, Task, http_client::Url};
 use language::{Anchor, Buffer};
 use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 use util::{paths::PathStyle, rel_path::RelPath};
-use zeta2::{Zeta, udiff::OpenedBuffers};
+use zeta2::udiff::OpenedBuffers;
 
 use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
@@ -318,12 +318,11 @@ impl NamedExample {
         }
     }
 
-    pub async fn setup_project<'a>(
-        &'a self,
+    pub async fn setup_project(
+        &self,
         app_state: &Arc<ZetaCliAppState>,
-        repetitions: u16,
         cx: &mut AsyncApp,
-    ) -> Result<(Entity<Project>, Vec<Entity<Zeta>>, OpenedBuffers<'a>)> {
+    ) -> Result<Entity<Project>> {
         let worktree_path = self.setup_worktree().await?;
 
         static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
@@ -365,33 +364,7 @@ impl NamedExample {
             })?
             .await;
 
-        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
-
-        let zetas = (0..repetitions)
-            .map(|_| {
-                let zeta = cx.new(|cx| {
-                    zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
-                })?;
-
-                cx.subscribe(&buffer_store, {
-                    let project = project.clone();
-                    let zeta = zeta.clone();
-                    move |_, event, cx| match event {
-                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                            zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
-                        }
-                        _ => {}
-                    }
-                })?
-                .detach();
-
-                anyhow::Ok(zeta)
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let edited_buffers = self.apply_edit_history(&project, cx).await?;
-
-        anyhow::Ok((project, zetas, edited_buffers))
+        anyhow::Ok(project)
     }
 
     pub async fn setup_worktree(&self) -> Result<PathBuf> {

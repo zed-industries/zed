@@ -1,16 +1,18 @@
-use crate::PromptFormat;
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
 use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
+use crate::{
+    CacheMode, PredictArguments, PredictionOptions, PredictionProvider, PredictionsOutputFormat,
+};
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
-use clap::{Args, ValueEnum};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
 use collections::HashMap;
 use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp, Entity};
 use language::{Anchor, Buffer, Point};
 use project::Project;
+use project::buffer_store::BufferStoreEvent;
 use serde::Deserialize;
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -19,98 +21,86 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use sweep_ai::SweepAi;
 use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
 
-#[derive(Debug, Args)]
-pub struct PredictArguments {
-    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
-    prompt_format: PromptFormat,
-    #[arg(long)]
-    use_expected_context: bool,
-    #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
-    format: PredictionsOutputFormat,
-    example_path: PathBuf,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
-}
-
-#[derive(Debug, ValueEnum, Default, Clone, Copy, PartialEq)]
-pub enum CacheMode {
-    /// Use cached LLM requests and responses, except when multiple repetitions are requested
-    #[default]
-    Auto,
-    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
-    #[value(alias = "request")]
-    Requests,
-    /// Ignore existing cache entries for both LLM and search.
-    Skip,
-    /// Use cached LLM responses AND search results for full determinism. Fails if they haven't been cached yet.
-    /// Useful for reproducing results and fixing bugs outside of search queries
-    Force,
-}
-
-impl CacheMode {
-    fn use_cached_llm_responses(&self) -> bool {
-        self.assert_not_auto();
-        matches!(self, CacheMode::Requests | CacheMode::Force)
-    }
-
-    fn use_cached_search_results(&self) -> bool {
-        self.assert_not_auto();
-        matches!(self, CacheMode::Force)
-    }
-
-    fn assert_not_auto(&self) {
-        assert_ne!(
-            *self,
-            CacheMode::Auto,
-            "Cache mode should not be auto at this point!"
-        );
-    }
-}
-
-#[derive(clap::ValueEnum, Debug, Clone)]
-pub enum PredictionsOutputFormat {
-    Json,
-    Md,
-    Diff,
-}
-
-pub async fn run_zeta2_predict(
+pub async fn run_predict(
     args: PredictArguments,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
-    let (project, mut zetas, _edited_buffers) =
-        example.setup_project(app_state, 1, cx).await.unwrap();
-    let result = zeta2_predict(
-        example,
-        project,
-        zetas.remove(0),
-        None,
-        args.prompt_format,
-        args.use_expected_context,
-        args.cache,
-        cx,
-    )
-    .await
-    .unwrap();
+    let project = example.setup_project(app_state, cx).await.unwrap();
+    let zeta = setup_zeta(&project, app_state, cx).unwrap();
+    let sweep = if matches!(args.options.provider, PredictionProvider::Sweep) {
+        Some(setup_sweep(&project, cx).unwrap())
+    } else {
+        None
+    };
+    let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
+    let result = perform_predict(example, project, zeta, sweep, None, args.options, cx)
+        .await
+        .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
     print_run_data_dir(true, std::io::stdout().is_terminal());
 }
 
-pub async fn zeta2_predict(
+pub fn setup_zeta(
+    project: &Entity<Project>,
+    app_state: &Arc<ZetaCliAppState>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Zeta>> {
+    let zeta =
+        cx.new(|cx| zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
+
+    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        let zeta = zeta.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })?
+    .detach();
+
+    anyhow::Ok(zeta)
+}
+
+pub fn setup_sweep(project: &Entity<Project>, cx: &mut AsyncApp) -> Result<Entity<SweepAi>> {
+    let sweep = cx.new(|cx| SweepAi::new(cx))?;
+
+    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        let sweep = sweep.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                sweep.update(cx, |sweep, cx| sweep.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })?
+    .detach();
+
+    anyhow::Ok(sweep)
+}
+
+pub async fn perform_predict(
     example: NamedExample,
     project: Entity<Project>,
     zeta: Entity<Zeta>,
+    sweep: Option<Entity<SweepAi>>,
     repetition_ix: Option<u16>,
-    prompt_format: PromptFormat,
-    use_expected_context: bool,
-    mut cache_mode: CacheMode,
+    options: PredictionOptions,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
+    let mut cache_mode = options.cache;
     if repetition_ix.is_some() {
         if cache_mode != CacheMode::Auto && cache_mode != CacheMode::Skip {
             panic!("Repetitions are not supported in Auto cache mode");
@@ -148,94 +138,8 @@ pub async fn zeta2_predict(
     let (cursor_buffer, cursor_anchor) = example.cursor_position(&project, cx).await?;
 
     let result = Arc::new(Mutex::new(PredictionDetails::new(example_run_dir.clone())));
-    let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
 
-    let debug_task = cx.background_spawn({
-        let result = result.clone();
-        async move {
-            let mut start_time = None;
-            let mut search_queries_generated_at = None;
-            let mut search_queries_executed_at = None;
-            while let Some(event) = debug_rx.next().await {
-                match event {
-                    zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
-                        start_time = Some(info.timestamp);
-                        fs::write(
-                            example_run_dir.join("search_prompt.md"),
-                            &info.search_prompt,
-                        )?;
-                    }
-                    zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
-                        search_queries_generated_at = Some(info.timestamp);
-                        fs::write(
-                            example_run_dir.join("search_queries.json"),
-                            serde_json::to_string_pretty(&info.search_queries).unwrap(),
-                        )?;
-                    }
-                    zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
-                        search_queries_executed_at = Some(info.timestamp);
-                    }
-                    zeta2::ZetaDebugInfo::ContextRetrievalFinished(_info) => {}
-                    zeta2::ZetaDebugInfo::EditPredictionRequested(request) => {
-                        let prediction_started_at = Instant::now();
-                        start_time.get_or_insert(prediction_started_at);
-                        let prompt = request.local_prompt.unwrap_or_default();
-                        fs::write(example_run_dir.join("prediction_prompt.md"), &prompt)?;
-
-                        {
-                            let mut result = result.lock().unwrap();
-                            result.prompt_len = prompt.chars().count();
-
-                            for included_file in request.request.included_files {
-                                let insertions =
-                                    vec![(request.request.cursor_point, CURSOR_MARKER)];
-                                result.excerpts.extend(included_file.excerpts.iter().map(
-                                    |excerpt| ActualExcerpt {
-                                        path: included_file.path.components().skip(1).collect(),
-                                        text: String::from(excerpt.text.as_ref()),
-                                    },
-                                ));
-                                write_codeblock(
-                                    &included_file.path,
-                                    included_file.excerpts.iter(),
-                                    if included_file.path == request.request.excerpt_path {
-                                        &insertions
-                                    } else {
-                                        &[]
-                                    },
-                                    included_file.max_row,
-                                    false,
-                                    &mut result.excerpts_text,
-                                );
-                            }
-                        }
-
-                        let response = request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
-                        let response = zeta2::text_from_response(response).unwrap_or_default();
-                        let prediction_finished_at = Instant::now();
-                        fs::write(example_run_dir.join("prediction_response.md"), &response)?;
-
-                        let mut result = result.lock().unwrap();
-                        result.generated_len = response.chars().count();
-
-                        if !use_expected_context {
-                            result.planning_search_time =
-                                Some(search_queries_generated_at.unwrap() - start_time.unwrap());
-                            result.running_search_time = Some(
-                                search_queries_executed_at.unwrap()
-                                    - search_queries_generated_at.unwrap(),
-                            );
-                        }
-                        result.prediction_time = prediction_finished_at - prediction_started_at;
-                        result.total_time = prediction_finished_at - start_time.unwrap();
-
-                        break;
-                    }
-                }
-            }
-            anyhow::Ok(())
-        }
-    });
+    let prompt_format = options.zeta2.prompt_format;
 
     zeta.update(cx, |zeta, _cx| {
         let mut options = zeta.options().clone();
@@ -243,55 +147,194 @@ pub async fn zeta2_predict(
         zeta.set_options(options);
     })?;
 
-    if use_expected_context {
-        let context_excerpts_tasks = example
-            .example
-            .expected_context
-            .iter()
-            .flat_map(|section| {
-                section.alternatives[0].excerpts.iter().map(|excerpt| {
-                    resolve_context_entry(project.clone(), excerpt.clone(), cx.clone())
-                })
-            })
-            .collect::<Vec<_>>();
-        let context_excerpts_vec = futures::future::try_join_all(context_excerpts_tasks).await?;
+    let prediction = match options.provider {
+        crate::PredictionProvider::Zeta2 => {
+            let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
 
-        let mut context_excerpts = HashMap::default();
-        for (buffer, mut excerpts) in context_excerpts_vec {
-            context_excerpts
-                .entry(buffer)
-                .or_insert(Vec::new())
-                .append(&mut excerpts);
+            let debug_task = cx.background_spawn({
+                let result = result.clone();
+                async move {
+                    let mut start_time = None;
+                    let mut search_queries_generated_at = None;
+                    let mut search_queries_executed_at = None;
+                    while let Some(event) = debug_rx.next().await {
+                        match event {
+                            zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
+                                start_time = Some(info.timestamp);
+                                fs::write(
+                                    example_run_dir.join("search_prompt.md"),
+                                    &info.search_prompt,
+                                )?;
+                            }
+                            zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
+                                search_queries_generated_at = Some(info.timestamp);
+                                fs::write(
+                                    example_run_dir.join("search_queries.json"),
+                                    serde_json::to_string_pretty(&info.search_queries).unwrap(),
+                                )?;
+                            }
+                            zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
+                                search_queries_executed_at = Some(info.timestamp);
+                            }
+                            zeta2::ZetaDebugInfo::ContextRetrievalFinished(_info) => {}
+                            zeta2::ZetaDebugInfo::EditPredictionRequested(request) => {
+                                let prediction_started_at = Instant::now();
+                                start_time.get_or_insert(prediction_started_at);
+                                let prompt = request.local_prompt.unwrap_or_default();
+                                fs::write(example_run_dir.join("prediction_prompt.md"), &prompt)?;
+
+                                {
+                                    let mut result = result.lock().unwrap();
+                                    result.prompt_len = prompt.chars().count();
+
+                                    for included_file in request.request.included_files {
+                                        let insertions =
+                                            vec![(request.request.cursor_point, CURSOR_MARKER)];
+                                        result.excerpts.extend(included_file.excerpts.iter().map(
+                                            |excerpt| {
+                                                ActualExcerpt {
+                                                    path: included_file
+                                                        .path
+                                                        .components()
+                                                        .skip(1)
+                                                        .collect(),
+                                                    text: String::from(excerpt.text.as_ref()),
+                                                }
+                                            },
+                                        ));
+                                        write_codeblock(
+                                            &included_file.path,
+                                            included_file.excerpts.iter(),
+                                            if included_file.path == request.request.excerpt_path {
+                                                &insertions
+                                            } else {
+                                                &[]
+                                            },
+                                            included_file.max_row,
+                                            false,
+                                            &mut result.excerpts_text,
+                                        );
+                                    }
+                                }
+
+                                let response =
+                                    request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
+                                let response =
+                                    zeta2::text_from_response(response).unwrap_or_default();
+                                let prediction_finished_at = Instant::now();
+                                fs::write(
+                                    example_run_dir.join("prediction_response.md"),
+                                    &response,
+                                )?;
+
+                                let mut result = result.lock().unwrap();
+                                result.generated_len = response.chars().count();
+
+                                if !options.use_expected_context {
+                                    result.planning_search_time = Some(
+                                        search_queries_generated_at.unwrap() - start_time.unwrap(),
+                                    );
+                                    result.running_search_time = Some(
+                                        search_queries_executed_at.unwrap()
+                                            - search_queries_generated_at.unwrap(),
+                                    );
+                                }
+                                result.prediction_time =
+                                    prediction_finished_at - prediction_started_at;
+                                result.total_time = prediction_finished_at - start_time.unwrap();
+
+                                break;
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            if options.use_expected_context {
+                let context_excerpts_tasks = example
+                    .example
+                    .expected_context
+                    .iter()
+                    .flat_map(|section| {
+                        section.alternatives[0].excerpts.iter().map(|excerpt| {
+                            resolve_context_entry(project.clone(), excerpt.clone(), cx.clone())
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let context_excerpts_vec =
+                    futures::future::try_join_all(context_excerpts_tasks).await?;
+
+                let mut context_excerpts = HashMap::default();
+                for (buffer, mut excerpts) in context_excerpts_vec {
+                    context_excerpts
+                        .entry(buffer)
+                        .or_insert(Vec::new())
+                        .append(&mut excerpts);
+                }
+
+                zeta.update(cx, |zeta, _cx| {
+                    zeta.set_context(project.clone(), context_excerpts)
+                })?;
+            } else {
+                zeta.update(cx, |zeta, cx| {
+                    zeta.refresh_context(project.clone(), cursor_buffer.clone(), cursor_anchor, cx)
+                })?
+                .await?;
+            }
+
+            let prediction = zeta
+                .update(cx, |zeta, cx| {
+                    zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
+                })?
+                .await?
+                .map(|prediction| (prediction.buffer, prediction.snapshot, prediction.edits));
+
+            debug_task.await?;
+
+            prediction
         }
+        crate::PredictionProvider::Sweep => sweep
+            .unwrap()
+            .update(cx, |sweep, cx| {
+                let mut recent_paths = Vec::new();
+                for path in zeta
+                    .read(cx)
+                    .history_for_project(&project)
+                    .rev()
+                    .filter_map(|event| event.project_path(cx))
+                {
+                    if !recent_paths.contains(&path) {
+                        recent_paths.push(path);
+                    }
+                }
 
-        zeta.update(cx, |zeta, _cx| {
-            zeta.set_context(project.clone(), context_excerpts)
-        })?;
-    } else {
-        zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context(project.clone(), cursor_buffer.clone(), cursor_anchor, cx)
-        })?
-        .await?;
-    }
-
-    let prediction = zeta
-        .update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
-        })?
-        .await?;
-
-    debug_task.await?;
+                sweep.request_completion(
+                    &project,
+                    recent_paths.into_iter(),
+                    &cursor_buffer,
+                    cursor_anchor,
+                    cx,
+                )
+            })?
+            .await?
+            .map(
+                |sweep_ai::EditPrediction {
+                     edits, snapshot, ..
+                 }| { (cursor_buffer.clone(), snapshot, edits) },
+            ),
+    };
 
     let mut result = Arc::into_inner(result).unwrap().into_inner().unwrap();
+
     result.diff = prediction
-        .map(|prediction| {
-            let old_text = prediction.snapshot.text();
-            let new_text = prediction
-                .buffer
+        .map(|(buffer, snapshot, edits)| {
+            let old_text = snapshot.text();
+            let new_text = buffer
                 .update(cx, |buffer, cx| {
                     let branch = buffer.branch(cx);
                     branch.update(cx, |branch, cx| {
-                        branch.edit(prediction.edits.iter().cloned(), None, cx);
+                        branch.edit(edits.iter().cloned(), None, cx);
                         branch.text()
                     })
                 })

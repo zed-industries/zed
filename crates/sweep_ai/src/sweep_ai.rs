@@ -11,7 +11,7 @@ use http_client::{AsyncBody, Method};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, Point, ToOffset as _, ToPoint, text_diff,
 };
-use project::Project;
+use project::{Project, ProjectPath};
 use release_channel::{AppCommitSha, AppVersion};
 use std::collections::{VecDeque, hash_map};
 use std::fmt::{self, Display};
@@ -48,11 +48,11 @@ impl Global for SweepAiGlobal {}
 
 #[derive(Clone)]
 pub struct EditPrediction {
-    id: EditPredictionId,
-    path: Arc<Path>,
-    edits: Arc<[(Range<Anchor>, Arc<str>)]>,
-    snapshot: BufferSnapshot,
-    edit_preview: EditPreview,
+    pub id: EditPredictionId,
+    pub path: Arc<Path>,
+    pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+    pub snapshot: BufferSnapshot,
+    pub edit_preview: EditPreview,
 }
 
 impl EditPrediction {
@@ -110,7 +110,7 @@ impl SweepAi {
         }
     }
 
-    fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             api_token: std::env::var("SWEEP_AI_TOKEN").ok(),
             projects: HashMap::default(),
@@ -195,8 +195,8 @@ impl SweepAi {
 
     pub fn request_completion(
         &mut self,
-        workspace: &WeakEntity<Workspace>,
         project: &Entity<Project>,
+        recent_buffers: impl Iterator<Item = ProjectPath>,
         active_buffer: &Entity<Buffer>,
         position: language::Anchor,
         cx: &mut Context<Self>,
@@ -223,26 +223,17 @@ impl SweepAi {
         let events = project_state.events.clone();
         let http_client = cx.http_client();
 
-        let Some(recent_buffers) = workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .recent_navigation_history_iter(cx)
-                    .filter_map(|(project_path, _)| {
-                        let buffer = project.read(cx).get_open_buffer(&project_path, cx)?;
-
-                        if active_buffer == &buffer {
-                            None
-                        } else {
-                            Some(buffer.read(cx).snapshot())
-                        }
-                    })
-                    .take(3)
-                    .collect::<Vec<_>>()
+        let recent_buffer_snapshots = recent_buffers
+            .filter_map(|project_path| {
+                let buffer = project.read(cx).get_open_buffer(&project_path, cx)?;
+                if active_buffer == &buffer {
+                    None
+                } else {
+                    Some(buffer.read(cx).snapshot())
+                }
             })
-            .log_err()
-        else {
-            return Task::ready(Ok(None));
-        };
+            .take(3)
+            .collect::<Vec<_>>();
 
         let result = cx.background_spawn({
             let full_path = full_path.clone();
@@ -255,7 +246,7 @@ impl SweepAi {
                     writeln!(&mut recent_changes, "{event}")?;
                 }
 
-                let file_chunks = recent_buffers
+                let file_chunks = recent_buffer_snapshots
                     .into_iter()
                     .map(|snapshot| {
                         let end_point = language::Point::new(30, 0).min(snapshot.max_point());
@@ -623,8 +614,23 @@ impl edit_prediction::EditPredictionProvider for SweepAiEditPredictionProvider {
 
             let completion_request = this.update(cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
+
                 this.sweep_ai.update(cx, |sweep_ai, cx| {
-                    sweep_ai.request_completion(&workspace, &project, &buffer, position, cx)
+                    let Some(recent_buffers) = workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace.recent_navigation_history_iter(cx)
+                        })
+                        .log_err()
+                    else {
+                        return Task::ready(Ok(None));
+                    };
+                    sweep_ai.request_completion(
+                        &project,
+                        recent_buffers.map(move |(project_path, _)| project_path),
+                        &buffer,
+                        position,
+                        cx,
+                    )
                 })
             });
 

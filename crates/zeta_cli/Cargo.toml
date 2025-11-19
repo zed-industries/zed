@@ -49,6 +49,7 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 soa-rs = "0.8.1"
+sweep_ai.workspace = true
 terminal_view.workspace = true
 toml.workspace = true
 util.workspace = true
