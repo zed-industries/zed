@@ -5784,7 +5784,7 @@ async fn compute_snapshot(
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
-        pending_ops_by_path,
+        pending_ops_by_path: prev_snapshot.pending_ops_by_path.clone(),
         renamed_paths: statuses.renamed_paths,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
