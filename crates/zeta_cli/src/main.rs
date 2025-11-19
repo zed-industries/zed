@@ -73,7 +73,7 @@ struct ContextStatsArgs {
 #[derive(Debug, Args)]
 struct ContextArgs {
     #[arg(long)]
-    engine: ContextEngine,
+    provider: ContextProvider,
     #[arg(long)]
     worktree: PathBuf,
     #[arg(long)]
@@ -87,7 +87,7 @@ struct ContextArgs {
 }
 
 #[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
-enum ContextEngine {
+enum ContextProvider {
     Zeta1,
     #[default]
     Syntax,
@@ -132,6 +132,8 @@ pub struct PredictionOptions {
     use_expected_context: bool,
     #[clap(flatten)]
     zeta2: Zeta2Args,
+    #[clap(long)]
+    provider: PredictionProvider,
     #[clap(long, value_enum, default_value_t = CacheMode::default())]
     cache: CacheMode,
 }
@@ -490,15 +492,17 @@ fn main() {
                     println!("{}", result.unwrap());
                 }
                 Some(Command::Context(context_args)) => {
-                    let result = match context_args.engine {
-                        ContextEngine::Zeta1 => {
+                    let result = match context_args.provider {
+                        ContextProvider::Zeta1 => {
                             let context =
                                 zeta1_context(context_args, &app_state, cx).await.unwrap();
                             serde_json::to_string_pretty(&context.body).unwrap()
                         }
-                        ContextEngine::Syntax => zeta2_syntax_context(context_args, &app_state, cx)
-                            .await
-                            .unwrap(),
+                        ContextProvider::Syntax => {
+                            zeta2_syntax_context(context_args, &app_state, cx)
+                                .await
+                                .unwrap()
+                        }
                     };
                     println!("{}", result);
                 }
