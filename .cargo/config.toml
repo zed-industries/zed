@@ -1,12 +1,20 @@
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
-rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
+rustflags = ["-C", "symbol-mangling-version=v0", "-C", "force-frame-pointers=yes", "--cfg", "tokio_unstable"]
 
 [alias]
 xtask = "run --package xtask --"
 perf-test = ["test", "--profile", "release-fast", "--lib", "--bins", "--tests", "--all-features", "--config", "target.'cfg(true)'.runner='cargo run -p perf --release'", "--config", "target.'cfg(true)'.rustflags=[\"--cfg\", \"perf_enabled\"]"]
 # Keep similar flags here to share some ccache
 perf-compare = ["run", "--profile", "release-fast", "-p", "perf", "--config", "target.'cfg(true)'.rustflags=[\"--cfg\", \"perf_enabled\"]", "--", "compare"]
+
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [target.'cfg(target_os = "windows")']
 rustflags = [
@@ -15,6 +23,9 @@ rustflags = [
     "-C",
     "target-feature=+crt-static", # This fixes the linking issue when compiling livekit on Windows
 ]
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "split-debuginfo=packed"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"

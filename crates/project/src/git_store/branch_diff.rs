@@ -34,11 +34,11 @@ impl DiffBase {
 
 pub struct BranchDiff {
     diff_base: DiffBase,
-    repo: Option<Entity<Repository>>,
-    project: Entity<Project>,
+    pub repo: Option<Entity<Repository>>,
+    pub project: Entity<Project>,
     base_commit: Option<SharedString>,
     head_commit: Option<SharedString>,
-    tree_diff: Option<TreeDiff>,
+    pub tree_diff: Option<TreeDiff>,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
@@ -318,7 +318,7 @@ impl BranchDiff {
         output
     }
 
-    fn load_buffer(
+    pub fn load_buffer(
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,

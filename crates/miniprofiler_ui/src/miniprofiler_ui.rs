@@ -6,9 +6,9 @@ use std::{
 
 use gpui::{
     App, AppContext, Context, Entity, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
-    ScrollHandle, SerializedTaskTiming, StatefulInteractiveElement, Styled, Task, TaskTiming,
-    TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, div, prelude::FluentBuilder, px,
-    relative, size,
+    ScrollHandle, SerializedThreadTaskTimings, StatefulInteractiveElement, Styled, Task,
+    TaskTiming, ThreadTaskTimings, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, div,
+    prelude::FluentBuilder, px, relative, size,
 };
 use util::ResultExt;
 use workspace::{
@@ -287,8 +287,17 @@ impl Render for ProfilerWindow {
                                         let Some(data) = this.get_timings() else {
                                             return;
                                         };
+
+                                        let timings = ThreadTaskTimings {
+                                            thread_name: Some("main".to_string()),
+                                            thread_id: std::thread::current().id(),
+                                            timings: data.clone(),
+                                        };
                                         let timings =
-                                            SerializedTaskTiming::convert(this.startup_time, &data);
+                                            Vec::from([SerializedThreadTaskTimings::convert(
+                                                this.startup_time,
+                                                timings,
+                                            )]);
 
                                         let active_path = workspace
                                             .read_with(cx, |workspace, cx| {
@@ -305,12 +314,17 @@ impl Render for ProfilerWindow {
                                         );
 
                                         cx.background_spawn(async move {
-                                            let path = path.await;
-                                            let path =
-                                                path.log_err().and_then(|p| p.log_err()).flatten();
-
-                                            let Some(path) = path else {
-                                                return;
+                                            let path = match path.await.log_err() {
+                                                Some(Ok(Some(path))) => path,
+                                                Some(e @ Err(_)) => {
+                                                    e.log_err();
+                                                    log::warn!("Saving miniprof in workingdir");
+                                                    std::path::Path::new(
+                                                        "performance_profile.miniprof",
+                                                    )
+                                                    .to_path_buf()
+                                                }
+                                                Some(Ok(None)) | None => return,
                                             };
 
                                             let Some(timings) =

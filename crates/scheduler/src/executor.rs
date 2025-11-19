@@ -13,6 +13,32 @@ use std::{
     time::Duration,
 };
 
+// https://docs.rs/tokio/latest/src/tokio/task/yield_now.rs.html#39-64
+pub async fn yield_now() {
+    /// Yield implementation
+    struct YieldNow {
+        yielded: bool,
+    }
+
+    impl Future for YieldNow {
+        type Output = ();
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+            // use core::task::ready;
+            // ready!(crate::trace::trace_leaf(cx));
+            if self.yielded {
+                return Poll::Ready(());
+            }
+
+            self.yielded = true;
+            // context::defer(cx.waker());
+            Poll::Pending
+        }
+    }
+
+    YieldNow { yielded: false }.await;
+}
+
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     session_id: SessionId,

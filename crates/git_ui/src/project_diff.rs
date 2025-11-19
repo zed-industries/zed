@@ -7,12 +7,14 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
+use db::smol::stream::StreamExt;
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use futures::{FutureExt, stream::FuturesUnordered};
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -27,7 +29,7 @@ use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
     git_store::{
-        Repository,
+        self, Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
@@ -37,7 +39,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
-use util::{ResultExt as _, rel_path::RelPath};
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -551,7 +553,7 @@ impl ProjectDiff {
         }
     }
 
-    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+    pub async fn old_refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
@@ -596,6 +598,98 @@ impl ProjectDiff {
             this.pending_scroll.take();
             cx.notify();
         })?;
+
+        Ok(())
+    }
+
+    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+        use git_store::branch_diff::BranchDiff;
+        let Some(this) = this.upgrade() else {
+            return Ok(());
+        };
+        let multibuffer = cx.read_entity(&this, |this, _| this.multibuffer.clone())?;
+        let branch_diff = cx.read_entity(&this, |pd, _| pd.branch_diff.clone())?;
+
+        let Some(repo) = cx.read_entity(&branch_diff, |bd, _| bd.repo.clone())? else {
+            return Ok(());
+        };
+        let project = cx.read_entity(&branch_diff, |bd, _| bd.project.clone())?;
+
+        let cached_status: Vec<git_store::StatusEntry> =
+            cx.read_entity(&repo, |repo: &Repository, _| repo.cached_status().collect())?;
+
+        let mut previous_paths =
+            cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
+
+        // Idea: on click in git panel prioritize task for that file in some way ...
+        //       could have a hashmap of futures here
+        // - needs to prioritize *some* background tasks over others
+        // -
+        let mut tasks = FuturesUnordered::new();
+        let mut seen = HashSet::default();
+        for entry in cached_status {
+            seen.insert(entry.repo_path.clone());
+            let tree_diff_status = cx.read_entity(&branch_diff, |branch_diff, _| {
+                branch_diff
+                    .tree_diff
+                    .as_ref()
+                    .and_then(|t| t.entries.get(&entry.repo_path))
+                    .cloned()
+            })?;
+
+            let Some(status) = cx.read_entity(&branch_diff, |bd, _| {
+                bd.merge_statuses(Some(entry.status), tree_diff_status.as_ref())
+            })?
+            else {
+                continue;
+            };
+            if !status.has_changes() {
+                continue;
+            }
+
+            let Some(project_path) = cx.read_entity(&repo, |repo, cx| {
+                repo.repo_path_to_project_path(&entry.repo_path, cx)
+            })?
+            else {
+                continue;
+            };
+
+            let sort_prefix = cx.read_entity(&repo, |repo, cx| {
+                sort_prefix(repo, &entry.repo_path, entry.status, cx)
+            })?;
+
+            let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.into_arc());
+            previous_paths.remove(&path_key);
+
+            let repo = repo.clone();
+            let task = project.update(cx, move |_, cx| {
+                BranchDiff::load_buffer(tree_diff_status, project_path, repo, cx)
+                    .map(move |res| (res, path_key, entry.status))
+            })?;
+
+            tasks.push(task)
+        }
+
+        // remove anything not part of the diff in the multibuffer
+        this.update(cx, |this, cx| {
+            multibuffer.update(cx, |multibuffer, cx| {
+                for path in previous_paths {
+                    this.buffer_diff_subscriptions.remove(&path.path);
+                    multibuffer.remove_excerpts_for_path(path, cx);
+                }
+            });
+        })?;
+
+        // add the new buffers as they are parsed
+        while let Some((res, path_key, file_status)) = tasks.next().await {
+            if let Some((buffer, diff)) = res.log_err() {
+                cx.update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.register_buffer(path_key, file_status, buffer, diff, window, cx)
+                    });
+                })?;
+            }
+        }
 
         Ok(())
     }
