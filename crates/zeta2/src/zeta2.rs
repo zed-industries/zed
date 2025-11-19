@@ -508,7 +508,7 @@ impl Zeta {
                 refresh_context_debounce_task: None,
                 refresh_context_timestamp: None,
                 _subscription: cx.subscribe(&project, |this, project, event, cx| {
-                    // todo! init with recent paths
+                    // TODO [zeta2] init with recent paths
                     if let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) {
                         if let project::Event::ActiveEntryChanged(Some(active_entry_id)) = event {
                             let path = project.read(cx).path_for_entry(*active_entry_id, cx);
