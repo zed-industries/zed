@@ -21709,9 +21709,7 @@ impl Editor {
     // or represent synthetic/non-local files (e.g., git blobs). File-less buffers
     // are also supported so tests and other in-memory views keep working.
     fn can_open_excerpts_in_file(file: Option<&Arc<dyn language::File>>) -> bool {
-        file.is_none_or(|file| {
-            project::File::from_dyn(Some(file)).is_some() || !file.is_local()
-        })
+        file.is_none_or(|file| project::File::from_dyn(Some(file)).is_some() || !file.is_local())
     }
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<OffsetUtf16>>> {
