@@ -2171,6 +2171,7 @@ impl Editor {
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
+                            editor.refresh_code_lenses(window, cx);
                         }
                     }
 
