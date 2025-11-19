@@ -2654,6 +2654,12 @@ impl GitPanel {
         self.stash_entries = repo.cached_stash();
 
         for entry in repo.cached_status() {
+            // Skip files that are outside the worktree boundaries
+            // to maintain consistency with the uncommitted changes view
+            if repo.repo_path_to_project_path(&entry.repo_path, cx).is_none() {
+                continue;
+            }
+
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
