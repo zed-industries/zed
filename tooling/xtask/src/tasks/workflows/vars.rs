@@ -11,8 +11,8 @@ macro_rules! secret {
 }
 
 macro_rules! var {
-    ($secret_name:ident) => {
-        pub const $secret_name: &str = concat!("${{ vars.", stringify!($secret_name), " }}");
+    ($var_name:ident) => {
+        pub const $var_name: &str = concat!("${{ vars.", stringify!($var_name), " }}");
     };
 }
 

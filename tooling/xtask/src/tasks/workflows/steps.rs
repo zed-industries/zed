@@ -107,8 +107,8 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
-fn setup_linux() -> Step<Run> {
-    named::bash("./script/linux")
+pub fn setup_linux() -> Step<Run> {
+    named::bash(include_str!("../../../../../script/linux"))
 }
 
 fn install_mold() -> Step<Run> {
