@@ -133,7 +133,7 @@ impl GitGraphView {
                     }
                     Err(err) => {
                         this.rows.clear();
-                        this.error = Some(format!("Failed to load git graph: {}", err.to_string()));
+                        this.error = Some(format!("Failed to load git graph: {err}"));
                         debug!("git_graph: failed to load graph: {err:?}");
                     }
                 }
@@ -279,7 +279,7 @@ impl GitGraphView {
             let id = SharedString::from(format!("badge-{}", text));
             div()
                 .child(
-                    IconButton::new(id.clone(), icon)
+                    IconButton::new(id, icon)
                         .icon_size(IconSize::Small)
                         .icon_color(color)
                         .style(ButtonStyle::Transparent)
