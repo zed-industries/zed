@@ -921,8 +921,7 @@ pub(crate) struct CustomShaderId(pub(crate) u32);
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CustomShaderGlobalParams {
     viewport_size: [f32; 2],
-    pad1: u32,
-    pad2: u32,
+    pad: [u32; 2],
 }
 
 pub(crate) struct PlatformInputHandler {

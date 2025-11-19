@@ -84,6 +84,14 @@ pub fn derive_shader_uniform(input: TokenStream) -> TokenStream {
                         "` is not properly aligned. Reorder fields or insert explicit padding to ensure WGSL layout rules are followed."
                     ));
                 }
+
+                if size_of::<#ty>() == 0 {
+                    panic!(concat!(
+                       "ShaderUniform: field `",
+                      stringify!(#ident),
+                     "` has a size of zero."
+                    ));
+                }
             };
 
             const #next_offset_ident: usize = #offset_ident + size_of::<#ty>();

@@ -41,7 +41,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
 }
 
-/// #[derive(ShaderUniform)] is used to make a struct which can be sent to custom shaders as user-data.
+/// #[derive(ShaderUniform)] is used to make a struct which can be sent to custom shaders as instance-data.
 #[proc_macro_derive(ShaderUniform)]
 pub fn derive_shader_uniform(input: TokenStream) -> TokenStream {
     derive_shader_uniform::derive_shader_uniform(input)

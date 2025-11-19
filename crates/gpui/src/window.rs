@@ -3,7 +3,7 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, CustomShader, Decorations, DevicePixels, DispatchActionListener,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
@@ -3273,7 +3273,7 @@ impl Window {
     pub fn paint_shader<T: ShaderUniform>(
         &mut self,
         bounds: Bounds<Pixels>,
-        shader: &CustomShader<T>,
+        shader: &str,
         user_data: &T,
     ) -> Result<(), &'static str> {
         self.invalidator.debug_assert_paint();
@@ -3282,7 +3282,7 @@ impl Window {
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
         let shader_id = self.platform_window.register_shader(
-            &shader.source,
+            shader,
             if T::DEFINITION.is_some() {
                 Some(T::NAME)
             } else {

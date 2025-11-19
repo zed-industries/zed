@@ -940,8 +940,7 @@ impl BladeRenderer {
                         &ShaderCustomShaderData {
                             globals: CustomShaderGlobalParams {
                                 viewport_size: globals.viewport_size,
-                                pad1: 0,
-                                pad2: 0,
+                                pad: [0, 0],
                             },
                             b_instances: instance_buf,
                         },
