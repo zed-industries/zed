@@ -22,7 +22,7 @@ use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
     http_client, prelude::*,
 };
-use language::{Anchor, Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
+use language::{Anchor, Buffer, DiagnosticSet, LanguageServerId, Point, ToOffset as _, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use open_ai::FunctionDefinition;
@@ -31,12 +31,12 @@ use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
 
-use std::env;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
+use std::{env, mem};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
 use util::{LogErrorFuture, ResultExt as _, TryFutureExt};
@@ -56,7 +56,9 @@ pub use crate::prediction::EditPredictionId;
 pub use provider::ZetaEditPredictionProvider;
 
 /// Maximum number of events to track.
-const MAX_EVENT_COUNT: usize = 16;
+const EVENT_COUNT_MAX_ZETA: usize = 16;
+const EVENT_COUNT_MAX_SWEEP: usize = 6;
+const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 
 pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
     max_bytes: 512,
@@ -299,6 +301,7 @@ pub enum Event {
     BufferChange {
         old_snapshot: BufferSnapshot,
         new_snapshot: BufferSnapshot,
+        end_edit_anchor: Option<Anchor>,
         timestamp: Instant,
     },
 }
@@ -568,66 +571,125 @@ impl Zeta {
         buffer: &Entity<Buffer>,
         project: &Entity<Project>,
         cx: &mut Context<Self>,
-    ) -> BufferSnapshot {
+    ) {
+        match self.edit_prediction_model {
+            ZetaEditPredictionModel::ZedCloud => {
+                self.report_changes_for_buffer_zeta(buffer, project, cx)
+            }
+            ZetaEditPredictionModel::Sweep => {
+                self.report_changes_for_buffer_sweep(buffer, project, cx)
+            }
+        }
+    }
+
+    fn report_changes_for_buffer_zeta(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
+    ) {
         let buffer_change_grouping_interval = self.options.buffer_change_grouping_interval;
         let zeta_project = self.get_or_init_zeta_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(zeta_project, buffer, project, cx);
 
         let new_snapshot = buffer.read(cx).snapshot();
         if new_snapshot.version != registered_buffer.snapshot.version {
-            let old_snapshot =
-                std::mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-            Self::push_event(
-                zeta_project,
-                buffer_change_grouping_interval,
-                Event::BufferChange {
-                    old_snapshot,
-                    new_snapshot: new_snapshot.clone(),
-                    timestamp: Instant::now(),
-                },
-            );
-        }
+            let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
 
-        new_snapshot
+            let timestamp = Instant::now();
+
+            let events = &mut zeta_project.events;
+
+            if buffer_change_grouping_interval > Duration::ZERO
+                && let Some(Event::BufferChange {
+                    new_snapshot: last_new_snapshot,
+                    timestamp: last_timestamp,
+                    ..
+                }) = events.back_mut()
+            {
+                if timestamp.duration_since(*last_timestamp) <= buffer_change_grouping_interval
+                    && old_snapshot.remote_id() == last_new_snapshot.remote_id()
+                    && old_snapshot.version == last_new_snapshot.version
+                {
+                    *last_new_snapshot = new_snapshot.clone();
+                    *last_timestamp = timestamp;
+                    return;
+                }
+            }
+
+            if events.len() >= EVENT_COUNT_MAX_ZETA {
+                // These are halved instead of popping to improve prompt caching.
+                events.drain(..EVENT_COUNT_MAX_ZETA / 2);
+            }
+
+            let event = Event::BufferChange {
+                old_snapshot,
+                new_snapshot: new_snapshot.clone(),
+                timestamp,
+                end_edit_anchor: None,
+            };
+            events.push_back(event);
+        }
     }
 
-    fn push_event(
-        zeta_project: &mut ZetaProject,
-        buffer_change_grouping_interval: Duration,
-        event: Event,
+    fn report_changes_for_buffer_sweep(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
     ) {
-        let events = &mut zeta_project.events;
+        let sweep_ai_project = self.get_or_init_zeta_project(project, cx);
+        let registered_buffer = Self::register_buffer_impl(sweep_ai_project, buffer, project, cx);
 
-        if buffer_change_grouping_interval > Duration::ZERO
-            && let Some(Event::BufferChange {
-                new_snapshot: last_new_snapshot,
-                timestamp: last_timestamp,
-                ..
-            }) = events.back_mut()
+        let new_snapshot = buffer.read(cx).snapshot();
+        if new_snapshot.version == registered_buffer.snapshot.version {
+            return;
+        }
+
+        let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
+        let end_edit_anchor = new_snapshot
+            .anchored_edits_since::<Point>(&old_snapshot.version)
+            .last()
+            .map(|(_, range)| range.end);
+        let events = &mut sweep_ai_project.events;
+
+        if let Some(Event::BufferChange {
+            new_snapshot: last_new_snapshot,
+            end_edit_anchor: last_end_edit_anchor,
+            ..
+        }) = events.back_mut()
         {
-            // Coalesce edits for the same buffer when they happen one after the other.
-            let Event::BufferChange {
-                old_snapshot,
-                new_snapshot,
-                timestamp,
-            } = &event;
+            let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
+                == last_new_snapshot.remote_id()
+                && old_snapshot.version == last_new_snapshot.version;
 
-            if timestamp.duration_since(*last_timestamp) <= buffer_change_grouping_interval
-                && old_snapshot.remote_id() == last_new_snapshot.remote_id()
-                && old_snapshot.version == last_new_snapshot.version
-            {
-                *last_new_snapshot = new_snapshot.clone();
-                *last_timestamp = *timestamp;
+            let should_coalesce = is_next_snapshot_of_same_buffer
+                && end_edit_anchor
+                    .as_ref()
+                    .zip(last_end_edit_anchor.as_ref())
+                    .is_some_and(|(a, b)| {
+                        let a = a.to_point(&new_snapshot);
+                        let b = b.to_point(&new_snapshot);
+                        a.row.abs_diff(b.row) <= CHANGE_GROUPING_LINE_SPAN
+                    });
+
+            if should_coalesce {
+                *last_end_edit_anchor = end_edit_anchor;
+                *last_new_snapshot = new_snapshot;
                 return;
             }
         }
 
-        if events.len() >= MAX_EVENT_COUNT {
-            // These are halved instead of popping to improve prompt caching.
-            events.drain(..MAX_EVENT_COUNT / 2);
+        if events.len() >= EVENT_COUNT_MAX_SWEEP {
+            events.pop_front();
         }
 
-        events.push_back(event);
+        events.push_back(Event::BufferChange {
+            old_snapshot,
+            new_snapshot,
+            end_edit_anchor,
+            timestamp: Instant::now(),
+        });
     }
 
     fn current_prediction_for_buffer(

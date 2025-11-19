@@ -273,8 +273,6 @@ impl SweepAi {
                     })
                     .collect();
 
-                eprintln!("{recent_changes}");
-
                 let request_body = AutocompleteRequest {
                     debug_info,
                     repo_name,
