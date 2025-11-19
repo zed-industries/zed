@@ -10,8 +10,8 @@ mod path_list;
 mod persistence;
 pub mod searchable;
 pub mod shared_screen;
-mod status_bar;
 pub mod speech_indicator;
+mod status_bar;
 pub mod tasks;
 mod theme_preview;
 mod toast_layer;
@@ -86,11 +86,11 @@ use serde::Deserialize;
 use session::AppSession;
 use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
+use speech_indicator::SpeechIndicator;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use speech_indicator::SpeechIndicator;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use async_channel::Sender;
+use async_channel::{Receiver, Sender};
 use cpal::{SampleFormat, StreamConfig};
 use gpui::{actions, App, Global, UpdateGlobal};
 use log::{error, info, warn};
@@ -15,10 +15,13 @@ actions!(
     speech,
     [
         /// Toggles the speech recognizer on and off.
-        ToggleListening
+        ToggleListening,
+        /// Toggles piping speech transcriptions to the AI assistant.
+        ToggleSpeechAssistant
     ]
 );
 
+#[derive(Clone, Debug)]
 pub enum SpeechNotification {
     ModelNotFound(String),
 }
@@ -31,11 +34,41 @@ pub enum SpeechState {
     Transcribing,
 }
 
+pub struct TranscriptionStream {
+    receiver: Receiver<String>,
+}
+
+impl TranscriptionStream {
+    fn new(receiver: Receiver<String>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<String> {
+        self.receiver.recv().await.ok()
+    }
+}
+
+pub struct NotificationStream {
+    receiver: Receiver<SpeechNotification>,
+}
+
+impl NotificationStream {
+    fn new(receiver: Receiver<SpeechNotification>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<SpeechNotification> {
+        self.receiver.recv().await.ok()
+    }
+}
+
 pub struct Speech {
     state: Arc<Mutex<SpeechState>>,
     task: Option<std::thread::JoinHandle<()>>,
-    _transcription_sender: Sender<String>,
-    _notification_sender: Sender<SpeechNotification>,
+    transcription_sender: Sender<String>,
+    notification_sender: Sender<SpeechNotification>,
+    transcription_subscribers: Arc<Mutex<Vec<Sender<String>>>>,
+    notification_subscribers: Arc<Mutex<Vec<Sender<SpeechNotification>>>>,
 }
 
 impl Global for Speech {}
@@ -49,32 +82,30 @@ impl Speech {
         info!("Initializing speech global");
         let (transcription_sender, transcription_receiver) = async_channel::unbounded();
         let (notification_sender, notification_receiver) = async_channel::unbounded();
+        let transcription_subscribers = Arc::new(Mutex::new(Vec::new()));
+        let notification_subscribers = Arc::new(Mutex::new(Vec::new()));
 
         {
-            let receiver = transcription_receiver.clone();
-            cx.spawn(async move |cx| {
+            let receiver: Receiver<String> = transcription_receiver.clone();
+            let subscribers = transcription_subscribers.clone();
+            cx.spawn(async move |_| {
                 while let Ok(transcription) = receiver.recv().await {
-                    if let Err(err) = cx.update(|_| {
-                        println!("Transcription: {}", transcription);
-                    }) {
-                        error!("failed to handle transcription: {err}");
-                        break;
-                    }
+                    Self::broadcast(&subscribers, transcription);
                 }
             })
             .detach();
         }
 
         {
-            let notifications = notification_receiver.clone();
-            cx.spawn(async move |cx| {
+            let notifications: Receiver<SpeechNotification> = notification_receiver.clone();
+            let subscribers = notification_subscribers.clone();
+            cx.spawn(async move |_| {
                 while let Ok(notification) = notifications.recv().await {
-                    let _ = cx.update(|_| match notification {
-                        SpeechNotification::ModelNotFound(path) => {
-                            warn!("Speech model not found at: {}", path);
-                            println!("Speech model not found at: {}", path);
-                        }
-                    });
+                    Self::broadcast(&subscribers, notification.clone());
+                    if let SpeechNotification::ModelNotFound(path) = notification {
+                        warn!("Speech model not found at: {}", path);
+                        println!("Speech model not found at: {}", path);
+                    }
                 }
             })
             .detach();
@@ -83,9 +114,28 @@ impl Speech {
         Self {
             state: Arc::new(Mutex::new(SpeechState::Idle)),
             task: None,
-            _transcription_sender: transcription_sender,
-            _notification_sender: notification_sender,
+            transcription_sender,
+            notification_sender,
+            transcription_subscribers,
+            notification_subscribers,
         }
+    }
+
+    pub fn subscribe_transcriptions(&self) -> TranscriptionStream {
+        let (sender, receiver) = async_channel::unbounded();
+        self.transcription_subscribers.lock().push(sender);
+        TranscriptionStream::new(receiver)
+    }
+
+    pub fn subscribe_notifications(&self) -> NotificationStream {
+        let (sender, receiver) = async_channel::unbounded();
+        self.notification_subscribers.lock().push(sender);
+        NotificationStream::new(receiver)
+    }
+
+    fn broadcast<T: Clone>(subscribers: &Arc<Mutex<Vec<Sender<T>>>>, value: T) {
+        let mut sinks = subscribers.lock();
+        sinks.retain(|subscriber| subscriber.try_send(value.clone()).is_ok());
     }
 
     fn toggle_listening(&mut self) {
@@ -139,18 +189,14 @@ impl Speech {
         let device = host
             .default_input_device()
             .ok_or_else(|| anyhow::anyhow!("no input device available"))?;
-        let device_name = device
-            .name()
-            .unwrap_or_else(|_| "Unknown input".into());
+        let device_name = device.name().unwrap_or_else(|_| "Unknown input".into());
         info!("Using audio input device: {}", device_name);
         let config = device.default_input_config()?;
         let input_sample_rate = config.sample_rate().0 as usize;
         let input_channels = config.channels() as usize;
         info!(
             "Input sample rate: {} Hz, channels: {} (target {} Hz)",
-            input_sample_rate,
-            input_channels,
-            TARGET_SAMPLE_RATE
+            input_sample_rate, input_channels, TARGET_SAMPLE_RATE
         );
         let needs_downmix = input_channels >= 2;
         let needs_resample = input_sample_rate != TARGET_SAMPLE_RATE;
@@ -164,9 +210,7 @@ impl Speech {
         let resample_ratio = TARGET_SAMPLE_RATE as f32 / input_sample_rate as f32;
         info!(
             "speech downmix: {}, resample: {} (ratio {:.3})",
-            downmix_strategy,
-            needs_resample,
-            resample_ratio
+            downmix_strategy, needs_resample, resample_ratio
         );
 
         let min_buffer_samples = TARGET_SAMPLE_RATE / 2; // ~0.5s of audio
@@ -176,13 +220,11 @@ impl Speech {
         let model_path_string = model_path.to_string_lossy().to_string();
         let mut context_params = WhisperContextParameters::default();
         context_params.dtw_parameters.mode = whisper_rs::DtwMode::ModelPreset {
-            model_preset: DtwModelPreset::BaseEn
+            model_preset: DtwModelPreset::BaseEn,
         };
-        let whisper_context = WhisperContext::new_with_params(
-            &model_path_string,
-            context_params,
-        )
-        .map_err(|e| anyhow::anyhow!("failed to load whisper model: {}", e))?;
+        let whisper_context =
+            WhisperContext::new_with_params(&model_path_string, context_params)
+                .map_err(|e| anyhow::anyhow!("failed to load whisper model: {}", e))?;
         let mut whisper_state = whisper_context.create_state()?;
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -302,7 +344,10 @@ impl Speech {
                     let average_magnitude = if processed_chunk.is_empty() {
                         0.0
                     } else {
-                        processed_chunk.iter().map(|sample| sample.abs()).sum::<f32>()
+                        processed_chunk
+                            .iter()
+                            .map(|sample| sample.abs())
+                            .sum::<f32>()
                             / processed_chunk.len() as f32
                     };
                     if average_magnitude > 0.005 {
@@ -327,7 +372,8 @@ impl Speech {
                             voiced_samples = 0;
                             continue;
                         } else {
-                            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+                            let mut params =
+                                FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
                             params.set_n_threads(8);
                             params.set_language(Some("en"));
 
@@ -341,7 +387,9 @@ impl Speech {
                                 if let Some(segment) = whisper_state.get_segment(i) {
                                     let text = segment
                                         .to_str()
-                                        .map_err(|e| anyhow::anyhow!("failed to get segment text: {}", e))?
+                                        .map_err(|e| {
+                                            anyhow::anyhow!("failed to get segment text: {}", e)
+                                        })?
                                         .to_owned();
                                     transcription_sender.send_blocking(text)?;
                                 }
@@ -418,8 +466,8 @@ fn apply_high_pass_filter(
 pub fn init(cx: &mut App) {
     let mut speech = Speech::new(cx);
     let state = speech.state.clone();
-    let transcription_sender = speech._transcription_sender.clone();
-    let notification_sender = speech._notification_sender.clone();
+    let transcription_sender = speech.transcription_sender.clone();
+    let notification_sender = speech.notification_sender.clone();
     speech.task = Some(Speech::run_transcription_loop(
         state,
         transcription_sender,

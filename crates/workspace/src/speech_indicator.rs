@@ -1,7 +1,9 @@
-use gpui::{div, prelude::*, svg, Action, Context, IntoElement, MouseButton, Render, Subscription, Window};
+use crate::StatusItemView;
+use gpui::{
+    Action, Context, IntoElement, MouseButton, Render, Subscription, Window, div, prelude::*, svg,
+};
 use speech::{Speech, SpeechState, ToggleListening};
 use theme::ActiveTheme;
-use crate::StatusItemView;
 
 pub struct SpeechIndicator {
     subscription: Option<Subscription>,
@@ -35,13 +37,7 @@ impl Render for SpeechIndicator {
         };
 
         div()
-            .child(
-                svg()
-                    .path("icons/mic.svg")
-                    .w_4()
-                    .h_4()
-                    .text_color(color),
-            )
+            .child(svg().path("icons/mic.svg").w_4().h_4().text_color(color))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, window, cx| {

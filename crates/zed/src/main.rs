@@ -1,4 +1,5 @@
 mod reliability;
+mod speech_ai;
 mod zed;
 
 use agent_ui::AgentPanel;
@@ -601,6 +602,7 @@ pub fn main() {
 
         audio::init(cx);
         speech::init(cx);
+        speech_ai::init(cx);
         workspace::init(app_state.clone(), cx);
         ui_prompt::init(cx);
 

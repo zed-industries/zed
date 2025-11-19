@@ -10,9 +10,9 @@ mod settings_store;
 mod speech_settings;
 mod vscode_import;
 
-pub use speech_settings::SpeechSettings;
 pub use settings_content::*;
 pub use settings_macros::RegisterSetting;
+pub use speech_settings::SpeechSettings;
 
 #[doc(hidden)]
 pub mod private {
