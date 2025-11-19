@@ -1136,6 +1136,18 @@ impl Vim {
         self.operator_stack.clear();
         self.selected_register.take();
         self.cancel_running_command(window, cx);
+
+        #[cfg(target_os = "windows")]
+        {
+            if last_mode == Mode::Insert && mode != Mode::Insert {
+                // disable IME when leaving Insert mode
+                window.disable_ime();
+            } else if mode == Mode::Insert && last_mode != Mode::Insert {
+                // enable IME when entering Insert mode
+                window.enable_ime();
+            }
+        }
+
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();

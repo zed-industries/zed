@@ -18,10 +18,18 @@ use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
-        Graphics::Dwm::*,
-        Graphics::Gdi::*,
+        Graphics::{Dwm::*, Gdi::*},
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
-        UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{
+                Ime::{HIMC, ImmAssociateContext, ImmGetContext, ImmReleaseContext},
+                KeyboardAndMouse::*,
+            },
+            Shell::*,
+            WindowsAndMessaging::*,
+        },
     },
     core::*,
 };
@@ -75,6 +83,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
+    ime_context: RefCell<Option<HIMC>>, // recent IME context
 }
 
 impl WindowsWindowState {
@@ -233,6 +242,7 @@ impl WindowsWindowInner {
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
             system_settings: RefCell::new(WindowsSystemSettings::new(context.display)),
+            ime_context: RefCell::new(None),
         }))
     }
 
@@ -881,6 +891,46 @@ impl PlatformWindow for WindowsWindow {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         // There is no such thing on Windows.
+    }
+
+    /// Enable IME (Input Method Editor) for text input.
+    ///
+    /// On Windows, this associates the previously saved IME context
+    /// with the window, allowing Japanese/Chinese/Korean(CJK) input.
+    fn enable_ime(&self) {
+        let hwnd = self.0.hwnd;
+
+        unsafe {
+            let mut saved_ctx = self.0.ime_context.borrow_mut();
+
+            let ctx = if let Some(saved) = *saved_ctx {
+                saved
+            } else {
+                let new_ctx = ImmGetContext(hwnd);
+                *saved_ctx = Some(new_ctx);
+                new_ctx
+            };
+
+            if ctx.0 != std::ptr::null_mut() {
+                // if context already exists
+                ImmAssociateContext(hwnd, ctx);
+                ImmReleaseContext(hwnd, ctx).ok().log_err();
+            }
+        }
+    }
+
+    /// Disable IME (Input Method Editor).
+    ///
+    /// On Windows, this disassociates the IME context from the window,
+    /// preventing non-ASCII input. The context is preserved for later re-enabling.
+    fn disable_ime(&self) {
+        let hwnd = self.0.hwnd;
+        unsafe {
+            use std::ptr;
+            eprintln!("disable_ime called");
+
+            ImmAssociateContext(hwnd, HIMC(ptr::null_mut()));
+        }
     }
 }
 

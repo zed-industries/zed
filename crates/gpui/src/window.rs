@@ -4746,6 +4746,16 @@ impl Window {
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
     }
+
+    /// Enable IME input.
+    pub fn enable_ime(&self) {
+        self.platform_window.enable_ime();
+    }
+
+    /// Disable IME input.
+    pub fn disable_ime(&self) {
+        self.platform_window.disable_ime();
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
