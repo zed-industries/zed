@@ -578,7 +578,7 @@ impl Model {
             Self::Gemini25FlashLitePreview => "Gemini 2.5 Flash-Lite Preview",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini3ProPreview => "Gemini 3 Pro Preview",
+            Self::Gemini3ProPreview => "Gemini 3 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
