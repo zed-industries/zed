@@ -67,7 +67,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
-use zed_actions::workspace::OpenWithSystem;
+use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -306,8 +306,6 @@ actions!(
         OpenSplitVertical,
         /// Opens the selected file in a horizontal split.
         OpenSplitHorizontal,
-        /// Toggles focus on the project panel.
-        ToggleFocus,
         /// Toggles visibility of git-ignored files.
         ToggleHideGitIgnore,
         /// Toggles visibility of hidden files.
