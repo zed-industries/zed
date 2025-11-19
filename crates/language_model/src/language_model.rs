@@ -104,7 +104,6 @@ pub enum LanguageModelCompletionEvent {
 impl LanguageModelCompletionEvent {
     pub fn from_completion_request_status(
         status: CompletionRequestStatus,
-        upstream_provider: LanguageModelProviderName,
     ) -> Result<Self, LanguageModelCompletionError> {
         match status {
             CompletionRequestStatus::Queued { position } => {
@@ -123,7 +122,6 @@ impl LanguageModelCompletionEvent {
                 request_id: _,
                 retry_after,
             } => Err(LanguageModelCompletionError::from_cloud_failure(
-                upstream_provider,
                 code,
                 message,
                 retry_after.map(Duration::from_secs_f64),
@@ -136,81 +134,57 @@ impl LanguageModelCompletionEvent {
 pub enum LanguageModelCompletionError {
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
-    #[error("missing {provider} API key")]
-    NoApiKey { provider: LanguageModelProviderName },
-    #[error("{provider}'s API rate limit exceeded")]
-    RateLimitExceeded {
-        provider: LanguageModelProviderName,
-        retry_after: Option<Duration>,
-    },
-    #[error("{provider}'s API servers are overloaded right now")]
-    ServerOverloaded {
-        provider: LanguageModelProviderName,
-        retry_after: Option<Duration>,
-    },
-    #[error("{provider}'s API server reported an internal server error: {message}")]
-    ApiInternalServerError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
+    #[error("missing API key")]
+    NoApiKey,
+    #[error("API rate limit exceeded")]
+    RateLimitExceeded { retry_after: Option<Duration> },
+    #[error("API servers are overloaded right now")]
+    ServerOverloaded { retry_after: Option<Duration> },
+    #[error("API server reported an internal server error: {message}")]
+    ApiInternalServerError { message: String },
     #[error("{message}")]
     UpstreamProviderError {
         message: String,
         status: StatusCode,
         retry_after: Option<Duration>,
     },
-    #[error("HTTP response error from {provider}'s API: status {status_code} - {message:?}")]
+    #[error("HTTP response error from API: status {status_code} - {message:?}")]
     HttpResponseError {
-        provider: LanguageModelProviderName,
         status_code: StatusCode,
         message: String,
     },
 
     // Client errors
-    #[error("invalid request format to {provider}'s API: {message}")]
-    BadRequestFormat {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
-    #[error("authentication error with {provider}'s API: {message}")]
-    AuthenticationError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
-    #[error("Permission error with {provider}'s API: {message}")]
-    PermissionError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
+    #[error("invalid request format to API: {message}")]
+    BadRequestFormat { message: String },
+    #[error("authentication error with API: {message}")]
+    AuthenticationError { message: String },
+    #[error("Permission error with API: {message}")]
+    PermissionError { message: String },
     #[error("language model provider API endpoint not found")]
-    ApiEndpointNotFound { provider: LanguageModelProviderName },
-    #[error("I/O error reading response from {provider}'s API")]
+    ApiEndpointNotFound,
+    #[error("I/O error reading response from API")]
     ApiReadResponseError {
-        provider: LanguageModelProviderName,
         #[source]
         error: io::Error,
     },
-    #[error("error serializing request to {provider} API")]
+    #[error("error serializing request to API")]
     SerializeRequest {
-        provider: LanguageModelProviderName,
         #[source]
         error: serde_json::Error,
     },
-    #[error("error building request body to {provider} API")]
+    #[error("error building request body to API")]
     BuildRequestBody {
-        provider: LanguageModelProviderName,
         #[source]
         error: http::Error,
     },
-    #[error("error sending HTTP request to {provider} API")]
+    #[error("error sending HTTP request to API")]
     HttpSend {
-        provider: LanguageModelProviderName,
         #[source]
         error: anyhow::Error,
     },
-    #[error("error deserializing {provider} API response")]
+    #[error("error deserializing API response")]
     DeserializeResponse {
-        provider: LanguageModelProviderName,
         #[source]
         error: serde_json::Error,
     },
@@ -237,7 +211,6 @@ impl LanguageModelCompletionError {
     }
 
     pub fn from_cloud_failure(
-        upstream_provider: LanguageModelProviderName,
         code: String,
         message: String,
         retry_after: Option<Duration>,
@@ -253,58 +226,42 @@ impl LanguageModelCompletionError {
             if let Some((upstream_status, inner_message)) =
                 Self::parse_upstream_error_json(&message)
             {
-                return Self::from_http_status(
-                    upstream_provider,
-                    upstream_status,
-                    inner_message,
-                    retry_after,
-                );
+                return Self::from_http_status(upstream_status, inner_message, retry_after);
             }
             anyhow!("completion request failed, code: {code}, message: {message}").into()
         } else if let Some(status_code) = code
             .strip_prefix("upstream_http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
-            Self::from_http_status(upstream_provider, status_code, message, retry_after)
+            Self::from_http_status(status_code, message, retry_after)
         } else if let Some(status_code) = code
             .strip_prefix("http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
-            Self::from_http_status(ZED_CLOUD_PROVIDER_NAME, status_code, message, retry_after)
+            Self::from_http_status(status_code, message, retry_after)
         } else {
             anyhow!("completion request failed, code: {code}, message: {message}").into()
         }
     }
 
     pub fn from_http_status(
-        provider: LanguageModelProviderName,
         status_code: StatusCode,
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
         match status_code {
-            StatusCode::BAD_REQUEST => Self::BadRequestFormat { provider, message },
-            StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
-            StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
-            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
+            StatusCode::BAD_REQUEST => Self::BadRequestFormat { message },
+            StatusCode::UNAUTHORIZED => Self::AuthenticationError { message },
+            StatusCode::FORBIDDEN => Self::PermissionError { message },
+            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound,
             StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(&message),
             },
-            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
-                provider,
-                retry_after,
-            },
-            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
-            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            _ if status_code.as_u16() == 529 => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded { retry_after },
+            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { message },
+            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded { retry_after },
+            _ if status_code.as_u16() == 529 => Self::ServerOverloaded { retry_after },
             _ => Self::HttpResponseError {
-                provider,
                 status_code,
                 message,
             },
@@ -314,31 +271,25 @@ impl LanguageModelCompletionError {
 
 impl From<AnthropicError> for LanguageModelCompletionError {
     fn from(error: AnthropicError) -> Self {
-        let provider = ANTHROPIC_PROVIDER_NAME;
         match error {
-            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
-            AnthropicError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { error },
+            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { error },
+            AnthropicError::HttpSend(error) => Self::HttpSend { error },
+            AnthropicError::DeserializeResponse(error) => Self::DeserializeResponse { error },
+            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { error },
             AnthropicError::HttpResponseError {
                 status_code,
                 message,
             } => Self::HttpResponseError {
-                provider,
                 status_code,
                 message,
             },
             AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
                 retry_after: Some(retry_after),
             },
-            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
+            AnthropicError::ServerOverloaded { retry_after } => {
+                Self::ServerOverloaded { retry_after }
+            }
             AnthropicError::ApiError(api_error) => api_error.into(),
         }
     }
@@ -347,37 +298,26 @@ impl From<AnthropicError> for LanguageModelCompletionError {
 impl From<anthropic::ApiError> for LanguageModelCompletionError {
     fn from(error: anthropic::ApiError) -> Self {
         use anthropic::ApiErrorCode::*;
-        let provider = ANTHROPIC_PROVIDER_NAME;
         match error.code() {
             Some(code) => match code {
                 InvalidRequestError => Self::BadRequestFormat {
-                    provider,
                     message: error.message,
                 },
                 AuthenticationError => Self::AuthenticationError {
-                    provider,
                     message: error.message,
                 },
                 PermissionError => Self::PermissionError {
-                    provider,
                     message: error.message,
                 },
-                NotFoundError => Self::ApiEndpointNotFound { provider },
+                NotFoundError => Self::ApiEndpointNotFound,
                 RequestTooLarge => Self::PromptTooLarge {
                     tokens: parse_prompt_too_long(&error.message),
                 },
-                RateLimitError => Self::RateLimitExceeded {
-                    provider,
-                    retry_after: None,
-                },
+                RateLimitError => Self::RateLimitExceeded { retry_after: None },
                 ApiError => Self::ApiInternalServerError {
-                    provider,
                     message: error.message,
                 },
-                OverloadedError => Self::ServerOverloaded {
-                    provider,
-                    retry_after: None,
-                },
+                OverloadedError => Self::ServerOverloaded { retry_after: None },
             },
             None => Self::Other(error.into()),
         }
@@ -388,7 +328,7 @@ impl From<open_ai::RequestError> for LanguageModelCompletionError {
     fn from(error: open_ai::RequestError) -> Self {
         match error {
             open_ai::RequestError::HttpResponseError {
-                provider,
+                provider: _,
                 status_code,
                 body,
                 headers,
@@ -398,7 +338,7 @@ impl From<open_ai::RequestError> for LanguageModelCompletionError {
                     .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
                     .map(Duration::from_secs);
 
-                Self::from_http_status(provider.into(), status_code, body, retry_after)
+                Self::from_http_status(status_code, body, retry_after)
             }
             open_ai::RequestError::Other(e) => Self::Other(e),
         }
@@ -407,23 +347,18 @@ impl From<open_ai::RequestError> for LanguageModelCompletionError {
 
 impl From<OpenRouterError> for LanguageModelCompletionError {
     fn from(error: OpenRouterError) -> Self {
-        let provider = LanguageModelProviderName::new("OpenRouter");
         match error {
-            OpenRouterError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
-            OpenRouterError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            OpenRouterError::SerializeRequest(error) => Self::SerializeRequest { error },
+            OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { error },
+            OpenRouterError::HttpSend(error) => Self::HttpSend { error },
+            OpenRouterError::DeserializeResponse(error) => Self::DeserializeResponse { error },
+            OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { error },
             OpenRouterError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
                 retry_after: Some(retry_after),
             },
-            OpenRouterError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
+            OpenRouterError::ServerOverloaded { retry_after } => {
+                Self::ServerOverloaded { retry_after }
+            }
             OpenRouterError::ApiError(api_error) => api_error.into(),
         }
     }
@@ -432,41 +367,28 @@ impl From<OpenRouterError> for LanguageModelCompletionError {
 impl From<open_router::ApiError> for LanguageModelCompletionError {
     fn from(error: open_router::ApiError) -> Self {
         use open_router::ApiErrorCode::*;
-        let provider = LanguageModelProviderName::new("OpenRouter");
         match error.code {
             InvalidRequestError => Self::BadRequestFormat {
-                provider,
                 message: error.message,
             },
             AuthenticationError => Self::AuthenticationError {
-                provider,
                 message: error.message,
             },
             PaymentRequiredError => Self::AuthenticationError {
-                provider,
                 message: format!("Payment required: {}", error.message),
             },
             PermissionError => Self::PermissionError {
-                provider,
                 message: error.message,
             },
             RequestTimedOut => Self::HttpResponseError {
-                provider,
                 status_code: StatusCode::REQUEST_TIMEOUT,
                 message: error.message,
             },
-            RateLimitError => Self::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
+            RateLimitError => Self::RateLimitExceeded { retry_after: None },
             ApiError => Self::ApiInternalServerError {
-                provider,
                 message: error.message,
             },
-            OverloadedError => Self::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
+            OverloadedError => Self::ServerOverloaded { retry_after: None },
         }
     }
 }
@@ -874,16 +796,13 @@ mod tests {
     #[test]
     fn test_from_cloud_failure_with_upstream_http_error() {
         let error = LanguageModelCompletionError::from_cloud_failure(
-            String::from("anthropic").into(),
             "upstream_http_error".to_string(),
             r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers. reset reason: connection timeout","upstream_status":503}"#.to_string(),
             None,
         );
 
         match error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
-                assert_eq!(provider.0, "anthropic");
-            }
+            LanguageModelCompletionError::ServerOverloaded { .. } => {}
             _ => panic!(
                 "Expected ServerOverloaded error for 503 status, got: {:?}",
                 error
@@ -891,15 +810,13 @@ mod tests {
         }
 
         let error = LanguageModelCompletionError::from_cloud_failure(
-            String::from("anthropic").into(),
             "upstream_http_error".to_string(),
             r#"{"code":"upstream_http_error","message":"Internal server error","upstream_status":500}"#.to_string(),
             None,
         );
 
         match error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
-                assert_eq!(provider.0, "anthropic");
+            LanguageModelCompletionError::ApiInternalServerError { message } => {
                 assert_eq!(message, "Internal server error");
             }
             _ => panic!(
@@ -912,16 +829,13 @@ mod tests {
     #[test]
     fn test_from_cloud_failure_with_standard_format() {
         let error = LanguageModelCompletionError::from_cloud_failure(
-            String::from("anthropic").into(),
             "upstream_http_503".to_string(),
             "Service unavailable".to_string(),
             None,
         );
 
         match error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
-                assert_eq!(provider.0, "anthropic");
-            }
+            LanguageModelCompletionError::ServerOverloaded { .. } => {}
             _ => panic!("Expected ServerOverloaded error for upstream_http_503"),
         }
     }
@@ -929,16 +843,13 @@ mod tests {
     #[test]
     fn test_upstream_http_error_connection_timeout() {
         let error = LanguageModelCompletionError::from_cloud_failure(
-            String::from("anthropic").into(),
             "upstream_http_error".to_string(),
             r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers. reset reason: connection timeout","upstream_status":503}"#.to_string(),
             None,
         );
 
         match error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
-                assert_eq!(provider.0, "anthropic");
-            }
+            LanguageModelCompletionError::ServerOverloaded { .. } => {}
             _ => panic!(
                 "Expected ServerOverloaded error for connection timeout with 503 status, got: {:?}",
                 error
@@ -946,15 +857,13 @@ mod tests {
         }
 
         let error = LanguageModelCompletionError::from_cloud_failure(
-            String::from("anthropic").into(),
             "upstream_http_error".to_string(),
             r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers. reset reason: connection timeout","upstream_status":500}"#.to_string(),
             None,
         );
 
         match error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
-                assert_eq!(provider.0, "anthropic");
+            LanguageModelCompletionError::ApiInternalServerError { message } => {
                 assert_eq!(
                     message,
                     "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers. reset reason: connection timeout"

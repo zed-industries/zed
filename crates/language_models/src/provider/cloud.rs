@@ -541,7 +541,6 @@ impl From<ApiError> for LanguageModelCompletionError {
             }
 
             return LanguageModelCompletionError::from_http_status(
-                PROVIDER_NAME,
                 error.status,
                 cloud_error.message,
                 None,
@@ -549,12 +548,7 @@ impl From<ApiError> for LanguageModelCompletionError {
         }
 
         let retry_after = None;
-        LanguageModelCompletionError::from_http_status(
-            PROVIDER_NAME,
-            error.status,
-            error.body,
-            retry_after,
-        )
+        LanguageModelCompletionError::from_http_status(error.status, error.body, retry_after)
     }
 }
 
@@ -752,7 +746,6 @@ impl LanguageModel for CloudLanguageModel {
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         let thinking_allowed = request.thinking_allowed;
-        let provider_name = LanguageModelProviderName(provider_name(&self.model.provider));
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
@@ -804,7 +797,6 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -851,7 +843,6 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -898,7 +889,6 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -939,7 +929,6 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -951,7 +940,6 @@ impl LanguageModel for CloudLanguageModel {
 
 fn map_cloud_completion_events<T, F>(
     stream: Pin<Box<dyn Stream<Item = Result<CompletionEvent<T>>> + Send>>,
-    provider: &LanguageModelProviderName,
     mut map_callback: F,
 ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
 where
@@ -960,7 +948,6 @@ where
         + Send
         + 'static,
 {
-    let provider = provider.clone();
     stream
         .flat_map(move |event| {
             futures::stream::iter(match event {
@@ -968,26 +955,12 @@ where
                     vec![Err(LanguageModelCompletionError::from(error))]
                 }
                 Ok(CompletionEvent::Status(event)) => {
-                    vec![
-                        LanguageModelCompletionEvent::from_completion_request_status(
-                            event,
-                            provider.clone(),
-                        ),
-                    ]
+                    vec![LanguageModelCompletionEvent::from_completion_request_status(event)]
                 }
                 Ok(CompletionEvent::Event(event)) => map_callback(event),
             })
         })
         .boxed()
-}
-
-fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> SharedString {
-    match provider {
-        cloud_llm_client::LanguageModelProvider::Anthropic => "Anthropic".into(),
-        cloud_llm_client::LanguageModelProvider::OpenAi => "OpenAI".into(),
-        cloud_llm_client::LanguageModelProvider::Google => "Google".into(),
-        cloud_llm_client::LanguageModelProvider::XAi => "XAi".into(),
-    }
 }
 
 fn usage_updated_event<T>(
@@ -1334,8 +1307,7 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
-                assert_eq!(provider, PROVIDER_NAME);
+            LanguageModelCompletionError::ApiInternalServerError { message } => {
                 assert_eq!(message, "Regular internal server error");
             }
             _ => panic!(
@@ -1383,9 +1355,7 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, .. } => {
-                assert_eq!(provider, PROVIDER_NAME);
-            }
+            LanguageModelCompletionError::ApiInternalServerError { .. } => {}
             _ => panic!(
                 "Expected ApiInternalServerError for invalid JSON, got: {:?}",
                 completion_error

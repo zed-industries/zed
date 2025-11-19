@@ -320,9 +320,7 @@ impl AnthropicModel {
 
         async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey);
             };
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
@@ -778,9 +776,9 @@ impl AnthropicEventMapper {
                         }
                     };
                 }
-                vec![Ok(LanguageModelCompletionEvent::TokenUsage(
-                    convert_usage(&self.usage),
-                ))]
+                vec![Ok(LanguageModelCompletionEvent::TokenUsage(convert_usage(
+                    &self.usage,
+                )))]
             }
             Event::MessageStop => {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]

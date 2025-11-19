@@ -84,9 +84,7 @@ impl State {
         let http_client = self.http_client.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
         let Some(api_key) = self.api_key_state.key(&api_url) else {
-            return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
-                provider: PROVIDER_NAME,
-            }));
+            return Task::ready(Err(LanguageModelCompletionError::NoApiKey));
         };
         cx.spawn(async move |this, cx| {
             let models = list_models(http_client.as_ref(), &api_url, &api_key)
@@ -288,9 +286,7 @@ impl OpenRouterLanguageModel {
 
         async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey);
             };
             let request =
                 open_router::stream_completion(http_client.as_ref(), &api_url, &api_key, request);

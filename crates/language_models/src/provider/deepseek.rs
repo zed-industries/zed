@@ -224,9 +224,7 @@ impl DeepSeekLanguageModel {
 
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey);
             };
             let request =
                 deepseek::stream_completion(http_client.as_ref(), &api_url, &api_key, request);

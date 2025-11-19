@@ -350,10 +350,7 @@ impl LanguageModel for GoogleLanguageModel {
 
         async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                }
-                .into());
+                return Err(LanguageModelCompletionError::NoApiKey.into());
             };
             let response = google_ai::count_tokens(
                 http_client.as_ref(),
@@ -608,9 +605,9 @@ impl GoogleEventMapper {
         let mut wants_to_use_tool = false;
         if let Some(usage_metadata) = event.usage_metadata {
             update_usage(&mut self.usage, &usage_metadata);
-            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(
-                convert_usage(&self.usage),
-            )))
+            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(convert_usage(
+                &self.usage,
+            ))))
         }
 
         if let Some(prompt_feedback) = event.prompt_feedback

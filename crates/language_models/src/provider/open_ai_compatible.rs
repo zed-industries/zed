@@ -227,7 +227,7 @@ impl OpenAiCompatibleLanguageModel {
         let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
+                return Err(LanguageModelCompletionError::NoApiKey);
             };
             let request = stream_completion(
                 http_client.as_ref(),

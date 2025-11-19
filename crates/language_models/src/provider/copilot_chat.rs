@@ -422,14 +422,12 @@ pub fn map_to_language_model_completion_events(
                         }
 
                         if let Some(usage) = event.usage {
-                            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(
-                                TokenUsage {
-                                    input_tokens: usage.prompt_tokens,
-                                    output_tokens: usage.completion_tokens,
-                                    cache_creation_input_tokens: 0,
-                                    cache_read_input_tokens: 0,
-                                },
-                            )));
+                            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(TokenUsage {
+                                input_tokens: usage.prompt_tokens,
+                                output_tokens: usage.completion_tokens,
+                                cache_creation_input_tokens: 0,
+                                cache_read_input_tokens: 0,
+                            })));
                         }
 
                         match choice.finish_reason.as_deref() {
@@ -655,7 +653,6 @@ impl CopilotResponsesEventMapper {
             }
 
             copilot::copilot_responses::StreamEvent::Failed { response } => {
-                let provider = PROVIDER_NAME;
                 let (status_code, message) = match response.error {
                     Some(error) => {
                         let status_code = StatusCode::from_str(&error.code)
@@ -668,7 +665,6 @@ impl CopilotResponsesEventMapper {
                     ),
                 };
                 vec![Err(LanguageModelCompletionError::HttpResponseError {
-                    provider,
                     status_code,
                     message,
                 })]
