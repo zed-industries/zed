@@ -3957,20 +3957,6 @@ impl GitPanel {
         let path_style = self.project.read(cx).path_style(cx);
         let display_name = entry.display_name(path_style);
 
-        let active_repo = self
-            .project
-            .read(cx)
-            .active_repository(cx)
-            .expect("active repository must be set");
-        let repo = active_repo.read(cx);
-        let repo_snapshot = repo.snapshot();
-
-        let old_path = if entry.status.is_renamed() {
-            repo_snapshot.renamed_paths.get(&entry.repo_path)
-        } else {
-            None
-        };
-
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -3979,16 +3965,15 @@ impl GitPanel {
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
-        let is_renamed = status.is_renamed();
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
+            } else if is_modified {
+                Color::VersionControlModified
             } else if is_deleted {
                 // We don't want a bunch of red labels in the list
                 Color::Disabled
-            } else if is_renamed || is_modified {
-                Color::VersionControlModified
             } else {
                 Color::VersionControlAdded
             }
@@ -4008,6 +3993,12 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
+        let active_repo = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .expect("active repository must be set");
+        let repo = active_repo.read(cx);
         // Checking for current staged/unstaged file status is a chained operation:
         // 1. first, we check for any pending operation recorded in repository
         // 2. if there are no pending ops either running or finished, we then ask the repository
@@ -4162,32 +4153,23 @@ impl GitPanel {
                     .items_center()
                     .flex_1()
                     // .overflow_hidden()
-                    .when_some(old_path.as_ref(), |this, old_path| {
-                        let new_display = old_path.display(path_style).to_string();
-                        let old_display = entry.repo_path.display(path_style).to_string();
-                        this.child(self.entry_label(old_display, Color::Muted).strikethrough())
-                            .child(self.entry_label(" → ", Color::Muted))
-                            .child(self.entry_label(new_display, label_color))
-                    })
-                    .when(old_path.is_none(), |this| {
-                        this.when_some(entry.parent_dir(path_style), |this, parent| {
-                            if !parent.is_empty() {
-                                this.child(
-                                    self.entry_label(
-                                        format!("{parent}{}", path_style.separator()),
-                                        path_color,
-                                    )
-                                    .when(status.is_deleted(), |this| this.strikethrough()),
+                    .when_some(entry.parent_dir(path_style), |this, parent| {
+                        if !parent.is_empty() {
+                            this.child(
+                                self.entry_label(
+                                    format!("{parent}{}", path_style.separator()),
+                                    path_color,
                                 )
-                            } else {
-                                this
-                            }
-                        })
-                        .child(
-                            self.entry_label(display_name, label_color)
                                 .when(status.is_deleted(), |this| this.strikethrough()),
-                        )
-                    }),
+                            )
+                        } else {
+                            this
+                        }
+                    })
+                    .child(
+                        self.entry_label(display_name, label_color)
+                            .when(status.is_deleted(), |this| this.strikethrough()),
+                    ),
             )
             .into_any_element()
     }
