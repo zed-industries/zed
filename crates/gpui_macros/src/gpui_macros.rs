@@ -2,6 +2,7 @@ mod derive_action;
 mod derive_app_context;
 mod derive_into_element;
 mod derive_render;
+mod derive_shader_uniform;
 mod derive_visual_context;
 mod register_action;
 mod styles;
@@ -38,6 +39,12 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
+}
+
+/// #[derive(ShaderUniform)] is used to make a struct which can be sent to custom shaders as user-data.
+#[proc_macro_derive(ShaderUniform)]
+pub fn derive_shader_uniform(input: TokenStream) -> TokenStream {
+    derive_shader_uniform::derive_shader_uniform(input)
 }
 
 /// #[derive(AppContext)] is used to create a context out of anything that holds a `&mut App`

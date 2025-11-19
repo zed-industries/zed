@@ -2,12 +2,13 @@ use std::time::Duration;
 
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, App, AppContext, Application, Bounds, Context,
-    CustomShader, IntoElement, Length, ParentElement, Radians, Render, RenderOnce, Rgba, Styled,
-    Window, WindowBounds, WindowOptions, custom_shader, div, px, relative, rgb, size,
+    CustomShader, IntoElement, Length, ParentElement, Radians, Render, RenderOnce, Rgba,
+    ShaderUniform, Styled, Window, WindowBounds, WindowOptions, custom_shader, div, px, relative,
+    rgb, size,
 };
 
 #[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+#[derive(ShaderUniform, Clone, Copy)]
 pub struct UserData {
     pub time_a: f32,
     pub time_b: f32,
@@ -36,7 +37,7 @@ impl Render for ShaderExample {
             c = mix(c, user_data.color_c, x);
 
             return vec4<f32>(c.x, c.y, c.z, 1.0);"#,
-            "time_a: f32, time_b: f32, color_a: vec3<f32>, pad0: u32, color_b: vec3<f32>, pad1: u32, color_c: vec3<f32>, pad2: u32",
+            // "time_a: f32, time_b: f32, color_a: vec3<f32>, pad0: u32, color_b: vec3<f32>, pad1: u32, color_c: vec3<f32>, pad2: u32",
             r#"
 
             fn rand22(n: vec2<f32>) -> f32 { return fract(sin(dot(n, vec2<f32>(12.9898, 4.1414))) * 43758.5453); }
@@ -174,7 +175,7 @@ fn star() -> Star {
 }
 
 #[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+#[derive(ShaderUniform, Clone, Copy)]
 struct StarUserData {
     bg: [f32; 4],
     border_color: [f32; 4],
@@ -192,14 +193,13 @@ impl RenderOnce for Star {
                 let r = min(input.size.x, input.size.y) / 2.0;
                 let p = vec2<f32>(input.position.x - input.origin.x, input.position.y - input.origin.y) - input.size / 2.0;
                 let p_rot = mat2x2<f32>(user_data.cosine, -user_data.sine, user_data.sine, user_data.cosine) * p;
-                let d = sd_pentagram(p_rot, r * 0.95) - r * 0.05;
+                let d = sd_pentagram(p_rot, r * 0.90) - r * 0.1;
 
                 let bg = mix(user_data.bg, vec4<f32>(user_data.bg.x, user_data.bg.y, user_data.bg.z, 0.0), clamp(d, 0.0, 1.0));
                 let border = clamp(abs(d + user_data.border / 2.0) - user_data.border / 2.0 - 1.0, 0.0, 1.0);
                 let color = mix(user_data.border_color, bg, border);
 
                 return color;"#,
-                "bg: vec4<f32>, border_color: vec4<f32>, border: f32, sine: f32, cosine: f32",
                 r#"
                 // https://iquilezles.org/articles/distfunctions2d/
                 fn sd_pentagram(pos: vec2<f32>, r: f32) -> f32 {

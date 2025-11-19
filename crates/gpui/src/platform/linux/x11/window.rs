@@ -1479,13 +1479,17 @@ impl PlatformWindow for X11Window {
     fn register_shader(
         &self,
         source: &str,
+        user_struct_name: Option<&str>,
         user_data_size: usize,
         user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
         let mut inner = self.0.state.borrow_mut();
-        inner
-            .renderer
-            .register_custom_shader(source, user_data_size, user_data_align)
+        inner.renderer.register_custom_shader(
+            source,
+            user_struct_name,
+            user_data_size,
+            user_data_align,
+        )
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

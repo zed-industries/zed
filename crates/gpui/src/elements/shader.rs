@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use bytemuck::Pod;
 use refineable::Refineable;
 
 use crate::{
@@ -9,14 +8,14 @@ use crate::{
 };
 
 /// An element for custom rendering.
-pub struct ShaderElement<T: Pod> {
+pub struct ShaderElement<T: ShaderUniform> {
     style: StyleRefinement,
     shader: CustomShader<T>,
     user_data: T,
 }
 
 /// Create a new shader element with `T` user-data.
-pub fn custom_shader<T: Pod>(shader: CustomShader<T>, user_data: T) -> ShaderElement<T> {
+pub fn custom_shader<T: ShaderUniform>(shader: CustomShader<T>, user_data: T) -> ShaderElement<T> {
     ShaderElement {
         style: Default::default(),
         shader,
@@ -24,7 +23,7 @@ pub fn custom_shader<T: Pod>(shader: CustomShader<T>, user_data: T) -> ShaderEle
     }
 }
 
-impl<T: Pod> IntoElement for ShaderElement<T> {
+impl<T: ShaderUniform> IntoElement for ShaderElement<T> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -32,7 +31,7 @@ impl<T: Pod> IntoElement for ShaderElement<T> {
     }
 }
 
-impl<T: Pod> Element for ShaderElement<T> {
+impl<T: ShaderUniform> Element for ShaderElement<T> {
     type RequestLayoutState = ();
 
     type PrepaintState = ();
@@ -86,7 +85,7 @@ impl<T: Pod> Element for ShaderElement<T> {
     }
 }
 
-impl<T: Pod> Styled for ShaderElement<T> {
+impl<T: ShaderUniform> Styled for ShaderElement<T> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
@@ -94,18 +93,17 @@ impl<T: Pod> Styled for ShaderElement<T> {
 
 /// An a shader which can be rendered by `shader`
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CustomShader<T: Pod> {
+pub struct CustomShader<T: ShaderUniform> {
     pub(crate) source: String,
     _marker: PhantomData<T>,
 }
 
-impl<T: Pod> CustomShader<T> {
+impl<T: ShaderUniform> CustomShader<T> {
     /// Create a new fragment shader with per-instance user-data
-    pub fn new_fragment(
-        fragment_body: &str,
-        user_data_definition: &str,
-        extra_definitions: &str,
-    ) -> Self {
+    pub fn new_fragment(fragment_body: &str, extra_definitions: &str) -> Self {
+        let user_data_ty = T::NAME;
+        let user_data_definition = T::DEFINITION.unwrap_or("");
+
         Self {
             source: format!(
                 r#"
@@ -143,14 +141,12 @@ impl<T: Pod> CustomShader<T> {
                     size: vec2<f32>,
                 }}
 
-                struct UserData {{
-                    {user_data_definition}
-                }}
+                {user_data_definition}
 
                 struct Instance {{
                     bounds: Bounds,
                     content_mask: Bounds,
-                    user_data: UserData,
+                    user_data: {user_data_ty},
                 }}
 
                 struct Instances {{
@@ -198,3 +194,58 @@ impl<T: Pod> CustomShader<T> {
         }
     }
 }
+
+/// Marker trait for data which can be passed to custom WGSL shaders.
+///
+/// To create a custom structure, derive this trait:
+///
+/// ```rust
+/// #[derive(ShaderUniform)]
+/// struct MyStruct {
+///     a_vec4_field: [f32; 4],
+///     some_other_field: u32,
+///     an_invalid_field: [f32; 2], // ERROR! vec2 in wgsl requires an alignment of 8
+/// }
+/// ```
+pub unsafe trait ShaderUniform: Clone + Copy + 'static {
+    /// The name of the type in wgsl (ie. `f32`, `UserData`)
+    const NAME: &str;
+
+    /// The type's definition, if it is a struct.
+    const DEFINITION: Option<&str>;
+
+    /// The wgsl alignment of this type in bytes
+    const ALIGN: usize;
+}
+
+macro_rules! impl_scalar {
+    ($ty:ty, $name:literal) => {
+        unsafe impl ShaderUniform for $ty {
+            const NAME: &str = $name;
+            const DEFINITION: Option<&str> = None;
+            const ALIGN: usize = 4;
+        }
+
+        unsafe impl ShaderUniform for [$ty; 2] {
+            const NAME: &str = concat!("vec2<", $name, ">");
+            const DEFINITION: Option<&str> = None;
+            const ALIGN: usize = 8;
+        }
+
+        unsafe impl ShaderUniform for [$ty; 3] {
+            const NAME: &str = concat!("vec3<", $name, ">");
+            const DEFINITION: Option<&str> = None;
+            const ALIGN: usize = 16;
+        }
+
+        unsafe impl ShaderUniform for [$ty; 4] {
+            const NAME: &str = concat!("vec4<", $name, ">");
+            const DEFINITION: Option<&str> = None;
+            const ALIGN: usize = 16;
+        }
+    };
+}
+
+impl_scalar!(u32, "u32");
+impl_scalar!(i32, "i32");
+impl_scalar!(f32, "f32");

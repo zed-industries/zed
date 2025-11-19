@@ -322,6 +322,7 @@ impl BladePipelines {
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
         source: &str,
+        user_struct_name: Option<&str>,
         user_data_size: usize,
         user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
@@ -333,10 +334,12 @@ impl BladePipelines {
         let shader = gpu.try_create_shader(gpu::ShaderDesc { source })?;
         shader.check_struct_size::<GlobalParams>();
 
-        assert_eq!(
-            shader.get_struct_size("UserData") as usize,
-            user_data_size.next_multiple_of(user_data_align)
-        );
+        if let Some(user_struct_name) = user_struct_name {
+            assert_eq!(
+                shader.get_struct_size(user_struct_name) as usize,
+                user_data_size.next_multiple_of(user_data_align)
+            );
+        }
 
         let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(user_data_align);
         assert_eq!(
@@ -1052,6 +1055,7 @@ impl BladeRenderer {
     pub fn register_custom_shader(
         &mut self,
         source: &str,
+        user_struct_name: Option<&str>,
         user_data_size: usize,
         user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
@@ -1059,6 +1063,7 @@ impl BladeRenderer {
             &self.gpu,
             self.surface.info(),
             source,
+            user_struct_name,
             user_data_size,
             user_data_align,
         )

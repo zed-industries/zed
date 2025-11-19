@@ -140,6 +140,7 @@ libc.workspace = true
 pin-project = "1.1.10"
 circular-buffer.workspace = true
 spin = "0.10.0"
+const_format = "0.2.35"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"

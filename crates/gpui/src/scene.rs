@@ -703,6 +703,7 @@ pub(crate) struct ShaderPrimitive {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub user_data: Vec<u8>,
+    pub user_data_align: usize,
 }
 
 impl From<ShaderPrimitive> for Primitive {

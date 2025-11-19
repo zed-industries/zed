@@ -1219,13 +1219,17 @@ impl PlatformWindow for WaylandWindow {
     fn register_shader(
         &self,
         source: &str,
+        user_struct_name: Option<&str>,
         user_data_size: usize,
         user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
         let mut state = self.borrow_mut();
-        state
-            .renderer
-            .register_custom_shader(source, user_data_size, user_data_align)
+        state.renderer.register_custom_shader(
+            source,
+            user_struct_name,
+            user_data_size,
+            user_data_align,
+        )
     }
 
     fn completed_frame(&self) {

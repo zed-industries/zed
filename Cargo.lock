@@ -7224,6 +7224,7 @@ dependencies = [
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
  "collections",
+ "const_format",
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.24.0",

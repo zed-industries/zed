@@ -506,6 +506,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn register_shader(
         &self,
         source: &str,
+        user_struct_name: Option<&str>,
         user_data_size: usize,
         user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str>;
