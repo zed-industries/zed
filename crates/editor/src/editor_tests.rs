@@ -19859,6 +19859,66 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
 }
 
 #[gpui::test]
+async fn test_toggle_selected_diff_hunks_neighbor(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        lineA
+        lineB
+        lineC
+        lineD
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇlineA1
+        lineB
+        lineD
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+        - lineA
+        + ˇlineA1
+          lineB
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_right(&MoveRight, window, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+        - lineA
+        + lineA1
+          lˇineB
+        - lineC
+          lineD
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_diff_base_change_with_expanded_diff_hunks(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
