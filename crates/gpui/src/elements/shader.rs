@@ -214,11 +214,7 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
                 {}
             }}
             "#,
-            self.shader
-                .extra_items
-                .as_ref()
-                .map(String::as_str)
-                .unwrap_or(""),
+            self.shader.extra_items.as_deref().unwrap_or(""),
             if size_of::<T>() != 0 {
                 "let data = b_instances.instances[input.instance_id].instance_data;"
             } else {
@@ -256,7 +252,7 @@ pub unsafe trait ShaderUniform: Clone + Copy + 'static {
     const ALIGN: usize;
 }
 
-// Used to mark instance-data as ununsed. It is not allowed in instance-data structs.
+// Used to mark instance-data as unused. It is not allowed in instance-data structs.
 unsafe impl ShaderUniform for () {
     const NAME: &str = "This shouldn't ever be emitted";
     const DEFINITION: Option<&str> = None;

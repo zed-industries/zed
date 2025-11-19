@@ -1266,11 +1266,7 @@ impl MetalRenderer {
 
         unsafe {
             // TODO: write directly to the buffer
-            ptr::copy_nonoverlapping(
-                instances.as_ptr() as *const u8,
-                buffer_contents,
-                instances.len(),
-            );
+            ptr::copy_nonoverlapping(instances.as_ptr(), buffer_contents, instances.len());
         }
 
         command_encoder.draw_primitives_instanced(

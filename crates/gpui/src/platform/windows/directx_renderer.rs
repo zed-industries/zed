@@ -215,8 +215,7 @@ impl DirectXRenderer {
                 .unwrap(),
             &[CustomShaderGlobalParams {
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
-                pad1: 0,
-                pad2: 0,
+                pad: [0; 2],
             }],
         )?;
         unsafe {

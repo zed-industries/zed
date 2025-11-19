@@ -887,6 +887,7 @@ impl PlatformWindow for WindowsWindow {
     fn register_shader(
         &self,
         source: &str,
+        _user_struct_name: Option<&str>,
         user_data_size: usize,
         user_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
