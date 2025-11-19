@@ -29,9 +29,10 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        Branch, CommitDecorations, CommitDetails, CommitDiff, CommitFile, CommitGraph,
+        CommitGraphEntry, CommitOptions, DiffType, FetchOptions, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -444,6 +445,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_git_diff);
         client.add_entity_request_handler(Self::handle_tree_diff);
         client.add_entity_request_handler(Self::handle_get_blob_content);
+        client.add_entity_request_handler(Self::handle_commit_graph);
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
         client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
         client.add_entity_message_handler(Self::handle_update_diff_bases);
@@ -2228,6 +2230,60 @@ impl GitStore {
         })
     }
 
+    async fn handle_commit_graph(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCommitGraph>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCommitGraphResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let graph = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.commit_graph(envelope.payload.limit as usize)
+            })?
+            .await??;
+
+        Ok(proto::GitCommitGraphResponse {
+            truncated: graph.truncated,
+            commits: graph
+                .commits
+                .into_iter()
+                .map(|commit| proto::GitCommitGraphEntry {
+                    oid: commit.oid.into(),
+                    short_oid: commit.short_oid.into(),
+                    parents: commit.parents.into_iter().map(Into::into).collect(),
+                    author: commit.author.into(),
+                    author_email: commit.author_email.into(),
+                    relative_time: commit.relative_time.into(),
+                    committed_at: commit.committed_at.into(),
+                    committed_timestamp: commit.committed_timestamp,
+                    summary: commit.summary.into(),
+                    decorations: Some(proto::GitCommitDecorations {
+                        head: commit.decorations.head.map(Into::into),
+                        tags: commit
+                            .decorations
+                            .tags
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                        local_branches: commit
+                            .decorations
+                            .local_branches
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                        remote_branches: commit
+                            .decorations
+                            .remote_branches
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                    }),
+                })
+                .collect(),
+        })
+    }
+
     async fn handle_reset(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitReset>,
@@ -3893,6 +3949,33 @@ impl Repository {
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
+                    })
+                }
+            }
+        })
+    }
+
+    pub fn commit_graph(&mut self, limit: usize) -> oneshot::Receiver<Result<CommitGraph>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local { backend, .. } => backend.commit_graph(limit).await,
+                RepositoryState::Remote { client, project_id } => {
+                    let response = client
+                        .request(proto::GitCommitGraph {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            limit: limit as u32,
+                        })
+                        .await?;
+
+                    Ok(CommitGraph {
+                        commits: response
+                            .commits
+                            .into_iter()
+                            .map(proto_to_commit_graph_entry)
+                            .collect::<Result<_>>()?,
+                        truncated: response.truncated,
                     })
                 }
             }
@@ -5702,6 +5785,39 @@ fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
         commit_timestamp: proto.commit_timestamp,
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),
+    }
+}
+
+fn proto_to_commit_graph_entry(proto: proto::GitCommitGraphEntry) -> Result<CommitGraphEntry> {
+    Ok(CommitGraphEntry {
+        oid: proto.oid.into(),
+        short_oid: proto.short_oid.into(),
+        parents: proto.parents.into_iter().map(Into::into).collect(),
+        author: proto.author.into(),
+        author_email: proto.author_email.into(),
+        relative_time: proto.relative_time.into(),
+        committed_at: proto.committed_at.into(),
+        committed_timestamp: proto.committed_timestamp,
+        summary: proto.summary.into(),
+        decorations: proto_commit_decorations(proto.decorations),
+    })
+}
+
+fn proto_commit_decorations(decorations: Option<proto::GitCommitDecorations>) -> CommitDecorations {
+    let decorations = decorations.unwrap_or_default();
+    CommitDecorations {
+        head: decorations.head.map(Into::into),
+        tags: decorations.tags.into_iter().map(Into::into).collect(),
+        local_branches: decorations
+            .local_branches
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        remote_branches: decorations
+            .remote_branches
+            .into_iter()
+            .map(Into::into)
+            .collect(),
     }
 }
 

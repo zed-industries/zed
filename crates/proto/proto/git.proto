@@ -247,6 +247,38 @@ message GitCommitDetails {
     string author_name = 5;
 }
 
+message GitCommitGraph {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    uint32 limit = 4;
+}
+
+message GitCommitDecorations {
+    optional string head = 1;
+    repeated string tags = 2;
+    repeated string local_branches = 3;
+    repeated string remote_branches = 4;
+}
+
+message GitCommitGraphEntry {
+    string oid = 1;
+    string short_oid = 2;
+    repeated string parents = 3;
+    string author = 4;
+    string author_email = 5;
+    string relative_time = 6;
+    string committed_at = 7;
+    int64 committed_timestamp = 8;
+    string summary = 9;
+    optional GitCommitDecorations decorations = 10;
+}
+
+message GitCommitGraphResponse {
+    repeated GitCommitGraphEntry commits = 1;
+    bool truncated = 2;
+}
+
 message LoadCommitDiff {
     uint64 project_id = 1;
     reserved 2;

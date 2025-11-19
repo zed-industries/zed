@@ -4,6 +4,7 @@ use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
+use log::debug;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
@@ -33,6 +34,10 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+
+const GRAPH_FIELD_DELIMITER: char = '\x1f';
+const GRAPH_RECORD_DELIMITER: char = '\x1e';
+const MAX_COMMIT_GRAPH_LIMIT: usize = 2_000;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -217,6 +222,34 @@ pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub struct CommitDecorations {
+    pub head: Option<SharedString>,
+    pub tags: Vec<SharedString>,
+    pub local_branches: Vec<SharedString>,
+    pub remote_branches: Vec<SharedString>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitGraphEntry {
+    pub oid: SharedString,
+    pub short_oid: SharedString,
+    pub parents: Vec<SharedString>,
+    pub author: SharedString,
+    pub author_email: SharedString,
+    pub relative_time: SharedString,
+    pub committed_at: SharedString,
+    pub committed_timestamp: i64,
+    pub summary: SharedString,
+    pub decorations: CommitDecorations,
+}
+
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub struct CommitGraph {
+    pub commits: Vec<CommitGraphEntry>,
+    pub truncated: bool,
 }
 
 impl CommitDetails {
@@ -428,6 +461,7 @@ pub trait GitRepository: Send + Sync {
     fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
+    fn commit_graph(&self, limit: usize) -> BoxFuture<'_, Result<CommitGraph>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
@@ -1257,6 +1291,55 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(branches)
+            })
+            .boxed()
+    }
+
+    fn commit_graph(&self, limit: usize) -> BoxFuture<'_, Result<CommitGraph>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let sanitized_limit = limit.clamp(1, MAX_COMMIT_GRAPH_LIMIT);
+                let fetch_limit = sanitized_limit.saturating_add(1);
+                let format = "%H%x1f%P%x1f%an%x1f%ae%x1f%cr%x1f%cI%x1f%ct%x1f%s%x1f%D%x1e";
+                let max_count = format!("--max-count={fetch_limit}");
+                let pretty = format!("--pretty=format:{format}");
+                let working_directory_path = working_directory?;
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory_path)
+                    .args([
+                        "--no-optional-locks",
+                        "log",
+                        "--all",
+                        "--date-order",
+                        "--decorate=full",
+                        "--color=never",
+                        max_count.as_str(),
+                        pretty.as_str(),
+                    ])
+                    .output()
+                    .await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to read git log:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                let stdout = String::from_utf8(output.stdout)?;
+                debug!("git commit_graph: repo {:?} fetched {} bytes (limit {fetch_limit})", working_directory_path, stdout.len());
+                let mut commits = parse_commit_graph(&stdout)?;
+                let truncated = commits.len() >= fetch_limit;
+                commits.truncate(sanitized_limit);
+
+                debug!(
+                    "git commit_graph: parsed {} commits (truncated={})",
+                    commits.len(),
+                    truncated
+                );
+
+                Ok(CommitGraph { commits, truncated })
             })
             .boxed()
     }
@@ -2438,6 +2521,77 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     }
 
     Ok(branches)
+}
+
+fn parse_commit_graph(raw: &str) -> Result<Vec<CommitGraphEntry>> {
+    raw.split(GRAPH_RECORD_DELIMITER)
+        .filter(|record| !record.trim().is_empty())
+        .map(parse_commit_record)
+        .collect()
+}
+
+fn parse_commit_record(record: &str) -> Result<CommitGraphEntry> {
+    let mut parts = record.split(GRAPH_FIELD_DELIMITER);
+    let oid = parts
+        .next().map(|s| s.trim())
+        .context("missing commit hash in git log output")?;
+    let parents_part = parts.next().unwrap_or_default();
+    let author = parts.next().unwrap_or_default();
+    let author_email = parts.next().unwrap_or_default();
+    let relative_time = parts.next().unwrap_or_default();
+    let committed_at = parts.next().unwrap_or_default();
+    let committed_timestamp = parts
+        .next()
+        .unwrap_or_default()
+        .parse::<i64>()
+        .context("timestamp parse error")?;
+    let summary = parts.next().unwrap_or_default();
+    let decorations_raw = parts.next().unwrap_or_default();
+
+    let parents = parents_part
+        .split_whitespace()
+        .filter(|parent| !parent.is_empty())
+        .map(|parent| parent.to_string().into())
+        .collect::<Vec<_>>();
+
+    Ok(CommitGraphEntry {
+        short_oid: abbreviate_oid(oid),
+        oid: oid.to_string().into(),
+        author: author.to_string().into(),
+        author_email: author_email.to_string().into(),
+        relative_time: relative_time.to_string().into(),
+        committed_at: committed_at.to_string().into(),
+        committed_timestamp,
+        summary: summary.to_string().into(),
+        parents,
+        decorations: parse_commit_decorations(decorations_raw),
+    })
+}
+
+fn parse_commit_decorations(raw: &str) -> CommitDecorations {
+    let mut decorations = CommitDecorations::default();
+    for token in raw
+        .split(',')
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(target) = token.strip_prefix("HEAD -> ") {
+            decorations.head = Some(target.trim().to_string().into());
+        } else if let Some(tag) = token.strip_prefix("tag: ") {
+            decorations.tags.push(tag.trim().to_string().into());
+        } else if token.contains('/') {
+            decorations.remote_branches.push(token.to_string().into());
+        } else {
+            decorations.local_branches.push(token.to_string().into());
+        }
+    }
+
+    decorations
+}
+
+fn abbreviate_oid(oid: &str) -> SharedString {
+    let abbrev_len = SHORT_SHA_LENGTH.min(oid.len());
+    oid[..abbrev_len].to_string().into()
 }
 
 fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
