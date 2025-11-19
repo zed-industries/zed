@@ -927,8 +927,6 @@ impl PlatformWindow for WindowsWindow {
         let hwnd = self.0.hwnd;
         unsafe {
             use std::ptr;
-            eprintln!("disable_ime called");
-
             ImmAssociateContext(hwnd, HIMC(ptr::null_mut()));
         }
     }
