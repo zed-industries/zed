@@ -12,7 +12,7 @@ const RUN_TESTS_INPUT: &str = "run_tests";
 const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
 
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
-pub fn extension_tests() -> Workflow {
+pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
 
