@@ -189,8 +189,8 @@ function DownloadAMDGpuServices {
 }
 
 function DownloadConpty {
-    $url = "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001"
-    $zipPath = ".\conpty.zip"
+    $url = "https://github.com/microsoft/terminal/releases/download/v1.23.12811.0/Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg"
+    $zipPath = ".\Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg"
     Invoke-WebRequest -Uri $url -OutFile $zipPath
     Expand-Archive -Path $zipPath -DestinationPath ".\conpty" -Force
 }
