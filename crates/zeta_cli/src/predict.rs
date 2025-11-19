@@ -1,7 +1,9 @@
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
 use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
-use crate::{CacheMode, PredictArguments, PredictionOptions, PredictionsOutputFormat};
+use crate::{
+    CacheMode, PredictArguments, PredictionOptions, PredictionProvider, PredictionsOutputFormat,
+};
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
@@ -10,6 +12,7 @@ use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp, Entity};
 use language::{Anchor, Buffer, Point};
 use project::Project;
+use project::buffer_store::BufferStoreEvent;
 use serde::Deserialize;
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -18,6 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use sweep_ai::SweepAi;
 use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
 
 pub async fn run_predict(
@@ -26,9 +30,15 @@ pub async fn run_predict(
     cx: &mut AsyncApp,
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
-    let (project, mut zetas, _edited_buffers) =
-        example.setup_project(app_state, 1, cx).await.unwrap();
-    let result = perform_predict(example, project, zetas.remove(0), None, args.options, cx)
+    let project = example.setup_project(app_state, cx).await.unwrap();
+    let zeta = setup_zeta(&project, app_state, cx).unwrap();
+    let sweep = if matches!(args.options.provider, PredictionProvider::Sweep) {
+        Some(setup_sweep(&project, cx).unwrap())
+    } else {
+        None
+    };
+    let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
+    let result = perform_predict(example, project, zeta, sweep, None, args.options, cx)
         .await
         .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
@@ -36,10 +46,56 @@ pub async fn run_predict(
     print_run_data_dir(true, std::io::stdout().is_terminal());
 }
 
+pub fn setup_zeta(
+    project: &Entity<Project>,
+    app_state: &Arc<ZetaCliAppState>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Zeta>> {
+    let zeta =
+        cx.new(|cx| zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
+
+    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        let zeta = zeta.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })?
+    .detach();
+
+    anyhow::Ok(zeta)
+}
+
+pub fn setup_sweep(project: &Entity<Project>, cx: &mut AsyncApp) -> Result<Entity<SweepAi>> {
+    let sweep = cx.new(|cx| SweepAi::new(cx))?;
+
+    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        let sweep = sweep.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                sweep.update(cx, |sweep, cx| sweep.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })?
+    .detach();
+
+    anyhow::Ok(sweep)
+}
+
 pub async fn perform_predict(
     example: NamedExample,
     project: Entity<Project>,
     zeta: Entity<Zeta>,
+    sweep: Option<Entity<SweepAi>>,
     repetition_ix: Option<u16>,
     options: PredictionOptions,
     cx: &mut AsyncApp,
@@ -210,11 +266,17 @@ pub async fn perform_predict(
         .await?;
     }
 
-    let prediction = zeta
-        .update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
-        })?
-        .await?;
+    let prediction = match options.provider {
+        crate::PredictionProvider::Zeta2 => {
+            zeta.update(cx, |zeta, cx| {
+                zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
+            })?
+            .await?
+        }
+        crate::PredictionProvider::Sweep => sweep.unwrap().update(cx, |sweep, cx| {
+            todo!("use sweep");
+        })?,
+    };
 
     debug_task.await?;
 

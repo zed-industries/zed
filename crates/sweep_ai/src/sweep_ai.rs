@@ -110,7 +110,7 @@ impl SweepAi {
         }
     }
 
-    fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             api_token: std::env::var("SWEEP_AI_TOKEN").ok(),
             projects: HashMap::default(),
