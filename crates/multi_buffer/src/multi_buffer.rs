@@ -7094,9 +7094,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         if self.range.start == self.diff_transforms.end().0 {
             self.diff_transforms.next();
         }
-        while let Some(item) = self.diff_transforms.item()
-            && matches!(item, DiffTransform::FilteredInsertedHunk { .. })
-        {
+        while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
             self.diff_transforms.next();
         }
 
@@ -7105,6 +7103,8 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         debug_assert!(self.range.start < diff_transform_end);
 
         let diff_transform = self.diff_transforms.item()?;
+        dbg!(&diff_transform);
+        dbg!(&self.buffer_chunk);
         match diff_transform {
             DiffTransform::FilteredInsertedHunk { .. } => {
                 unreachable!("we make sure we're not in a filtered hunk before this match");
