@@ -57,6 +57,99 @@ pub struct ParsedMarkdown {
     pub children: Vec<ParsedMarkdownElement>,
 }
 
+impl ParsedMarkdown {
+    /// Extracts all text content from the parsed markdown as plain text.
+    /// This strips formatting but preserves the textual content.
+    pub fn to_plain_text(&self) -> String {
+        let mut result = String::new();
+        for (i, child) in self.children.iter().enumerate() {
+            if i > 0 {
+                result.push_str("\n\n");
+            }
+            extract_text_from_element(child, &mut result);
+        }
+        result
+    }
+}
+
+fn extract_text_from_element(element: &ParsedMarkdownElement, output: &mut String) {
+    match element {
+        ParsedMarkdownElement::Heading(heading) => {
+            extract_text_from_paragraph(&heading.contents, output);
+        }
+        ParsedMarkdownElement::Paragraph(paragraph) => {
+            extract_text_from_paragraph(paragraph, output);
+        }
+        ParsedMarkdownElement::ListItem(list_item) => {
+            // Add list marker
+            match &list_item.item_type {
+                ParsedMarkdownListItemType::Ordered(num) => {
+                    output.push_str(&format!("{}. ", num));
+                }
+                ParsedMarkdownListItemType::Task(checked, _) => {
+                    output.push_str(if *checked { "[x] " } else { "[ ] " });
+                }
+                ParsedMarkdownListItemType::Unordered => {
+                    output.push_str("• ");
+                }
+            }
+            // Extract content
+            for (i, content) in list_item.content.iter().enumerate() {
+                if i > 0 {
+                    output.push('\n');
+                }
+                extract_text_from_element(content, output);
+            }
+        }
+        ParsedMarkdownElement::BlockQuote(block_quote) => {
+            for (i, child) in block_quote.children.iter().enumerate() {
+                if i > 0 {
+                    output.push('\n');
+                }
+                extract_text_from_element(child, output);
+            }
+        }
+        ParsedMarkdownElement::CodeBlock(code_block) => {
+            output.push_str(&code_block.contents);
+        }
+        ParsedMarkdownElement::Table(table) => {
+            // Extract table content row by row
+            for row in table.header.iter().chain(table.body.iter()) {
+                for (i, column) in row.columns.iter().enumerate() {
+                    if i > 0 {
+                        output.push_str(" | ");
+                    }
+                    extract_text_from_paragraph(&column.children, output);
+                }
+                output.push('\n');
+            }
+        }
+        ParsedMarkdownElement::HorizontalRule(_) => {
+            output.push_str("---");
+        }
+        ParsedMarkdownElement::Image(image) => {
+            if let Some(alt_text) = &image.alt_text {
+                output.push_str(alt_text);
+            }
+        }
+    }
+}
+
+fn extract_text_from_paragraph(paragraph: &MarkdownParagraph, output: &mut String) {
+    for chunk in paragraph {
+        match chunk {
+            MarkdownParagraphChunk::Text(text) => {
+                output.push_str(&text.contents);
+            }
+            MarkdownParagraphChunk::Image(image) => {
+                if let Some(alt_text) = &image.alt_text {
+                    output.push_str(alt_text);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownListItem {
