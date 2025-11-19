@@ -275,7 +275,6 @@ struct FileHunkInfo {
     header: String,
     hunks: Vec<String>,
     hunks_to_keep: usize,
-    
 }
 
 impl FileHunkInfo {
@@ -310,7 +309,6 @@ impl FileHunkInfo {
             hunks,
             hunks_to_keep,
         })
-
     }
     fn calculate_size(&self) -> usize {
         let mut size = self.header.len();
@@ -1906,8 +1904,8 @@ impl GitPanel {
         if file_infos.is_empty() {
             return text.to_string();
         }
-        current_size = file_infos.iter().map (|f| f.calculate_size()).sum::<usize>();
-        while current_size > max_bytes  {
+        current_size = file_infos.iter().map(|f| f.calculate_size()).sum::<usize>();
+        while current_size > max_bytes {
             let file_idx = file_infos
                 .iter()
                 .enumerate()
@@ -1930,10 +1928,10 @@ impl GitPanel {
         }
 
         file_infos
-        .iter()
-        .map(|info| info.build_final_hunked_patch())
-        .collect::<Vec<_>>()
-        .join("\n")
+            .iter()
+            .map(|info| info.build_final_hunked_patch())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn compress_commit_diff(diff_text: &str, max_bytes: usize) -> String {
