@@ -14309,7 +14309,6 @@ impl Editor {
     }
 
     pub fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         let end = self.buffer.read(cx).read(cx).len();
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(vec![0..end]);
