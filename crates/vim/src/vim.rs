@@ -1931,7 +1931,7 @@ impl Vim {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             let collapse_matches = !HelixModeSetting::get_global(cx).0;
-            editor.set_collapse_matches(dbg!(collapse_matches));
+            editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor

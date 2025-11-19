@@ -838,7 +838,6 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        dbg!();
         Vim::take_forced_motion(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         let Some(pane) = self.pane(window, cx) else {
