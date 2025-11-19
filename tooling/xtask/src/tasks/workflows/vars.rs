@@ -147,6 +147,10 @@ impl StepOutput {
                 .expect("Steps that produce outputs must have an ID"),
         }
     }
+
+    pub fn expr(&self) -> String {
+        format!("steps.{}.outputs.{}", self.step_id, self.name)
+    }
 }
 
 impl serde::Serialize for StepOutput {

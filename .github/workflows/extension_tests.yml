@@ -97,7 +97,7 @@ jobs:
         path: zed-extension
         key: zed-extension-${{ env.ZED_EXTENSION_CLI_SHA }}
     - name: extension_tests::download_zed_extension_cli
-      if: ${{ steps.cache-zed-extension-cli.outputs.cache-hit }} != 'true'
+      if: steps.cache-zed-extension-cli.outputs.cache-hit != 'true'
       run: |
         wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension"
         chmod +x zed-extension

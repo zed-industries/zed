@@ -115,7 +115,7 @@ pub fn download_zed_extension_cli(cache_hit: StepOutput) -> Step<Run> {
         chmod +x zed-extension
         "#,
     }
-    ).if_condition(Expression::new(format!("{cache_hit} != 'true'")))
+    ).if_condition(Expression::new(format!("{} != 'true'", cache_hit.expr())))
 }
 
 pub fn check() -> Step<Run> {
