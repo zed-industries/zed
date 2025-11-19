@@ -22377,9 +22377,8 @@ impl Editor {
 
         let buffer_snapshot = buffer.snapshot();
 
-        let detected_language = cx.update_global::<LanguageDetector, _>(|detector, cx| {
-            detector.detect_language(buffer_snapshot, language_registry, cx)
-        });
+        let detected_language =
+            LanguageDetector::new().detect_language(buffer_snapshot, language_registry, cx);
 
         cx.spawn(async move |_, cx| {
             if let Ok(detected_language) = detected_language.await {

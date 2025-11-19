@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{App, AppContext, Global, Task};
+use gpui::{App, AppContext, Task};
 use language::{BufferSnapshot, Language, LanguageRegistry};
 use magika::ContentType;
 use parking_lot::Mutex;
@@ -55,16 +55,6 @@ fn content_type_to_language_name(content_type: ContentType) -> Option<&'static s
         _ => None,
     }
 }
-
-pub fn init(cx: &mut App) {
-    if DisableAiSettings::get_global(cx).disable_ai {
-        return;
-    }
-
-    cx.set_global(LanguageDetector::new());
-}
-
-impl Global for LanguageDetector {}
 
 pub struct LanguageDetector {
     session: Option<Arc<Mutex<magika::Session>>>,
