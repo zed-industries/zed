@@ -8,7 +8,9 @@ use feature_flags::FeatureFlag;
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, EntityId, Global, Task, WeakEntity};
 use http_client::{AsyncBody, Method};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, ToOffset as _, ToPoint, text_diff};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPreview, Point, ToOffset as _, ToPoint, text_diff,
+};
 use project::Project;
 use release_channel::{AppCommitSha, AppVersion};
 use std::collections::{VecDeque, hash_map};
@@ -28,8 +30,8 @@ use workspace::Workspace;
 
 use crate::api::{AutocompleteRequest, AutocompleteResponse, FileChunk};
 
-const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-const MAX_EVENT_COUNT: usize = 16;
+const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
+const MAX_EVENT_COUNT: usize = 6;
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
@@ -141,40 +143,6 @@ impl SweepAi {
                 })
             }
         }
-    }
-
-    fn push_event(sweep_ai_project: &mut SweepAiProject, event: Event) {
-        let events = &mut sweep_ai_project.events;
-
-        if let Some(Event::BufferChange {
-            new_snapshot: last_new_snapshot,
-            timestamp: last_timestamp,
-            ..
-        }) = events.back_mut()
-        {
-            // Coalesce edits for the same buffer when they happen one after the other.
-            let Event::BufferChange {
-                old_snapshot,
-                new_snapshot,
-                timestamp,
-            } = &event;
-
-            if timestamp.duration_since(*last_timestamp) <= BUFFER_CHANGE_GROUPING_INTERVAL
-                && old_snapshot.remote_id() == last_new_snapshot.remote_id()
-                && old_snapshot.version == last_new_snapshot.version
-            {
-                *last_new_snapshot = new_snapshot.clone();
-                *last_timestamp = *timestamp;
-                return;
-            }
-        }
-
-        if events.len() >= MAX_EVENT_COUNT {
-            // These are halved instead of popping to improve prompt caching.
-            events.drain(..MAX_EVENT_COUNT / 2);
-        }
-
-        events.push_back(event);
     }
 
     pub fn register_buffer(
@@ -314,6 +282,8 @@ impl SweepAi {
                     })
                     .collect();
 
+                eprintln!("{recent_changes}");
+
                 let request_body = AutocompleteRequest {
                     debug_info,
                     repo_name,
@@ -420,24 +390,58 @@ impl SweepAi {
         buffer: &Entity<Buffer>,
         project: &Entity<Project>,
         cx: &mut Context<Self>,
-    ) -> BufferSnapshot {
+    ) {
         let sweep_ai_project = self.get_or_init_sweep_ai_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(sweep_ai_project, buffer, project, cx);
 
         let new_snapshot = buffer.read(cx).snapshot();
-        if new_snapshot.version != registered_buffer.snapshot.version {
-            let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-            Self::push_event(
-                sweep_ai_project,
-                Event::BufferChange {
-                    old_snapshot,
-                    new_snapshot: new_snapshot.clone(),
-                    timestamp: Instant::now(),
-                },
-            );
+        if new_snapshot.version == registered_buffer.snapshot.version {
+            return;
         }
 
-        new_snapshot
+        let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
+        let end_edit_anchor = new_snapshot
+            .anchored_edits_since::<Point>(&old_snapshot.version)
+            .last()
+            .map(|(_, range)| range.end);
+        let events = &mut sweep_ai_project.events;
+
+        if let Some(Event::BufferChange {
+            new_snapshot: last_new_snapshot,
+            end_edit_anchor: last_end_edit_anchor,
+            ..
+        }) = events.back_mut()
+        {
+            let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
+                == last_new_snapshot.remote_id()
+                && old_snapshot.version == last_new_snapshot.version;
+
+            let should_coalesce = is_next_snapshot_of_same_buffer
+                && end_edit_anchor
+                    .as_ref()
+                    .zip(last_end_edit_anchor.as_ref())
+                    .is_some_and(|(a, b)| {
+                        let a = a.to_point(&new_snapshot);
+                        let b = b.to_point(&new_snapshot);
+                        a.row.abs_diff(b.row) <= CHANGE_GROUPING_LINE_SPAN
+                    });
+
+            if should_coalesce {
+                *last_end_edit_anchor = end_edit_anchor;
+                *last_new_snapshot = new_snapshot;
+                return;
+            }
+        }
+
+        if events.len() >= MAX_EVENT_COUNT {
+            events.pop_front();
+        }
+
+        events.push_back(Event::BufferChange {
+            old_snapshot,
+            new_snapshot,
+            end_edit_anchor,
+        });
     }
 }
 
@@ -451,7 +455,7 @@ pub enum Event {
     BufferChange {
         old_snapshot: BufferSnapshot,
         new_snapshot: BufferSnapshot,
-        timestamp: Instant,
+        end_edit_anchor: Option<Anchor>,
     },
 }
 
