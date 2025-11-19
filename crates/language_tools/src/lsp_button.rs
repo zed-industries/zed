@@ -588,6 +588,8 @@ impl LspButton {
         };
         let mut updated = false;
 
+        // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
+        // Also, we do not get "LSP removed" events so LSPs are never removed.
         match e {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -755,7 +757,6 @@ impl LspButton {
                 .ok();
 
             let mut servers_per_worktree = BTreeMap::<SharedString, Vec<ServerData>>::new();
-            let mut servers_without_worktree = Vec::<ServerData>::new();
             let mut servers_with_health_checks = HashSet::default();
 
             for (server_id, health) in &state.language_servers.health_statuses {
@@ -777,12 +778,11 @@ impl LspButton {
                     health,
                     binary_status,
                 };
-                match worktree_name {
-                    Some(worktree_name) => servers_per_worktree
+                if let Some(worktree_name) = worktree_name {
+                    servers_per_worktree
                         .entry(worktree_name.clone())
                         .or_default()
-                        .push(server_data),
-                    None => servers_without_worktree.push(server_data),
+                        .push(server_data);
                 }
             }
 
@@ -837,8 +837,7 @@ impl LspButton {
                 }
             }
 
-            let mut new_lsp_items =
-                Vec::with_capacity(servers_per_worktree.len() + servers_without_worktree.len() + 2);
+            let mut new_lsp_items = Vec::with_capacity(servers_per_worktree.len() + 1);
             for (worktree_name, worktree_servers) in servers_per_worktree {
                 if worktree_servers.is_empty() {
                     continue;
@@ -848,17 +847,6 @@ impl LspButton {
                     separator: false,
                 });
                 new_lsp_items.extend(worktree_servers.into_iter().map(ServerData::into_lsp_item));
-            }
-            if !servers_without_worktree.is_empty() {
-                new_lsp_items.push(LspMenuItem::Header {
-                    header: Some(SharedString::from("Unknown worktree")),
-                    separator: false,
-                });
-                new_lsp_items.extend(
-                    servers_without_worktree
-                        .into_iter()
-                        .map(ServerData::into_lsp_item),
-                );
             }
             if !new_lsp_items.is_empty() {
                 if can_stop_all {
