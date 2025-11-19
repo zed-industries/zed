@@ -50,7 +50,7 @@ pub mod udiff;
 mod xml_edits;
 
 use crate::assemble_excerpts::assemble_excerpts;
-use crate::prediction::EditPrediction;
+pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 pub use provider::ZetaEditPredictionProvider;
 
@@ -325,6 +325,14 @@ impl Event {
                     })
                 }
             }
+        }
+    }
+
+    pub fn project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+        match self {
+            Event::BufferChange { new_snapshot, .. } => new_snapshot
+                .file()
+                .map(|f| project::ProjectPath::from_file(f.as_ref(), cx)),
         }
     }
 }
