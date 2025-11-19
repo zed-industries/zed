@@ -17237,7 +17237,7 @@ impl Editor {
 
                 return editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range, true);
+                    let range = editor.range_for_match(&range);
 
                     if Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                         editor.go_to_singleton_buffer_range(range, window, cx);
