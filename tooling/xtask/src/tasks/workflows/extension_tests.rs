@@ -1,5 +1,3 @@
-use std::process::Output;
-
 use gh_workflow::*;
 use indoc::indoc;
 
