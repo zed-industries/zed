@@ -2618,8 +2618,6 @@ dependencies = [
 [[package]]
 name = "calloop"
 version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9f6e1368bd4621d2c86baa7e37de77a938adf5221e5dd3d6133340101b309e"
 dependencies = [
  "bitflags 2.9.4",
  "polling",
@@ -10029,6 +10027,7 @@ name = "miniprofiler_ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "log",
  "serde_json",
  "smol",
  "util",

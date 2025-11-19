@@ -305,12 +305,17 @@ impl Render for ProfilerWindow {
                                         );
 
                                         cx.background_spawn(async move {
-                                            let path = path.await;
-                                            let path =
-                                                path.log_err().and_then(|p| p.log_err()).flatten();
-
-                                            let Some(path) = path else {
-                                                return;
+                                            let path = match path.await.log_err() {
+                                                Some(Ok(Some(path))) => path,
+                                                Some(e @ Err(_)) => {
+                                                    e.log_err();
+                                                    log::warn!("Saving miniprof in workingdir");
+                                                    std::path::Path::new(
+                                                        "performance_profile.miniprof",
+                                                    )
+                                                    .to_path_buf()
+                                                }
+                                                Some(Ok(None)) | None => return,
                                             };
 
                                             let Some(timings) =

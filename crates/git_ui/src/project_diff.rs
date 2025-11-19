@@ -553,7 +553,56 @@ impl ProjectDiff {
         }
     }
 
-    pub async fn new_refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+    pub async fn old_refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+        let mut path_keys = Vec::new();
+        let buffers_to_load = this.update(cx, |this, cx| {
+            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+                let load_buffers = branch_diff.load_buffers(cx);
+                (branch_diff.repo().cloned(), load_buffers)
+            });
+            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+
+            if let Some(repo) = repo {
+                let repo = repo.read(cx);
+
+                path_keys = Vec::with_capacity(buffers_to_load.len());
+                for entry in buffers_to_load.iter() {
+                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                    let path_key =
+                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+                    previous_paths.remove(&path_key);
+                    path_keys.push(path_key)
+                }
+            }
+
+            this.multibuffer.update(cx, |multibuffer, cx| {
+                for path in previous_paths {
+                    this.buffer_diff_subscriptions.remove(&path.path);
+                    multibuffer.remove_excerpts_for_path(path, cx);
+                }
+            });
+            buffers_to_load
+        })?;
+
+        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+            if let Some((buffer, diff)) = entry.load.await.log_err() {
+                cx.update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                    })
+                    .ok();
+                })?;
+            }
+        }
+        this.update(cx, |this, cx| {
+            this.pending_scroll.take();
+            cx.notify();
+        })?;
+
+        Ok(())
+    }
+
+    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         use git_store::branch_diff::BranchDiff;
         let Some(this) = this.upgrade() else {
             return Ok(());
@@ -632,56 +681,7 @@ impl ProjectDiff {
         })?;
 
         Ok(())
-        }
-
-        pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-            let mut path_keys = Vec::new();
-            let buffers_to_load = this.update(cx, |this, cx| {
-                let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                    let load_buffers = branch_diff.load_buffers(cx);
-                    (branch_diff.repo().cloned(), load_buffers)
-                });
-                let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
-
-                if let Some(repo) = repo {
-                    let repo = repo.read(cx);
-
-                    path_keys = Vec::with_capacity(buffers_to_load.len());
-                    for entry in buffers_to_load.iter() {
-                        let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                        let path_key =
-                            PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
-                        previous_paths.remove(&path_key);
-                        path_keys.push(path_key)
-                    }
-                }
-
-                this.multibuffer.update(cx, |multibuffer, cx| {
-                    for path in previous_paths {
-                        this.buffer_diff_subscriptions.remove(&path.path);
-                        multibuffer.remove_excerpts_for_path(path, cx);
-                    }
-                });
-                buffers_to_load
-            })?;
-
-            for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
-                if let Some((buffer, diff)) = entry.load.await.log_err() {
-                    cx.update(|window, cx| {
-                        this.update(cx, |this, cx| {
-                            this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
-                        })
-                        .ok();
-                    })?;
-                }
-            }
-            this.update(cx, |this, cx| {
-                this.pending_scroll.take();
-                cx.notify();
-            })?;
-
-            Ok(())
-        }
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
