@@ -478,7 +478,7 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
 
             let scores = Scores::new(&expected, &actual_context_lines);
 
-            false_positive_lines.retain(|line| !actual_context_lines.contains(line));
+            false_positive_lines.retain(|line| !expected.contains(line));
 
             if best_alternative_score
                 .as_ref()
