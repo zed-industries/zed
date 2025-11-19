@@ -6979,112 +6979,68 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_empty(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-        add_labeled_item(&pane, "A", false, cx);
-        pane.update(cx, |pane, cx| {
-            pane.split(SplitDirection::Right, &SplitBehavior::Empty, cx);
-        });
-        cx.executor().run_until_parked();
-        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-        assert_item_labels(&pane, ["A*"], cx);
-        assert_item_labels(&right_pane, [], cx);
-        assert_pane_ids_on_axis(
-            &workspace,
-            [&pane.entity_id(), &right_pane.entity_id()],
-            Axis::Horizontal,
-            cx,
-        );
-
-        add_labeled_item(&right_pane, "B", false, cx);
-        assert_item_labels(&right_pane, ["B*"], cx);
+    async fn test_split_empty_right(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitBehavior::Empty, cx).await;
     }
 
     #[gpui::test]
-    async fn test_split_clone(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        add_labeled_item(&pane, "A", false, cx);
-        pane.update(cx, |pane, cx| {
-            pane.split(SplitDirection::Right, &SplitBehavior::Clone, cx);
-        });
-        cx.run_until_parked();
-        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-        assert_item_labels(&pane, ["A*"], cx);
-        assert_item_labels(&right_pane, ["A*"], cx);
-        assert_pane_ids_on_axis(
-            &workspace,
-            [&pane.entity_id(), &right_pane.entity_id()],
-            Axis::Horizontal,
-            cx,
-        );
+    async fn test_split_empty_left(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Left, SplitBehavior::Empty, cx).await;
     }
 
     #[gpui::test]
-    async fn test_split_move(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        add_labeled_item(&pane, "A", false, cx);
-        add_labeled_item(&pane, "B", false, cx);
-        pane.update(cx, |pane, cx| {
-            pane.split(SplitDirection::Right, &SplitBehavior::Move, cx);
-        });
-        cx.run_until_parked();
-        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-        assert_item_labels(&pane, ["A*"], cx);
-        assert_item_labels(&right_pane, ["B*"], cx);
-        assert_pane_ids_on_axis(
-            &workspace,
-            [&pane.entity_id(), &right_pane.entity_id()],
-            Axis::Horizontal,
-            cx,
-        );
+    async fn test_split_empty_up(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Up, SplitBehavior::Empty, cx).await;
     }
 
     #[gpui::test]
-    async fn test_split_move_on_single_pane(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    async fn test_split_empty_down(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Down, SplitBehavior::Empty, cx).await;
+    }
 
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        add_labeled_item(&pane, "A", false, cx);
-        pane.update(cx, |pane, cx| {
-            pane.split(SplitDirection::Right, &SplitBehavior::Move, cx);
-        });
-        cx.run_until_parked();
-        let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    #[gpui::test]
+    async fn test_split_clone_right(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitBehavior::Clone, cx).await;
+    }
 
-        // NOTE single pane means just getting the same pane again
-        assert_item_labels(&pane, ["A*"], cx);
-        assert_item_labels(&right_pane, ["A*"], cx);
-        assert_eq!(pane.entity_id(), right_pane.entity_id());
-        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
-            Member::Axis(_) => panic!("expected a pane"),
-            Member::Pane(p) => assert_eq!(p.entity_id(), pane.entity_id()),
-        });
+    #[gpui::test]
+    async fn test_split_clone_left(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Left, SplitBehavior::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_up(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Up, SplitBehavior::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_down(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Down, SplitBehavior::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_right_on_single_pane(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitBehavior::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_right(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Right, SplitBehavior::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_left(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Left, SplitBehavior::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_up(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Up, SplitBehavior::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_down(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Down, SplitBehavior::Move, cx).await;
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -7183,6 +7139,47 @@ mod tests {
         );
     }
 
+    // Assert the item label, with the active item label expected active index
+    // TODO dont like the duplication
+    #[track_caller]
+    fn assert_item_labels_active_index(
+        pane: &Entity<Pane>,
+        expected_states: &[&str],
+        expected_active_idx: usize,
+        cx: &mut VisualTestContext,
+    ) {
+        let actual_states = pane.update(cx, |pane, cx| {
+            pane.items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let mut state = item
+                        .to_any()
+                        .downcast::<TestItem>()
+                        .unwrap()
+                        .read(cx)
+                        .label
+                        .clone();
+                    if ix == pane.active_item_index {
+                        assert_eq!(ix, expected_active_idx);
+                    }
+                    if item.is_dirty(cx) {
+                        state.push('^');
+                    }
+                    if pane.is_tab_pinned(ix) {
+                        state.push('!');
+                    }
+                    state
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            actual_states, expected_states,
+            "pane items do not match expectation"
+        );
+    }
+
+    #[track_caller]
     fn assert_pane_ids_on_axis<const COUNT: usize>(
         workspace: &Entity<Workspace>,
         expected_ids: [&EntityId; COUNT],
@@ -7206,5 +7203,86 @@ mod tests {
             }
             Member::Pane(_) => panic!("expected axis"),
         });
+    }
+
+    async fn test_single_pane_split<const COUNT: usize>(
+        pane_labels: [&str; COUNT],
+        direction: SplitDirection,
+        operation: SplitBehavior,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        for label in pane_labels {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        pane.update(cx, |pane, cx| pane.split(direction, &operation, cx));
+        cx.executor().run_until_parked();
+        let new_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let num_labels = pane_labels.len();
+        let last_as_active = format!("{}*", String::from(pane_labels[num_labels - 1]));
+
+        // check labels for all split operations
+        match operation {
+            SplitBehavior::Empty => {
+                assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&new_pane, [], cx);
+            }
+            SplitBehavior::Clone => {
+                assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&new_pane, [&last_as_active], cx);
+            }
+            SplitBehavior::Move => {
+                if num_labels == 1 {
+                    // we end up with a single pane/id
+                    assert_item_labels(&pane, [&last_as_active], cx);
+                    assert_item_labels(&new_pane, [&last_as_active], cx);
+                    assert_eq!(pane.entity_id(), new_pane.entity_id());
+                } else {
+                    // let (head, _last) = pane_labels.split_at(num_labels - 1);
+                    let head = &pane_labels[..(num_labels - 1)];
+                    assert_item_labels_active_index(&pane, &head, head.len() - 1, cx);
+                    assert_item_labels(&new_pane, [&last_as_active], cx);
+                }
+            }
+        }
+
+        // expected axis depends on split direction
+        let expected_axis = match direction {
+            SplitDirection::Right | SplitDirection::Left => Axis::Horizontal,
+            SplitDirection::Up | SplitDirection::Down => Axis::Vertical,
+        };
+
+        // expected ids depends on split direction
+        let expected_ids = match direction {
+            SplitDirection::Right | SplitDirection::Down => {
+                [&pane.entity_id(), &new_pane.entity_id()]
+            }
+            SplitDirection::Left | SplitDirection::Up => [&new_pane.entity_id(), &pane.entity_id()],
+        };
+
+        // check pane axes for all operations
+        match operation {
+            SplitBehavior::Empty | SplitBehavior::Clone => {
+                assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+            }
+            SplitBehavior::Move => {
+                if num_labels > 1 {
+                    assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+                } else {
+                    // we end up with a single pane/id
+                    workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+                        Member::Axis(_) => panic!("expected a pane"),
+                        Member::Pane(p) => assert_eq!(p.entity_id(), pane.entity_id()),
+                    });
+                }
+            }
+        }
     }
 }
