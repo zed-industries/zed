@@ -668,6 +668,7 @@ impl VsCodeSettings {
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
+            sort_mode: None,
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,
@@ -869,7 +870,7 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: crate::Maybe::Unset,
+            project_name: None,
             prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")

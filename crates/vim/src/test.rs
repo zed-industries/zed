@@ -1139,6 +1139,26 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
+#[gpui::test]
+async fn test_go_to_definition(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+
+    cx.set_state("const before = 2; console.log(beforˇe)", Mode::Normal);
+    let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
+    let mut go_to_request =
+        cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(url.clone(), def_range),
+            )))
+        });
+
+    cx.simulate_keystrokes("g d");
+    go_to_request.next().await.unwrap();
+    cx.run_until_parked();
+
+    cx.assert_state("const ˇbefore = 2; console.log(before)", Mode::Normal);
+}
+
 #[perf]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {

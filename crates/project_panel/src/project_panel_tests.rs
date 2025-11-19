@@ -326,6 +326,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
+                sort_mode: settings::ProjectPanelSortMode::DirectoriesFirst,
                 ..settings
             },
             cx,
@@ -807,6 +808,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.rename(&Default::default(), window, cx)
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -1200,7 +1202,9 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
         panel.paste(&Default::default(), window, cx);
     });
     cx.executor().run_until_parked();
-
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
@@ -1239,7 +1243,9 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
         panel.paste(&Default::default(), window, cx);
     });
     cx.executor().run_until_parked();
-
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
@@ -2398,6 +2404,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ],
     );
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -2603,6 +2610,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
         ],
     );
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -7695,6 +7703,215 @@ fn visible_entries_as_strings(
     });
 
     result
+}
+
+/// Test that missing sort_mode field defaults to DirectoriesFirst
+#[gpui::test]
+async fn test_sort_mode_default_fallback(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Verify that when sort_mode is not specified, it defaults to DirectoriesFirst
+    let default_settings = cx.read(|cx| *ProjectPanelSettings::get_global(cx));
+    assert_eq!(
+        default_settings.sort_mode,
+        settings::ProjectPanelSortMode::DirectoriesFirst,
+        "sort_mode should default to DirectoriesFirst"
+    );
+}
+
+/// Test sort modes: DirectoriesFirst (default) vs Mixed
+#[gpui::test]
+async fn test_sort_mode_directories_first(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "zebra.txt": "",
+            "Apple": {},
+            "banana.rs": "",
+            "Carrot": {},
+            "aardvark.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Default sort mode should be DirectoriesFirst
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > Apple",
+            "    > Carrot",
+            "      aardvark.txt",
+            "      banana.rs",
+            "      zebra.txt",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_sort_mode_mixed(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "Zebra.txt": "",
+            "apple": {},
+            "Banana.rs": "",
+            "carrot": {},
+            "Aardvark.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    // Switch to Mixed mode
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().sort_mode =
+                    Some(settings::ProjectPanelSortMode::Mixed);
+            });
+        });
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Mixed mode: case-insensitive sorting
+    // Aardvark < apple < Banana < carrot < Zebra (all case-insensitive)
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "      Aardvark.txt",
+            "    > apple",
+            "      Banana.rs",
+            "    > carrot",
+            "      Zebra.txt",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_sort_mode_files_first(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "Zebra.txt": "",
+            "apple": {},
+            "Banana.rs": "",
+            "carrot": {},
+            "Aardvark.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    // Switch to FilesFirst mode
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().sort_mode =
+                    Some(settings::ProjectPanelSortMode::FilesFirst);
+            });
+        });
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // FilesFirst mode: files first, then directories (both case-insensitive)
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "      Aardvark.txt",
+            "      Banana.rs",
+            "      Zebra.txt",
+            "    > apple",
+            "    > carrot",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "file2.txt": "",
+            "dir1": {},
+            "file1.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Initially DirectoriesFirst
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > dir1", "      file1.txt", "      file2.txt",]
+    );
+
+    // Toggle to Mixed
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().sort_mode =
+                    Some(settings::ProjectPanelSortMode::Mixed);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > dir1", "      file1.txt", "      file2.txt",]
+    );
+
+    // Toggle back to DirectoriesFirst
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().sort_mode =
+                    Some(settings::ProjectPanelSortMode::DirectoriesFirst);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > dir1", "      file1.txt", "      file2.txt",]
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) {

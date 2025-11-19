@@ -2713,14 +2713,8 @@ impl GitPanel {
                         self.single_staged_entry = single_staged_entry;
                     }
                 }
-            } else if repo
-                .pending_ops_by_path
-                .summary()
-                .item_summary
-                .staging_count
-                == 1
-            {
-                self.single_staged_entry = repo.pending_ops_by_path.iter().find_map(|ops| {
+            } else if repo.pending_ops_summary().item_summary.staging_count == 1 {
+                self.single_staged_entry = repo.pending_ops().find_map(|ops| {
                     if ops.staging() {
                         repo.status_for_path(&ops.repo_path)
                             .map(|status| GitStatusEntry {
