@@ -379,7 +379,6 @@ impl TerminalBuilder {
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
-            mouse_down_link: None,
             mouse_down_detected_element: None,
             #[cfg(windows)]
             shell_program: None,
@@ -606,7 +605,6 @@ impl TerminalBuilder {
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
-                mouse_down_link: None,
                 mouse_down_detected_element: None,
                 #[cfg(windows)]
                 shell_program,
@@ -837,7 +835,6 @@ pub struct Terminal {
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
-    mouse_down_link: Option<Arc<alacritty_terminal::term::cell::Hyperlink>>,
     mouse_down_detected_element: Option<(String, Match)>,
     #[cfg(windows)]
     shell_program: Option<String>,
@@ -1774,16 +1771,9 @@ impl Terminal {
                     self.last_content.display_offset,
                 );
 
-                // Check if current position is within the stored element's character bounds
-                let within_element = point.line >= element_range.start().line
-                    && point.line <= element_range.end().line
-                    && point.column >= element_range.start().column
-                    && point.column <= element_range.end().column;
-
-                if !within_element {
+                if !element_range.contains(&point) {
                     // Moved outside element bounds - clear click state and start selection
                     self.mouse_down_detected_element = None;
-                    self.mouse_down_link = None;
                 } else {
                     // Still within element - preserve click state, don't start selection
                     return;
@@ -1791,8 +1781,6 @@ impl Terminal {
             }
 
             self.selection_phase = SelectionPhase::Selecting;
-            // Clear link tracking when dragging (user is selecting text, not clicking link)
-            self.mouse_down_link = None;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
             self.events
@@ -1838,29 +1826,18 @@ impl Terminal {
             self.last_content.display_offset,
         );
 
-        // Store link and detect clickable element on Ctrl/Cmd+click for element-bounded click detection
+        // Detect any clickable element on Ctrl/Cmd+click for element-bounded click detection
         if e.button == MouseButton::Left
             && e.modifiers.secondary()
             && !self.mouse_mode(e.modifiers.shift)
         {
-            let mouse_cell_index =
-                content_index_for_mouse(position, &self.last_content.terminal_bounds);
-            self.mouse_down_link = self
-                .last_content
-                .cells
-                .get(mouse_cell_index)
-                .and_then(|cell| cell.hyperlink().map(Arc::new));
-
-            // Detect any clickable element (URL, file path, hyperlink) at mouse down position
-            {
-                let term_lock = self.term.lock();
-                self.mouse_down_detected_element = terminal_hyperlinks::find_from_grid_point(
-                    &term_lock,
-                    point,
-                    &mut self.hyperlink_regex_searches,
-                )
-                .map(|(text, _is_url, match_range)| (text, match_range));
-            }
+            let term_lock = self.term.lock();
+            self.mouse_down_detected_element = terminal_hyperlinks::find_from_grid_point(
+                &term_lock,
+                point,
+                &mut self.hyperlink_regex_searches,
+            )
+            .map(|(text, _is_url, match_range)| (text, match_range));
         }
 
         if self.mouse_mode(e.modifiers.shift) {
@@ -1964,25 +1941,6 @@ impl Terminal {
                             self.last_mouse = None;
                             return;
                         }
-                    }
-                }
-            }
-
-            // Check for link click first (works even with mouse movement during click)
-            if let Some(down_link) = self.mouse_down_link.take() {
-                let mouse_cell_index =
-                    content_index_for_mouse(position, &self.last_content.terminal_bounds);
-                if let Some(up_link) = self
-                    .last_content
-                    .cells
-                    .get(mouse_cell_index)
-                    .and_then(|cell| cell.hyperlink())
-                {
-                    if down_link.uri() == up_link.uri() {
-                        cx.open_url(up_link.uri());
-                        self.selection_phase = SelectionPhase::Ended;
-                        self.last_mouse = None;
-                        return;
                     }
                 }
             }
