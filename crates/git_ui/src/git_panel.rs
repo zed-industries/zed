@@ -2654,9 +2654,10 @@ impl GitPanel {
         self.stash_entries = repo.cached_stash();
 
         for entry in repo.cached_status() {
-            // Skip files that are outside the worktree boundaries
-            // to maintain consistency with the uncommitted changes view
-            if repo.repo_path_to_project_path(&entry.repo_path, cx).is_none() {
+            if repo
+                .repo_path_to_project_path(&entry.repo_path, cx)
+                .is_none()
+            {
                 continue;
             }
 
