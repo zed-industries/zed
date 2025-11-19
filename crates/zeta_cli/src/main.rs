@@ -191,7 +191,7 @@ pub struct EvaluateArguments {
     skip_prediction: bool,
 }
 
-#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
+#[derive(clap::ValueEnum, Default, Debug, Clone, Copy, PartialEq)]
 enum PredictionProvider {
     #[default]
     Zeta2,
