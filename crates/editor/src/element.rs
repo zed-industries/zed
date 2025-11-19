@@ -3675,6 +3675,7 @@ impl EditorElement {
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
+        block_resize_offset: &mut i32,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, Size<Pixels>, DisplayRow, Pixels)> {
@@ -3828,7 +3829,10 @@ impl EditorElement {
         };
         let mut element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
 
-        let mut row = block_row_start;
+        let effective_row_start = block_row_start.0 as i32 + *block_resize_offset;
+        debug_assert!(effective_row_start >= 0);
+        let mut row = DisplayRow(effective_row_start.max(0) as u32);
+
         let mut x_offset = px(0.);
         let mut is_block = true;
 
@@ -3858,6 +3862,7 @@ impl EditorElement {
                 }
             };
             if element_height_in_lines != block.height() {
+                *block_resize_offset += element_height_in_lines as i32 - block.height() as i32;
                 resized_blocks.insert(custom_block_id, element_height_in_lines);
             }
         }
@@ -4274,6 +4279,7 @@ impl EditorElement {
         let mut blocks = Vec::new();
         let mut resized_blocks = HashMap::default();
         let mut row_block_types = HashMap::default();
+        let mut block_resize_offset: i32 = 0;
 
         for (row, block) in fixed_blocks {
             let block_id = block.id();
@@ -4304,6 +4310,7 @@ impl EditorElement {
                 latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                &mut block_resize_offset,
                 window,
                 cx,
             ) {
@@ -4362,6 +4369,7 @@ impl EditorElement {
                 latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                &mut block_resize_offset,
                 window,
                 cx,
             ) {
@@ -4418,6 +4426,7 @@ impl EditorElement {
                 latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                &mut block_resize_offset,
                 window,
                 cx,
             ) {
@@ -8789,7 +8798,7 @@ pub struct EditorRequestLayoutState {
 }
 
 impl EditorRequestLayoutState {
-    const MAX_PREPAINT_DEPTH: usize = 2;
+    const MAX_PREPAINT_DEPTH: usize = 3;
 
     fn increment_prepaint_depth(&self) -> EditorPrepaintGuard {
         let depth = self.prepaint_depth.get();
