@@ -200,20 +200,14 @@ pub struct DeploySearch {
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub enum SplitOperation {
-    /// clone the current item when splitting
+    /// clone the current pane
     #[default]
     Clone,
-    /// create an empty new item when splitting
-    Empty,
+    /// create an empty new pane
+    Clear,
     /// move the item into a new pane
     Move,
 }
-
-// TODO tuple struct seem to fail for default - maybe issues with deserializing from {}?
-// #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-// #[action(namespace = pane)]
-// #[serde(deny_unknown_fields)]
-// pub struct SplitLeft(#[serde(default)] SplitAnd);
 
 /// Splits the pane to the left.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
@@ -6980,22 +6974,22 @@ mod tests {
 
     #[gpui::test]
     async fn test_split_empty_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Clear, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_empty_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Left, SplitOperation::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Left, SplitOperation::Clear, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_empty_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Up, SplitOperation::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Up, SplitOperation::Clear, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_empty_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Down, SplitOperation::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Down, SplitOperation::Clear, cx).await;
     }
 
     #[gpui::test]
@@ -7230,7 +7224,7 @@ mod tests {
 
         // check labels for all split operations
         match operation {
-            SplitOperation::Empty => {
+            SplitOperation::Clear => {
                 assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
                 assert_item_labels(&new_pane, [], cx);
             }
@@ -7269,7 +7263,7 @@ mod tests {
 
         // check pane axes for all operations
         match operation {
-            SplitOperation::Empty | SplitOperation::Clone => {
+            SplitOperation::Clear | SplitOperation::Clone => {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
             SplitOperation::Move => {

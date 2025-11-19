@@ -387,10 +387,10 @@ impl TerminalPanel {
                 match operation {
                     // TODO not exactly clear what we expect in terminal panes when splitting with
                     // Empty? Assuming not cloning for now.
-                    SplitOperation::Clone | SplitOperation::Empty => {
+                    SplitOperation::Clone | SplitOperation::Clear => {
                         let clone = match operation {
                             SplitOperation::Clone => true,
-                            SplitOperation::Empty => false,
+                            SplitOperation::Clear => false,
                             _ => unreachable!(),
                         };
                         let fut = self.new_pane_with_active_terminal(window, cx, clone);

@@ -4108,7 +4108,7 @@ impl Workspace {
                         self.split_and_clone(pane.clone(), *direction, window, cx)
                             .detach();
                     }
-                    SplitOperation::Empty => {
+                    SplitOperation::Clear => {
                         self.split_pane(pane.clone(), *direction, window, cx);
                     }
                     SplitOperation::Move => {
