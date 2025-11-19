@@ -1389,7 +1389,7 @@ impl Thread {
         use LanguageModelCompletionEvent::*;
 
         match event {
-            StartMessage { .. } => {
+            LanguageModelCompletionEvent::StartMessage { .. } => {
                 self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
@@ -1433,10 +1433,9 @@ impl Thread {
             StatusUpdate(CompletionRequestStatus::UsageUpdated { amount, limit }) => {
                 self.update_model_request_usage(amount, limit, cx);
             }
+            StatusUpdate(CompletionRequestStatus::Failed { .. }) => panic!("YYY"),
             StatusUpdate(
-                CompletionRequestStatus::Started
-                | CompletionRequestStatus::Queued { .. }
-                | CompletionRequestStatus::Failed { .. },
+                CompletionRequestStatus::Started | CompletionRequestStatus::Queued { .. },
             ) => {}
             StatusUpdate(CompletionRequestStatus::ToolUseLimitReached) => {
                 self.tool_use_limit_reached = true;
