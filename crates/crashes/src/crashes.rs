@@ -289,6 +289,7 @@ impl minidumper::ServerHandler for CrashServer {
 pub fn panic_hook(info: &PanicHookInfo) {
     // Don't handle a panic on threads that are not relevant to the main execution.
     if extension_host::wasm_host::IS_WASM_THREAD.with(|v| v.load(Ordering::Acquire)) {
+        log::error!("wasm thread panicked!");
         return;
     }
 
