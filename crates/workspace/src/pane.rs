@@ -199,13 +199,13 @@ pub struct DeploySearch {
 // TODO naming
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
-pub enum SplitBehavior {
+pub enum SplitOperation {
     /// clone the current item when splitting
     #[default]
     Clone,
     /// create an empty new item when splitting
     Empty,
-    /// move the current item
+    /// move the item into a new pane
     Move,
 }
 
@@ -220,13 +220,13 @@ pub enum SplitBehavior {
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitLeft {
-    pub behavior: SplitBehavior,
+    pub operation: SplitOperation,
 }
 
 impl SplitLeft {
     pub fn and_move() -> Self {
         Self {
-            behavior: SplitBehavior::Move,
+            operation: SplitOperation::Move,
         }
     }
 }
@@ -236,13 +236,13 @@ impl SplitLeft {
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitRight {
-    pub behavior: SplitBehavior,
+    pub operation: SplitOperation,
 }
 
 impl SplitRight {
     pub fn and_move() -> Self {
         Self {
-            behavior: SplitBehavior::Move,
+            operation: SplitOperation::Move,
         }
     }
 }
@@ -252,13 +252,13 @@ impl SplitRight {
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitUp {
-    pub behavior: SplitBehavior,
+    pub operation: SplitOperation,
 }
 
 impl SplitUp {
     pub fn and_move() -> Self {
         Self {
-            behavior: SplitBehavior::Move,
+            operation: SplitOperation::Move,
         }
     }
 }
@@ -268,13 +268,13 @@ impl SplitUp {
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitDown {
-    pub behavior: SplitBehavior,
+    pub operation: SplitOperation,
 }
 
 impl SplitDown {
     pub fn and_move() -> Self {
         Self {
-            behavior: SplitBehavior::Move,
+            operation: SplitOperation::Move,
         }
     }
 }
@@ -284,7 +284,7 @@ impl SplitDown {
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitHorizontal {
-    pub behavior: SplitBehavior,
+    pub operation: SplitOperation,
 }
 
 /// Splits the pane vertically.
@@ -292,7 +292,7 @@ pub struct SplitHorizontal {
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitVertical {
-    pub behavior: SplitBehavior,
+    pub operation: SplitOperation,
 }
 
 actions!(
@@ -365,7 +365,7 @@ pub enum Event {
     },
     Split {
         direction: SplitDirection,
-        behavior: SplitBehavior,
+        operation: SplitOperation,
     },
     ItemPinned,
     ItemUnpinned,
@@ -399,11 +399,11 @@ impl fmt::Debug for Event {
                 .finish(),
             Event::Split {
                 direction,
-                behavior,
+                operation,
             } => f
                 .debug_struct("Split")
                 .field("direction", direction)
-                .field("behavior", behavior)
+                .field("operation", operation)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -2395,16 +2395,16 @@ impl Pane {
     pub fn split(
         &mut self,
         direction: SplitDirection,
-        behavior: &SplitBehavior,
+        operation: &SplitOperation,
         cx: &mut Context<Self>,
     ) {
-        if self.items.len() <= 1 && *behavior == SplitBehavior::Move {
+        if self.items.len() <= 1 && *operation == SplitOperation::Move {
             return;
         }
 
         cx.emit(Event::Split {
             direction,
-            behavior: behavior.to_owned(),
+            operation: operation.to_owned(),
         });
     }
 
@@ -3804,34 +3804,34 @@ impl Render for Pane {
             .flex_none()
             .overflow_hidden()
             .on_action(cx.listener(|pane, split: &SplitLeft, _, cx| {
-                pane.split(SplitDirection::Left, &split.behavior, cx)
+                pane.split(SplitDirection::Left, &split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitUp, _, cx| {
-                pane.split(SplitDirection::Up, &split.behavior, cx)
+                pane.split(SplitDirection::Up, &split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), &split.behavior, cx)
+                pane.split(SplitDirection::horizontal(cx), &split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), &split.behavior, cx)
+                pane.split(SplitDirection::vertical(cx), &split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitRight, _, cx| {
-                pane.split(SplitDirection::Right, &split.behavior, cx)
+                pane.split(SplitDirection::Right, &split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitDown, _, cx| {
-                pane.split(SplitDirection::Down, &split.behavior, cx)
+                pane.split(SplitDirection::Down, &split.operation, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
-                pane.split(SplitDirection::Up, &SplitBehavior::Move, cx)
+                pane.split(SplitDirection::Up, &SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
-                pane.split(SplitDirection::Down, &SplitBehavior::Move, cx)
+                pane.split(SplitDirection::Down, &SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
-                pane.split(SplitDirection::Left, &SplitBehavior::Move, cx)
+                pane.split(SplitDirection::Left, &SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
-                pane.split(SplitDirection::Right, &SplitBehavior::Move, cx)
+                pane.split(SplitDirection::Right, &SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
@@ -6980,67 +6980,67 @@ mod tests {
 
     #[gpui::test]
     async fn test_split_empty_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Right, SplitBehavior::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Empty, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_empty_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Left, SplitBehavior::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Left, SplitOperation::Empty, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_empty_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Up, SplitBehavior::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Up, SplitOperation::Empty, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_empty_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Down, SplitBehavior::Empty, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Down, SplitOperation::Empty, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_clone_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Right, SplitBehavior::Clone, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Clone, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_clone_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Left, SplitBehavior::Clone, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Left, SplitOperation::Clone, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_clone_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Up, SplitBehavior::Clone, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Up, SplitOperation::Clone, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_clone_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Down, SplitBehavior::Clone, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Down, SplitOperation::Clone, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_move_right_on_single_pane(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Right, SplitBehavior::Move, cx).await;
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Move, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_move_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Right, SplitBehavior::Move, cx).await;
+        test_single_pane_split(["A", "B"], SplitDirection::Right, SplitOperation::Move, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_move_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Left, SplitBehavior::Move, cx).await;
+        test_single_pane_split(["A", "B"], SplitDirection::Left, SplitOperation::Move, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_move_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Up, SplitBehavior::Move, cx).await;
+        test_single_pane_split(["A", "B"], SplitDirection::Up, SplitOperation::Move, cx).await;
     }
 
     #[gpui::test]
     async fn test_split_move_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Down, SplitBehavior::Move, cx).await;
+        test_single_pane_split(["A", "B"], SplitDirection::Down, SplitOperation::Move, cx).await;
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -7208,7 +7208,7 @@ mod tests {
     async fn test_single_pane_split<const COUNT: usize>(
         pane_labels: [&str; COUNT],
         direction: SplitDirection,
-        operation: SplitBehavior,
+        operation: SplitOperation,
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -7230,15 +7230,15 @@ mod tests {
 
         // check labels for all split operations
         match operation {
-            SplitBehavior::Empty => {
+            SplitOperation::Empty => {
                 assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
                 assert_item_labels(&new_pane, [], cx);
             }
-            SplitBehavior::Clone => {
+            SplitOperation::Clone => {
                 assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
                 assert_item_labels(&new_pane, [&last_as_active], cx);
             }
-            SplitBehavior::Move => {
+            SplitOperation::Move => {
                 if num_labels == 1 {
                     // we end up with a single pane/id
                     assert_item_labels(&pane, [&last_as_active], cx);
@@ -7269,10 +7269,10 @@ mod tests {
 
         // check pane axes for all operations
         match operation {
-            SplitBehavior::Empty | SplitBehavior::Clone => {
+            SplitOperation::Empty | SplitOperation::Clone => {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
-            SplitBehavior::Move => {
+            SplitOperation::Move => {
                 if num_labels > 1 {
                     assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
                 } else {

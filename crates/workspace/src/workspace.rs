@@ -4101,17 +4101,17 @@ impl Workspace {
             }
             pane::Event::Split {
                 direction,
-                behavior,
+                operation,
             } => {
-                match behavior {
-                    SplitBehavior::Clone => {
+                match operation {
+                    SplitOperation::Clone => {
                         self.split_and_clone(pane.clone(), *direction, window, cx)
                             .detach();
                     }
-                    SplitBehavior::Empty => {
+                    SplitOperation::Empty => {
                         self.split_pane(pane.clone(), *direction, window, cx);
                     }
-                    SplitBehavior::Move => {
+                    SplitOperation::Move => {
                         self.split_and_move(pane.clone(), *direction, window, cx);
                     }
                 };

@@ -6748,7 +6748,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     pane.update(cx, |pane, cx| {
         pane.split(
             workspace::SplitDirection::Right,
-            &workspace::SplitBehavior::default(),
+            &workspace::SplitOperation::default(),
             cx,
         );
     });

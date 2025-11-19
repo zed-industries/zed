@@ -30,7 +30,7 @@ use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, NewTerminal,
-    Pane, PaneGroup, SplitBehavior, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitOperation, SplitRight, SplitUp,
     SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
@@ -382,15 +382,15 @@ impl TerminalPanel {
             }
             &pane::Event::Split {
                 direction,
-                ref behavior,
+                ref operation,
             } => {
-                match behavior {
+                match operation {
                     // TODO not exactly clear what we expect in terminal panes when splitting with
                     // Empty? Assuming not cloning for now.
-                    SplitBehavior::Clone | SplitBehavior::Empty => {
-                        let clone = match behavior {
-                            SplitBehavior::Clone => true,
-                            SplitBehavior::Empty => false,
+                    SplitOperation::Clone | SplitOperation::Empty => {
+                        let clone = match operation {
+                            SplitOperation::Clone => true,
+                            SplitOperation::Empty => false,
                             _ => unreachable!(),
                         };
                         let fut = self.new_pane_with_active_terminal(window, cx, clone);
@@ -408,7 +408,7 @@ impl TerminalPanel {
                         })
                         .detach();
                     }
-                    SplitBehavior::Move => {
+                    SplitOperation::Move => {
                         let Some(item) =
                             pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
                         else {
