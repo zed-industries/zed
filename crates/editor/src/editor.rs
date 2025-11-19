@@ -22382,18 +22382,12 @@ impl Editor {
         });
 
         cx.spawn(async move |_, cx| {
-            let start = Instant::now();
-
             if let Ok(detected_language) = detected_language.await {
                 buffer_entity
                     .update(cx, |buffer, cx| {
                         buffer.set_language(Some(detected_language.to_owned()), cx);
                     })
                     .ok();
-
-                let duration = start.elapsed();
-                println!("Time elapsed: {:?}", duration);
-                println!("Time elapsed: {} ms", duration.as_millis());
             }
         })
         .detach();
