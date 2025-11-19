@@ -341,7 +341,13 @@ fn show_hover(
                     renderer
                         .as_ref()
                         .and_then(|renderer| {
-                            renderer.render_hover(group, point_range, buffer_id, cx)
+                            renderer.render_hover(
+                                group,
+                                point_range,
+                                buffer_id,
+                                language_registry.clone(),
+                                cx,
+                            )
                         })
                         .context("no rendered diagnostic")
                 })??;
@@ -986,6 +992,11 @@ impl DiagnosticPopover {
                                     self.markdown.clone(),
                                     diagnostics_markdown_style(window, cx),
                                 )
+                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                    copy_button: false,
+                                    copy_button_on_hover: false,
+                                    border: false,
+                                })
                                 .on_url_click(
                                     move |link, window, cx| {
                                         if let Some(renderer) = GlobalDiagnosticRenderer::global(cx)

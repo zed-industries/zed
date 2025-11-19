@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use anyhow::Result;
-use collections::{FxHashMap, FxHashSet};
+use collections::FxHashMap;
 use itertools::Itertools;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
@@ -18,7 +18,9 @@ use windows::Win32::{
 };
 use windows_core::PCWSTR;
 
-use crate::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, hash};
+use crate::{
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+};
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
@@ -46,16 +48,6 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(CF_HDROP.0 as u32, ClipboardFormatType::Files);
-    formats_map
-});
-static FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
-    let mut formats_map = FxHashSet::default();
-    formats_map.insert(CF_UNICODETEXT.0 as u32);
-    formats_map.insert(*CLIPBOARD_PNG_FORMAT);
-    formats_map.insert(*CLIPBOARD_GIF_FORMAT);
-    formats_map.insert(*CLIPBOARD_JPG_FORMAT);
-    formats_map.insert(*CLIPBOARD_SVG_FORMAT);
-    formats_map.insert(CF_HDROP.0 as u32);
     formats_map
 });
 static IMAGE_FORMATS_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
@@ -138,6 +130,11 @@ fn register_clipboard_format(format: PCWSTR) -> u32 {
             std::io::Error::last_os_error()
         );
     }
+    log::debug!(
+        "Registered clipboard format {} as {}",
+        unsafe { format.display() },
+        ret
+    );
     ret
 }
 
@@ -159,6 +156,7 @@ fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
             ClipboardEntry::Image(image) => {
                 write_image_to_clipboard(image)?;
             }
+            ClipboardEntry::ExternalPaths(_) => {}
         },
         None => {
             // Writing an empty list of entries just clears the clipboard.
@@ -249,19 +247,33 @@ fn with_best_match_format<F>(f: F) -> Option<ClipboardItem>
 where
     F: Fn(u32) -> Option<ClipboardEntry>,
 {
+    let mut text = None;
+    let mut image = None;
+    let mut files = None;
     let count = unsafe { CountClipboardFormats() };
     let mut clipboard_format = 0;
     for _ in 0..count {
         clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
-        let Some(item_format) = FORMATS_SET.get(&clipboard_format) else {
+        let Some(item_format) = FORMATS_MAP.get(&clipboard_format) else {
             continue;
         };
-        if let Some(entry) = f(*item_format) {
-            return Some(ClipboardItem {
-                entries: vec![entry],
-            });
+        let bucket = match item_format {
+            ClipboardFormatType::Text if text.is_none() => &mut text,
+            ClipboardFormatType::Image if image.is_none() => &mut image,
+            ClipboardFormatType::Files if files.is_none() => &mut files,
+            _ => continue,
+        };
+        if let Some(entry) = f(clipboard_format) {
+            *bucket = Some(entry);
         }
     }
+
+    if let Some(entry) = [image, files, text].into_iter().flatten().next() {
+        return Some(ClipboardItem {
+            entries: vec![entry],
+        });
+    }
+
     // log the formats that we don't support yet.
     {
         clipboard_format = 0;
@@ -346,18 +358,17 @@ fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<Clipbo
 }
 
 fn read_files_from_clipboard() -> Option<ClipboardEntry> {
-    let text = with_clipboard_data(CF_HDROP.0 as u32, |data_ptr, _size| {
+    let filenames = with_clipboard_data(CF_HDROP.0 as u32, |data_ptr, _size| {
         let hdrop = HDROP(data_ptr);
-        let mut filenames = String::new();
+        let mut filenames = Vec::new();
         with_file_names(hdrop, |file_name| {
-            filenames.push_str(&file_name);
+            filenames.push(std::path::PathBuf::from(file_name));
         });
         filenames
     })?;
-    Some(ClipboardEntry::String(ClipboardString {
-        text,
-        metadata: None,
-    }))
+    Some(ClipboardEntry::ExternalPaths(ExternalPaths(
+        filenames.into(),
+    )))
 }
 
 fn with_clipboard_data<F, R>(format: u32, f: F) -> Option<R>

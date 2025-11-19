@@ -1346,11 +1346,12 @@ pub enum WindowKind {
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WindowAppearance {
     /// A light appearance.
     ///
     /// On macOS, this corresponds to the `aqua` appearance.
+    #[default]
     Light,
 
     /// A light appearance with vibrant colors.
@@ -1367,12 +1368,6 @@ pub enum WindowAppearance {
     ///
     /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
-}
-
-impl Default for WindowAppearance {
-    fn default() -> Self {
-        Self::Light
-    }
 }
 
 /// The appearance of the background of the window itself, when there is
@@ -1475,9 +1470,10 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     /// The default cursor
+    #[default]
     Arrow,
 
     /// A text input cursor
@@ -1564,12 +1560,6 @@ pub enum CursorStyle {
     None,
 }
 
-impl Default for CursorStyle {
-    fn default() -> Self {
-        Self::Arrow
-    }
-}
-
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
@@ -1583,6 +1573,8 @@ pub enum ClipboardEntry {
     String(ClipboardString),
     /// An image entry
     Image(Image),
+    /// A file entry
+    ExternalPaths(crate::ExternalPaths),
 }
 
 impl ClipboardItem {
@@ -1623,16 +1615,29 @@ impl ClipboardItem {
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
         let mut answer = String::new();
-        let mut any_entries = false;
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
                 answer.push_str(text);
-                any_entries = true;
             }
         }
 
-        if any_entries { Some(answer) } else { None }
+        if answer.is_empty() {
+            for entry in self.entries.iter() {
+                if let ClipboardEntry::ExternalPaths(paths) = entry {
+                    for path in &paths.0 {
+                        use std::fmt::Write as _;
+                        _ = write!(answer, "{}", path.display());
+                    }
+                }
+            }
+        }
+
+        if !answer.is_empty() {
+            Some(answer)
+        } else {
+            None
+        }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.

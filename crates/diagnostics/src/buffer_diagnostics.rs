@@ -370,11 +370,16 @@ impl BufferDiagnosticsEditor {
                     continue;
                 }
 
+                let languages = buffer_diagnostics_editor
+                    .read_with(cx, |b, cx| b.project.read(cx).languages().clone())
+                    .ok();
+
                 let diagnostic_blocks = cx.update(|_window, cx| {
                     DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(Arc::new(buffer_diagnostics_editor.clone())),
+                        languages,
                         cx,
                     )
                 })?;

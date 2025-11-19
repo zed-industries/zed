@@ -104,6 +104,7 @@ pub trait EditPredictionProvider: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
+    fn did_show(&mut self, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -142,6 +143,7 @@ pub trait EditPredictionProviderHandle {
         direction: Direction,
         cx: &mut App,
     );
+    fn did_show(&self, cx: &mut App);
     fn accept(&self, cx: &mut App);
     fn discard(&self, cx: &mut App);
     fn suggest(
@@ -231,6 +233,10 @@ where
 
     fn discard(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.discard(cx))
+    }
+
+    fn did_show(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.did_show(cx))
     }
 
     fn suggest(

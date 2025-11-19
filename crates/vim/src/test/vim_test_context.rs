@@ -41,6 +41,11 @@ impl VimTestContext {
         Self::new_with_lsp(EditorLspTestContext::new_html(cx).await, true)
     }
 
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> VimTestContext {
+        Self::init(cx);
+        Self::new_with_lsp(EditorLspTestContext::new_markdown_with_rust(cx).await, true)
+    }
+
     pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(
@@ -54,6 +59,7 @@ impl VimTestContext {
                         prepare_provider: Some(true),
                         work_done_progress_options: Default::default(),
                     })),
+                    definition_provider: Some(lsp::OneOf::Left(true)),
                     ..Default::default()
                 },
                 cx,

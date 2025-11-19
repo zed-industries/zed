@@ -42,14 +42,14 @@ use util::rel_path::RelPathBuf;
 use util::{LogErrorFuture, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-pub mod merge_excerpts;
+pub mod assemble_excerpts;
 mod prediction;
 mod provider;
 pub mod retrieval_search;
 pub mod udiff;
 mod xml_edits;
 
-use crate::merge_excerpts::merge_excerpts;
+use crate::assemble_excerpts::assemble_excerpts;
 use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 pub use provider::ZetaEditPredictionProvider;
@@ -91,12 +91,21 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
 
 static USE_OLLAMA: LazyLock<bool> =
     LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
-static MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    env::var("ZED_ZETA2_MODEL").unwrap_or(if *USE_OLLAMA {
+static CONTEXT_RETRIEVAL_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    env::var("ZED_ZETA2_CONTEXT_MODEL").unwrap_or(if *USE_OLLAMA {
         "qwen3-coder:30b".to_string()
     } else {
         "yqvev8r3".to_string()
     })
+});
+static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
+    match env::var("ZED_ZETA2_MODEL").as_deref() {
+        Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
+        Ok(model) => model,
+        Err(_) if *USE_OLLAMA => "qwen3-coder:30b",
+        Err(_) => "yqvev8r3", // Vanilla qwen3-coder @ Baseten
+    }
+    .to_string()
 });
 static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
     env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
@@ -132,15 +141,8 @@ pub struct Zeta {
     options: ZetaOptions,
     update_required: bool,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
-    #[cfg(feature = "llm-response-cache")]
-    llm_response_cache: Option<Arc<dyn LlmResponseCache>>,
-}
-
-#[cfg(feature = "llm-response-cache")]
-pub trait LlmResponseCache: Send + Sync {
-    fn get_key(&self, url: &gpui::http_client::Url, body: &str) -> u64;
-    fn read_response(&self, key: u64) -> Option<String>;
-    fn write_response(&self, key: u64, value: &str);
+    #[cfg(feature = "eval-support")]
+    eval_cache: Option<Arc<dyn EvalCache>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,7 +217,7 @@ pub struct ZetaSearchQueryDebugInfo {
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ZetaProject {
-    syntax_index: Entity<SyntaxIndex>,
+    syntax_index: Option<Entity<SyntaxIndex>>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
@@ -369,14 +371,14 @@ impl Zeta {
             ),
             update_required: false,
             debug_tx: None,
-            #[cfg(feature = "llm-response-cache")]
-            llm_response_cache: None,
+            #[cfg(feature = "eval-support")]
+            eval_cache: None,
         }
     }
 
-    #[cfg(feature = "llm-response-cache")]
-    pub fn with_llm_response_cache(&mut self, cache: Arc<dyn LlmResponseCache>) {
-        self.llm_response_cache = Some(cache);
+    #[cfg(feature = "eval-support")]
+    pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
+        self.eval_cache = Some(cache);
     }
 
     pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<ZetaDebugInfo> {
@@ -452,9 +454,13 @@ impl Zeta {
         self.projects
             .entry(project.entity_id())
             .or_insert_with(|| ZetaProject {
-                syntax_index: cx.new(|cx| {
-                    SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
-                }),
+                syntax_index: if let ContextMode::Syntax(_) = &self.options.context {
+                    Some(cx.new(|cx| {
+                        SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
+                    }))
+                } else {
+                    None
+                },
                 events: VecDeque::new(),
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
@@ -692,10 +698,11 @@ impl Zeta {
     ) -> Task<Result<Option<EditPrediction>>> {
         let project_state = self.projects.get(&project.entity_id());
 
-        let index_state = project_state.map(|state| {
+        let index_state = project_state.and_then(|state| {
             state
                 .syntax_index
-                .read_with(cx, |index, _cx| index.state().clone())
+                .as_ref()
+                .map(|syntax_index| syntax_index.read_with(cx, |index, _cx| index.state().clone()))
         });
         let options = self.options.clone();
         let active_snapshot = active_buffer.read(cx).snapshot();
@@ -736,9 +743,19 @@ impl Zeta {
         // TODO data collection
         let can_collect_data = cx.is_staff();
 
-        let mut included_files = project_state
+        let empty_context_files = HashMap::default();
+        let context_files = project_state
             .and_then(|project_state| project_state.context.as_ref())
-            .unwrap_or(&HashMap::default())
+            .unwrap_or(&empty_context_files);
+
+        #[cfg(feature = "eval-support")]
+        let parsed_fut = futures::future::join_all(
+            context_files
+                .keys()
+                .map(|buffer| buffer.read(cx).parsing_idle()),
+        );
+
+        let mut included_files = context_files
             .iter()
             .filter_map(|(buffer_entity, ranges)| {
                 let buffer = buffer_entity.read(cx);
@@ -751,12 +768,19 @@ impl Zeta {
             })
             .collect::<Vec<_>>();
 
-        #[cfg(feature = "llm-response-cache")]
-        let llm_response_cache = self.llm_response_cache.clone();
+        included_files.sort_by(|(_, _, path_a, ranges_a), (_, _, path_b, ranges_b)| {
+            (path_a, ranges_a.len()).cmp(&(path_b, ranges_b.len()))
+        });
+
+        #[cfg(feature = "eval-support")]
+        let eval_cache = self.eval_cache.clone();
 
         let request_task = cx.background_spawn({
             let active_buffer = active_buffer.clone();
             async move {
+                #[cfg(feature = "eval-support")]
+                parsed_fut.await;
+
                 let index_state = if let Some(index_state) = index_state {
                     Some(index_state.lock_owned().await)
                 } else {
@@ -796,22 +820,14 @@ impl Zeta {
                             })
                         {
                             let (_, buffer, _, ranges) = &mut included_files[buffer_ix];
-                            let range_ix = ranges
-                                .binary_search_by(|probe| {
-                                    probe
-                                        .start
-                                        .cmp(&excerpt_anchor_range.start, buffer)
-                                        .then(excerpt_anchor_range.end.cmp(&probe.end, buffer))
-                                })
-                                .unwrap_or_else(|ix| ix);
-
-                            ranges.insert(range_ix, excerpt_anchor_range);
+                            ranges.push(excerpt_anchor_range);
+                            retrieval_search::merge_anchor_ranges(ranges, buffer);
                             let last_ix = included_files.len() - 1;
                             included_files.swap(buffer_ix, last_ix);
                         } else {
                             included_files.push((
                                 active_buffer.clone(),
-                                active_snapshot,
+                                active_snapshot.clone(),
                                 excerpt_path.clone(),
                                 vec![excerpt_anchor_range],
                             ));
@@ -819,17 +835,18 @@ impl Zeta {
 
                         let included_files = included_files
                             .iter()
-                            .map(|(_, buffer, path, ranges)| {
-                                let excerpts = merge_excerpts(
-                                    &buffer,
-                                    ranges.iter().map(|range| {
-                                        let point_range = range.to_point(&buffer);
+                            .map(|(_, snapshot, path, ranges)| {
+                                let ranges = ranges
+                                    .iter()
+                                    .map(|range| {
+                                        let point_range = range.to_point(&snapshot);
                                         Line(point_range.start.row)..Line(point_range.end.row)
-                                    }),
-                                );
+                                    })
+                                    .collect::<Vec<_>>();
+                                let excerpts = assemble_excerpts(&snapshot, ranges);
                                 predict_edits_v3::IncludedFile {
                                     path: path.clone(),
-                                    max_row: Line(buffer.max_point().row),
+                                    max_row: Line(snapshot.max_point().row),
                                     excerpts,
                                 }
                             })
@@ -925,7 +942,7 @@ impl Zeta {
 
                 let (prompt, _) = prompt_result?;
                 let request = open_ai::Request {
-                    model: MODEL_ID.clone(),
+                    model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
                         content: open_ai::MessageContent::Plain(prompt),
                     }],
@@ -948,8 +965,10 @@ impl Zeta {
                     client,
                     llm_token,
                     app_version,
-                    #[cfg(feature = "llm-response-cache")]
-                    llm_response_cache,
+                    #[cfg(feature = "eval-support")]
+                    eval_cache,
+                    #[cfg(feature = "eval-support")]
+                    EvalCacheEntryKind::Prediction,
                 )
                 .await;
                 let request_time = chrono::Utc::now() - before_request;
@@ -993,7 +1012,16 @@ impl Zeta {
 
                 let (edited_buffer_snapshot, edits) = match options.prompt_format {
                     PromptFormat::NumLinesUniDiff => {
+                        // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                    }
+                    PromptFormat::Minimal | PromptFormat::MinimalQwen => {
+                        if output_text.contains("--- a/\n+++ b/\nNo edits") {
+                            let edits = vec![];
+                            (&active_snapshot, edits)
+                        } else {
+                            crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                        }
                     }
                     PromptFormat::OldTextNewText => {
                         crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context)
@@ -1049,9 +1077,8 @@ impl Zeta {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: SemanticVersion,
-        #[cfg(feature = "llm-response-cache")] llm_response_cache: Option<
-            Arc<dyn LlmResponseCache>,
-        >,
+        #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+        #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1061,16 +1088,23 @@ impl Zeta {
                 .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
-        #[cfg(feature = "llm-response-cache")]
-        let cache_key = if let Some(cache) = llm_response_cache {
-            let request_json = serde_json::to_string(&request)?;
-            let key = cache.get_key(&url, &request_json);
+        #[cfg(feature = "eval-support")]
+        let cache_key = if let Some(cache) = eval_cache {
+            use collections::FxHasher;
+            use std::hash::{Hash, Hasher};
 
-            if let Some(response_str) = cache.read_response(key) {
+            let mut hasher = FxHasher::default();
+            url.hash(&mut hasher);
+            let request_str = serde_json::to_string_pretty(&request)?;
+            request_str.hash(&mut hasher);
+            let hash = hasher.finish();
+
+            let key = (eval_cache_kind, hash);
+            if let Some(response_str) = cache.read(key) {
                 return Ok((serde_json::from_str(&response_str)?, None));
             }
 
-            Some((cache, key))
+            Some((cache, request_str, key))
         } else {
             None
         };
@@ -1088,9 +1122,9 @@ impl Zeta {
         )
         .await?;
 
-        #[cfg(feature = "llm-response-cache")]
-        if let Some((cache, key)) = cache_key {
-            cache.write_response(key, &serde_json::to_string(&response)?);
+        #[cfg(feature = "eval-support")]
+        if let Some((cache, request, key)) = cache_key {
+            cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
         }
 
         Ok((response, usage))
@@ -1340,7 +1374,7 @@ impl Zeta {
         let (tool_schema, tool_description) = TOOL_SCHEMA.clone();
 
         let request = open_ai::Request {
-            model: MODEL_ID.clone(),
+            model: CONTEXT_RETRIEVAL_MODEL_ID.clone(),
             messages: vec![open_ai::RequestMessage::User {
                 content: open_ai::MessageContent::Plain(prompt),
             }],
@@ -1361,8 +1395,8 @@ impl Zeta {
             reasoning_effort: None,
         };
 
-        #[cfg(feature = "llm-response-cache")]
-        let llm_response_cache = self.llm_response_cache.clone();
+        #[cfg(feature = "eval-support")]
+        let eval_cache = self.eval_cache.clone();
 
         cx.spawn(async move |this, cx| {
             log::trace!("Sending search planning request");
@@ -1371,8 +1405,10 @@ impl Zeta {
                 client,
                 llm_token,
                 app_version,
-                #[cfg(feature = "llm-response-cache")]
-                llm_response_cache,
+                #[cfg(feature = "eval-support")]
+                eval_cache.clone(),
+                #[cfg(feature = "eval-support")]
+                EvalCacheEntryKind::Context,
             )
             .await;
             let mut response = Self::handle_api_response(&this, response, cx)?;
@@ -1421,8 +1457,14 @@ impl Zeta {
 
             log::trace!("Running retrieval search: {queries:#?}");
 
-            let related_excerpts_result =
-                retrieval_search::run_retrieval_searches(project.clone(), queries, cx).await;
+            let related_excerpts_result = retrieval_search::run_retrieval_searches(
+                queries,
+                project.clone(),
+                #[cfg(feature = "eval-support")]
+                eval_cache,
+                cx,
+            )
+            .await;
 
             log::trace!("Search queries executed");
 
@@ -1529,10 +1571,11 @@ impl Zeta {
     ) -> Task<Result<predict_edits_v3::PredictEditsRequest>> {
         let project_state = self.projects.get(&project.entity_id());
 
-        let index_state = project_state.map(|state| {
+        let index_state = project_state.and_then(|state| {
             state
                 .syntax_index
-                .read_with(cx, |index, _cx| index.state().clone())
+                .as_ref()
+                .map(|index| index.read_with(cx, |index, _cx| index.state().clone()))
         });
         let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
@@ -1602,10 +1645,11 @@ impl Zeta {
         cx: &mut App,
     ) -> Task<Result<()>> {
         let zeta_project = self.get_or_init_zeta_project(project, cx);
-        zeta_project
-            .syntax_index
-            .read(cx)
-            .wait_for_initial_file_indexing(cx)
+        if let Some(syntax_index) = &zeta_project.syntax_index {
+            syntax_index.read(cx).wait_for_initial_file_indexing(cx)
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 }
 
@@ -1770,6 +1814,34 @@ fn add_signature(
     });
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)
+}
+
+#[cfg(feature = "eval-support")]
+pub type EvalCacheKey = (EvalCacheEntryKind, u64);
+
+#[cfg(feature = "eval-support")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EvalCacheEntryKind {
+    Context,
+    Search,
+    Prediction,
+}
+
+#[cfg(feature = "eval-support")]
+impl std::fmt::Display for EvalCacheEntryKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalCacheEntryKind::Search => write!(f, "search"),
+            EvalCacheEntryKind::Context => write!(f, "context"),
+            EvalCacheEntryKind::Prediction => write!(f, "prediction"),
+        }
+    }
+}
+
+#[cfg(feature = "eval-support")]
+pub trait EvalCache: Send + Sync {
+    fn read(&self, key: EvalCacheKey) -> Option<String>;
+    fn write(&self, key: EvalCacheKey, input: &str, value: &str);
 }
 
 #[cfg(test)]

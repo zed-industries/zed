@@ -313,7 +313,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
-      "cmd-alt-t": "agent::NewThread"
+      "cmd-alt-n": "agent::NewExternalAgentThread"
     }
   },
   {

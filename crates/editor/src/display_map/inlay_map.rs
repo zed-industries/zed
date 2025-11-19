@@ -248,10 +248,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 // Determine split index handling edge cases
                 let split_index = if desired_bytes >= chunk.text.len() {
                     chunk.text.len()
-                } else if chunk.text.is_char_boundary(desired_bytes) {
-                    desired_bytes
                 } else {
-                    find_next_utf8_boundary(chunk.text, desired_bytes)
+                    chunk.text.ceil_char_boundary(desired_bytes)
                 };
 
                 let (prefix, suffix) = chunk.text.split_at(split_index);
@@ -373,10 +371,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                         .next()
                         .map(|c| c.len_utf8())
                         .unwrap_or(1)
-                } else if inlay_chunk.is_char_boundary(next_inlay_highlight_endpoint) {
-                    next_inlay_highlight_endpoint
                 } else {
-                    find_next_utf8_boundary(inlay_chunk, next_inlay_highlight_endpoint)
+                    inlay_chunk.ceil_char_boundary(next_inlay_highlight_endpoint)
                 };
 
                 let (chunk, remainder) = inlay_chunk.split_at(split_index);
@@ -1144,31 +1140,6 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
     if let Some(summary) = summary {
         sum_tree.push(Transform::Isomorphic(summary), ());
     }
-}
-
-/// Given a byte index that is NOT a UTF-8 boundary, find the next one.
-/// Assumes: 0 < byte_index < text.len() and !text.is_char_boundary(byte_index)
-#[inline(always)]
-fn find_next_utf8_boundary(text: &str, byte_index: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut idx = byte_index + 1;
-
-    // Scan forward until we find a boundary
-    while idx < text.len() {
-        if is_utf8_char_boundary(bytes[idx]) {
-            return idx;
-        }
-        idx += 1;
-    }
-
-    // Hit the end, return the full length
-    text.len()
-}
-
-// Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
-const fn is_utf8_char_boundary(byte: u8) -> bool {
-    // This is bit magic equivalent to: b < 128 || b >= 192
-    (byte as i8) >= -0x40
 }
 
 #[cfg(test)]

@@ -12,7 +12,9 @@ use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorElement, EditorMode, MultiBuffer};
+use editor::{
+    Direction, Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks,
+};
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
@@ -69,7 +71,7 @@ use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
+    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
 
 actions!(
@@ -409,16 +411,9 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged { full_scan: true }
+                        RepositoryEvent::StatusesChanged
                         | RepositoryEvent::BranchChanged
                         | RepositoryEvent::MergeHeadsChanged,
-                        true,
-                    ) => {
-                        this.schedule_update(window, cx);
-                    }
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::StatusesChanged { full_scan: false },
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
@@ -745,7 +740,7 @@ impl GitPanel {
     ) {
         self.select_first_entry_if_none(cx);
 
-        cx.focus_self(window);
+        self.focus_handle.focus(window);
         cx.notify();
     }
 
@@ -799,15 +794,46 @@ impl GitPanel {
                 return None;
             }
 
-            self.workspace
+            let open_task = self
+                .workspace
                 .update(cx, |workspace, cx| {
-                    workspace
-                        .open_path_preview(path, None, false, false, true, window, cx)
-                        .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
-                            Some(format!("{e}"))
-                        });
+                    workspace.open_path_preview(path, None, false, false, true, window, cx)
                 })
-                .ok()
+                .ok()?;
+
+            cx.spawn_in(window, async move |_, mut cx| {
+                let item = open_task
+                    .await
+                    .notify_async_err(&mut cx)
+                    .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
+                if let Some(active_editor) = item.downcast::<Editor>() {
+                    if let Some(diff_task) =
+                        active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())?
+                    {
+                        diff_task.await;
+                    }
+
+                    cx.update(|window, cx| {
+                        active_editor.update(cx, |editor, cx| {
+                            editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+
+                            let snapshot = editor.snapshot(window, cx);
+                            editor.go_to_hunk_before_or_after_position(
+                                &snapshot,
+                                language::Point::new(0, 0),
+                                Direction::Next,
+                                window,
+                                cx,
+                            );
+                        })
+                    })?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach();
+
+            Some(())
         });
     }
 
@@ -1224,14 +1250,18 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
+        let repo = active_repository.read(cx);
         let (stage, repo_paths) = match entry {
             GitListEntry::Status(status_entry) => {
                 let repo_paths = vec![status_entry.clone()];
-                let stage = if active_repository
-                    .read(cx)
+                let stage = if repo
                     .pending_ops_for_path(&status_entry.repo_path)
                     .map(|ops| ops.staging() || ops.staged())
-                    .unwrap_or(status_entry.status.staging().has_staged())
+                    .or_else(|| {
+                        repo.status_for_path(&status_entry.repo_path)
+                            .map(|status| status.status.staging().has_staged())
+                    })
+                    .unwrap_or(status_entry.staging.has_staged())
                 {
                     if let Some(op) = self.bulk_staging.clone()
                         && op.anchor == status_entry.repo_path
@@ -1247,13 +1277,12 @@ impl GitPanel {
             }
             GitListEntry::Header(section) => {
                 let goal_staged_state = !self.header_state(section.header).selected();
-                let repository = active_repository.read(cx);
                 let entries = self
                     .entries
                     .iter()
                     .filter_map(|entry| entry.status_entry())
                     .filter(|status_entry| {
-                        section.contains(status_entry, repository)
+                        section.contains(status_entry, repo)
                             && status_entry.staging.as_bool() != Some(goal_staged_state)
                     })
                     .cloned()
@@ -3224,18 +3253,12 @@ impl GitPanel {
     ) -> Option<impl IntoElement> {
         self.active_repository.as_ref()?;
 
-        let text;
-        let action;
-        let tooltip;
-        if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
-            text = "Unstage All";
-            action = git::UnstageAll.boxed_clone();
-            tooltip = "git reset";
-        } else {
-            text = "Stage All";
-            action = git::StageAll.boxed_clone();
-            tooltip = "git add --all ."
-        }
+        let (text, action, stage, tooltip) =
+            if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
+                ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
+            } else {
+                ("Stage All", StageAll.boxed_clone(), true, "git add --all")
+            };
 
         let change_string = match self.entry_count {
             0 => "No Changes".to_string(),
@@ -3273,11 +3296,15 @@ impl GitPanel {
                                     &self.focus_handle,
                                 ))
                                 .disabled(self.entry_count == 0)
-                                .on_click(move |_, _, cx| {
-                                    let action = action.boxed_clone();
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(action.as_ref());
-                                    })
+                                .on_click({
+                                    let git_panel = cx.weak_entity();
+                                    move |_, _, cx| {
+                                        git_panel
+                                            .update(cx, |git_panel, cx| {
+                                                git_panel.change_all_files_stage(stage, cx);
+                                            })
+                                            .ok();
+                                    }
                                 }),
                         ),
                 ),
@@ -3661,13 +3688,18 @@ impl GitPanel {
         let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;
 
-        let is_staging_or_staged = if let Some(status_entry) = entry.status_entry() {
-            repo.pending_ops_for_path(&repo_path)
-                .map(|ops| ops.staging() || ops.staged())
-                .unwrap_or(status_entry.staging.has_staged())
-        } else {
-            false
-        };
+        let is_staging_or_staged = repo
+            .pending_ops_for_path(&repo_path)
+            .map(|ops| ops.staging() || ops.staged())
+            .or_else(|| {
+                repo.status_for_path(&repo_path)
+                    .and_then(|status| status.status.staging().as_bool())
+            })
+            .or_else(|| {
+                entry
+                    .status_entry()
+                    .and_then(|entry| entry.staging.as_bool())
+            });
 
         let checkbox = Checkbox::new("stage-file", is_staging_or_staged.into())
             .disabled(!self.has_write_access(cx))
@@ -3925,6 +3957,20 @@ impl GitPanel {
         let path_style = self.project.read(cx).path_style(cx);
         let display_name = entry.display_name(path_style);
 
+        let active_repo = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .expect("active repository must be set");
+        let repo = active_repo.read(cx);
+        let repo_snapshot = repo.snapshot();
+
+        let old_path = if entry.status.is_renamed() {
+            repo_snapshot.renamed_paths.get(&entry.repo_path)
+        } else {
+            None
+        };
+
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -3933,15 +3979,16 @@ impl GitPanel {
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
+        let is_renamed = status.is_renamed();
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
-            } else if is_modified {
-                Color::VersionControlModified
             } else if is_deleted {
                 // We don't want a bunch of red labels in the list
                 Color::Disabled
+            } else if is_renamed || is_modified {
+                Color::VersionControlModified
             } else {
                 Color::VersionControlAdded
             }
@@ -3961,12 +4008,6 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
-        let active_repo = self
-            .project
-            .read(cx)
-            .active_repository(cx)
-            .expect("active repository must be set");
-        let repo = active_repo.read(cx);
         // Checking for current staged/unstaged file status is a chained operation:
         // 1. first, we check for any pending operation recorded in repository
         // 2. if there are no pending ops either running or finished, we then ask the repository
@@ -4121,23 +4162,32 @@ impl GitPanel {
                     .items_center()
                     .flex_1()
                     // .overflow_hidden()
-                    .when_some(entry.parent_dir(path_style), |this, parent| {
-                        if !parent.is_empty() {
-                            this.child(
-                                self.entry_label(
-                                    format!("{parent}{}", path_style.separator()),
-                                    path_color,
-                                )
-                                .when(status.is_deleted(), |this| this.strikethrough()),
-                            )
-                        } else {
-                            this
-                        }
+                    .when_some(old_path.as_ref(), |this, old_path| {
+                        let new_display = old_path.display(path_style).to_string();
+                        let old_display = entry.repo_path.display(path_style).to_string();
+                        this.child(self.entry_label(old_display, Color::Muted).strikethrough())
+                            .child(self.entry_label(" → ", Color::Muted))
+                            .child(self.entry_label(new_display, label_color))
                     })
-                    .child(
-                        self.entry_label(display_name, label_color)
-                            .when(status.is_deleted(), |this| this.strikethrough()),
-                    ),
+                    .when(old_path.is_none(), |this| {
+                        this.when_some(entry.parent_dir(path_style), |this, parent| {
+                            if !parent.is_empty() {
+                                this.child(
+                                    self.entry_label(
+                                        format!("{parent}{}", path_style.separator()),
+                                        path_color,
+                                    )
+                                    .when(status.is_deleted(), |this| this.strikethrough()),
+                                )
+                            } else {
+                                this
+                            }
+                        })
+                        .child(
+                            self.entry_label(display_name, label_color)
+                                .when(status.is_deleted(), |this| this.strikethrough()),
+                        )
+                    }),
             )
             .into_any_element()
     }

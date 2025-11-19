@@ -37,6 +37,10 @@ pub struct InputField {
     disabled: bool,
     /// The minimum width of for the input
     min_width: Length,
+    /// The tab index for keyboard navigation order.
+    tab_index: Option<isize>,
+    /// Whether this field is a tab stop (can be focused via Tab key).
+    tab_stop: bool,
 }
 
 impl Focusable for InputField {
@@ -63,6 +67,8 @@ impl InputField {
             start_icon: None,
             disabled: false,
             min_width: px(192.).into(),
+            tab_index: None,
+            tab_stop: true,
         }
     }
 
@@ -83,6 +89,16 @@ impl InputField {
 
     pub fn label_min_width(mut self, width: impl Into<Length>) -> Self {
         self.min_width = width.into();
+        self
+    }
+
+    pub fn tab_index(mut self, index: isize) -> Self {
+        self.tab_index = Some(index);
+        self
+    }
+
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
         self
     }
 
@@ -151,6 +167,16 @@ impl Render for InputField {
             ..Default::default()
         };
 
+        let focus_handle = self.editor.focus_handle(cx);
+
+        let configured_handle = if let Some(tab_index) = self.tab_index {
+            focus_handle.tab_index(tab_index).tab_stop(self.tab_stop)
+        } else if !self.tab_stop {
+            focus_handle.tab_stop(false)
+        } else {
+            focus_handle
+        };
+
         v_flex()
             .id(self.placeholder.clone())
             .w_full()
@@ -168,6 +194,7 @@ impl Render for InputField {
             })
             .child(
                 h_flex()
+                    .track_focus(&configured_handle)
                     .min_w(self.min_width)
                     .min_h_8()
                     .w_full()

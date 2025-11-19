@@ -117,8 +117,9 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, OutlineItem, Point, Runnable, RunnableRange, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, Point, Runnable,
+    RunnableRange, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -371,6 +372,7 @@ pub trait DiagnosticRenderer {
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>>;
 
@@ -379,6 +381,7 @@ pub trait DiagnosticRenderer {
         diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Option<Entity<markdown::Markdown>>;
 
@@ -1096,6 +1099,7 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     current_line_highlight: Option<CurrentLineHighlight>,
+    collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
@@ -1297,8 +1301,9 @@ struct SelectionHistoryEntry {
     add_selections_state: Option<AddSelectionsState>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 enum SelectionHistoryMode {
+    #[default]
     Normal,
     Undoing,
     Redoing,
@@ -1309,12 +1314,6 @@ enum SelectionHistoryMode {
 struct HoveredCursor {
     replica_id: ReplicaId,
     selection_id: usize,
-}
-
-impl Default for SelectionHistoryMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Debug)]
@@ -2213,7 +2212,7 @@ impl Editor {
                 .unwrap_or_default(),
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
-
+            collapse_matches: false,
             workspace: None,
             input_enabled: !is_minimap,
             use_modal_editing: full_mode,
@@ -2386,7 +2385,10 @@ impl Editor {
                     }
                 }
                 EditorEvent::Edited { .. } => {
-                    if vim_flavor(cx).is_none() {
+                    let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
+                        .map(|vim_mode| vim_mode.0)
+                        .unwrap_or(false);
+                    if !vim_mode {
                         let display_map = editor.display_snapshot(cx);
                         let selections = editor.selections.all_adjusted_display(&display_map);
                         let pop_state = editor
@@ -2631,6 +2633,10 @@ impl Editor {
             && selection.end.to_offset(snapshot) == snapshot.len()
         {
             key_context.add("end_of_input");
+        }
+
+        if self.has_any_expanded_diff_hunks(cx) {
+            key_context.add("diffs_expanded");
         }
 
         key_context
@@ -3011,15 +3017,19 @@ impl Editor {
         self.current_line_highlight = current_line_highlight;
     }
 
-    pub fn range_for_match<T: std::marker::Copy>(
-        &self,
-        range: &Range<T>,
-        collapse: bool,
-    ) -> Range<T> {
-        if collapse {
+    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
+        self.collapse_matches = collapse_matches;
+    }
+
+    pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
+        if self.collapse_matches {
             return range.start..range.start;
         }
         range.clone()
+    }
+
+    pub fn clip_at_line_ends(&mut self, cx: &mut Context<Self>) -> bool {
+        self.display_map.read(cx).clip_at_line_ends
     }
 
     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut Context<Self>) {
@@ -7867,6 +7877,10 @@ impl Editor {
                 self.edit_prediction_preview,
                 EditPredictionPreview::Inactive { .. }
             ) {
+                if let Some(provider) = self.edit_prediction_provider.as_ref() {
+                    provider.provider.did_show(cx)
+                }
+
                 self.edit_prediction_preview = EditPredictionPreview::Active {
                     previous_scroll_position: None,
                     since: Instant::now(),
@@ -8046,6 +8060,9 @@ impl Editor {
                 && !self.edit_predictions_hidden_for_vim_mode;
 
             if show_completions_in_buffer {
+                if let Some(provider) = &self.edit_prediction_provider {
+                    provider.provider.did_show(cx);
+                }
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
@@ -11060,6 +11077,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.breakpoint_store.is_none() {
+            return;
+        }
+
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
             let breakpoint = breakpoint.unwrap_or_else(|| Breakpoint {
                 message: None,
@@ -11119,6 +11140,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.breakpoint_store.is_none() {
+            return;
+        }
+
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
             let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_disabled()) else {
                 continue;
@@ -11138,6 +11163,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.breakpoint_store.is_none() {
+            return;
+        }
+
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
             let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_enabled()) else {
                 continue;
@@ -11157,6 +11186,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.breakpoint_store.is_none() {
+            return;
+        }
+
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
             if let Some(breakpoint) = breakpoint {
                 self.edit_breakpoint_at_anchor(
@@ -12564,6 +12597,7 @@ impl Editor {
         {
             let max_point = buffer.max_point();
             let mut is_first = true;
+            let mut prev_selection_was_entire_line = false;
             for selection in &mut selections {
                 let is_entire_line =
                     (selection.is_empty() && cut_no_selection_line) || self.selections.line_mode();
@@ -12578,9 +12612,10 @@ impl Editor {
                 }
                 if is_first {
                     is_first = false;
-                } else {
+                } else if !prev_selection_was_entire_line {
                     text += "\n";
                 }
+                prev_selection_was_entire_line = is_entire_line;
                 let mut len = 0;
                 for chunk in buffer.text_for_range(selection.start..selection.end) {
                     text.push_str(chunk);
@@ -12663,6 +12698,7 @@ impl Editor {
         {
             let max_point = buffer.max_point();
             let mut is_first = true;
+            let mut prev_selection_was_entire_line = false;
             for selection in &selections {
                 let mut start = selection.start;
                 let mut end = selection.end;
@@ -12721,9 +12757,10 @@ impl Editor {
                 for trimmed_range in trimmed_selections {
                     if is_first {
                         is_first = false;
-                    } else {
+                    } else if !prev_selection_was_entire_line {
                         text += "\n";
                     }
+                    prev_selection_was_entire_line = is_entire_line;
                     let mut len = 0;
                     for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
                         text.push_str(chunk);
@@ -12797,7 +12834,11 @@ impl Editor {
                             let end_offset = start_offset + clipboard_selection.len;
                             to_insert = &clipboard_text[start_offset..end_offset];
                             entire_line = clipboard_selection.is_entire_line;
-                            start_offset = end_offset + 1;
+                            start_offset = if entire_line {
+                                end_offset
+                            } else {
+                                end_offset + 1
+                            };
                             original_indent_column = Some(clipboard_selection.first_line_indent);
                         } else {
                             to_insert = &*clipboard_text;
@@ -16890,7 +16931,7 @@ impl Editor {
 
                 editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range, false);
+                    let range = editor.range_for_match(&range);
                     let range = collapse_multiline_range(range);
 
                     if !split
@@ -17992,8 +18033,18 @@ impl Editor {
             .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
             .collect::<Vec<_>>();
 
-        let blocks =
-            renderer.render_group(diagnostic_group, buffer_id, snapshot, cx.weak_entity(), cx);
+        let language_registry = self
+            .project()
+            .map(|project| project.read(cx).languages().clone());
+
+        let blocks = renderer.render_group(
+            diagnostic_group,
+            buffer_id,
+            snapshot,
+            cx.weak_entity(),
+            language_registry,
+            cx,
+        );
 
         let blocks = self.display_map.update(cx, |display_map, cx| {
             display_map.insert_blocks(blocks, cx).into_iter().collect()
@@ -19356,6 +19407,16 @@ impl Editor {
                 false
             }
         })
+    }
+
+    fn has_any_expanded_diff_hunks(&self, cx: &App) -> bool {
+        if self.buffer.read(cx).all_diff_hunks_expanded() {
+            return true;
+        }
+        let ranges = vec![Anchor::min()..Anchor::max()];
+        self.buffer
+            .read(cx)
+            .has_expanded_diff_hunks_in_ranges(&ranges, cx)
     }
 
     fn toggle_diff_hunks_in_ranges(
@@ -21769,7 +21830,9 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = vim_flavor(cx).is_some();
+        let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
+            .map(|vim_mode| vim_mode.0)
+            .unwrap_or(false);
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
@@ -22402,28 +22465,6 @@ fn edit_for_markdown_paste<'a>(
         Cow::Owned(format!("[{old_text}]({to_insert})"))
     };
     (range, new_text)
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum VimFlavor {
-    Vim,
-    Helix,
-}
-
-pub fn vim_flavor(cx: &App) -> Option<VimFlavor> {
-    if vim_mode_setting::HelixModeSetting::try_get(cx)
-        .map(|helix_mode| helix_mode.0)
-        .unwrap_or(false)
-    {
-        Some(VimFlavor::Helix)
-    } else if vim_mode_setting::VimModeSetting::try_get(cx)
-        .map(|vim_mode| vim_mode.0)
-        .unwrap_or(false)
-    {
-        Some(VimFlavor::Vim)
-    } else {
-        None // neither vim nor helix mode
-    }
 }
 
 fn process_completion_for_edit(
