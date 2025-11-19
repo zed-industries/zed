@@ -486,13 +486,15 @@ impl CodegenAlternative {
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
-        if dbg!(!self.range.start.is_valid(&self.snapshot)) {
-            self.snapshot = self.buffer.read(cx).snapshot(cx);
-            self.range = self.snapshot.anchor_after(self.range.start)
-                ..self.snapshot.anchor_after(self.range.end)
-        }
+
+        // Make a new snapshot and re-resolve anchor in case the document was modified.
+        // This can happen often if the editor loses focus and is saved + reformatted,
+        // as in https://github.com/zed-industries/zed/issues/39088
+        self.snapshot = self.buffer.read(cx).snapshot(cx);
+        self.range = self.snapshot.anchor_after(self.range.start)
+            ..self.snapshot.anchor_after(self.range.end);
+
         let snapshot = self.snapshot.clone();
-        // make a new snapshot and re-resolve anchor.
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
             .collect::<Rope>();
