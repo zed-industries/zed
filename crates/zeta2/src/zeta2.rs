@@ -39,7 +39,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
-use util::{LogErrorFuture, TryFutureExt};
+use util::{LogErrorFuture, ResultExt as _, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 pub mod assemble_excerpts;
@@ -401,7 +401,9 @@ impl Zeta {
 
     pub fn set_edit_prediction_model(&mut self, model: ZetaEditPredictionModel) {
         if model == ZetaEditPredictionModel::Sweep {
-            self.sweep_api_token = std::env::var("SWEEP_AI_TOKEN").ok();
+            self.sweep_api_token = std::env::var("SWEEP_AI_TOKEN")
+                .context("No SWEEP_AI_TOKEN environment variable set")
+                .log_err();
         }
         self.edit_prediction_model = model;
     }
