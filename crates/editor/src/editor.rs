@@ -16919,7 +16919,9 @@ impl Editor {
                     }
                     None => Ok(Navigated::No),
                 }
-            } else {
+            } else
+            /* if num_locations == 1 */
+            {
                 let Some(workspace) = workspace else {
                     return Ok(Navigated::No);
                 };
@@ -17146,14 +17148,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
-        let selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
+        let selection = self.selections.newest_anchor();
         let multi_buffer = self.buffer.read(cx);
-        let head = selection.head();
-
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let selection_offset = selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot));
+        let selection_point = selection.map(|anchor| anchor.to_point(&multi_buffer_snapshot));
+        let head = selection_offset.head();
+
         let head_anchor = multi_buffer_snapshot.anchor_at(
             head,
-            if head < selection.tail() {
+            if head < selection_offset.tail() {
                 Bias::Right
             } else {
                 Bias::Left
@@ -17199,6 +17203,14 @@ impl Editor {
                         let buffer = location.buffer.read(cx);
                         (location.buffer, location.range.to_point(buffer))
                     })
+                    // remove ranges that intersect current selection
+                    .filter(|(location_buffer, location)| {
+                        if &buffer != location_buffer {
+                            return true;
+                        }
+
+                        !location.contains_inclusive(&selection_point.range())
+                    })
                     .into_group_map()
             })?;
             if locations.is_empty() {
@@ -17207,6 +17219,55 @@ impl Editor {
             for ranges in locations.values_mut() {
                 ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
+            }
+            let mut num_locations = 0;
+            for ranges in locations.values_mut() {
+                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.dedup();
+                num_locations += ranges.len();
+            }
+
+            if num_locations == 0 {
+                return Ok(Navigated::No);
+            }
+
+            if num_locations == 1 {
+                let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
+                let target_range = target_ranges.first().unwrap().clone();
+
+                return editor.update_in(cx, |editor, window, cx| {
+                    let range = target_range.to_point(target_buffer.read(cx));
+                    let range = editor.range_for_match(&range);
+
+                    if Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                        editor.go_to_singleton_buffer_range(range, window, cx);
+                    } else {
+                        let pane = workspace.read(cx).active_pane().clone();
+                        window.defer(cx, move |window, cx| {
+                            let target_editor: Entity<Self> =
+                                workspace.update(cx, |workspace, cx| {
+                                    let pane = workspace.active_pane().clone();
+
+                                    workspace.open_project_item(
+                                        pane,
+                                        target_buffer.clone(),
+                                        true,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            target_editor.update(cx, |target_editor, cx| {
+                                // When selecting a definition in a different buffer, disable the nav history
+                                // to avoid creating a history entry at the previous cursor location.
+                                pane.update(cx, |pane, _| pane.disable_history());
+                                target_editor.go_to_singleton_buffer_range(range, window, cx);
+                                pane.update(cx, |pane, _| pane.enable_history());
+                            });
+                        });
+                    }
+                    Navigated::Yes
+                });
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
