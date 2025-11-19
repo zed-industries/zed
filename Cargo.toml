@@ -156,6 +156,7 @@ members = [
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
+    "crates/speech",
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/story",
@@ -385,6 +386,7 @@ settings = { path = "crates/settings" }
 settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
+speech = { path = "crates/speech" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }

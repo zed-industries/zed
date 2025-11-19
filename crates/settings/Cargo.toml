@@ -37,6 +37,7 @@ serde_repr.workspace = true
 settings_json.workspace = true
 settings_macros.workspace = true
 smallvec.workspace = true
+speech_settings_types = { package = "speech_settings", path = "../speech_settings" }
 strum.workspace = true
 util.workspace = true
 zlog.workspace = true

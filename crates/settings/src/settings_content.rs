@@ -29,7 +29,7 @@ use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::{ActiveSettingsProfileName, merge_from};
+use crate::{ActiveSettingsProfileName, SpeechSettings, merge_from};
 
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -68,6 +68,9 @@ pub struct SettingsContent {
 
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,
+
+    /// Configuration of speech recognition in Zed.
+    pub speech: Option<SpeechSettings>,
 
     /// Whether or not to automatically check for updates.
     ///

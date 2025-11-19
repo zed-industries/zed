@@ -1,0 +1,13 @@
+[package]
+name = "speech_settings"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
