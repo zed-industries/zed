@@ -8794,10 +8794,22 @@ impl EditorElement {
 
 #[derive(Default)]
 pub struct EditorRequestLayoutState {
+    // We use prepaint depth to limit the number of times prepaint is
+    // called recursively. We need this so that we can update stale
+    // data for e.g. block heights in block map.
     prepaint_depth: Rc<Cell<usize>>,
 }
 
 impl EditorRequestLayoutState {
+    // Ideally we should have this number set to 2. Since the first prepaint calculates
+    // new heights for blocks, and the second one simply uses them without any resize.
+    //
+    // But, in some cases we might be introduced to a new custom block in the second prepaint
+    // phase and now we first need to calculate new height for this block, and subsequently
+    // call prepaint again.
+    //
+    // We still need to investigate the appearance of this block in the second prepaint.
+    // test_random_diagnostics_blocks fails if you set this to 2.
     const MAX_PREPAINT_DEPTH: usize = 3;
 
     fn increment_prepaint_depth(&self) -> EditorPrepaintGuard {
