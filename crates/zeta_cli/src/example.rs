@@ -318,8 +318,8 @@ impl NamedExample {
         }
     }
 
-    pub async fn setup_project<'a>(
-        &'a self,
+    pub async fn setup_project(
+        &self,
         app_state: &Arc<ZetaCliAppState>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Project>> {
