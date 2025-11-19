@@ -1,3 +1,5 @@
+use std::process::Output;
+
 use gh_workflow::*;
 use indoc::indoc;
 
@@ -5,7 +7,7 @@ use crate::tasks::workflows::{
     run_tests::{orchestrate, tests_pass},
     runners,
     steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
-    vars::{PathCondition, one_workflow_per_non_main_branch},
+    vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
 const RUN_TESTS_INPUT: &str = "run_tests";
@@ -78,20 +80,21 @@ fn check_rust() -> NamedJob {
 }
 
 fn check_extension() -> NamedJob {
+    let (cache_download, cache_hit) = cache_zed_extension_cli();
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(steps::checkout_repo())
-        .add_step(cache_zed_extension_cli())
-        .add_step(download_zed_extension_cli())
+        .add_step(cache_download)
+        .add_step(download_zed_extension_cli(cache_hit))
         .add_step(check());
 
     named::job(job)
 }
 
-pub fn cache_zed_extension_cli() -> Step<Use> {
-    named::uses(
+pub fn cache_zed_extension_cli() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
         "actions",
         "cache",
         "0057852bfaa89a56745cba8c7296529d2fc39830",
@@ -100,10 +103,12 @@ pub fn cache_zed_extension_cli() -> Step<Use> {
         Input::default()
             .add("path", "zed-extension")
             .add("key", "zed-extension-${{ env.ZED_EXTENSION_CLI_SHA }}"),
-    )
+    );
+    let output = StepOutput::new(&step, "cache-hit");
+    (step, output)
 }
 
-pub fn download_zed_extension_cli() -> Step<Run> {
+pub fn download_zed_extension_cli(cache_hit: StepOutput) -> Step<Run> {
     named::bash(
     indoc! {
         r#"
@@ -111,7 +116,7 @@ pub fn download_zed_extension_cli() -> Step<Run> {
         chmod +x zed-extension
         "#,
     }
-    ).if_condition(Expression::new("steps.cache-zed-extension.outputs.cache-hit != 'true'"))
+    ).if_condition(Expression::new(format!("{cache_hit} != 'true'")))
 }
 
 pub fn check() -> Step<Run> {
