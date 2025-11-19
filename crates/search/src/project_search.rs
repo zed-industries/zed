@@ -37,7 +37,6 @@ use std::{
     ops::{Not, Range},
     pin::pin,
     sync::Arc,
-    time::Duration,
 };
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
@@ -237,7 +236,6 @@ pub struct ProjectSearchView {
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     results_collapsed: bool,
-    search_debounce_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -893,32 +891,21 @@ impl ProjectSearchView {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
                     }
-                    // Trigger search on input with debounce:
+                    // Trigger search on input:
                     if EditorSettings::get_global(cx).search.search_on_input {
                         let query = this.search_query_text(cx);
                         if query.is_empty() {
-                            // Clear results immediately when query is empty
+                            // Clear results immediately when query is empty and abort ongoing search
                             this.entity.update(cx, |model, cx| {
+                                model.pending_search = None;
                                 model.match_ranges.clear();
                                 model.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
                                 model.no_results = None;
                                 model.limit_reached = false;
                                 cx.notify();
                             });
-                            // Cancel any pending search
-                            this.search_debounce_task = None;
                         } else {
-                            // Spawn debounced search task
-                            this.search_debounce_task = Some(cx.spawn(async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(250))
-                                    .await;
-
-                                this.update(cx, |this, cx| {
-                                    this.search(cx);
-                                })
-                                .ok();
-                            }));
+                            this.search(cx);
                         }
                     }
                 }
@@ -1025,7 +1012,6 @@ impl ProjectSearchView {
             included_opened_only: false,
             regex_language: None,
             results_collapsed: false,
-            search_debounce_task: None,
             _subscriptions: subscriptions,
         };
 
