@@ -410,6 +410,7 @@ pub fn main() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
+        language_detection::init(cx);
         zlog_settings::init(cx);
         handle_settings_file_changes(
             user_settings_file_rx,

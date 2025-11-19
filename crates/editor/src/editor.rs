@@ -21272,7 +21272,7 @@ impl Editor {
                         );
                     }
 
-                    self.detect_buffer_language(buffer_id, window, cx);
+                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -22353,14 +22353,8 @@ impl Editor {
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
     }
 
-    fn detect_buffer_language(
-        &self,
-        buffer_id: BufferId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
-        if disable_ai {
+    fn detect_buffer_language(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 
@@ -22369,7 +22363,6 @@ impl Editor {
         };
 
         let buffer = buffer_entity.read(cx);
-
         let Some(current_language) = buffer.language().clone() else {
             return;
         };
@@ -22381,19 +22374,23 @@ impl Editor {
 
         let buffer_snapshot = buffer.snapshot();
 
-        cx.spawn_in(window, async move |_, cx| {
-            let detected_language = cx
-                .background_spawn(async move {
-                    LanguageDetector::detect_language(buffer_snapshot, language_registry).await
-                })
-                .await;
+        let detected_language = cx.update_global::<LanguageDetector, _>(|detector, cx| {
+            detector.detect_language(buffer_snapshot, language_registry, cx)
+        });
 
-            if let Ok(detected_language) = detected_language {
+        cx.spawn(async move |_, cx| {
+            let start = Instant::now();
+
+            if let Ok(detected_language) = detected_language.await {
                 buffer_entity
                     .update(cx, |buffer, cx| {
-                        buffer.set_language(Some(detected_language), cx);
+                        buffer.set_language(Some(detected_language.to_owned()), cx);
                     })
                     .ok();
+
+                let duration = start.elapsed();
+                println!("Time elapsed: {:?}", duration);
+                println!("Time elapsed: {} ms", duration.as_millis());
             }
         })
         .detach();

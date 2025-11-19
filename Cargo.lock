@@ -8855,6 +8855,7 @@ dependencies = [
  "log",
  "magika",
  "ort",
+ "parking_lot",
  "project",
  "settings",
 ]
@@ -21454,6 +21455,7 @@ dependencies = [
  "json_schema_store",
  "keymap_editor",
  "language",
+ "language_detection",
  "language_extension",
  "language_model",
  "language_models",
