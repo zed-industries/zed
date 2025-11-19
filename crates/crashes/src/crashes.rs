@@ -293,7 +293,12 @@ pub fn panic_hook(info: &PanicHookInfo) {
         return;
     }
 
-    let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
+    let message = info
+        .payload()
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "Box<Any>".to_string());
 
     let span = info
         .location()
