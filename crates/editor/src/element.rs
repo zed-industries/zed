@@ -8801,16 +8801,12 @@ pub struct EditorRequestLayoutState {
 }
 
 impl EditorRequestLayoutState {
-    // Ideally we should have this number set to 2. Since the first prepaint calculates
-    // new heights for blocks, and the second one simply uses them without any resize.
-    //
-    // But, in some cases we might be introduced to a new custom block in the second prepaint
-    // phase and now we first need to calculate new height for this block, and subsequently
-    // call prepaint again.
-    //
-    // We still need to investigate the appearance of this block in the second prepaint.
-    // test_random_diagnostics_blocks fails if you set this to 2.
-    const MAX_PREPAINT_DEPTH: usize = 3;
+    // In ideal conditions we only need one more subsequent prepaint call for resize to take effect.
+    // i.e. MAX_PREPAINT_DEPTH = 2, but since moving blocks inline (place_near), more lines from
+    // below get exposed, and we end up querying blocks for those lines too in subsequent renders.
+    // Setting MAX_PREPAINT_DEPTH = 3, passes all tests. Just to be on the safe side we set it to 5, so
+    // that subsequent shrinking does not lead to incorrect block placing.
+    const MAX_PREPAINT_DEPTH: usize = 5;
 
     fn increment_prepaint_depth(&self) -> EditorPrepaintGuard {
         let depth = self.prepaint_depth.get();
