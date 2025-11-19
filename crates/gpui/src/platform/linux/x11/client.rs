@@ -789,6 +789,16 @@ impl X11Client {
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
+                if event.type_ == state.atoms._GPUI_FORCE_UPDATE_WINDOW {
+                    window.mark_renderer_drawable();
+                    drop(state);
+                    window.refresh(RequestFrameOptions {
+                        force_render: true,
+                        require_presentation: false,
+                    });
+                    return None;
+                }
+
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user
                     if window.should_close() {

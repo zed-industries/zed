@@ -9,6 +9,7 @@ use std::{
 use blade_graphics as gpu;
 use collections::HashMap;
 use futures::channel::oneshot::Receiver;
+use util::ResultExt;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -1213,7 +1214,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene).log_err();
     }
 
     fn completed_frame(&self) {

@@ -342,6 +342,7 @@ pub struct BladeRenderer {
     path_intermediate_msaa_texture: Option<gpu::Texture>,
     path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
     rendering_parameters: RenderingParameters,
+    skip_draws: bool,
 }
 
 impl BladeRenderer {
@@ -428,29 +429,31 @@ impl BladeRenderer {
             path_intermediate_msaa_texture,
             path_intermediate_msaa_texture_view,
             rendering_parameters,
+            skip_draws: false,
         })
     }
 
-    fn wait_for_gpu(&mut self) {
-        if let Some(last_sp) = self.last_sync_point.take()
-            && !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS)
-        {
-            log::error!("GPU hung");
-            #[cfg(target_os = "linux")]
-            if self.gpu.device_information().driver_name == "radv" {
+    fn wait_for_gpu(&mut self) -> anyhow::Result<()> {
+        if let Some(last_sp) = self.last_sync_point.take() {
+            if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
+                log::error!("GPU hung");
+                #[cfg(target_os = "linux")]
+                if self.gpu.device_information().driver_name == "radv" {
+                    log::error!(
+                        "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
+                    );
+                    log::error!(
+                        "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
+                    );
+                }
                 log::error!(
-                    "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
+                    "your device information is: {:?}",
+                    self.gpu.device_information()
                 );
-                log::error!(
-                    "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
-                );
+                return Err(anyhow::anyhow!("GPU device hung or lost"));
             }
-            log::error!(
-                "your device information is: {:?}",
-                self.gpu.device_information()
-            );
-            while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
         }
+        Ok(())
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
@@ -476,7 +479,10 @@ impl BladeRenderer {
         };
 
         if always_resize || gpu_size != self.surface_config.size {
-            self.wait_for_gpu();
+            if let Err(err) = self.wait_for_gpu() {
+                log::error!("Failed to wait for GPU during resize: {}", err);
+                return;
+            }
             self.surface_config.size = gpu_size;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
@@ -514,7 +520,10 @@ impl BladeRenderer {
 
     pub fn update_transparency(&mut self, transparent: bool) {
         if transparent != self.surface_config.transparent {
-            self.wait_for_gpu();
+            if let Err(err) = self.wait_for_gpu() {
+                log::error!("Failed to wait for GPU during transparency update: {}", err);
+                return;
+            }
             self.surface_config.transparent = transparent;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
@@ -623,7 +632,9 @@ impl BladeRenderer {
     }
 
     pub fn destroy(&mut self) {
-        self.wait_for_gpu();
+        if let Err(err) = self.wait_for_gpu() {
+            log::error!("Failed to wait for GPU during destroy: {}", err);
+        }
         self.atlas.destroy();
         self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
@@ -641,7 +652,59 @@ impl BladeRenderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    /// Used to recover from GPU hangs caused by suspend/resume or driver issues.
+    pub fn recreate_after_device_loss<
+        I: raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle,
+    >(
+        &mut self,
+        new_context: &BladeContext,
+        window: &I,
+    ) -> anyhow::Result<()> {
+        let size = self.surface_config.size;
+        let transparent = self.surface_config.transparent;
+
+        self.atlas.destroy();
+        self.gpu.destroy_sampler(self.atlas_sampler);
+        self.instance_belt.destroy(&self.gpu);
+        self.gpu.destroy_command_encoder(&mut self.command_encoder);
+        self.pipelines.destroy(&self.gpu);
+        self.gpu.destroy_surface(&mut self.surface);
+        self.gpu.destroy_texture(self.path_intermediate_texture);
+        self.gpu
+            .destroy_texture_view(self.path_intermediate_texture_view);
+        if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
+            self.gpu.destroy_texture(msaa_texture);
+        }
+        if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
+            self.gpu.destroy_texture_view(msaa_view);
+        }
+
+        self.atlas.handle_device_lost();
+        let old_atlas = self.atlas.clone();
+
+        let config = BladeSurfaceConfig { size, transparent };
+        let new_renderer = Self::new(new_context, window, config)?;
+
+        old_atlas.update_gpu_context(&new_renderer.gpu);
+
+        *self = new_renderer;
+        self.atlas = old_atlas;
+        self.skip_draws = true;
+
+        Ok(())
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn mark_drawable(&mut self) {
+        self.skip_draws = false;
+    }
+
+    pub fn draw(&mut self, scene: &Scene) -> anyhow::Result<()> {
+        if self.skip_draws {
+            return Ok(());
+        }
+
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -914,8 +977,9 @@ impl BladeRenderer {
         self.instance_belt.flush(&sync_point);
         self.atlas.after_frame(&sync_point);
 
-        self.wait_for_gpu();
+        self.wait_for_gpu()?;
         self.last_sync_point = Some(sync_point);
+        Ok(())
     }
 }
 

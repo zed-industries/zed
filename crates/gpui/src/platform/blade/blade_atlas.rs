@@ -61,6 +61,24 @@ impl BladeAtlas {
         self.0.lock().destroy();
     }
 
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn handle_device_lost(&self) {
+        let mut lock = self.0.lock();
+        lock.storage = BladeAtlasStorage::default();
+        lock.tiles_by_key.clear();
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn update_gpu_context(&self, new_gpu: &Arc<gpu::Context>) {
+        let mut lock = self.0.lock();
+        lock.gpu = Arc::clone(new_gpu);
+        lock.upload_belt = BufferBelt::new(BufferBeltDescriptor {
+            memory: gpu::Memory::Upload,
+            min_chunk_size: 0x10000,
+            alignment: 64,
+        });
+    }
+
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
         let mut lock = self.0.lock();
         lock.flush(gpu_encoder);

@@ -21,7 +21,7 @@ use x11rb::{
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
-        xproto::{self, ClientMessageEvent, ConnectionExt, TranslateCoordinatesReply},
+        xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
     },
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
@@ -81,6 +81,7 @@ x11rb::atom_manager! {
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
         _NET_CLIENT_LIST_STACKING,
+        _GPUI_FORCE_UPDATE_WINDOW,
     }
 }
 
@@ -882,9 +883,63 @@ impl X11Window {
         xcb_flush(&self.0.xcb);
         Ok(())
     }
+
+    fn attempt_gpu_recovery(
+        state: &mut X11WindowState,
+        x_window: xproto::Window,
+        xcb: &XCBConnection,
+        x_main_screen_index: usize,
+    ) -> anyhow::Result<()> {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let new_context = BladeContext::new()?;
+        let visual_set = find_visuals(xcb, x_main_screen_index);
+        let visual = visual_set.transparent.unwrap_or(visual_set.inherit);
+        let raw_window = RawWindow {
+            connection: xcb.get_raw_xcb_connection(),
+            screen_id: x_main_screen_index,
+            window_id: x_window,
+            visual_id: visual.id,
+        };
+        state
+            .renderer
+            .recreate_after_device_loss(&new_context, &raw_window)
+    }
+
+    fn send_force_update(&self, force_update_atom: xproto::Atom) {
+        let message =
+            ClientMessageEvent::new(32, self.0.x_window, force_update_atom, [0, 0, 0, 0, 0]);
+        check_reply(
+            || "X11 SendEvent for GPU recovery force update failed",
+            self.0
+                .xcb
+                .send_event(false, self.0.x_window, EventMask::default(), message),
+        )
+        .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn handle_draw_failure(&self, err: anyhow::Error) {
+        log::error!("Renderer draw failed: {}", err);
+        let mut inner = self.0.state.borrow_mut();
+        if let Err(recovery_err) =
+            Self::attempt_gpu_recovery(&mut inner, self.0.x_window, &self.0.xcb, 0)
+        {
+            log::error!("GPU recovery failed: {}", recovery_err);
+            std::process::exit(1);
+        }
+        log::info!("GPU recovery successful");
+        let force_update_atom = inner.atoms._GPUI_FORCE_UPDATE_WINDOW;
+        drop(inner);
+        self.send_force_update(force_update_atom);
+    }
 }
 
 impl X11WindowStatePtr {
+    pub(crate) fn mark_renderer_drawable(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.mark_drawable();
+    }
+
     pub fn should_close(&self) -> bool {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(mut should_close) = cb.should_close.take() {
@@ -1472,7 +1527,10 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        if let Err(err) = inner.renderer.draw(scene) {
+            drop(inner);
+            self.handle_draw_failure(err);
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
