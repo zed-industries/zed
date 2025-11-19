@@ -49,6 +49,14 @@ pub fn setup_zeta(
     let zeta =
         cx.new(|cx| zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
 
+    zeta.update(cx, |zeta, _cx| {
+        let model = match provider {
+            PredictionProvider::Zeta2 => zeta2::ZetaEditPredictionModel::ZedCloud,
+            PredictionProvider::Sweep => zeta2::ZetaEditPredictionModel::Sweep,
+        };
+        zeta.set_edit_prediction_model(model);
+    })?;
+
     let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
 
     cx.subscribe(&buffer_store, {
@@ -62,14 +70,6 @@ pub fn setup_zeta(
         }
     })?
     .detach();
-
-    zeta.update(cx, |zeta, _cx| {
-        let model = match provider {
-            PredictionProvider::Zeta2 => zeta2::ZetaEditPredictionModel::ZedCloud,
-            PredictionProvider::Sweep => zeta2::ZetaEditPredictionModel::Sweep,
-        };
-        zeta.set_edit_prediction_model(model);
-    })?;
 
     anyhow::Ok(zeta)
 }
