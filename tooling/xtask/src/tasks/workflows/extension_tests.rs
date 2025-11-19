@@ -57,7 +57,7 @@ pub fn extension_tests() -> Workflow {
 }
 
 fn run_clippy() -> Step<Run> {
-    named::bash("cargo clippy --release -all-targets --all-features -- --deny warnings")
+    named::bash("cargo clippy --release --all-targets --all-features -- --deny warnings")
 }
 
 fn check_rust() -> NamedJob {

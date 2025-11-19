@@ -76,7 +76,7 @@ jobs:
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
     - name: extension_tests::run_clippy
-      run: cargo clippy --release -all-targets --all-features -- --deny warnings
+      run: cargo clippy --release --all-targets --all-features -- --deny warnings
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       if: inputs.run_tests
