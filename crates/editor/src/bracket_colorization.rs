@@ -919,23 +919,26 @@ mod foo «1{
                 .flat_map(|entry| entry.1)
                 .filter(|bracket_match| bracket_match.color_index.is_some())
             {
-                let start = dbg!(bracket_match.open_range.to_point(buffer_snapshot));
+                let start = bracket_match.open_range.to_point(buffer_snapshot);
                 let end = bracket_match.close_range.to_point(buffer_snapshot);
-                dbg!(
-                    buffer_snapshot
-                        .text_for_range(start.start..end.end)
-                        .collect::<String>()
-                );
                 let start_bracket = colored_brackets.iter().find(|(_, range)| *range == start);
                 assert!(
                     start_bracket.is_some(),
-                    "Existing bracket start in the visible range should be highlighted"
+                    "Existing bracket start in the visible range should be highlighted. Missing color for match: \"{}\" at position {:?}",
+                    buffer_snapshot
+                        .text_for_range(start.start..end.end)
+                        .collect::<String>(),
+                    start
                 );
 
                 let end_bracket = colored_brackets.iter().find(|(_, range)| *range == end);
                 assert!(
                     end_bracket.is_some(),
-                    "Existing bracket end in the visible range should be highlighted"
+                    "Existing bracket end in the visible range should be highlighted. Missing color for match: \"{}\" at position {:?}",
+                    buffer_snapshot
+                        .text_for_range(start.start..end.end)
+                        .collect::<String>(),
+                    start
                 );
 
                 assert_eq!(
