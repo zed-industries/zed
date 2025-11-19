@@ -9,13 +9,12 @@ use crate::tasks::workflows::{
 };
 
 const RUN_TESTS_INPUT: &str = "run_tests";
-
 const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
 
+// This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
-    // let should_check_themes = PathCondition::new("check_themes", r"*.json");
 
     let orchestrate = orchestrate(&[&should_check_rust, &should_check_extension]);
 
@@ -29,18 +28,15 @@ pub fn extension_tests() -> Workflow {
 
     named::workflow()
         .add_event(
-            Event::default()
-                .workflow_call(WorkflowCall::default().add_input(
-                    RUN_TESTS_INPUT,
-                    WorkflowCallInput {
-                        description: "Whether the workflow should run rust tests".into(),
-                        required: true,
-                        input_type: "boolean".into(),
-                        default: None,
-                    },
-                ))
-                .push(Push::default().add_branch("main"))
-                .pull_request(PullRequest::default().add_branch("**")),
+            Event::default().workflow_call(WorkflowCall::default().add_input(
+                RUN_TESTS_INPUT,
+                WorkflowCallInput {
+                    description: "Whether the workflow should run rust tests".into(),
+                    required: true,
+                    input_type: "boolean".into(),
+                    default: None,
+                },
+            )),
         )
         .concurrency(one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
@@ -77,8 +73,6 @@ fn check_rust() -> NamedJob {
             steps::cargo_nextest(runners::Platform::Linux)
                 .if_condition(Expression::new(format!("inputs.{RUN_TESTS_INPUT}"))),
         );
-    // todo! (hah)
-    // .add_step(steps::check_todos());
 
     named::job(job)
 }

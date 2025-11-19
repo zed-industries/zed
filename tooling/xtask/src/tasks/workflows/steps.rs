@@ -313,17 +313,11 @@ pub mod named {
             false
         });
 
-        let components = name
-            .split("::")
+        name.split("::")
             .skip_while(|s| s != &"workflows")
             .skip(1)
-            .collect::<Vec<_>>();
-
-        if name.starts_with("xtask[") {
-            components.join("::")
-        } else {
-            components[..components.len().saturating_sub(1)].join("::")
-        }
+            .collect::<Vec<_>>()
+            .join("::")
     }
 }
 

@@ -7,12 +7,6 @@ env:
   CARGO_INCREMENTAL: '0'
   ZED_EXTENSION_CLI_SHA: 7cfce605704d41ca247e3f84804bf323f6c6caaf
 on:
-  pull_request:
-    branches:
-    - '**'
-  push:
-    branches:
-    - main
   workflow_call:
     inputs:
       run_tests:
