@@ -119,11 +119,13 @@ mod tests {
         },
     };
     use collections::HashSet;
+    use gpui::UpdateGlobal as _;
     use indoc::indoc;
     use itertools::Itertools;
     use languages::rust_lang;
     use pretty_assertions::assert_eq;
     use rope::Point;
+    use settings::SettingsStore;
     use text::{Bias, OffsetRangeExt, ToOffset};
     use util::post_inc;
 
@@ -497,6 +499,65 @@ mod foo «1{
 4 hsla(187.00, 47.00%, 59.22%, 1.00)
 5 hsla(355.00, 65.00%, 75.94%, 1.00)
 "#},
+                comment_lines,
+            ),
+            &mut cx,
+        );
+
+        // Turning bracket colorization off should remove all bracket colors
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.colorize_brackets = Some(false);
+                });
+            });
+        });
+        assert_bracket_colors(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo {
+    fn process_data_1() {
+        let map: Option<Vec<()>> = None;
+    }
+"#},
+                r#"    fn process_data_2() {
+        let map: Option<Vec<()>> = None;
+    }
+    {{}}}}
+
+"#,
+                comment_lines,
+            ),
+            &mut cx,
+        );
+
+        // Turning it back on refreshes the visible excerpts' bracket colors
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.colorize_brackets = Some(true);
+                });
+            });
+        });
+        assert_bracket_colors(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+"#},
+                r#"    fn process_data_2() {
+        let map: Option<Vec<()>> = None;
+    }
+    {{}}}}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#,
                 comment_lines,
             ),
             &mut cx,
@@ -949,7 +1010,5 @@ mod foo «1{
                 )
             }
         }
-
-        // todo! more tests, check no brackets missing in range, settings toggle
     }
 }
