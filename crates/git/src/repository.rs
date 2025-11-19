@@ -4,12 +4,12 @@ use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
-use log::debug;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use git2::BranchType;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
+use log::debug;
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -1328,7 +1328,11 @@ impl GitRepository for RealGitRepository {
                 );
 
                 let stdout = String::from_utf8(output.stdout)?;
-                debug!("git commit_graph: repo {:?} fetched {} bytes (limit {fetch_limit})", working_directory_path, stdout.len());
+                debug!(
+                    "git commit_graph: repo {:?} fetched {} bytes (limit {fetch_limit})",
+                    working_directory_path,
+                    stdout.len()
+                );
                 let mut commits = parse_commit_graph(&stdout)?;
                 let truncated = commits.len() >= fetch_limit;
                 commits.truncate(sanitized_limit);
@@ -2533,7 +2537,8 @@ fn parse_commit_graph(raw: &str) -> Result<Vec<CommitGraphEntry>> {
 fn parse_commit_record(record: &str) -> Result<CommitGraphEntry> {
     let mut parts = record.split(GRAPH_FIELD_DELIMITER);
     let oid = parts
-        .next().map(|s| s.trim())
+        .next()
+        .map(|s| s.trim())
         .context("missing commit hash in git log output")?;
     let parents_part = parts.next().unwrap_or_default();
     let author = parts.next().unwrap_or_default();

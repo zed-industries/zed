@@ -3,8 +3,8 @@ use anyhow::Context as _;
 use git::repository::{CommitGraph, CommitGraphEntry};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    ListSizingBehavior, MouseButton, Pixels, Render, SharedString,
-    Task, UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
+    ListSizingBehavior, MouseButton, Pixels, Render, SharedString, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, uniform_list,
 };
 use log::debug;
 use project::git_store::Repository;
@@ -65,7 +65,11 @@ impl GitGraphView {
         workspace.add_item_to_active_pane(Box::new(graph), None, true, window, cx);
     }
 
-    fn new(workspace: WeakEntity<Workspace>, repository: Option<Entity<Repository>>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             workspace,
             repository,
@@ -99,9 +103,7 @@ impl GitGraphView {
             .work_directory_abs_path
             .to_string_lossy()
             .to_string();
-        debug!(
-            "git_graph: loading commit graph (limit {grid_limit}) for repo {repo_path}"
-        );
+        debug!("git_graph: loading commit graph (limit {grid_limit}) for repo {repo_path}");
         self._load_task = Some(window.spawn(cx, async move |cx| {
             let graph_result = repository
                 .update(cx, |repository, _| repository.commit_graph(grid_limit))
@@ -131,8 +133,7 @@ impl GitGraphView {
                     }
                     Err(err) => {
                         this.rows.clear();
-                        this.error =
-                            Some(format!("Failed to load git graph: {}", err.to_string()));
+                        this.error = Some(format!("Failed to load git graph: {}", err.to_string()));
                         debug!("git_graph: failed to load graph: {err:?}");
                     }
                 }
@@ -161,14 +162,9 @@ impl GitGraphView {
             colors.link_text_hover,
         ];
         let lane_color = lane_colors[row.lane_index % lane_colors.len()];
-        
+
         let commit = &row.commit;
-        let relative_time: SharedString = commit
-            .relative_time
-            .as_ref()
-            .trim()
-            .to_string()
-            .into();
+        let relative_time: SharedString = commit.relative_time.as_ref().trim().to_string().into();
 
         let commit_oid = commit.oid.clone();
 
@@ -230,7 +226,7 @@ impl GitGraphView {
                     .child(
                         div()
                             .flex_none() // Don't shrink badges
-                            .child(self.render_decorations(&commit))
+                            .child(self.render_decorations(&commit)),
                     ),
             )
             .child(
@@ -266,51 +262,70 @@ impl GitGraphView {
                             .single_line(),
                     ),
             )
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                this.open_commit(commit_oid.clone(), window, cx);
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.open_commit(commit_oid.clone(), window, cx);
+                }),
+            )
             .into_any_element()
     }
 
     fn render_decorations(&self, commit: &CommitGraphEntry) -> AnyElement {
         let mut badges: Vec<AnyElement> = Vec::new();
-        
+
         // Helper to create a compact icon badge with tooltip
         let make_badge = |icon: IconName, text: String, color: Color| {
             let id = SharedString::from(format!("badge-{}", text));
             div()
                 .child(
-                     IconButton::new(id.clone(), icon)
+                    IconButton::new(id.clone(), icon)
                         .icon_size(IconSize::Small)
                         .icon_color(color)
                         .style(ButtonStyle::Transparent)
-                        .tooltip(move |window, cx| {
-                            Tooltip::text(text.clone())(window, cx)
-                        })
+                        .tooltip(move |window, cx| Tooltip::text(text.clone())(window, cx)),
                 )
                 .into_any_element()
         };
 
         if let Some(head) = commit.decorations.head.as_ref() {
-            badges.push(make_badge(IconName::GitBranch, format!("HEAD -> {head}"), Color::Accent));
+            badges.push(make_badge(
+                IconName::GitBranch,
+                format!("HEAD -> {head}"),
+                Color::Accent,
+            ));
         }
 
-        badges.extend(commit.decorations.local_branches.iter().map(|branch| {
-             make_badge(IconName::GitBranch, branch.to_string(), Color::Created)
-        }));
+        badges.extend(
+            commit
+                .decorations
+                .local_branches
+                .iter()
+                .map(|branch| make_badge(IconName::GitBranch, branch.to_string(), Color::Created)),
+        );
 
-        badges.extend(commit.decorations.tags.iter().map(|tag| {
-            make_badge(IconName::Hash, tag.to_string(), Color::Warning)
-        }));
+        badges.extend(
+            commit
+                .decorations
+                .tags
+                .iter()
+                .map(|tag| make_badge(IconName::Hash, tag.to_string(), Color::Warning)),
+        );
 
-        badges.extend(commit.decorations.remote_branches.iter().map(|branch| {
-             make_badge(IconName::CloudDownload, branch.to_string(), Color::Muted)
-        }));
+        badges.extend(
+            commit.decorations.remote_branches.iter().map(|branch| {
+                make_badge(IconName::CloudDownload, branch.to_string(), Color::Muted)
+            }),
+        );
 
         if badges.is_empty() {
             div().into_any_element()
         } else {
-            h_flex().gap_1().flex_wrap().children(badges).into_any_element()
+            h_flex()
+                .gap_1()
+                .flex_wrap()
+                .children(badges)
+                .into_any_element()
         }
     }
 
@@ -433,14 +448,19 @@ impl Render for GitGraphView {
         let repo_label = self
             .repository
             .as_ref()
-            .and_then(|repo| repo.read(cx).branch.as_ref().map(|branch| branch.name().to_string()))
+            .and_then(|repo| {
+                repo.read(cx)
+                    .branch
+                    .as_ref()
+                    .map(|branch| branch.name().to_string())
+            })
             .unwrap_or_else(|| "No repository".to_string());
         let truncated_badge = self.truncated.then(|| {
             Badge::new(format!("Showing {}+", self.limit))
                 .icon(IconName::CountdownTimer)
                 .into_any_element()
         });
-        
+
         // Calculate graph width for the header to match the rows
         let max_lanes = self
             .rows
@@ -464,14 +484,11 @@ impl Render for GitGraphView {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        Label::new(repo_label)
-                            .weight(gpui::FontWeight::BOLD)
-                    )
+                    .child(Label::new(repo_label).weight(gpui::FontWeight::BOLD))
                     .when_some(truncated_badge, |row, badge| row.child(badge)),
             )
             .child(
-                 h_flex()
+                h_flex()
                     .gap_1()
                     .child(
                         Button::new("git-graph-refresh", "Refresh")
@@ -495,10 +512,9 @@ impl Render for GitGraphView {
                                 this.load(next, window, cx);
                             }))
                             .tooltip(|window, cx| {
-                                Tooltip::text(format!(
-                                    "Load more (max {})",
-                                    MAX_GRAPH_LIMIT
-                                ))(window, cx)
+                                Tooltip::text(format!("Load more (max {})", MAX_GRAPH_LIMIT))(
+                                    window, cx,
+                                )
                             }),
                     ),
             );
@@ -513,50 +529,39 @@ impl Render for GitGraphView {
             .border_color(colors.border)
             .bg(colors.editor_background) // Slightly different bg to distinguish from toolbar
             .child(
-                div()
-                    .w(graph_width)
-                    .child(
-                        Label::new("Graph")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
+                div().w(graph_width).child(
+                    Label::new("Graph")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
             )
             .child(
-                h_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(
-                         Label::new("Description")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small)
-                    )
+                h_flex().flex_1().min_w(px(0.0)).child(
+                    Label::new("Description")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
             )
             .child(
-                div()
-                    .w(px(120.0))
-                    .child(
-                        Label::new("Date")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
+                div().w(px(120.0)).child(
+                    Label::new("Date")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
             )
             .child(
-                div()
-                    .w(px(120.0))
-                    .child(
-                        Label::new("Author")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
+                div().w(px(120.0)).child(
+                    Label::new("Author")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
             )
             .child(
-                div()
-                    .w(px(80.0))
-                    .child(
-                        Label::new("Commit")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
+                div().w(px(80.0)).child(
+                    Label::new("Commit")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
             );
 
         v_flex()
