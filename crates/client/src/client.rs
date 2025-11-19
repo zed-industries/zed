@@ -30,7 +30,7 @@ use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use serde::{Deserialize, Serialize};
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, content::SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -101,7 +101,7 @@ pub struct ClientSettings {
 }
 
 impl Settings for ClientSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         if let Some(server_url) = &*ZED_SERVER_URL {
             return Self {
                 server_url: server_url.clone(),
@@ -133,7 +133,7 @@ impl ProxySettings {
 }
 
 impl Settings for ProxySettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         Self {
             proxy: content.proxy.clone(),
         }

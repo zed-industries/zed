@@ -67,7 +67,7 @@ use project::{
     project_settings::ProjectSettings,
 };
 use settings::{
-    GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
+    content::{GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring},
     Settings,
 };
 use smallvec::{SmallVec, smallvec};

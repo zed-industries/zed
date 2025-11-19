@@ -10,7 +10,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
-use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
+use settings::content::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
     env,

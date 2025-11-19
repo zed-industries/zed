@@ -46,7 +46,7 @@ pub use crate::scale::*;
 pub use crate::schema::*;
 pub use crate::settings::*;
 pub use crate::styles::*;
-pub use ::settings::{
+pub use ::settings::content::{
     FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
     ThemeStyleContent,
 };

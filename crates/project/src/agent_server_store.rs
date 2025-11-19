@@ -1796,8 +1796,8 @@ impl BuiltinAgentServerSettings {
     }
 }
 
-impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
-    fn from(value: settings::BuiltinAgentServerSettings) -> Self {
+impl From<settings::content::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
+    fn from(value: settings::content::BuiltinAgentServerSettings) -> Self {
         BuiltinAgentServerSettings {
             path: value
                 .path
@@ -1880,8 +1880,8 @@ impl CustomAgentServerSettings {
     }
 }
 
-impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
-    fn from(value: settings::CustomAgentServerSettings) -> Self {
+impl From<settings::content::CustomAgentServerSettings> for CustomAgentServerSettings {
+    fn from(value: settings::content::CustomAgentServerSettings) -> Self {
         match value {
             settings::CustomAgentServerSettings::Custom {
                 path,
@@ -1910,7 +1910,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
         Self {
             gemini: agent_settings.gemini.map(Into::into),
@@ -2221,7 +2221,7 @@ mod extension_agent_tests {
 
     #[test]
     fn test_tilde_expansion_in_settings() {
-        let settings = settings::BuiltinAgentServerSettings {
+        let settings = settings::content::BuiltinAgentServerSettings {
             path: Some(PathBuf::from("~/bin/agent")),
             args: Some(vec!["--flag".into()]),
             env: None,
@@ -2238,7 +2238,7 @@ mod extension_agent_tests {
             "Tilde should be expanded for builtin agent path"
         );
 
-        let settings = settings::CustomAgentServerSettings::Custom {
+        let settings = settings::content::CustomAgentServerSettings::Custom {
             path: PathBuf::from("~/custom/agent"),
             args: vec!["serve".into()],
             env: None,

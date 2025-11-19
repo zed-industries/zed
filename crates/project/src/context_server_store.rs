@@ -948,7 +948,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Extension {
+                    settings::content::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -967,7 +967,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Extension {
+                    settings::content::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -994,7 +994,7 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        settings::ContextServerSettingsContent::Extension {
+                        settings::content::ContextServerSettingsContent::Extension {
                             enabled: true,
                             settings: json!({
                                 "somevalue": false
@@ -1003,7 +1003,7 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        settings::ContextServerSettingsContent::Custom {
+                        settings::content::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
@@ -1035,7 +1035,7 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        settings::ContextServerSettingsContent::Extension {
+                        settings::content::ContextServerSettingsContent::Extension {
                             enabled: true,
                             settings: json!({
                                 "somevalue": false
@@ -1044,7 +1044,7 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        settings::ContextServerSettingsContent::Custom {
+                        settings::content::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
@@ -1071,7 +1071,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Extension {
+                    settings::content::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -1094,7 +1094,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Extension {
+                    settings::content::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -1180,7 +1180,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Custom {
+                    settings::content::ContextServerSettingsContent::Custom {
                         enabled: false,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
@@ -1209,7 +1209,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Custom {
+                    settings::content::ContextServerSettingsContent::Custom {
                         enabled: true,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
@@ -1227,7 +1227,7 @@ mod tests {
     }
 
     fn set_context_server_configuration(
-        context_servers: Vec<(Arc<str>, settings::ContextServerSettingsContent)>,
+        context_servers: Vec<(Arc<str>, settings::content::ContextServerSettingsContent)>,
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {

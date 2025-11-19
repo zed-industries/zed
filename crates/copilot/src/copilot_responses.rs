@@ -4,7 +4,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::OpenAiReasoningEffort as ReasoningEffort;
+pub use settings::content::OpenAiReasoningEffort as ReasoningEffort;
 
 #[derive(Serialize, Debug)]
 pub struct Request {

@@ -6,8 +6,11 @@ use convert_case::{Case, Casing as _};
 use fs::Fs;
 use gpui::{App, SharedString};
 use settings::{
-    AgentProfileContent, ContextServerPresetContent, LanguageModelSelection, Settings as _,
-    SettingsContent, update_settings_file,
+    content::{
+        AgentProfileContent, ContextServerPresetContent, LanguageModelSelection,
+        SettingsContent,
+    },Settings as _,
+    update_settings_file,
 };
 use util::ResultExt as _;
 
@@ -193,8 +196,8 @@ pub struct ContextServerPreset {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
-impl From<settings::ContextServerPresetContent> for ContextServerPreset {
-    fn from(content: settings::ContextServerPresetContent) -> Self {
+impl From<settings::content::ContextServerPresetContent> for ContextServerPreset {
+    fn from(content: settings::content::ContextServerPresetContent) -> Self {
         Self {
             tools: content.tools,
         }

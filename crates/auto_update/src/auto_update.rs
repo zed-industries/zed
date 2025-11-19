@@ -153,7 +153,7 @@ struct AutoUpdateSetting(bool);
 ///
 /// Default: true
 impl Settings for AutoUpdateSetting {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         Self(content.auto_update.unwrap())
     }
 }

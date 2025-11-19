@@ -11,8 +11,8 @@ use gpui::{
 use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
-use settings::{RegisterSetting, Settings, SettingsContent};
+pub use settings::content::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
+use settings::{RegisterSetting, Settings, content::SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -83,12 +83,12 @@ impl From<UiDensity> for String {
     }
 }
 
-impl From<settings::UiDensity> for UiDensity {
-    fn from(val: settings::UiDensity) -> Self {
+impl From<settings::content::UiDensity> for UiDensity {
+    fn from(val: settings::content::UiDensity) -> Self {
         match val {
-            settings::UiDensity::Compact => Self::Compact,
-            settings::UiDensity::Default => Self::Default,
-            settings::UiDensity::Comfortable => Self::Comfortable,
+            settings::content::UiDensity::Compact => Self::Compact,
+            settings::content::UiDensity::Default => Self::Default,
+            settings::content::UiDensity::Comfortable => Self::Comfortable,
         }
     }
 }
@@ -126,9 +126,9 @@ pub struct ThemeSettings {
     /// Manual overrides for the active theme.
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
-    pub experimental_theme_overrides: Option<settings::ThemeStyleContent>,
+    pub experimental_theme_overrides: Option<settings::content::ThemeStyleContent>,
     /// Manual overrides per theme
-    pub theme_overrides: HashMap<String, settings::ThemeStyleContent>,
+    pub theme_overrides: HashMap<String, settings::content::ThemeStyleContent>,
     /// The current icon theme selection.
     pub icon_theme: IconThemeSelection,
     /// The density of the UI.
@@ -216,11 +216,11 @@ pub enum ThemeSelection {
     },
 }
 
-impl From<settings::ThemeSelection> for ThemeSelection {
-    fn from(selection: settings::ThemeSelection) -> Self {
+impl From<settings::content::ThemeSelection> for ThemeSelection {
+    fn from(selection: settings::content::ThemeSelection) -> Self {
         match selection {
-            settings::ThemeSelection::Static(theme) => ThemeSelection::Static(theme),
-            settings::ThemeSelection::Dynamic { mode, light, dark } => {
+            settings::content::ThemeSelection::Static(theme) => ThemeSelection::Static(theme),
+            settings::content::ThemeSelection::Dynamic { mode, light, dark } => {
                 ThemeSelection::Dynamic { mode, light, dark }
             }
         }
@@ -268,11 +268,13 @@ pub enum IconThemeSelection {
     },
 }
 
-impl From<settings::IconThemeSelection> for IconThemeSelection {
-    fn from(selection: settings::IconThemeSelection) -> Self {
+impl From<settings::content::IconThemeSelection> for IconThemeSelection {
+    fn from(selection: settings::content::IconThemeSelection) -> Self {
         match selection {
-            settings::IconThemeSelection::Static(theme) => IconThemeSelection::Static(theme),
-            settings::IconThemeSelection::Dynamic { mode, light, dark } => {
+            settings::content::IconThemeSelection::Static(theme) => {
+                IconThemeSelection::Static(theme)
+            }
+            settings::content::IconThemeSelection::Dynamic { mode, light, dark } => {
                 IconThemeSelection::Dynamic { mode, light, dark }
             }
         }
@@ -313,8 +315,8 @@ pub fn set_theme(
 ) {
     if let Some(selection) = current.theme.theme.as_mut() {
         let theme_to_update = match selection {
-            settings::ThemeSelection::Static(theme) => theme,
-            settings::ThemeSelection::Dynamic { mode, light, dark } => match mode {
+            settings::content::ThemeSelection::Static(theme) => theme,
+            settings::content::ThemeSelection::Dynamic { mode, light, dark } => match mode {
                 ThemeAppearanceMode::Light => light,
                 ThemeAppearanceMode::Dark => dark,
                 ThemeAppearanceMode::System => match appearance {
@@ -326,7 +328,7 @@ pub fn set_theme(
 
         *theme_to_update = ThemeName(theme_name.into());
     } else {
-        current.theme.theme = Some(settings::ThemeSelection::Static(ThemeName(
+        current.theme.theme = Some(settings::content::ThemeSelection::Static(ThemeName(
             theme_name.into(),
         )));
     }
@@ -340,8 +342,8 @@ pub fn set_icon_theme(
 ) {
     if let Some(selection) = current.theme.icon_theme.as_mut() {
         let icon_theme_to_update = match selection {
-            settings::IconThemeSelection::Static(theme) => theme,
-            settings::IconThemeSelection::Dynamic { mode, light, dark } => match mode {
+            settings::content::IconThemeSelection::Static(theme) => theme,
+            settings::content::IconThemeSelection::Dynamic { mode, light, dark } => match mode {
                 ThemeAppearanceMode::Light => light,
                 ThemeAppearanceMode::Dark => dark,
                 ThemeAppearanceMode::System => match appearance {
@@ -353,7 +355,9 @@ pub fn set_icon_theme(
 
         *icon_theme_to_update = icon_theme_name;
     } else {
-        current.theme.icon_theme = Some(settings::IconThemeSelection::Static(icon_theme_name));
+        current.theme.icon_theme = Some(settings::content::IconThemeSelection::Static(
+            icon_theme_name,
+        ));
     }
 }
 
@@ -363,23 +367,23 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
 
     if let Some(selection) = theme.theme.as_mut() {
         match selection {
-            settings::ThemeSelection::Static(theme) => {
+            settings::content::ThemeSelection::Static(theme) => {
                 // If the theme was previously set to a single static theme,
                 // we don't know whether it was a light or dark theme, so we
                 // just use it for both.
-                *selection = settings::ThemeSelection::Dynamic {
+                *selection = settings::content::ThemeSelection::Dynamic {
                     mode,
                     light: theme.clone(),
                     dark: theme.clone(),
                 };
             }
-            settings::ThemeSelection::Dynamic {
+            settings::content::ThemeSelection::Dynamic {
                 mode: mode_to_update,
                 ..
             } => *mode_to_update = mode,
         }
     } else {
-        theme.theme = Some(settings::ThemeSelection::Dynamic {
+        theme.theme = Some(settings::content::ThemeSelection::Dynamic {
             mode,
             light: ThemeName(DEFAULT_LIGHT_THEME.into()),
             dark: ThemeName(DEFAULT_DARK_THEME.into()),
@@ -388,25 +392,25 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
 
     if let Some(selection) = theme.icon_theme.as_mut() {
         match selection {
-            settings::IconThemeSelection::Static(icon_theme) => {
+            settings::content::IconThemeSelection::Static(icon_theme) => {
                 // If the icon theme was previously set to a single static
                 // theme, we don't know whether it was a light or dark
                 // theme, so we just use it for both.
-                *selection = settings::IconThemeSelection::Dynamic {
+                *selection = settings::content::IconThemeSelection::Dynamic {
                     mode,
                     light: icon_theme.clone(),
                     dark: icon_theme.clone(),
                 };
             }
-            settings::IconThemeSelection::Dynamic {
+            settings::content::IconThemeSelection::Dynamic {
                 mode: mode_to_update,
                 ..
             } => *mode_to_update = mode,
         }
     } else {
-        theme.icon_theme = Some(settings::IconThemeSelection::Static(IconThemeName(
-            DEFAULT_ICON_THEME_NAME.into(),
-        )));
+        theme.icon_theme = Some(settings::content::IconThemeSelection::Static(
+            IconThemeName(DEFAULT_ICON_THEME_NAME.into()),
+        ));
     }
 }
 // }
@@ -423,12 +427,12 @@ pub enum BufferLineHeight {
     Custom(f32),
 }
 
-impl From<settings::BufferLineHeight> for BufferLineHeight {
-    fn from(value: settings::BufferLineHeight) -> Self {
+impl From<settings::content::BufferLineHeight> for BufferLineHeight {
+    fn from(value: settings::content::BufferLineHeight) -> Self {
         match value {
-            settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
-            settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
-            settings::BufferLineHeight::Custom(line_height) => {
+            settings::content::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
+            settings::content::BufferLineHeight::Standard => BufferLineHeight::Standard,
+            settings::content::BufferLineHeight::Custom(line_height) => {
                 BufferLineHeight::Custom(line_height)
             }
         }
@@ -539,7 +543,10 @@ impl ThemeSettings {
         arc_theme
     }
 
-    fn modify_theme(base_theme: &mut Theme, theme_overrides: &settings::ThemeStyleContent) {
+    fn modify_theme(
+        base_theme: &mut Theme,
+        theme_overrides: &settings::content::ThemeStyleContent,
+    ) {
         if let Some(window_background_appearance) = theme_overrides.window_background_appearance {
             base_theme.styles.window_background_appearance = window_background_appearance.into();
         }
@@ -676,7 +683,7 @@ fn clamp_font_weight(weight: f32) -> FontWeight {
 
 /// font fallback from settings
 pub fn font_fallbacks_from_settings(
-    fallbacks: Option<Vec<settings::FontFamilyName>>,
+    fallbacks: Option<Vec<settings::content::FontFamilyName>>,
 ) -> Option<FontFallbacks> {
     fallbacks.map(|fallbacks| {
         FontFallbacks::from_fonts(
@@ -689,7 +696,7 @@ pub fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let content = &content.theme;
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();

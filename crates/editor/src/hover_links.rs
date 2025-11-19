@@ -739,7 +739,7 @@ mod tests {
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
     use multi_buffer::MultiBufferOffset;
-    use settings::InlayHintSettingsContent;
+    use settings::content::InlayHintSettingsContent;
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 

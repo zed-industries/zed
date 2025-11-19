@@ -8,7 +8,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::http::{self, HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
 use serde::{Deserialize, Serialize};
-pub use settings::{AnthropicAvailableModel as AvailableModel, ModelMode};
+pub use settings::content::{AnthropicAvailableModel as AvailableModel, ModelMode};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 

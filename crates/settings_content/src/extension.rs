@@ -3,6 +3,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
 use settings_macros::{MergeFrom, with_fallible_options};
 
 #[with_fallible_options]

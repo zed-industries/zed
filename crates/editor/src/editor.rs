@@ -166,7 +166,7 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
+    content::{GitGutterSetting, RelativeLineNumbers}, Settings, SettingsLocation, SettingsStore,
     update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};

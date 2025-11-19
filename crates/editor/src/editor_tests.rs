@@ -44,7 +44,7 @@ use project::{
     project_settings::LspSettings,
 };
 use serde_json::{self, json};
-use settings::{
+use settings::content::{
     AllLanguageSettingsContent, EditorSettingsContent, IndentGuideBackgroundColoring,
     IndentGuideColoring, ProjectSettingsContent, SearchSettingsContent,
 };
@@ -12378,7 +12378,7 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Single(Formatter::LanguageServer(
-            settings::LanguageServerFormatterSpecifier::Current,
+            settings::content::LanguageServerFormatterSpecifier::Current,
         )))
     });
 
@@ -12504,7 +12504,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
         settings.defaults.formatter = Some(FormatterList::Vec(vec![
-            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+            Formatter::LanguageServer(settings::content::LanguageServerFormatterSpecifier::Current),
             Formatter::CodeAction("code-action-1".into()),
             Formatter::CodeAction("code-action-2".into()),
         ]))
@@ -12763,7 +12763,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Vec(vec![Formatter::LanguageServer(
-            settings::LanguageServerFormatterSpecifier::Current,
+            settings::content::LanguageServerFormatterSpecifier::Current,
         )]))
     });
 
@@ -27742,7 +27742,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                settings.editor.sticky_scroll = Some(settings::content::StickyScrollContent {
                     enabled: Some(true),
                 })
             });

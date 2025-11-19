@@ -98,7 +98,7 @@ mod tests {
             }
         );
 
-        assert!(crate::parse_json_with_comments::<Foo>(&input).is_err());
+        assert!(parse_json_with_comments::<Foo>(&input).is_err());
 
         let ParseStatus::Failed { error } = result else {
             panic!("Expected parse to fail")

@@ -3,12 +3,12 @@ use core::num;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
-pub use settings::{
+pub use settings::content::{
     CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
-use settings::{RegisterSetting, RelativeLineNumbers, Settings};
+use settings::{RegisterSetting, content::RelativeLineNumbers, Settings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 /// Imports from the VSCode settings at
@@ -187,7 +187,7 @@ impl ScrollbarVisibility for EditorSettings {
 }
 
 impl Settings for EditorSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let editor = content.editor.clone();
         let scrollbar = editor.scrollbar.unwrap();
         let minimap = editor.minimap.unwrap();

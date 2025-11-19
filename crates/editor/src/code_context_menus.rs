@@ -43,7 +43,7 @@ use crate::{
 };
 use crate::{CodeActionSource, EditorSettings};
 use collections::{HashSet, VecDeque};
-use settings::{Settings, SnippetSortOrder};
+use settings::{Settings, content::SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);

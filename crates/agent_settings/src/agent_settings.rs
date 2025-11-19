@@ -8,10 +8,11 @@ use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{
+use settings::content::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, RegisterSetting, Settings,
+    NotifyWhenAgentWaiting,
 };
+use settings::{RegisterSetting, Settings};
 
 pub use crate::agent_profile::*;
 
@@ -114,11 +115,11 @@ impl From<CompletionMode> for cloud_llm_client::CompletionMode {
     }
 }
 
-impl From<settings::CompletionMode> for CompletionMode {
-    fn from(value: settings::CompletionMode) -> Self {
+impl From<settings::content::CompletionMode> for CompletionMode {
+    fn from(value: settings::content::CompletionMode) -> Self {
         match value {
-            settings::CompletionMode::Normal => CompletionMode::Normal,
-            settings::CompletionMode::Burn => CompletionMode::Burn,
+            settings::content::CompletionMode::Normal => CompletionMode::Normal,
+            settings::content::CompletionMode::Burn => CompletionMode::Burn,
         }
     }
 }
@@ -145,7 +146,7 @@ impl Default for AgentProfileId {
 }
 
 impl Settings for AgentSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
         Self {
             enabled: agent.enabled.unwrap(),

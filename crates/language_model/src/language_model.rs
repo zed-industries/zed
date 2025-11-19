@@ -21,7 +21,7 @@ use icons::IconName;
 use open_router::OpenRouterError;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-pub use settings::LanguageModelCacheConfiguration;
+pub use settings::content::LanguageModelCacheConfiguration;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;

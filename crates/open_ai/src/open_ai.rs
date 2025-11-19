@@ -6,7 +6,7 @@ use http_client::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::OpenAiReasoningEffort as ReasoningEffort;
+pub use settings::content::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;

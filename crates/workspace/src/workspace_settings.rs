@@ -4,29 +4,32 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
-    AutosaveSetting, BottomDockLayout, InactiveOpacity, PaneSplitDirectionHorizontal,
-    PaneSplitDirectionVertical, RegisterSetting, RestoreOnStartupBehavior, Settings,
+    RegisterSetting, Settings,
+    content::{
+        AutosaveSetting, BottomDockLayout, InactiveOpacity, PaneSplitDirectionHorizontal,
+        PaneSplitDirectionVertical, RestoreOnStartupBehavior,
+    },
 };
 
 #[derive(RegisterSetting)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
-    pub bottom_dock_layout: settings::BottomDockLayout,
-    pub pane_split_direction_horizontal: settings::PaneSplitDirectionHorizontal,
-    pub pane_split_direction_vertical: settings::PaneSplitDirectionVertical,
-    pub centered_layout: settings::CenteredLayoutSettings,
+    pub bottom_dock_layout: settings::content::BottomDockLayout,
+    pub pane_split_direction_horizontal: settings::content::PaneSplitDirectionHorizontal,
+    pub pane_split_direction_vertical: settings::content::PaneSplitDirectionVertical,
+    pub centered_layout: settings::content::CenteredLayoutSettings,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
-    pub restore_on_startup: settings::RestoreOnStartupBehavior,
+    pub restore_on_startup: settings::content::RestoreOnStartupBehavior,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
     pub command_aliases: HashMap<String, String>,
     pub max_tabs: Option<NonZeroUsize>,
-    pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
-    pub on_last_window_closed: settings::OnLastWindowClosed,
+    pub when_closing_with_no_tabs: settings::content::CloseWindowWhenNoItems,
+    pub on_last_window_closed: settings::content::OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub use_system_window_tabs: bool,
@@ -61,7 +64,7 @@ pub struct TabBarSettings {
 }
 
 impl Settings for WorkspaceSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let workspace = &content.workspace;
         Self {
             active_pane_modifiers: ActivePanelModifiers {
@@ -112,7 +115,7 @@ impl Settings for WorkspaceSettings {
 }
 
 impl Settings for TabBarSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let tab_bar = content.tab_bar.clone().unwrap();
         TabBarSettings {
             show: tab_bar.show.unwrap(),
@@ -131,7 +134,7 @@ pub struct StatusBarSettings {
 }
 
 impl Settings for StatusBarSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let status_bar = content.status_bar.clone().unwrap();
         StatusBarSettings {
             show: status_bar.show.unwrap(),

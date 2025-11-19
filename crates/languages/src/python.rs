@@ -1230,13 +1230,13 @@ impl ToolchainLister for PythonToolchainProvider {
                     .detect_venv
                     .as_option()
                     .map(|venv| venv.conda_manager)
-                    .unwrap_or(settings::CondaManager::Auto);
+                    .unwrap_or(settings::content::CondaManager::Auto);
 
                 let manager = match conda_manager {
-                    settings::CondaManager::Conda => "conda",
-                    settings::CondaManager::Mamba => "mamba",
-                    settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => {
+                    settings::content::CondaManager::Conda => "conda",
+                    settings::content::CondaManager::Mamba => "mamba",
+                    settings::content::CondaManager::Micromamba => "micromamba",
+                    settings::content::CondaManager::Auto => {
                         // When auto, prefer the detected manager or fall back to conda
                         toolchain
                             .environment

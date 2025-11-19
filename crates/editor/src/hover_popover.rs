@@ -1036,7 +1036,7 @@ mod tests {
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
     use project::InlayId;
-    use settings::InlayHintSettingsContent;
+    use settings::content::InlayHintSettingsContent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;

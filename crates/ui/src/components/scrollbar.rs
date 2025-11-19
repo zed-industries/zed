@@ -54,13 +54,13 @@ pub mod scrollbars {
         Never,
     }
 
-    impl From<settings::ShowScrollbar> for ShowScrollbar {
-        fn from(value: settings::ShowScrollbar) -> Self {
+    impl From<settings::content::ShowScrollbar> for ShowScrollbar {
+        fn from(value: settings::content::ShowScrollbar) -> Self {
             match value {
-                settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
-                settings::ShowScrollbar::System => ShowScrollbar::System,
-                settings::ShowScrollbar::Always => ShowScrollbar::Always,
-                settings::ShowScrollbar::Never => ShowScrollbar::Never,
+                settings::content::ShowScrollbar::Auto => ShowScrollbar::Auto,
+                settings::content::ShowScrollbar::System => ShowScrollbar::System,
+                settings::content::ShowScrollbar::Always => ShowScrollbar::Always,
+                settings::content::ShowScrollbar::Never => ShowScrollbar::Never,
             }
         }
     }

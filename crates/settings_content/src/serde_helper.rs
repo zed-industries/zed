@@ -92,7 +92,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::*;
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]

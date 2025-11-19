@@ -6,11 +6,15 @@ use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use settings::AlternateScroll;
+pub use settings::content::AlternateScroll;
 
 use settings::{
-    PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition,
-    TerminalLineHeight, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
+    PathHyperlinkRegex, RegisterSetting,
+    content::{
+        ShowScrollbar, TerminalBlink, TerminalDockPosition, TerminalLineHeight, VenvSettings,
+        WorkingDirectory,
+    },
+    merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
@@ -59,11 +63,11 @@ pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
-fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
+fn settings_shell_to_task_shell(shell: settings::content::Shell) -> Shell {
     match shell {
-        settings::Shell::System => Shell::System,
-        settings::Shell::Program(program) => Shell::Program(program),
-        settings::Shell::WithArguments {
+        settings::content::Shell::System => Shell::System,
+        settings::content::Shell::Program(program) => Shell::Program(program),
+        settings::content::Shell::WithArguments {
             program,
             args,
             title_override,
@@ -76,7 +80,7 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 }
 
 impl settings::Settings for TerminalSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let user_content = content.terminal.clone().unwrap();
         // Note: we allow a subset of "terminal" settings in the project files.
         let mut project_content = user_content.project.clone();
@@ -146,13 +150,13 @@ pub enum CursorShape {
     Hollow,
 }
 
-impl From<settings::CursorShapeContent> for CursorShape {
-    fn from(value: settings::CursorShapeContent) -> Self {
+impl From<settings::content::CursorShapeContent> for CursorShape {
+    fn from(value: settings::content::CursorShapeContent) -> Self {
         match value {
-            settings::CursorShapeContent::Block => CursorShape::Block,
-            settings::CursorShapeContent::Underline => CursorShape::Underline,
-            settings::CursorShapeContent::Bar => CursorShape::Bar,
-            settings::CursorShapeContent::Hollow => CursorShape::Hollow,
+            settings::content::CursorShapeContent::Block => CursorShape::Block,
+            settings::content::CursorShapeContent::Underline => CursorShape::Underline,
+            settings::content::CursorShapeContent::Bar => CursorShape::Bar,
+            settings::content::CursorShapeContent::Hollow => CursorShape::Hollow,
         }
     }
 }

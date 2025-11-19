@@ -3,7 +3,8 @@ use std::sync::Arc;
 use git::GitHostingProviderRegistry;
 use gpui::App;
 use settings::{
-    GitHostingProviderConfig, GitHostingProviderKind, RegisterSetting, Settings, SettingsStore,
+    RegisterSetting, Settings, SettingsStore,
+    content::{GitHostingProviderConfig, GitHostingProviderKind},
 };
 use url::Url;
 use util::ResultExt as _;
@@ -58,7 +59,7 @@ pub struct GitHostingProviderSettings {
 }
 
 impl Settings for GitHostingProviderSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         Self {
             git_hosting_providers: content
                 .project

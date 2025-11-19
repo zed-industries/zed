@@ -150,6 +150,7 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+     "crates/settings_content",
     "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
@@ -384,6 +385,7 @@ search = { path = "crates/search" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }

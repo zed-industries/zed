@@ -1,5 +1,5 @@
 use dap_types::SteppingGranularity;
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, content::SettingsContent};
 
 #[derive(Debug, RegisterSetting)]
 pub struct DebuggerSettings {
@@ -30,7 +30,7 @@ pub struct DebuggerSettings {
     /// The dock position of the debug panel
     ///
     /// Default: Bottom
-    pub dock: settings::DockPosition,
+    pub dock: settings::content::DockPosition,
 }
 
 impl Settings for DebuggerSettings {
@@ -51,11 +51,11 @@ impl Settings for DebuggerSettings {
 }
 
 fn dap_granularity_from_settings(
-    granularity: settings::SteppingGranularity,
+    granularity: settings::content::SteppingGranularity,
 ) -> dap_types::SteppingGranularity {
     match granularity {
-        settings::SteppingGranularity::Instruction => dap_types::SteppingGranularity::Instruction,
-        settings::SteppingGranularity::Line => dap_types::SteppingGranularity::Line,
-        settings::SteppingGranularity::Statement => dap_types::SteppingGranularity::Statement,
+        settings::content::SteppingGranularity::Instruction => dap_types::SteppingGranularity::Instruction,
+        settings::content::SteppingGranularity::Line => dap_types::SteppingGranularity::Line,
+        settings::content::SteppingGranularity::Statement => dap_types::SteppingGranularity::Statement,
     }
 }

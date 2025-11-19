@@ -31,8 +31,8 @@ pub struct WslConnectionOptions {
     pub user: Option<String>,
 }
 
-impl From<settings::WslConnection> for WslConnectionOptions {
-    fn from(val: settings::WslConnection) -> Self {
+impl From<settings::content::WslConnection> for WslConnectionOptions {
+    fn from(val: settings::content::WslConnection) -> Self {
         WslConnectionOptions {
             distro_name: val.distro_name.into(),
             user: val.user,

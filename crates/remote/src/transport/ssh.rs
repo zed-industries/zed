@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use paths::remote_server_dir_relative;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
-pub use settings::SshPortForwardOption;
+pub use settings::content::SshPortForwardOption;
 use smol::{
     fs,
     process::{self, Child, Stdio},
@@ -57,8 +57,8 @@ pub struct SshConnectionOptions {
     pub upload_binary_over_ssh: bool,
 }
 
-impl From<settings::SshConnection> for SshConnectionOptions {
-    fn from(val: settings::SshConnection) -> Self {
+impl From<settings::content::SshConnection> for SshConnectionOptions {
+    fn from(val: settings::content::SshConnection) -> Self {
         SshConnectionOptions {
             host: val.host.into(),
             username: val.username,

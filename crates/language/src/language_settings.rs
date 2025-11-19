@@ -10,7 +10,7 @@ use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 
-pub use settings::{
+pub use settings::content::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
@@ -69,7 +69,7 @@ pub struct LanguageSettings {
     /// spaces.
     pub hard_tabs: bool,
     /// How to soft-wrap long lines of text.
-    pub soft_wrap: settings::SoftWrap,
+    pub soft_wrap: settings::content::SoftWrap,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
@@ -91,7 +91,7 @@ pub struct LanguageSettings {
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
-    pub formatter: settings::FormatterList,
+    pub formatter: settings::content::FormatterList,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to automatically close JSX tags.
@@ -117,7 +117,7 @@ pub struct LanguageSettings {
     /// scopes.
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
-    pub show_whitespaces: settings::ShowWhitespaceSetting,
+    pub show_whitespaces: settings::content::ShowWhitespaceSetting,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -202,11 +202,11 @@ pub struct IndentGuideSettings {
     /// Determines how indent guides are colored.
     ///
     /// Default: Fixed
-    pub coloring: settings::IndentGuideColoring,
+    pub coloring: settings::content::IndentGuideColoring,
     /// Determines how indent guide backgrounds are colored.
     ///
     /// Default: Disabled
-    pub background_coloring: settings::IndentGuideBackgroundColoring,
+    pub background_coloring: settings::content::IndentGuideBackgroundColoring,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -365,13 +365,13 @@ impl InlayHintSettings {
 #[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
-    pub provider: settings::EditPredictionProvider,
+    pub provider: settings::content::EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
-    pub mode: settings::EditPredictionsMode,
+    pub mode: settings::content::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
@@ -509,7 +509,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let all_languages = &content.project.all_languages;
 
         fn load_from_content(settings: LanguageSettingsContent) -> LanguageSettings {

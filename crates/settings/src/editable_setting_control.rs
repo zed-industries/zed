@@ -1,7 +1,7 @@
 use fs::Fs;
 use gpui::{App, RenderOnce, SharedString};
 
-use crate::{settings_content::SettingsContent, update_settings_file};
+use crate::{content::SettingsContent, update_settings_file};
 
 /// A UI control that can be used to edit a setting.
 pub trait EditableSettingControl: RenderOnce {

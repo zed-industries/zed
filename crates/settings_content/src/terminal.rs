@@ -4,9 +4,13 @@ use collections::HashMap;
 use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
 use settings_macros::{MergeFrom, with_fallible_options};
 
-use crate::FontFamilyName;
+use crate::{
+    FontFamilyName, serialize_f32_with_two_decimal_places,
+    serialize_optional_f32_with_two_decimal_places,
+};
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectTerminalSettingsContent {
@@ -75,7 +79,7 @@ pub struct TerminalSettingsContent {
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font size.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub font_size: Option<f32>,
     /// Sets the terminal's font family.
     ///
@@ -96,7 +100,7 @@ pub struct TerminalSettingsContent {
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub font_weight: Option<f32>,
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
@@ -135,12 +139,12 @@ pub struct TerminalSettingsContent {
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// Default height when the terminal is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
     /// The maximum number of lines to keep in the scrollback history.
     /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
@@ -172,7 +176,7 @@ pub struct TerminalSettingsContent {
     /// - 90: Preferred for body text
     ///
     /// Default: 45
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
 }
 
@@ -256,7 +260,7 @@ pub enum TerminalLineHeight {
     /// particularly if they use box characters
     Standard,
     /// Use a custom line height.
-    Custom(#[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] f32),
+    Custom(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] f32),
 }
 
 impl TerminalLineHeight {

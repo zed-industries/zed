@@ -17,11 +17,11 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-pub use settings::DirenvSettings;
-pub use settings::LspSettings;
+pub use settings::content::DirenvSettings;
+pub use settings::content::LspSettings;
 use settings::{
-    DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
-    SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
+    InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings, SettingsLocation,
+    SettingsStore, content::DapSettingsContent, parse_json_with_comments, watch_config_file,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -47,7 +47,7 @@ pub struct ProjectSettings {
     // We should change to use a non content type (settings::LspSettings is a content type)
     // Note: Will either require merging with defaults, which also requires deciding where the defaults come from,
     //       or case by case deciding which fields are optional and which are actually required.
-    pub lsp: HashMap<LanguageServerName, settings::LspSettings>,
+    pub lsp: HashMap<LanguageServerName, settings::content::LspSettings>,
 
     /// Common language server settings.
     pub global_lsp_settings: GlobalLspSettings,
@@ -95,8 +95,8 @@ pub struct NodeBinarySettings {
     pub ignore_system_version: bool,
 }
 
-impl From<settings::NodeBinarySettings> for NodeBinarySettings {
-    fn from(settings: settings::NodeBinarySettings) -> Self {
+impl From<settings::content::NodeBinarySettings> for NodeBinarySettings {
+    fn from(settings: settings::content::NodeBinarySettings) -> Self {
         Self {
             path: settings.path,
             npm_path: settings.npm_path,
@@ -147,16 +147,16 @@ pub enum ContextServerSettings {
     },
 }
 
-impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
-    fn from(value: settings::ContextServerSettingsContent) -> Self {
+impl From<settings::content::ContextServerSettingsContent> for ContextServerSettings {
+    fn from(value: settings::content::ContextServerSettingsContent) -> Self {
         match value {
-            settings::ContextServerSettingsContent::Custom { enabled, command } => {
+            settings::content::ContextServerSettingsContent::Custom { enabled, command } => {
                 ContextServerSettings::Custom { enabled, command }
             }
-            settings::ContextServerSettingsContent::Extension { enabled, settings } => {
+            settings::content::ContextServerSettingsContent::Extension { enabled, settings } => {
                 ContextServerSettings::Extension { enabled, settings }
             }
-            settings::ContextServerSettingsContent::Http {
+            settings::content::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
@@ -168,20 +168,20 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
         }
     }
 }
-impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
-    fn into(self) -> settings::ContextServerSettingsContent {
+impl Into<settings::content::ContextServerSettingsContent> for ContextServerSettings {
+    fn into(self) -> settings::content::ContextServerSettingsContent {
         match self {
             ContextServerSettings::Custom { enabled, command } => {
-                settings::ContextServerSettingsContent::Custom { enabled, command }
+                settings::content::ContextServerSettingsContent::Custom { enabled, command }
             }
             ContextServerSettings::Extension { enabled, settings } => {
-                settings::ContextServerSettingsContent::Extension { enabled, settings }
+                settings::content::ContextServerSettingsContent::Extension { enabled, settings }
             }
             ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
-            } => settings::ContextServerSettingsContent::Http {
+            } => settings::content::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
@@ -237,15 +237,15 @@ impl DiagnosticSeverity {
     }
 }
 
-impl From<settings::DiagnosticSeverityContent> for DiagnosticSeverity {
-    fn from(severity: settings::DiagnosticSeverityContent) -> Self {
+impl From<settings::content::DiagnosticSeverityContent> for DiagnosticSeverity {
+    fn from(severity: settings::content::DiagnosticSeverityContent) -> Self {
         match severity {
-            settings::DiagnosticSeverityContent::Off => DiagnosticSeverity::Off,
-            settings::DiagnosticSeverityContent::Error => DiagnosticSeverity::Error,
-            settings::DiagnosticSeverityContent::Warning => DiagnosticSeverity::Warning,
-            settings::DiagnosticSeverityContent::Info => DiagnosticSeverity::Info,
-            settings::DiagnosticSeverityContent::Hint => DiagnosticSeverity::Hint,
-            settings::DiagnosticSeverityContent::All => DiagnosticSeverity::Hint,
+            settings::content::DiagnosticSeverityContent::Off => DiagnosticSeverity::Off,
+            settings::content::DiagnosticSeverityContent::Error => DiagnosticSeverity::Error,
+            settings::content::DiagnosticSeverityContent::Warning => DiagnosticSeverity::Warning,
+            settings::content::DiagnosticSeverityContent::Info => DiagnosticSeverity::Info,
+            settings::content::DiagnosticSeverityContent::Hint => DiagnosticSeverity::Hint,
+            settings::content::DiagnosticSeverityContent::All => DiagnosticSeverity::Hint,
         }
     }
 }
@@ -328,7 +328,7 @@ pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
-    pub git_gutter: settings::GitGutterSetting,
+    pub git_gutter: settings::content::GitGutterSetting,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0
@@ -347,7 +347,7 @@ pub struct GitSettings {
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
-    pub hunk_style: settings::GitHunkStyleSetting,
+    pub hunk_style: settings::content::GitHunkStyleSetting,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
@@ -381,7 +381,7 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: settings::DelayMs,
+    pub delay_ms: settings::content::DelayMs,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -488,7 +488,7 @@ pub struct LspPullDiagnosticsSettings {
 }
 
 impl Settings for ProjectSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let project = &content.project.clone();
         let diagnostics = content.diagnostics.as_ref().unwrap();
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();

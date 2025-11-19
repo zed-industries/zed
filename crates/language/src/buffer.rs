@@ -213,13 +213,13 @@ pub enum CursorShape {
     Hollow,
 }
 
-impl From<settings::CursorShape> for CursorShape {
-    fn from(shape: settings::CursorShape) -> Self {
+impl From<settings::content::CursorShape> for CursorShape {
+    fn from(shape: settings::content::CursorShape) -> Self {
         match shape {
-            settings::CursorShape::Bar => CursorShape::Bar,
-            settings::CursorShape::Block => CursorShape::Block,
-            settings::CursorShape::Underline => CursorShape::Underline,
-            settings::CursorShape::Hollow => CursorShape::Hollow,
+            settings::content::CursorShape::Bar => CursorShape::Bar,
+            settings::content::CursorShape::Block => CursorShape::Block,
+            settings::content::CursorShape::Underline => CursorShape::Underline,
+            settings::content::CursorShape::Hollow => CursorShape::Hollow,
         }
     }
 }

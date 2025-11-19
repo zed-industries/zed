@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{self as settings, settings_content::BaseKeymapContent};
+use crate::{self as settings, content::BaseKeymapContent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
@@ -129,7 +129,7 @@ impl BaseKeymap {
 }
 
 impl Settings for BaseKeymap {
-    fn from_settings(s: &crate::settings_content::SettingsContent) -> Self {
+    fn from_settings(s: &crate::content::SettingsContent) -> Self {
         s.base_keymap.unwrap().into()
     }
 }

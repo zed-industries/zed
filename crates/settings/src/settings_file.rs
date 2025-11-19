@@ -1,4 +1,4 @@
-use crate::{settings_content::SettingsContent, settings_store::SettingsStore};
+use crate::{content::SettingsContent, settings_store::SettingsStore};
 use collections::HashSet;
 use fs::{Fs, PathEventKind};
 use futures::{StreamExt, channel::mpsc};

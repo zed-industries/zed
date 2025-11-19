@@ -20,7 +20,7 @@ use gpui::{
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
-use settings::{Settings, SettingsContent};
+use settings::{Settings, content::SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{

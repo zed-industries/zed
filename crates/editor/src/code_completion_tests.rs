@@ -4,7 +4,7 @@ use gpui::TestAppContext;
 use language::CodeLabel;
 use lsp::{CompletionItem, CompletionItemKind, LanguageServerId};
 use project::{Completion, CompletionSource};
-use settings::SnippetSortOrder;
+use settings::content::SnippetSortOrder;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use text::Anchor;

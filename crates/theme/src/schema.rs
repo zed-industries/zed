@@ -4,7 +4,7 @@ use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-pub use settings::{FontWeightContent, WindowBackgroundContent};
+pub use settings::content::{FontWeightContent, WindowBackgroundContent};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -44,11 +44,13 @@ pub struct ThemeFamilyContent {
 pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
-    pub style: settings::ThemeStyleContent,
+    pub style: settings::content::ThemeStyleContent,
 }
 
 /// Returns the syntax style overrides in the [`ThemeContent`].
-pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, HighlightStyle)> {
+pub fn syntax_overrides(
+    this: &settings::content::ThemeStyleContent,
+) -> Vec<(String, HighlightStyle)> {
     this.syntax
         .iter()
         .map(|(key, style)| {
@@ -72,7 +74,9 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
         .collect()
 }
 
-pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> StatusColorsRefinement {
+pub fn status_colors_refinement(
+    colors: &settings::content::StatusColorsContent,
+) -> StatusColorsRefinement {
     StatusColorsRefinement {
         conflict: colors
             .conflict
@@ -246,7 +250,7 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
 }
 
 pub fn theme_colors_refinement(
-    this: &settings::ThemeColorsContent,
+    this: &settings::content::ThemeColorsContent,
     status_colors: &StatusColorsRefinement,
 ) -> ThemeColorsRefinement {
     let border = this

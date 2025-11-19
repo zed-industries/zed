@@ -16,7 +16,7 @@ use anyhow::Result;
 use client::Client;
 use gpui::AsyncApp;
 use parking_lot::RwLock;
-pub use settings::ContextServerCommand;
+pub use settings::content::ContextServerCommand;
 use url::Url;
 
 use crate::transport::HttpTransport;

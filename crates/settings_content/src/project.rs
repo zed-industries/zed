@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use collections::{BTreeMap, HashMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
 use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 

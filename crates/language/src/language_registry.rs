@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
-use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
+use settings::content::{AllLanguageSettingsContent, LanguageSettingsContent};
 
 use futures::{
     Future,

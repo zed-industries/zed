@@ -1009,7 +1009,7 @@ pub struct DisableAiSettings {
 }
 
 impl settings::Settings for DisableAiSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         Self {
             disable_ai: content.disable_ai.unwrap().0,
         }
@@ -5279,7 +5279,7 @@ impl Project {
         worktree_id: WorktreeId,
         rel_path: Arc<RelPath>,
         cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
+        update: impl 'static + Send + FnOnce(&mut settings::content::SettingsContent, &App),
     ) {
         let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
             // todo(settings_ui) error?

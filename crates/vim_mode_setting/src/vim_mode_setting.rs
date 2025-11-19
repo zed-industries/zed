@@ -4,7 +4,7 @@
 //! disable Vim/Helix modes without having to depend on the `vim` crate in its
 //! entirety.
 
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, content::SettingsContent};
 
 #[derive(RegisterSetting)]
 pub struct VimModeSetting(pub bool);

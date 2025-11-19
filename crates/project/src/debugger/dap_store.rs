@@ -32,7 +32,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedStrin
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
-use settings::InlayHintKind;
+use settings::content::InlayHintKind;
 
 use remote::RemoteClient;
 use rpc::{

@@ -953,7 +953,7 @@ pub mod tests {
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
+    use settings::{content::{AllLanguageSettingsContent, InlayHintSettingsContent}, SettingsStore};
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};

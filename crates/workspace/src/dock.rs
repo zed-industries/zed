@@ -221,22 +221,22 @@ pub enum DockPosition {
     Right,
 }
 
-impl From<settings::DockPosition> for DockPosition {
-    fn from(value: settings::DockPosition) -> Self {
+impl From<settings::content::DockPosition> for DockPosition {
+    fn from(value: settings::content::DockPosition) -> Self {
         match value {
-            settings::DockPosition::Left => Self::Left,
-            settings::DockPosition::Bottom => Self::Bottom,
-            settings::DockPosition::Right => Self::Right,
+            settings::content::DockPosition::Left => Self::Left,
+            settings::content::DockPosition::Bottom => Self::Bottom,
+            settings::content::DockPosition::Right => Self::Right,
         }
     }
 }
 
-impl Into<settings::DockPosition> for DockPosition {
-    fn into(self) -> settings::DockPosition {
+impl Into<settings::content::DockPosition> for DockPosition {
+    fn into(self) -> settings::content::DockPosition {
         match self {
-            Self::Left => settings::DockPosition::Left,
-            Self::Bottom => settings::DockPosition::Bottom,
-            Self::Right => settings::DockPosition::Right,
+            Self::Left => settings::content::DockPosition::Left,
+            Self::Bottom => settings::content::DockPosition::Bottom,
+            Self::Right => settings::content::DockPosition::Right,
         }
     }
 }

@@ -3,7 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::KeepAlive;
+pub use settings::content::KeepAlive;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 

@@ -4,10 +4,11 @@ use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::Error as _};
+
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{ExtendingVec, merge_from};
+use crate::ExtendingVec;
 
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -27,7 +28,7 @@ pub struct AllLanguageSettingsContent {
     pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
 }
 
-impl merge_from::MergeFrom for AllLanguageSettingsContent {
+impl crate::merge_from::MergeFrom for AllLanguageSettingsContent {
     fn merge_from(&mut self, other: &Self) {
         self.file_types.merge_from(&other.file_types);
         self.features.merge_from(&other.features);
@@ -908,10 +909,9 @@ pub enum IndentGuideBackgroundColoring {
 
 #[cfg(test)]
 mod test {
-
     use crate::{ParseStatus, fallible_options};
 
-    use super::*;
+    use crate::*;
 
     #[test]
     fn test_formatter_deserialization() {

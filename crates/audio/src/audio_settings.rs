@@ -42,7 +42,7 @@ pub struct AudioSettings {
 
 /// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::content::SettingsContent) -> Self {
         let audio = &content.audio.as_ref().unwrap();
         AudioSettings {
             rodio_audio: audio.rodio_audio.unwrap(),

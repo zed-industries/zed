@@ -1,15 +1,12 @@
 mod base_keymap_setting;
 mod editable_setting_control;
-mod fallible_options;
 mod keymap_file;
-pub mod merge_from;
-mod serde_helper;
-mod settings_content;
 mod settings_file;
 mod settings_store;
 mod vscode_import;
 
-pub use settings_content::*;
+pub use settings_content as content;
+pub use settings_content::merge_from;
 pub use settings_macros::RegisterSetting;
 
 #[doc(hidden)]
@@ -18,8 +15,9 @@ pub mod private {
     pub use inventory;
 }
 
-use gpui::{App, Global};
+use gpui::App;
 use rust_embed::RustEmbed;
+use settings_content::fallible_options;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
@@ -29,7 +27,6 @@ pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
-pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
@@ -40,11 +37,6 @@ pub use settings_store::{
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 pub use keymap_file::ActionSequence;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ActiveSettingsProfileName(pub String);
-
-impl Global for ActiveSettingsProfileName {}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct WorktreeId(usize);

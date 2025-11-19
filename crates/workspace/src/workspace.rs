@@ -83,7 +83,7 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
+use settings::{content::CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
