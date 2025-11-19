@@ -1,14 +1,17 @@
 use anyhow::Result;
-use gpui::{App, Global};
+use gpui::{App, AppContext, Global, Task};
 use language::{BufferSnapshot, Language, LanguageRegistry};
 use magika::ContentType;
+use parking_lot::Mutex;
+use project::DisableAiSettings;
+use settings::Settings;
 use std::sync::Arc;
 
 fn content_type_to_language_name(content_type: ContentType) -> Option<&'static str> {
     match content_type {
         ContentType::C => Some("c"),
         ContentType::Clojure => Some("clojure"),
-        ContentType::Cpp => Some("cpp"),
+        ContentType::Cpp => Some("c++"),
         ContentType::Cs => Some("csharp"),
         ContentType::Css => Some("css"),
         ContentType::Dart => Some("dart"),
@@ -53,45 +56,67 @@ fn content_type_to_language_name(content_type: ContentType) -> Option<&'static s
     }
 }
 
-// pub fn init(cx: &mut App) {
-//     cx.set_global(LanguageDetector {});
-// }
+pub fn init(cx: &mut App) {
+    if DisableAiSettings::get_global(cx).disable_ai {
+        return;
+    }
 
-// impl Global for LanguageDetector {}
+    cx.set_global(LanguageDetector::new());
+}
 
-pub struct LanguageDetector {}
+impl Global for LanguageDetector {}
+
+pub struct LanguageDetector {
+    session: Option<Arc<Mutex<magika::Session>>>,
+}
 
 impl LanguageDetector {
-    pub async fn detect_language(
+    pub fn new() -> Self {
+        let session = magika::Session::new().ok();
+
+        Self {
+            session: session.map(|s| Arc::new(Mutex::new(s))),
+        }
+    }
+
+    pub fn detect_language(
+        &self,
         buffer: BufferSnapshot,
         language_registry: Arc<LanguageRegistry>,
-    ) -> Result<Arc<Language>> {
-        let text_sample = extract_text_sample(buffer);
+        cx: &mut App,
+    ) -> Task<Result<Arc<Language>>> {
+        let session = self.session.clone();
 
-        let session = magika::Session::new();
-        let result = match session {
-            Ok(mut session) => session
+        cx.background_spawn(async move {
+            let Some(session) = session else {
+                return Err(anyhow::Error::msg("No session found"));
+            };
+
+            let text_sample = extract_text_sample(buffer);
+
+            let result = session
+                .lock()
                 .identify_content_sync(text_sample.as_bytes())
-                .map_err(|e| anyhow::Error::new(e)),
-            Err(err) => {
-                log::error!("Failed to create magika session: {}", err);
-                Err(anyhow::Error::msg("Failed to create magika session"))
-            }
-        };
+                .map_err(|e| anyhow::Error::new(e));
 
-        match result {
-            Ok(file_type) => {
-                let content_type = file_type.content_type().unwrap();
-                let Some(language_name) = content_type_to_language_name(content_type) else {
-                    return Err(anyhow::Error::msg("Failed to detect language"));
-                };
-                language_registry.language_for_name(language_name).await
+            match result {
+                Ok(file_type) => {
+                    let content_type = file_type.content_type().unwrap();
+                    let Some(language_name) = content_type_to_language_name(content_type) else {
+                        return Err(anyhow::Error::msg("Failed to detect language"));
+                    };
+
+                    println!("contenttype: {}", content_type.info().label);
+                    println!("languagename: {}", language_name);
+
+                    language_registry.language_for_name(language_name).await
+                }
+                Err(err) => {
+                    log::error!("Failed to identify content type: {}", err);
+                    Err(anyhow::Error::msg("test"))
+                }
             }
-            Err(err) => {
-                log::error!("Failed to identify content type: {}", err);
-                Err(err)
-            }
-        }
+        })
     }
 }
 

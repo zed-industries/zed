@@ -18,5 +18,6 @@ language.workspace = true
 log.workspace = true
 magika = "1.0.0"
 ort = { version = "=2.0.0-rc.10", features = ["download-binaries"] }
+parking_lot.workspace = true
 project.workspace = true
 settings.workspace = true
