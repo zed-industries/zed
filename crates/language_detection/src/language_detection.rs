@@ -94,14 +94,11 @@ impl LanguageDetector {
                         return Err(anyhow::Error::msg("Failed to detect language"));
                     };
 
-                    println!("contenttype: {}", content_type.info().label);
-                    println!("languagename: {}", language_name);
-
                     language_registry.language_for_name(language_name).await
                 }
                 Err(err) => {
                     log::error!("Failed to identify content type: {}", err);
-                    Err(anyhow::Error::msg("test"))
+                    Err(anyhow::Error::msg("Failed to detect language"))
                 }
             }
         })
