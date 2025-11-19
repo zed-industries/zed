@@ -124,7 +124,7 @@ mod tests {
     use languages::rust_lang;
     use pretty_assertions::assert_eq;
     use rope::Point;
-    use text::OffsetRangeExt;
+    use text::{Bias, OffsetRangeExt, ToOffset};
     use util::post_inc;
 
     #[gpui::test]
@@ -896,29 +896,43 @@ mod foo «1{
             }
 
             let buffer_snapshot = snapshot.buffer().as_singleton().unwrap().2;
-            for (start, end) in snapshot
-                .bracket_ranges(
-                    DisplayPoint::new(visible_range.start, Default::default()).to_point(&snapshot)
-                        ..DisplayPoint::new(
-                            visible_range.end,
-                            snapshot.line_len(visible_range.end),
+            for bracket_match in buffer_snapshot
+                .fetch_bracket_ranges(
+                    snapshot
+                        .display_point_to_point(
+                            DisplayPoint::new(visible_range.start, 0),
+                            Bias::Left,
                         )
-                        .to_point(&snapshot),
+                        .to_offset(&buffer_snapshot)
+                        ..snapshot
+                            .display_point_to_point(
+                                DisplayPoint::new(
+                                    visible_range.end,
+                                    snapshot.line_len(visible_range.end),
+                                ),
+                                Bias::Right,
+                            )
+                            .to_offset(&buffer_snapshot),
+                    None,
                 )
-                .into_iter()
-                .flatten()
+                .iter()
+                .flat_map(|entry| entry.1)
+                .filter(|bracket_match| bracket_match.color_index.is_some())
             {
-                let start_bracket = colored_brackets
-                    .iter()
-                    .find(|(_, range)| range.to_offset(buffer_snapshot) == start);
+                let start = dbg!(bracket_match.open_range.to_point(buffer_snapshot));
+                let end = bracket_match.close_range.to_point(buffer_snapshot);
+                dbg!(
+                    buffer_snapshot
+                        .text_for_range(start.start..end.end)
+                        .collect::<String>()
+                );
+                let start_bracket = colored_brackets.iter().find(|(_, range)| *range == start);
                 assert!(
                     start_bracket.is_some(),
                     "Existing bracket start in the visible range should be highlighted"
                 );
 
-                let end_bracket = colored_brackets
-                    .iter()
-                    .find(|(_, range)| range.to_offset(buffer_snapshot) == end);
+                let end_bracket = colored_brackets.iter().find(|(_, range)| *range == end);
                 assert!(
                     end_bracket.is_some(),
                     "Existing bracket end in the visible range should be highlighted"
