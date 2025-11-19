@@ -1476,11 +1476,18 @@ impl PlatformWindow for MacWindow {
 
     fn register_shader(
         &self,
-        _source: &str,
-        _user_data_size: usize,
-        _user_data_align: usize,
+        source: &str,
+        user_struct_name: Option<&str>,
+        user_data_size: usize,
+        user_data_align: usize,
     ) -> Result<crate::CustomShaderId, &'static str> {
-        unimplemented!()
+        let mut this = self.0.lock();
+        this.renderer.register_custom_shader(
+            source,
+            user_struct_name,
+            user_data_size,
+            user_data_align,
+        )
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
