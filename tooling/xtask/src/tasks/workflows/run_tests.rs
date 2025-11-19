@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions},
+    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
     vars::PathCondition,
 };
 
@@ -215,11 +215,7 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .map(|j| j.name.to_string())
                 .collect::<Vec<String>>(),
         )
-        // todo! is this always relevant? Should not be
-        // .cond(Expression::new(
-        //     "github.repository_owner == 'zed-industries' && always()",
-        // ))
-        .with_repository_owner_guard()
+        .cond(repository_owner_guard_expression(true))
         .add_step(named::bash(&script));
 
     named::job(job)

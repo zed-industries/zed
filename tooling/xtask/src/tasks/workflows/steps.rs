@@ -153,16 +153,24 @@ pub fn set_repo_owner(owner: &'static str) {
     REPO_OWNER.set(owner).unwrap();
 }
 
+pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
+    Expression::new(
+        format!(
+            "github.repository_owner == '{}' {}",
+            REPO_OWNER.get().expect("Call set_repo_owner first"),
+            trigger_always.then_some("&& always()").unwrap_or_default()
+        )
+        .trim(),
+    )
+}
+
 pub trait CommonJobConditions: Sized {
     fn with_repository_owner_guard(self) -> Self;
 }
 
 impl CommonJobConditions for Job {
     fn with_repository_owner_guard(self) -> Self {
-        self.cond(Expression::new(format!(
-            "github.repository_owner == '{}'",
-            REPO_OWNER.get().expect("Call set_repo_owner first")
-        )))
+        self.cond(repository_owner_guard_expression(false))
     }
 }
 
