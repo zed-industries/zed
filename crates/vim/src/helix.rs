@@ -724,14 +724,14 @@ impl Vim {
             return;
         }
         if self.mode == Mode::HelixSelect {
-            self.update_editor(cx, |vim, editor, cx| {
+            self.update_editor(cx, |_vim, editor, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 editor.change_selections(SelectionEffects::default(), window, cx, |s| {
                     s.select_anchor_ranges(
                         prior_selections
                             .iter()
                             .cloned()
-                            .chain(s.all_anchors(&snapshot).iter().map(|s| s.range().clone())),
+                            .chain(s.all_anchors(&snapshot).iter().map(|s| s.range())),
                     );
                 })
             });
