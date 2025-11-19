@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 gpui = { path = "../gpui" }
-whisper-rs = { version = "0.15.1", features = ["tracing_backend"] }
+whisper-rs = { version = "0.15.1", features = ["tracing_backend", "vulkan"] }
 cpal = "0.15.3"
 anyhow = "1.0.86"
 async-channel = "2.3.1"
