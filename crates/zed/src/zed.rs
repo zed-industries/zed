@@ -2241,7 +2241,9 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
+    use editor::{
+        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
+    };
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
@@ -3508,7 +3510,11 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "untitled");
                     assert!(Arc::ptr_eq(
-                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap(),
                         &languages::PLAIN_TEXT
                     ));
                     editor.handle_input("hi", window, cx);
@@ -3542,7 +3548,12 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap()
+                            .name(),
                         "Rust".into()
                     );
                 });
@@ -3648,7 +3659,11 @@ mod tests {
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(Arc::ptr_eq(
-                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap(),
                         &languages::PLAIN_TEXT
                     ));
                     editor.handle_input("hi", window, cx);
@@ -3672,7 +3687,12 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap()
+                            .name(),
                         "Rust".into()
                     )
                 });

@@ -16,6 +16,7 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::MultiBufferOffset;
 use editor::RowExt;
 use editor::SelectionEffects;
 use editor::scroll::ScrollOffset;
@@ -803,7 +804,7 @@ impl InlineAssistant {
                 (
                     editor
                         .selections
-                        .newest::<usize>(&editor.display_snapshot(cx)),
+                        .newest::<MultiBufferOffset>(&editor.display_snapshot(cx)),
                     editor.buffer().read(cx).snapshot(cx),
                 )
             });
@@ -836,7 +837,7 @@ impl InlineAssistant {
                 (
                     editor
                         .selections
-                        .newest::<usize>(&editor.display_snapshot(cx)),
+                        .newest::<MultiBufferOffset>(&editor.display_snapshot(cx)),
                     editor.buffer().read(cx).snapshot(cx),
                 )
             });
@@ -853,12 +854,14 @@ impl InlineAssistant {
                     } else {
                         let distance_from_selection = assist_range
                             .start
-                            .abs_diff(selection.start)
-                            .min(assist_range.start.abs_diff(selection.end))
+                            .0
+                            .abs_diff(selection.start.0)
+                            .min(assist_range.start.0.abs_diff(selection.end.0))
                             + assist_range
                                 .end
-                                .abs_diff(selection.start)
-                                .min(assist_range.end.abs_diff(selection.end));
+                                .0
+                                .abs_diff(selection.start.0)
+                                .min(assist_range.end.0.abs_diff(selection.end.0));
                         match closest_assist_fallback {
                             Some((_, old_distance)) => {
                                 if distance_from_selection < old_distance {
@@ -935,7 +938,7 @@ impl InlineAssistant {
             EditorEvent::Edited { transaction_id } => {
                 let buffer = editor.read(cx).buffer().read(cx);
                 let edited_ranges =
-                    buffer.edited_ranges_for_transaction::<usize>(*transaction_id, cx);
+                    buffer.edited_ranges_for_transaction::<MultiBufferOffset>(*transaction_id, cx);
                 let snapshot = buffer.snapshot(cx);
 
                 for assist_id in editor_assists.assist_ids.clone() {

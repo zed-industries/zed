@@ -6,8 +6,8 @@ mod select;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, SelectionEffects, ToOffset,
-    ToPoint, movement,
+    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
 use gpui::{Context, Window};
@@ -523,7 +523,7 @@ impl Vim {
                         ..range.end.to_offset(&display_map, Bias::Left);
 
                     if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(byte_range.len());
+                        let replacement_text = text.repeat(byte_range.end - byte_range.start);
                         edits.push((byte_range, replacement_text));
                     }
                 }
@@ -620,7 +620,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let newest = editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx));
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             editor.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
         });
     }

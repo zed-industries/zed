@@ -211,9 +211,14 @@ fn find_target(
     let mut pre_char = String::new();
 
     // Backward scan to find the start of the number, but stop at start_offset
-    for ch in snapshot.reversed_chars_at(offset + if offset < snapshot.len() { 1 } else { 0 }) {
+    let next_offset = if offset < snapshot.len() {
+        offset + 1usize
+    } else {
+        offset
+    };
+    for ch in snapshot.reversed_chars_at(next_offset) {
         // Search boundaries
-        if offset == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
+        if offset.0 == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
             break;
         }
 

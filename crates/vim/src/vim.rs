@@ -21,8 +21,8 @@ mod visual;
 
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
-    ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    SelectionEffects, ToPoint,
     actions::Paste,
     movement::{self, FindRange},
 };
@@ -1388,7 +1388,7 @@ impl Vim {
         let newest_selection_empty = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx))
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .is_empty()
         });
         let editor = editor.read(cx);
@@ -1488,7 +1488,7 @@ impl Vim {
             let snapshot = &editor.snapshot(window, cx);
             let selection = editor
                 .selections
-                .newest::<usize>(&snapshot.display_snapshot);
+                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
 
             let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =

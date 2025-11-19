@@ -16,7 +16,7 @@ use gpui::{
     AppContext as _, Context, Entity, EntityId, Font, FontFeatures, FontStyle, FontWeight, Pixels,
     VisualTestContext, Window, font, size,
 };
-use multi_buffer::ToPoint;
+use multi_buffer::{MultiBufferOffset, ToPoint};
 use pretty_assertions::assert_eq;
 use project::{Project, project_settings::DiagnosticSeverity};
 use ui::{App, BorrowAppContext, px};
@@ -78,7 +78,7 @@ pub fn marked_display_snapshot(
     let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()
-        .map(|offset| offset.to_display_point(&snapshot))
+        .map(|offset| MultiBufferOffset(offset).to_display_point(&snapshot))
         .collect();
 
     (snapshot, markers)
@@ -94,7 +94,11 @@ pub fn select_ranges(
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-        s.select_ranges(text_ranges)
+        s.select_ranges(
+            text_ranges
+                .into_iter()
+                .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end)),
+        )
     });
 }
 
@@ -108,7 +112,12 @@ pub fn assert_text_with_selections(
     assert_eq!(editor.text(cx), unmarked_text, "text doesn't match");
     let actual = generate_marked_text(
         &editor.text(cx),
-        &editor.selections.ranges(&editor.display_snapshot(cx)),
+        &editor
+            .selections
+            .ranges::<MultiBufferOffset>(&editor.display_snapshot(cx))
+            .into_iter()
+            .map(|range| range.start.0..range.end.0)
+            .collect::<Vec<_>>(),
         marked_text.contains("«"),
     );
     assert_eq!(actual, marked_text, "Selections don't match");

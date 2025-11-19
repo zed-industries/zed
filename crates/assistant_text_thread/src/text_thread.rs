@@ -667,7 +667,7 @@ pub struct TextThread {
     buffer: Entity<Buffer>,
     pub(crate) parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
-    edits_since_last_parse: language::Subscription,
+    edits_since_last_parse: language::Subscription<usize>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     pub(crate) slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
