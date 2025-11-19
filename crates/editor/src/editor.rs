@@ -117,15 +117,16 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, Point, Runnable,
-    RunnableRange, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
-    WordsQuery,
+    IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, PLAIN_TEXT, Point,
+    Runnable, RunnableRange, Selection, SelectionGoal, TextObject, TransactionId,
+    TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
+use language_detection::LanguageDetector;
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
@@ -21260,8 +21261,9 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
+                    let buffer_id = buffer.read(cx).remote_id();
+
                     if self.project.is_some() {
-                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -21269,6 +21271,8 @@ impl Editor {
                             cx,
                         );
                     }
+
+                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -22347,6 +22351,45 @@ impl Editor {
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
+    }
+
+    fn detect_buffer_language(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
+        let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+
+        let buffer = buffer_entity.read(cx);
+        let Some(current_language) = buffer.language() else {
+            return;
+        };
+
+        if current_language.id() != PLAIN_TEXT.id() {
+            return;
+        }
+
+        let Some(language_registry) = buffer.language_registry() else {
+            return;
+        };
+
+        let buffer_snapshot = buffer.snapshot();
+
+        let detected_language =
+            LanguageDetector::new().detect_language(buffer_snapshot, language_registry, cx);
+
+        cx.spawn(async move |_, cx| {
+            if let Ok(detected_language) = detected_language.await {
+                buffer_entity
+                    .update(cx, |buffer, cx| {
+                        buffer.set_language(Some(detected_language.to_owned()), cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
