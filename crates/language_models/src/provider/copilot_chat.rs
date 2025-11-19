@@ -361,6 +361,7 @@ pub fn map_to_language_model_completion_events(
         id: String,
         name: String,
         arguments: String,
+        thought_signature: Option<String>,
     }
 
     struct State {
@@ -408,6 +409,10 @@ pub fn map_to_language_model_completion_events(
 
                             if let Some(tool_id) = tool_call.id.clone() {
                                 entry.id = tool_id;
+                            }
+
+                            if let Some(thought_signature) = tool_call.thought_signature.clone() {
+                                entry.thought_signature = Some(thought_signature);
                             }
 
                             if let Some(function) = tool_call.function.as_ref() {
@@ -458,7 +463,7 @@ pub fn map_to_language_model_completion_events(
                                                 is_input_complete: true,
                                                 input,
                                                 raw_input: tool_call.arguments,
-                                                thought_signature: None,
+                                                thought_signature: tool_call.thought_signature,
                                             },
                                         )),
                                         Err(error) => Ok(
@@ -779,6 +784,7 @@ fn into_copilot_chat(
                                     arguments: serde_json::to_string(&tool_use.input)?,
                                 },
                             },
+                            thought_signature: tool_use.thought_signature.clone(),
                         });
                     }
                 }
