@@ -93,7 +93,7 @@ enum ContextEngine {
     Syntax,
 }
 
-#[derive(Debug, Args)]
+#[derive(Clone, Debug, Args)]
 struct Zeta2Args {
     #[arg(long, default_value_t = 8192)]
     max_prompt_bytes: usize,
@@ -119,13 +119,19 @@ struct Zeta2Args {
 
 #[derive(Debug, Args)]
 pub struct PredictArguments {
-    #[clap(flatten)]
-    options: Zeta2Args,
-    #[arg(long)]
-    use_expected_context: bool,
     #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
     format: PredictionsOutputFormat,
     example_path: PathBuf,
+    #[clap(flatten)]
+    options: PredictionOptions,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct PredictionOptions {
+    #[arg(long)]
+    use_expected_context: bool,
+    #[clap(flatten)]
+    zeta2: Zeta2Args,
     #[clap(long, value_enum, default_value_t = CacheMode::default())]
     cache: CacheMode,
 }
@@ -176,15 +182,18 @@ pub enum PredictionsOutputFormat {
 pub struct EvaluateArguments {
     example_paths: Vec<PathBuf>,
     #[clap(flatten)]
-    zeta2_args: Zeta2Args,
-    #[arg(long)]
-    use_expected_context: bool,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
+    options: PredictionOptions,
     #[clap(short, long, default_value_t = 1, alias = "repeat")]
     repetitions: u16,
     #[arg(long)]
     skip_prediction: bool,
+}
+
+#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
+enum PredictionProvider {
+    #[default]
+    Zeta2,
+    Sweep,
 }
 
 fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {

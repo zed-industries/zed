@@ -1,7 +1,7 @@
 use crate::example::{ActualExcerpt, ExpectedExcerpt, NamedExample};
 use crate::headless::ZetaCliAppState;
 use crate::paths::{CACHE_DIR, LATEST_EXAMPLE_RUN_DIR, RUN_DIR, print_run_data_dir};
-use crate::{CacheMode, PredictArguments, PredictionsOutputFormat, PromptFormat};
+use crate::{CacheMode, PredictArguments, PredictionOptions, PredictionsOutputFormat};
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
@@ -28,18 +28,9 @@ pub async fn run_predict(
     let example = NamedExample::load(args.example_path).unwrap();
     let (project, mut zetas, _edited_buffers) =
         example.setup_project(app_state, 1, cx).await.unwrap();
-    let result = perform_predict(
-        example,
-        project,
-        zetas.remove(0),
-        None,
-        args.options.prompt_format,
-        args.use_expected_context,
-        args.cache,
-        cx,
-    )
-    .await
-    .unwrap();
+    let result = perform_predict(example, project, zetas.remove(0), None, args.options, cx)
+        .await
+        .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
 
     print_run_data_dir(true, std::io::stdout().is_terminal());
@@ -50,11 +41,10 @@ pub async fn perform_predict(
     project: Entity<Project>,
     zeta: Entity<Zeta>,
     repetition_ix: Option<u16>,
-    prompt_format: PromptFormat,
-    use_expected_context: bool,
-    mut cache_mode: CacheMode,
+    options: PredictionOptions,
     cx: &mut AsyncApp,
 ) -> Result<PredictionDetails> {
+    let mut cache_mode = options.cache;
     if repetition_ix.is_some() {
         if cache_mode != CacheMode::Auto && cache_mode != CacheMode::Skip {
             panic!("Repetitions are not supported in Auto cache mode");
@@ -162,7 +152,7 @@ pub async fn perform_predict(
                         let mut result = result.lock().unwrap();
                         result.generated_len = response.chars().count();
 
-                        if !use_expected_context {
+                        if !options.use_expected_context {
                             result.planning_search_time =
                                 Some(search_queries_generated_at.unwrap() - start_time.unwrap());
                             result.running_search_time = Some(
@@ -181,13 +171,15 @@ pub async fn perform_predict(
         }
     });
 
+    let prompt_format = options.zeta2.prompt_format;
+
     zeta.update(cx, |zeta, _cx| {
         let mut options = zeta.options().clone();
         options.prompt_format = prompt_format.into();
         zeta.set_options(options);
     })?;
 
-    if use_expected_context {
+    if options.use_expected_context {
         let context_excerpts_tasks = example
             .example
             .expected_context

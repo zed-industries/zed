@@ -12,7 +12,7 @@ use util::ResultExt as _;
 use zeta2::{Zeta, udiff::DiffLine};
 
 use crate::{
-    CacheMode, EvaluateArguments, PromptFormat,
+    EvaluateArguments, PredictionOptions,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
@@ -35,7 +35,9 @@ pub async fn run_evaluate(
         eprintln!("No examples provided");
         return;
     }
+
     let all_tasks = args.example_paths.into_iter().map(|path| {
+        let options = args.options.clone();
         let app_state = app_state.clone();
         let example = NamedExample::load(&path).expect("Failed to load example");
 
@@ -45,28 +47,30 @@ pub async fn run_evaluate(
                 .await
                 .unwrap();
 
-            let tasks = zetas.into_iter().enumerate().map(|(repetition_ix, zeta)| {
-                let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
-                let example = example.clone();
-                let project = project.clone();
+            let tasks = zetas
+                .into_iter()
+                .enumerate()
+                .map(move |(repetition_ix, zeta)| {
+                    let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
+                    let example = example.clone();
+                    let project = project.clone();
+                    let options = options.clone();
 
-                cx.spawn(async move |cx| {
-                    let name = example.name.clone();
-                    run_evaluate_one(
-                        example,
-                        repetition_ix,
-                        project,
-                        zeta,
-                        args.zeta2_args.prompt_format,
-                        args.use_expected_context,
-                        !args.skip_prediction,
-                        args.cache,
-                        cx,
-                    )
-                    .await
-                    .map_err(|err| (err, name, repetition_ix))
-                })
-            });
+                    cx.spawn(async move |cx| {
+                        let name = example.name.clone();
+                        run_evaluate_one(
+                            example,
+                            repetition_ix,
+                            project,
+                            zeta,
+                            options,
+                            !args.skip_prediction,
+                            cx,
+                        )
+                        .await
+                        .map_err(|err| (err, name, repetition_ix))
+                    })
+                });
             futures::future::join_all(tasks).await
         })
     });
@@ -158,10 +162,8 @@ pub async fn run_evaluate_one(
     repetition_ix: Option<u16>,
     project: Entity<Project>,
     zeta: Entity<Zeta>,
-    prompt_format: PromptFormat,
-    use_expected_context: bool,
+    prediction_options: PredictionOptions,
     predict: bool,
-    cache_mode: CacheMode,
     cx: &mut AsyncApp,
 ) -> Result<(EvaluationResult, ExecutionData)> {
     let predict_result = perform_predict(
@@ -169,9 +171,7 @@ pub async fn run_evaluate_one(
         project,
         zeta,
         repetition_ix,
-        prompt_format,
-        use_expected_context,
-        cache_mode,
+        prediction_options,
         cx,
     )
     .await?;
