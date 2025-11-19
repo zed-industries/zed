@@ -427,8 +427,8 @@ impl SweepAi {
                     });
 
             if should_coalesce {
-                *last_end_edit_anchor = end_edit_anchor.clone();
-                *last_new_snapshot = new_snapshot.clone();
+                *last_end_edit_anchor = end_edit_anchor;
+                *last_new_snapshot = new_snapshot;
                 return;
             }
         }
@@ -439,7 +439,7 @@ impl SweepAi {
 
         events.push_back(Event::BufferChange {
             old_snapshot,
-            new_snapshot: new_snapshot.clone(),
+            new_snapshot,
             end_edit_anchor,
         });
     }
