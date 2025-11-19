@@ -182,7 +182,7 @@ use language::{
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LanguageScope,
-    LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
+    LocalFile, OffsetRangeExt, OutlineItem, PLAIN_TEXT, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
@@ -10821,7 +10821,10 @@ impl Editor {
         let Some(current_language) = buffer.language().clone() else {
             return;
         };
-        // TODO: check that current_language is unset (now always set to plain text)
+
+        if current_language.id() != PLAIN_TEXT.id() {
+            return;
+        }
 
         let Some(language_registry) = buffer.language_registry() else {
             return;
