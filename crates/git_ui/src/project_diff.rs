@@ -7,12 +7,14 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
+use db::smol::stream::StreamExt;
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use futures::{FutureExt, stream::FuturesUnordered};
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -621,6 +623,11 @@ impl ProjectDiff {
         let mut previous_paths =
             cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
 
+        // Idea: on click in git panel prioritize task for that file in some way ...
+        //       could have a hashmap of futures here
+        // - needs to prioritize *some* background tasks over others
+        // -
+        let mut tasks = FuturesUnordered::new();
         let mut seen = HashSet::default();
         for entry in cached_status {
             seen.insert(entry.repo_path.clone());
@@ -649,10 +656,6 @@ impl ProjectDiff {
                 continue;
             };
 
-            let task = project.update(cx, |_, cx| {
-                BranchDiff::load_buffer(tree_diff_status, project_path, repo.clone(), cx)
-            })?;
-
             let sort_prefix = cx.read_entity(&repo, |repo, cx| {
                 sort_prefix(repo, &entry.repo_path, entry.status, cx)
             })?;
@@ -660,14 +663,13 @@ impl ProjectDiff {
             let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.into_arc());
             previous_paths.remove(&path_key);
 
-            // TODO re-introduce concurrency by moving this out of the spawn loop
-            if let Some((buffer, diff)) = task.await.log_err() {
-                cx.update(|window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.status, buffer, diff, window, cx)
-                    });
-                })?;
-            }
+            let repo = repo.clone();
+            let task = project.update(cx, move |_, cx| {
+                BranchDiff::load_buffer(tree_diff_status, project_path, repo, cx)
+                    .map(move |res| (res, path_key, entry.status))
+            })?;
+
+            tasks.push(task)
         }
 
         // remove anything not part of the diff in the multibuffer
@@ -679,6 +681,17 @@ impl ProjectDiff {
                 }
             });
         })?;
+
+        // add the new buffers as they are parsed
+        while let Some((res, path_key, file_status)) = tasks.next().await {
+            if let Some((buffer, diff)) = res.log_err() {
+                cx.update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.register_buffer(path_key, file_status, buffer, diff, window, cx)
+                    });
+                })?;
+            }
+        }
 
         Ok(())
     }
