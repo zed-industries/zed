@@ -17101,8 +17101,6 @@ impl Editor {
         }))
     }
 
-    // todo! check if it's OK to make this filter out the symbol that triggered
-    // the search
     pub fn find_all_references(
         &mut self,
         _: &FindAllReferences,
