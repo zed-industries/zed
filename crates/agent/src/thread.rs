@@ -30,11 +30,11 @@ use gpui::{
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
-    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, Role,
+    SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -1295,9 +1295,10 @@ impl Thread {
 
             if let Some(error) = error {
                 attempt += 1;
+                let provider = model.upstream_provider_name();
                 let retry = this.update(cx, |this, cx| {
                     let user_store = this.user_store.read(cx);
-                    this.handle_completion_error(error, attempt, user_store.plan())
+                    this.handle_completion_error(provider, error, attempt, user_store.plan())
                 })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
@@ -1323,6 +1324,7 @@ impl Thread {
 
     fn handle_completion_error(
         &mut self,
+        provider: LanguageModelProviderName,
         error: LanguageModelCompletionError,
         attempt: u8,
         plan: Option<Plan>,

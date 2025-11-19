@@ -195,6 +195,72 @@ pub enum LanguageModelCompletionError {
 }
 
 impl LanguageModelCompletionError {
+    fn display_format(&self, provider: LanguageModelProviderName) {
+        // match self {
+        // #[error("prompt too large for context window")]
+        // PromptTooLarge { tokens: Option<u64> },
+        // #[error("missing API key")]
+        // NoApiKey,
+        // #[error("API rate limit exceeded")]
+        // RateLimitExceeded { retry_after: Option<Duration> },
+        // #[error("API servers are overloaded right now")]
+        // ServerOverloaded { retry_after: Option<Duration> },
+        // #[error("API server reported an internal server error: {message}")]
+        // ApiInternalServerError { message: String },
+        // #[error("{message}")]
+        // UpstreamProviderError {
+        //     message: String,
+        //     status: StatusCode,
+        //     retry_after: Option<Duration>,
+        // },
+        // #[error("HTTP response error from API: status {status_code} - {message:?}")]
+        // HttpResponseError {
+        //     status_code: StatusCode,
+        //     message: String,
+        // },
+
+        // // Client errors
+        // #[error("invalid request format to API: {message}")]
+        // BadRequestFormat { message: String },
+        // #[error("authentication error with API: {message}")]
+        // AuthenticationError { message: String },
+        // #[error("Permission error with API: {message}")]
+        // PermissionError { message: String },
+        // #[error("language model provider API endpoint not found")]
+        // ApiEndpointNotFound,
+        // #[error("I/O error reading response from API")]
+        // ApiReadResponseError {
+        //     #[source]
+        //     error: io::Error,
+        // },
+        // #[error("error serializing request to API")]
+        // SerializeRequest {
+        //     #[source]
+        //     error: serde_json::Error,
+        // },
+        // #[error("error building request body to API")]
+        // BuildRequestBody {
+        //     #[source]
+        //     error: http::Error,
+        // },
+        // #[error("error sending HTTP request to API")]
+        // HttpSend {
+        //     #[source]
+        //     error: anyhow::Error,
+        // },
+        // #[error("error deserializing API response")]
+        // DeserializeResponse {
+        //     #[source]
+        //     error: serde_json::Error,
+        // },
+
+        // // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
+        // #[error(transparent)]
+        // Other(#[from] anyhow::Error),
+
+        // }
+    }
+
     fn parse_upstream_error_json(message: &str) -> Option<(StatusCode, String)> {
         let error_json = serde_json::from_str::<serde_json::Value>(message).ok()?;
         let upstream_status = error_json
@@ -228,7 +294,9 @@ impl LanguageModelCompletionError {
             {
                 return Self::from_http_status(upstream_status, inner_message, retry_after);
             }
-            anyhow!("completion request failed, code: {code}, message: {message}").into()
+            Self::Other(anyhow!(
+                "completion request failed, code: {code}, message: {message}"
+            ))
         } else if let Some(status_code) = code
             .strip_prefix("upstream_http_")
             .and_then(|code| StatusCode::from_str(code).ok())
@@ -240,7 +308,9 @@ impl LanguageModelCompletionError {
         {
             Self::from_http_status(status_code, message, retry_after)
         } else {
-            anyhow!("completion request failed, code: {code}, message: {message}").into()
+            Self::Other(anyhow!(
+                "completion request failed, code: {code}, message: {message}"
+            ))
         }
     }
 
