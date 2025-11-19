@@ -90,6 +90,13 @@ pub struct MultiBuffer {
     capability: Capability,
     buffer_changed_since_sync: Rc<Cell<bool>>,
     follower: Option<Entity<MultiBuffer>>,
+    filter_mode: Option<MultiBufferFilterMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultiBufferFilterMode {
+    KeepInsertions,
+    KeepDeletions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -633,6 +640,7 @@ impl MultiBuffer {
             buffer_changed_since_sync: Default::default(),
             history: History::default(),
             follower: None,
+            filter_mode: None,
         }
     }
 
@@ -676,6 +684,7 @@ impl MultiBuffer {
             title: self.title.clone(),
             buffer_changed_since_sync,
             follower: None,
+            filter_mode: None,
         }
     }
 
@@ -687,8 +696,33 @@ impl MultiBuffer {
         }
 
         let follower = cx.new(|cx| self.clone(cx));
+        follower.update(cx, |follower, cx| {
+            follower.set_all_diff_hunks_expanded(cx);
+            follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions))
+        });
         self.follower = Some(follower.clone());
+        self.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
+        self.set_all_diff_hunks_expanded(cx);
         follower
+    }
+
+    pub fn set_filter_mode(&mut self, new_mode: Option<MultiBufferFilterMode>) {
+        self.filter_mode = new_mode;
+        let excerpt_len = self
+            .snapshot
+            .get_mut()
+            .diff_transforms
+            .summary()
+            .excerpt_len();
+        Self::sync_diff_transforms(
+            self.snapshot.get_mut(),
+            vec![Edit {
+                old: ExcerptOffset::new(0)..excerpt_len,
+                new: ExcerptOffset::new(0)..excerpt_len,
+            }],
+            DiffChangeKind::BufferEdited,
+            new_mode,
+        );
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
@@ -1343,6 +1377,7 @@ impl MultiBuffer {
                 new: edit_start..edit_end,
             }],
             DiffChangeKind::BufferEdited,
+            self.filter_mode,
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -1408,6 +1443,7 @@ impl MultiBuffer {
                 new: start..start,
             }],
             DiffChangeKind::BufferEdited,
+            self.filter_mode,
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -1706,7 +1742,12 @@ impl MultiBuffer {
             snapshot.trailing_excerpt_update_count += 1;
         }
 
-        let edits = Self::sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
+        let edits = Self::sync_diff_transforms(
+            &mut snapshot,
+            edits,
+            DiffChangeKind::BufferEdited,
+            self.filter_mode,
+        );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
@@ -1872,6 +1913,7 @@ impl MultiBuffer {
             DiffChangeKind::DiffUpdated {
                 base_changed: base_text_changed,
             },
+            self.filter_mode,
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2151,6 +2193,7 @@ impl MultiBuffer {
             &mut snapshot,
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
+            self.filter_mode,
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2242,7 +2285,12 @@ impl MultiBuffer {
             follower.update(cx, |follower, cx| follower.resize_excerpt(id, range, cx));
         }
 
-        let edits = Self::sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
+        let edits = Self::sync_diff_transforms(
+            &mut snapshot,
+            edits,
+            DiffChangeKind::BufferEdited,
+            self.filter_mode,
+        );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
@@ -2353,6 +2401,7 @@ impl MultiBuffer {
             &mut snapshot,
             excerpt_edits.clone(),
             DiffChangeKind::BufferEdited,
+            self.filter_mode,
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2378,6 +2427,7 @@ impl MultiBuffer {
             &mut self.snapshot.borrow_mut(),
             &self.buffers,
             &self.diffs,
+            self.filter_mode,
             cx,
         );
         if !edits.is_empty() {
@@ -2390,7 +2440,13 @@ impl MultiBuffer {
         if !changed {
             return;
         }
-        let edits = Self::sync_(self.snapshot.get_mut(), &self.buffers, &self.diffs, cx);
+        let edits = Self::sync_(
+            self.snapshot.get_mut(),
+            &self.buffers,
+            &self.diffs,
+            self.filter_mode,
+            cx,
+        );
 
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2401,6 +2457,7 @@ impl MultiBuffer {
         snapshot: &mut MultiBufferSnapshot,
         buffers: &HashMap<BufferId, BufferState>,
         diffs: &HashMap<BufferId, DiffState>,
+        filter_mode: Option<MultiBufferFilterMode>,
         cx: &App,
     ) -> Vec<Edit<usize>> {
         let MultiBufferSnapshot {
@@ -2523,13 +2580,14 @@ impl MultiBuffer {
 
         drop(cursor);
         *excerpts = new_excerpts;
-        Self::sync_diff_transforms(snapshot, edits, DiffChangeKind::BufferEdited)
+        Self::sync_diff_transforms(snapshot, edits, DiffChangeKind::BufferEdited, filter_mode)
     }
 
     fn sync_diff_transforms(
         snapshot: &mut MultiBufferSnapshot,
         excerpt_edits: Vec<text::Edit<ExcerptOffset>>,
         change_kind: DiffChangeKind,
+        filter_mode: Option<MultiBufferFilterMode>,
     ) -> Vec<Edit<usize>> {
         if excerpt_edits.is_empty() {
             return vec![];
@@ -2581,6 +2639,7 @@ impl MultiBuffer {
                 &mut old_expanded_hunks,
                 snapshot,
                 change_kind,
+                filter_mode,
             );
 
             // Compute the end of the edit in output coordinates.
@@ -2672,6 +2731,7 @@ impl MultiBuffer {
         old_expanded_hunks: &mut HashSet<DiffTransformHunkInfo>,
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
+        filter_mode: Option<MultiBufferFilterMode>,
     ) -> bool {
         log::trace!(
             "recomputing diff transform for edit {:?} => {:?}",
@@ -2785,6 +2845,7 @@ impl MultiBuffer {
                         if !hunk.diff_base_byte_range.is_empty()
                             && hunk_buffer_range.start >= edit_buffer_start
                             && hunk_buffer_range.start <= excerpt_buffer_end
+                            && filter_mode != Some(MultiBufferFilterMode::KeepInsertions)
                         {
                             let base_text = diff.base_text();
                             let mut text_cursor =
@@ -2814,7 +2875,8 @@ impl MultiBuffer {
                             *end_of_current_insert = Some(CurrentInsertedHunk {
                                 insertion_end_offset: hunk_excerpt_end.min(excerpt_end),
                                 hunk_info,
-                                is_filtered: false, // FIXME
+                                is_filtered: filter_mode
+                                    == Some(MultiBufferFilterMode::KeepDeletions),
                             });
                         }
                     }
