@@ -8538,8 +8538,11 @@ fn merge_pending_ops_snapshots(
                     .find_map(|(op, idx)| if op.id == s_op.id { Some(idx) } else { None })
                 {
                     let t_op = &mut t_ops.ops[op_idx];
-                    if s_op.finished {
-                        t_op.finished = true;
+                    match (s_op.job_status, t_op.job_status) {
+                        (pending_op::JobStatus::Running, _) => {}
+                        (s_st, pending_op::JobStatus::Running) => t_op.job_status = s_st,
+                        (s_st, t_st) if s_st == t_st => {}
+                        _ => unreachable!(),
                     }
                 } else {
                     t_ops.ops.push(s_op);
@@ -8631,7 +8634,7 @@ async fn test_repository_pending_ops_staging(
                 Some(&pending_op::PendingOp {
                     id: id.into(),
                     git_status,
-                    finished: false,
+                    job_status: pending_op::JobStatus::Running
                 })
             );
             task
@@ -8646,7 +8649,7 @@ async fn test_repository_pending_ops_staging(
                 Some(&pending_op::PendingOp {
                     id: id.into(),
                     git_status,
-                    finished: true,
+                    job_status: pending_op::JobStatus::Finished
                 })
             );
         });
@@ -8672,27 +8675,27 @@ async fn test_repository_pending_ops_staging(
             pending_op::PendingOp {
                 id: 1u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
             pending_op::PendingOp {
                 id: 3u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
             pending_op::PendingOp {
                 id: 4u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
             pending_op::PendingOp {
                 id: 5u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             }
         ],
     );
@@ -8789,11 +8792,18 @@ async fn test_repository_pending_ops_long_running_staging(
             .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
             .unwrap()
             .ops,
-        vec![pending_op::PendingOp {
-            id: 2u16.into(),
-            git_status: pending_op::GitStatus::Staged,
-            finished: true,
-        }],
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Skipped
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            }
+        ],
     );
 
     repo.update(cx, |repo, _cx| {
@@ -8894,12 +8904,12 @@ async fn test_repository_pending_ops_stage_all(
             pending_op::PendingOp {
                 id: 1u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
         ],
     );
@@ -8913,12 +8923,12 @@ async fn test_repository_pending_ops_stage_all(
             pending_op::PendingOp {
                 id: 1u16.into(),
                 git_status: pending_op::GitStatus::Staged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
             pending_op::PendingOp {
                 id: 2u16.into(),
                 git_status: pending_op::GitStatus::Unstaged,
-                finished: true,
+                job_status: pending_op::JobStatus::Finished
             },
         ],
     );
