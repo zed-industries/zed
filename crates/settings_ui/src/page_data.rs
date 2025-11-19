@@ -5495,13 +5495,13 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Change Counters",
-                    description: "When to show change counters in the git gutter.",
+                    title: "Path Style",
+                    description: "Should the name or path be displayed first in the git view.",
                     field: Box::new(SettingField {
-                        json_path: Some("git.show_change_counters"),
-                        pick: |settings_content| settings_content.git.as_ref()?.show_change_counters.as_ref(),
+                        json_path: Some("git.path_style"),
+                        pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
                         write: |settings_content, value| {
-                            settings_content.git.get_or_insert_default().show_change_counters = value;
+                            settings_content.git.get_or_insert_default().path_style = value;
                         },
                     }),
                     metadata: None,

@@ -4050,13 +4050,6 @@ impl GitPanel {
         } else {
             cx.theme().colors().ghost_element_active
         };
-        let name_label =
-            |status: FileStatus, label_color: Color, this: Div, label: String| -> Div {
-                this.child(
-                    self.entry_label(label, label_color)
-                        .when(status.is_deleted(), |this| this.strikethrough()),
-                )
-            };
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -4150,18 +4143,23 @@ impl GitPanel {
                     ),
             )
             .child(git_status_icon(status))
-            .child(h_flex().items_center().flex_1().map(|this| {
-                self.path_formatted(
-                    this,
-                    entry.parent_dir(path_style),
-                    path_color,
-                    display_name,
-                    label_color,
-                    path_style,
-                    git_path_style,
-                    status.is_deleted(),
-                )
-            }))
+            .child(
+                h_flex()
+                    .items_center()
+                    .flex_1()
+                    .child(h_flex().items_center().flex_1().map(|this| {
+                        self.path_formatted(
+                            this,
+                            entry.parent_dir(path_style),
+                            path_color,
+                            display_name,
+                            label_color,
+                            path_style,
+                            git_path_style,
+                            status.is_deleted(),
+                        )
+                    })),
+            )
             .into_any_element()
     }
 
