@@ -64,7 +64,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::workspace::OpenWithSystem;
@@ -136,8 +136,24 @@ pub struct ProjectPanel {
     previous_drag_position: Option<Point<Pixels>>,
     sticky_items_count: usize,
     last_reported_update: Instant,
-    update_visible_entries_task: Task<()>,
+    update_visible_entries_task: UpdateVisibleEntriesTask,
     state: State,
+}
+
+struct UpdateVisibleEntriesTask {
+    _visible_entries_task: Task<()>,
+    focus_filename_editor: bool,
+    autoscroll: bool,
+}
+
+impl Default for UpdateVisibleEntriesTask {
+    fn default() -> Self {
+        UpdateVisibleEntriesTask {
+            _visible_entries_task: Task::ready(()),
+            focus_filename_editor: Default::default(),
+            autoscroll: Default::default(),
+        }
+    }
 }
 
 enum DragTarget {
@@ -294,6 +310,8 @@ actions!(
         ToggleFocus,
         /// Toggles visibility of git-ignored files.
         ToggleHideGitIgnore,
+        /// Toggles visibility of hidden files.
+        ToggleHideHidden,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -358,13 +376,7 @@ impl FoldedAncestors {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    ProjectPanelSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -378,6 +390,19 @@ pub fn init(cx: &mut App) {
                         .project_panel
                         .get_or_insert_default()
                         .hide_gitignore
+                        .unwrap_or(false),
+                );
+            })
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideHidden, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file(fs, cx, move |setting, _| {
+                setting.project_panel.get_or_insert_default().hide_hidden = Some(
+                    !setting
+                        .project_panel
+                        .get_or_insert_default()
+                        .hide_hidden
                         .unwrap_or(false),
                 );
             })
@@ -491,17 +516,13 @@ impl ProjectPanel {
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                this.focus_out(window, cx);
-            })
-            .detach();
 
             cx.subscribe_in(
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                    | GitStoreEvent::RepositoryAdded(_)
+                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
+                    | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -615,8 +636,11 @@ impl ProjectPanel {
             .detach();
 
             let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_via_collab();
+            let is_remote = project.read(cx).is_remote();
 
+            // Make sure the trash option is never displayed anywhere on remote
+            // hosts since they may not support trashing. May want to dynamically
+            // detect this in the future.
             if is_remote {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
                     filter.hide_action_types(&trash_action);
@@ -643,7 +667,7 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            match project_panel.confirm_edit(window, cx) {
+                            match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
                                     task.detach_and_notify_err(window, cx);
                                 }
@@ -677,6 +701,9 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.hide_hidden != new_settings.hide_hidden {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
+                    if project_panel_settings.sort_mode != new_settings.sort_mode {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -725,7 +752,7 @@ impl ProjectPanel {
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
                 },
-                update_visible_entries_task: Task::ready(()),
+                update_visible_entries_task: Default::default(),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -947,12 +974,6 @@ impl ProjectPanel {
         }
     }
 
-    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus_handle.is_focused(window) {
-            self.confirm(&Confirm, window, cx);
-        }
-    }
-
     fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -981,7 +1002,7 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let is_read_only = project.is_read_only(cx);
-            let is_remote = project.is_via_collab();
+            let is_remote = project.is_remote();
             let is_local = project.is_local();
 
             let settings = ProjectPanelSettings::get_global(cx);
@@ -1041,17 +1062,16 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .separator()
                             .when(!should_hide_rename, |menu| {
-                                menu.action("Rename", Box::new(Rename))
+                                menu.separator().action("Rename", Box::new(Rename))
                             })
-                            .when(!is_root & !is_remote, |menu| {
+                            .when(!is_root && !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
                                 menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(!is_remote & is_root, |menu| {
+                            .when(!is_remote && is_root, |menu| {
                                 menu.separator()
                                     .action(
                                         "Add Folder to Project…",
@@ -1421,7 +1441,7 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(task) = self.confirm_edit(window, cx) {
+        if let Some(task) = self.confirm_edit(true, window, cx) {
             task.detach_and_notify_err(window, cx);
         }
     }
@@ -1553,6 +1573,7 @@ impl ProjectPanel {
 
     fn confirm_edit(
         &mut self,
+        refocus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1606,7 +1627,7 @@ impl ProjectPanel {
                 filename.clone()
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
-                if existing.id == entry.id {
+                if existing.id == entry.id && refocus {
                     window.focus(&self.focus_handle);
                 }
                 return None;
@@ -1617,7 +1638,9 @@ impl ProjectPanel {
             });
         };
 
-        window.focus(&self.focus_handle);
+        if refocus {
+            window.focus(&self.focus_handle);
+        }
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -1647,7 +1670,10 @@ impl ProjectPanel {
                             }
                         project_panel.update_visible_entries(None, false, false, window, cx);
                         if is_new_entry && !is_dir {
-                            project_panel.open_entry(new_entry.id, true, false, cx);
+                            let settings = ProjectPanelSettings::get_global(cx);
+                            if settings.auto_open.should_open_on_create() {
+                                project_panel.open_entry(new_entry.id, true, false, cx);
+                            }
                         }
                         cx.notify();
                     })?;
@@ -1816,6 +1842,9 @@ impl ProjectPanel {
             depth: 0,
             validation_state: ValidationState::None,
         });
+        self.filename_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+        });
         self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), true, true, window, cx);
         cx.notify();
     }
@@ -1882,9 +1911,8 @@ impl ProjectPanel {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges([selection])
                     });
-                    window.focus(&editor.focus_handle(cx));
                 });
-                self.update_visible_entries(None, false, true, window, cx);
+                self.update_visible_entries(None, true, true, window, cx);
                 cx.notify();
             }
         }
@@ -2077,7 +2105,8 @@ impl ProjectPanel {
                 .map(|entry| entry.to_owned())
                 .collect();
 
-        sort_worktree_entries(&mut siblings);
+        let mode = ProjectPanelSettings::get_global(cx).sort_mode;
+        sort_worktree_entries_with_mode(&mut siblings, mode);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -2677,12 +2706,14 @@ impl ProjectPanel {
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
+                            if let Some(CreatedEntry::Included(entry)) =
+                                task.await.notify_async_err(cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.log_err() {
+                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
                                 last_succeed = Some(entry);
                             }
                         }
@@ -2698,14 +2729,17 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, and only focus if rename is not pending
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
                                 if !entry.is_dir() {
-                                    project_panel.open_entry(
-                                        entry.id,
-                                        disambiguation_range.is_none(),
-                                        false,
-                                        cx,
-                                    );
+                                    let settings = ProjectPanelSettings::get_global(cx);
+                                    if settings.auto_open.should_open_on_paste() {
+                                        project_panel.open_entry(
+                                            entry.id,
+                                            disambiguation_range.is_none(),
+                                            false,
+                                            cx,
+                                        );
+                                    }
                                 }
 
                                 // if only one entry was pasted and it was disambiguated, open the rename editor
@@ -3199,6 +3233,7 @@ impl ProjectPanel {
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
+        let sort_mode = settings.sort_mode;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
 
@@ -3217,7 +3252,8 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
-        self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
+
+        let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
                     for worktree_snapshot in visible_worktrees {
@@ -3409,7 +3445,10 @@ impl ProjectPanel {
                             entry_iter.advance();
                         }
 
-                        par_sort_worktree_entries(&mut visible_worktree_entries);
+                        par_sort_worktree_entries_with_mode(
+                            &mut visible_worktree_entries,
+                            sort_mode,
+                        );
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
                             entries: visible_worktree_entries,
@@ -3463,19 +3502,27 @@ impl ProjectPanel {
                             .sum::<usize>(),
                     )
                 }
-                if focus_filename_editor {
+                if this.update_visible_entries_task.focus_filename_editor {
+                    this.update_visible_entries_task.focus_filename_editor = false;
                     this.filename_editor.update(cx, |editor, cx| {
-                        editor.clear(window, cx);
                         window.focus(&editor.focus_handle(cx));
                     });
                 }
-                if autoscroll {
+                if this.update_visible_entries_task.autoscroll {
+                    this.update_visible_entries_task.autoscroll = false;
                     this.autoscroll(cx);
                 }
                 cx.notify();
             })
             .ok();
         });
+
+        self.update_visible_entries_task = UpdateVisibleEntriesTask {
+            _visible_entries_task: visible_entries_task,
+            focus_filename_editor: focus_filename_editor
+                || self.update_visible_entries_task.focus_filename_editor,
+            autoscroll: autoscroll || self.update_visible_entries_task.autoscroll,
+        };
     }
 
     fn expand_entry(
@@ -3581,7 +3628,10 @@ impl ProjectPanel {
                 let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
-                        this.open_entry(opened_entries[0], true, false, cx);
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        if settings.auto_open.should_open_on_drop() {
+                            this.open_entry(opened_entries[0], true, false, cx);
+                        }
                     }
                 })
             }
@@ -4656,7 +4706,7 @@ impl ProjectPanel {
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
                         let click_count = event.click_count();
-                        let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                        let focus_opened_item = click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
                         project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                     }
@@ -4678,12 +4728,11 @@ impl ProjectPanel {
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
-                                .tooltip(move |window, cx| {
+                                .tooltip(move |_window, cx| {
                                     Tooltip::with_meta(
                                         path.to_string(),
                                         None,
                                         "Symbolic Link",
-                                        window,
                                         cx,
                                     )
                                 })
@@ -5454,33 +5503,13 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
-                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
-                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.click_count() > 1
-                                && let Some(entry_id) = this.state.last_worktree_root_id
-                            {
-                                let project = this.project.read(cx);
-
-                                let worktree_id = if let Some(worktree) =
-                                    project.worktree_for_entry(entry_id, cx)
-                                {
-                                    worktree.read(cx).id()
-                                } else {
-                                    return;
-                                };
-
-                                this.state.selection = Some(SelectedEntry {
-                                    worktree_id,
-                                    entry_id,
-                                });
-
-                                this.new_file(&NewFile, window, cx);
-                            }
-                        }))
+                        .when(!project.is_remote(), |el| {
+                            el.on_action(cx.listener(Self::trash))
+                        })
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
@@ -5815,7 +5844,34 @@ impl Render for ProjectPanel {
                                             );
                                         }
                                     }),
-                                ),
+                                )
+                                .when(!project.is_read_only(cx), |el| {
+                                    el.on_click(cx.listener(
+                                        |this, event: &gpui::ClickEvent, window, cx| {
+                                            if event.click_count() > 1
+                                                && let Some(entry_id) =
+                                                    this.state.last_worktree_root_id
+                                            {
+                                                let project = this.project.read(cx);
+
+                                                let worktree_id = if let Some(worktree) =
+                                                    project.worktree_for_entry(entry_id, cx)
+                                                {
+                                                    worktree.read(cx).id()
+                                                } else {
+                                                    return;
+                                                };
+
+                                                this.state.selection = Some(SelectedEntry {
+                                                    worktree_id,
+                                                    entry_id,
+                                                });
+
+                                                this.new_file(&NewFile, window, cx);
+                                            }
+                                        },
+                                    ))
+                                }),
                         )
                         .size_full(),
                 )
@@ -5856,7 +5912,6 @@ impl Render for ProjectPanel {
                         .key_binding(KeyBinding::for_action_in(
                             &workspace::Open,
                             &focus_handle,
-                            window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -6007,6 +6062,10 @@ impl Panel for ProjectPanel {
         "Project Panel"
     }
 
+    fn panel_key() -> &'static str {
+        PROJECT_PANEL_KEY
+    }
+
     fn starts_open(&self, _: &Window, cx: &App) -> bool {
         if !ProjectPanelSettings::get_global(cx).starts_open {
             return false;
@@ -6050,21 +6109,42 @@ impl ClipboardEntry {
     }
 }
 
-fn cmp<T: AsRef<Entry>>(lhs: T, rhs: T) -> cmp::Ordering {
-    let entry_a = lhs.as_ref();
-    let entry_b = rhs.as_ref();
-    util::paths::compare_rel_paths(
-        (&entry_a.path, entry_a.is_file()),
-        (&entry_b.path, entry_b.is_file()),
-    )
+#[inline]
+fn cmp_directories_first(a: &Entry, b: &Entry) -> cmp::Ordering {
+    util::paths::compare_rel_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
 }
 
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
-    entries.sort_by(|lhs, rhs| cmp(lhs, rhs));
+#[inline]
+fn cmp_mixed(a: &Entry, b: &Entry) -> cmp::Ordering {
+    util::paths::compare_rel_paths_mixed((&a.path, a.is_file()), (&b.path, b.is_file()))
 }
 
-pub fn par_sort_worktree_entries(entries: &mut Vec<GitEntry>) {
-    entries.par_sort_by(|lhs, rhs| cmp(lhs, rhs));
+#[inline]
+fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
+    util::paths::compare_rel_paths_files_first((&a.path, a.is_file()), (&b.path, b.is_file()))
+}
+
+#[inline]
+fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
+    match mode {
+        settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b),
+        settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b),
+        settings::ProjectPanelSortMode::FilesFirst => cmp_files_first(a, b),
+    }
+}
+
+pub fn sort_worktree_entries_with_mode(
+    entries: &mut [impl AsRef<Entry>],
+    mode: settings::ProjectPanelSortMode,
+) {
+    entries.sort_by(|lhs, rhs| cmp_with_mode(lhs.as_ref(), rhs.as_ref(), &mode));
+}
+
+pub fn par_sort_worktree_entries_with_mode(
+    entries: &mut Vec<GitEntry>,
+    mode: settings::ProjectPanelSortMode,
+) {
+    entries.par_sort_by(|lhs, rhs| cmp_with_mode(lhs, rhs, &mode));
 }
 
 #[cfg(test)]

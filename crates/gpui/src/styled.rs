@@ -9,13 +9,13 @@ pub use gpui_macros::{
     overflow_style_methods, padding_style_methods, position_style_methods,
     visibility_style_methods,
 };
-
 const ELLIPSIS: SharedString = SharedString::new_static("…");
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a utility CSS-like styling API.
+// gate on rust-analyzer so rust-analyzer never needs to expand this macro, it takes up to 10 seconds to expand due to inefficiencies in rust-analyzers proc-macro srv
 #[cfg_attr(
-    any(feature = "inspector", debug_assertions),
+    all(any(feature = "inspector", debug_assertions), not(rust_analyzer)),
     gpui_macros::derive_inspector_reflection
 )]
 pub trait Styled: Sized {
@@ -50,6 +50,13 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/display)
     fn grid(mut self) -> Self {
         self.style().display = Some(Display::Grid);
+        self
+    }
+
+    /// Sets the display type of the element to `none`.
+    /// [Docs](https://tailwindcss.com/docs/display)
+    fn hidden(mut self) -> Self {
+        self.style().display = Some(Display::None);
         self
     }
 
@@ -299,6 +306,16 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/justify-content#space-around)
     fn justify_around(mut self) -> Self {
         self.style().justify_content = Some(JustifyContent::SpaceAround);
+        self
+    }
+
+    /// Sets the element to justify items along the container's main axis such
+    /// that there is an equal amount of space around each item, but also
+    /// accounting for the doubling of space you would normally see between
+    /// each item when using justify-around.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-evenly)
+    fn justify_evenly(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::SpaceEvenly);
         self
     }
 

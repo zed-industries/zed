@@ -88,13 +88,6 @@ pub use syntax_map::{
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
-/// Initializes the `language` crate.
-///
-/// This should be called before making use of items from the create.
-pub fn init(cx: &mut App) {
-    language_settings::init(cx);
-}
-
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 
@@ -298,6 +291,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -680,7 +674,7 @@ pub struct CodeLabelBuilder {
     filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -823,7 +817,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -2324,17 +2318,19 @@ impl CodeLabel {
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
-        Self::filtered(text, filter_text, Vec::new())
+        Self::filtered(text.clone(), text.len(), filter_text, Vec::new())
     }
 
     pub fn filtered(
         text: String,
+        label_len: usize,
         filter_text: Option<&str>,
         runs: Vec<(Range<usize>, HighlightId)>,
     ) -> Self {
+        assert!(label_len <= text.len());
         let filter_range = filter_text
             .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..text.len());
+            .unwrap_or(0..label_len);
         Self::new(text, filter_range, runs)
     }
 
@@ -2589,10 +2585,106 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
-        log::warn!("range_from_lsp called with inverted range {start:?}-{end:?}");
+        // We debug instead of warn so that this is not logged by default unless explicitly requested.
+        // Using warn would write to the log file, and since we receive an enormous amount of
+        // range_from_lsp calls (especially during completions), that can hang the main thread.
+        //
+        // See issue #36223.
+        zlog::debug!("range_from_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     start..end
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn rust_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/rust/outline.scm"
+        ))),
+        indents: Some(Cow::from(
+            r#"
+[
+    ((where_clause) _ @end)
+    (field_expression)
+    (call_expression)
+    (assignment_expression)
+    (let_declaration)
+    (let_chain)
+    (await_expression)
+] @indent
+
+(_ "[" "]" @end) @indent
+(_ "<" ">" @end) @indent
+(_ "{" "}" @end) @indent
+(_ "(" ")" @end) @indent"#,
+        )),
+        brackets: Some(Cow::from(
+            r#"
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+("<" @open ">" @close)
+("\"" @open "\"" @close)
+(closure_parameters "|" @open "|" @close)"#,
+        )),
+        text_objects: Some(Cow::from(
+            r#"
+(function_item
+    body: (_
+        "{"
+        (_)* @function.inside
+        "}" )) @function.around
+        "#,
+        )),
+        ..LanguageQueries::default()
+    })
+    .expect("Could not parse queries");
+    Arc::new(language)
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn markdown_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_md::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/brackets.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/injections.scm"
+        ))),
+        ..Default::default()
+    })
+    .expect("Could not parse markdown queries");
+    Arc::new(language)
 }
 
 #[cfg(test)]

@@ -19,10 +19,13 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use settings::Settings;
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
+use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
@@ -38,6 +41,14 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct PythonToolchainData {
+    #[serde(flatten)]
+    environment: PythonEnvironment,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_scripts: Option<HashMap<ShellKind, PathBuf>>,
+}
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -152,6 +163,45 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let label_len = label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
+        };
+
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.detail.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
+
+        Some(language::CodeLabel::filtered(
+            text,
+            label_len,
+            item.filter_text.as_deref(),
+            highlight_id
+                .map(|id| (0..label_len, id))
+                .into_iter()
+                .collect(),
+        ))
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -165,11 +215,12 @@ impl LspAdapter for TyLspAdapter {
             })?
             .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
-            serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
+            serde_json::from_value::<PythonToolchainData>(toolchain.as_json).ok()
         }) {
             _ = maybe!({
-                let uri = url::Url::from_file_path(toolchain.executable?).ok()?;
-                let sys_prefix = toolchain.prefix.clone()?;
+                let uri =
+                    url::Url::from_file_path(toolchain.environment.executable.as_ref()?).ok()?;
+                let sys_prefix = toolchain.environment.prefix.clone()?;
                 let environment = json!({
                     "executable": {
                         "uri": uri,
@@ -251,7 +302,7 @@ impl LspInstaller for TyLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
@@ -396,6 +447,7 @@ impl LspAdapter for PyrightLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
@@ -417,9 +469,10 @@ impl LspAdapter for PyrightLspAdapter {
         }
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
             highlight_id
-                .map(|id| (0..label.len(), id))
+                .map(|id| (0..label_len, id))
                 .into_iter()
                 .collect(),
         ))
@@ -474,9 +527,8 @@ impl LspAdapter for PyrightLspAdapter {
 
             // If we have a detected toolchain, configure Pyright to use it
             if let Some(toolchain) = toolchain
-                && let Ok(env) = serde_json::from_value::<
-                    pet_core::python_environment::PythonEnvironment,
-                >(toolchain.as_json.clone())
+                && let Ok(env) =
+                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
             {
                 if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -484,7 +536,7 @@ impl LspAdapter for PyrightLspAdapter {
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = env.prefix {
+                if let Some(venv_dir) = &env.environment.prefix {
                     // Set venvPath and venv at the root level
                     // This matches the format of a pyrightconfig.json file
                     if let Some(parent) = venv_dir.parent() {
@@ -1023,6 +1075,7 @@ impl ToolchainLister for PythonToolchainProvider {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
+        fs: &dyn Fs,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
@@ -1114,13 +1167,16 @@ impl ToolchainLister for PythonToolchainProvider {
                 .then_with(exe_ordering)
         });
 
-        let mut toolchains: Vec<_> = toolchains
-            .into_iter()
-            .filter_map(venv_to_toolchain)
-            .collect();
-        toolchains.dedup();
+        let mut out_toolchains = Vec::new();
+        for toolchain in toolchains {
+            let Some(toolchain) = venv_to_toolchain(toolchain, fs).await else {
+                continue;
+            };
+            out_toolchains.push(toolchain);
+        }
+        out_toolchains.dedup();
         ToolchainList {
-            toolchains,
+            toolchains: out_toolchains,
             default: None,
             groups: Default::default(),
         }
@@ -1139,6 +1195,7 @@ impl ToolchainLister for PythonToolchainProvider {
         &self,
         path: PathBuf,
         env: Option<HashMap<String, String>>,
+        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
@@ -1150,69 +1207,84 @@ impl ToolchainLister for PythonToolchainProvider {
         let toolchain = pet::resolve::resolve_environment(&path, &locators, &environment)
             .context("Could not find a virtual environment in provided path")?;
         let venv = toolchain.resolved.unwrap_or(toolchain.discovered);
-        venv_to_toolchain(venv).context("Could not convert a venv into a toolchain")
+        venv_to_toolchain(venv, fs)
+            .await
+            .context("Could not convert a venv into a toolchain")
     }
 
-    async fn activation_script(
-        &self,
-        toolchain: &Toolchain,
-        shell: ShellKind,
-        fs: &dyn Fs,
-    ) -> Vec<String> {
-        let Ok(toolchain) = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
-            toolchain.as_json.clone(),
-        ) else {
+    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String> {
+        let Ok(toolchain) =
+            serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+        else {
             return vec![];
         };
+
+        log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
+
         let mut activation_script = vec![];
 
-        match toolchain.kind {
+        match toolchain.environment.kind {
             Some(PythonEnvironmentKind::Conda) => {
-                if let Some(name) = &toolchain.name {
-                    activation_script.push(format!("conda activate {name}"));
+                let settings = TerminalSettings::get_global(cx);
+                let conda_manager = settings
+                    .detect_venv
+                    .as_option()
+                    .map(|venv| venv.conda_manager)
+                    .unwrap_or(settings::CondaManager::Auto);
+
+                let manager = match conda_manager {
+                    settings::CondaManager::Conda => "conda",
+                    settings::CondaManager::Mamba => "mamba",
+                    settings::CondaManager::Micromamba => "micromamba",
+                    settings::CondaManager::Auto => {
+                        // When auto, prefer the detected manager or fall back to conda
+                        toolchain
+                            .environment
+                            .manager
+                            .as_ref()
+                            .and_then(|m| m.executable.file_name())
+                            .and_then(|name| name.to_str())
+                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                            .unwrap_or("conda")
+                    }
+                };
+
+                if let Some(name) = &toolchain.environment.name {
+                    activation_script.push(format!("{manager} activate {name}"));
                 } else {
-                    activation_script.push("conda activate".to_string());
+                    activation_script.push(format!("{manager} activate base"));
                 }
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
-                if let Some(prefix) = &toolchain.prefix {
-                    let activate_keyword = shell.activate_keyword();
-                    let activate_script_name = match shell {
-                        ShellKind::Posix | ShellKind::Rc => "activate",
-                        ShellKind::Csh => "activate.csh",
-                        ShellKind::Tcsh => "activate.csh",
-                        ShellKind::Fish => "activate.fish",
-                        ShellKind::Nushell => "activate.nu",
-                        ShellKind::PowerShell => "activate.ps1",
-                        ShellKind::Cmd => "activate.bat",
-                        ShellKind::Xonsh => "activate.xsh",
-                    };
-                    let path = prefix.join(BINARY_DIR).join(activate_script_name);
-
-                    if let Some(quoted) = shell.try_quote(&path.to_string_lossy())
-                        && fs.is_file(&path).await
-                    {
-                        activation_script.push(format!("{activate_keyword} {quoted}"));
+                if let Some(activation_scripts) = &toolchain.activation_scripts {
+                    if let Some(activate_script_path) = activation_scripts.get(&shell) {
+                        let activate_keyword = shell.activate_keyword();
+                        if let Some(quoted) =
+                            shell.try_quote(&activate_script_path.to_string_lossy())
+                        {
+                            activation_script.push(format!("{activate_keyword} {quoted}"));
+                        }
                     }
                 }
             }
             Some(PythonEnvironmentKind::Pyenv) => {
-                let Some(manager) = toolchain.manager else {
+                let Some(manager) = &toolchain.environment.manager else {
                     return vec![];
                 };
-                let version = toolchain.version.as_deref().unwrap_or("system");
-                let pyenv = manager.executable;
+                let version = toolchain.environment.version.as_deref().unwrap_or("system");
+                let pyenv = &manager.executable;
                 let pyenv = pyenv.display();
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
+                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
                     ShellKind::Rc => None,
                     ShellKind::Xonsh => None,
+                    ShellKind::Elvish => None,
                 })
             }
             _ => {}
@@ -1221,7 +1293,7 @@ impl ToolchainLister for PythonToolchainProvider {
     }
 }
 
-fn venv_to_toolchain(venv: PythonEnvironment) -> Option<Toolchain> {
+async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolchain> {
     let mut name = String::from("Python");
     if let Some(ref version) = venv.version {
         _ = write!(name, " {version}");
@@ -1238,12 +1310,59 @@ fn venv_to_toolchain(venv: PythonEnvironment) -> Option<Toolchain> {
         _ = write!(name, " {nk}");
     }
 
+    let mut activation_scripts = HashMap::default();
+    match venv.kind {
+        Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+            resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await
+        }
+        _ => {}
+    }
+    let data = PythonToolchainData {
+        environment: venv,
+        activation_scripts: Some(activation_scripts),
+    };
+
     Some(Toolchain {
         name: name.into(),
-        path: venv.executable.as_ref()?.to_str()?.to_owned().into(),
+        path: data
+            .environment
+            .executable
+            .as_ref()?
+            .to_str()?
+            .to_owned()
+            .into(),
         language_name: LanguageName::new("Python"),
-        as_json: serde_json::to_value(venv).ok()?,
+        as_json: serde_json::to_value(data).ok()?,
     })
+}
+
+async fn resolve_venv_activation_scripts(
+    venv: &PythonEnvironment,
+    fs: &dyn Fs,
+    activation_scripts: &mut HashMap<ShellKind, PathBuf>,
+) {
+    log::debug!("(Python) Resolving activation scripts for venv toolchain {venv:?}");
+    if let Some(prefix) = &venv.prefix {
+        for (shell_kind, script_name) in &[
+            (ShellKind::Posix, "activate"),
+            (ShellKind::Rc, "activate"),
+            (ShellKind::Csh, "activate.csh"),
+            (ShellKind::Tcsh, "activate.csh"),
+            (ShellKind::Fish, "activate.fish"),
+            (ShellKind::Nushell, "activate.nu"),
+            (ShellKind::PowerShell, "activate.ps1"),
+            (ShellKind::Cmd, "activate.bat"),
+            (ShellKind::Xonsh, "activate.xsh"),
+        ] {
+            let path = prefix.join(BINARY_DIR).join(script_name);
+
+            log::debug!("Trying path: {}", path.display());
+
+            if fs.is_file(&path).await {
+                activation_scripts.insert(*shell_kind, path);
+            }
+        }
+    }
 }
 
 pub struct EnvironmentApi<'a> {
@@ -1293,9 +1412,13 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
         if self.global_search_locations.lock().is_empty() {
-            let mut paths =
-                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
-                    .collect::<Vec<PathBuf>>();
+            let mut paths = std::env::split_paths(
+                &self
+                    .get_env_var("PATH".to_string())
+                    .or_else(|| self.get_env_var("Path".to_string()))
+                    .unwrap_or_default(),
+            )
+            .collect::<Vec<PathBuf>>();
 
             log::trace!("Env PATH: {:?}", paths);
             for p in self.pet_env.get_know_global_search_locations() {
@@ -1411,6 +1534,7 @@ impl LspAdapter for PyLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
@@ -1421,6 +1545,7 @@ impl LspAdapter for PyLspAdapter {
         };
         Some(language::CodeLabel::filtered(
             label.clone(),
+            label_len,
             item.filter_text.as_deref(),
             vec![(0..label.len(), highlight_id)],
         ))
@@ -1686,6 +1811,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
+        let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
@@ -1707,6 +1833,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         }
         Some(language::CodeLabel::filtered(
             text,
+            label_len,
             item.filter_text.as_deref(),
             highlight_id
                 .map(|id| (0..label.len(), id))
@@ -1811,12 +1938,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
                 maybe!({
-                    let basedpyright = object
-                        .entry("basedpyright")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    let analysis = basedpyright
-                        .as_object_mut()?
-                        .entry("analysis")
+                    let analysis = object
+                        .entry("basedpyright.analysis")
                         .or_insert(Value::Object(serde_json::Map::default()));
                     if let serde_json::map::Entry::Vacant(v) =
                         analysis.as_object_mut()?.entry("typeCheckingMode")
@@ -2092,7 +2215,7 @@ impl LspInstaller for RuffLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
@@ -2187,7 +2310,6 @@ mod tests {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |s| {
                     s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);

@@ -386,6 +386,7 @@ pub(crate) fn new_debugger_pane(
             Default::default(),
             None,
             NoAction.boxed_clone(),
+            true,
             window,
             cx,
         );
@@ -565,14 +566,13 @@ pub(crate) fn new_debugger_pane(
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
+                                    move |_window, cx| {
                                         let zoomed_text =
                                             if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
                                             &ToggleExpandItem,
                                             &focus_handle,
-                                            window,
                                             cx,
                                         )
                                     }

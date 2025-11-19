@@ -62,6 +62,7 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
@@ -70,7 +71,6 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
@@ -78,6 +78,10 @@ use crate::{
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScrollDelta, ScrollWheelEvent,
     Size, TouchPhase, WindowParams, point, px, size,
+};
+use crate::{
+    LinuxDispatcher, RunnableVariant, TaskTiming,
+    platform::{PlatformWindow, blade::BladeContext},
 };
 use crate::{
     SharedString,
@@ -115,6 +119,7 @@ pub struct Globals {
     pub fractional_scale_manager:
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
+    pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub executor: ForegroundExecutor,
@@ -152,6 +157,7 @@ impl Globals {
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
@@ -384,9 +390,6 @@ impl WaylandClientStatePtr {
         {
             state.keyboard_focused_window = Some(window);
         }
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
     }
 }
 
@@ -491,7 +494,37 @@ impl WaylandClient {
                 move |event, _, _: &mut WaylandClientStatePtr| {
                     if let calloop::channel::Event::Msg(runnable) = event {
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let mut timing = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    LinuxDispatcher::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    LinuxDispatcher::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                            };
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            LinuxDispatcher::add_task_timing(timing);
                         });
                     }
                 }
@@ -695,7 +728,10 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+        let parent = state
+            .keyboard_focused_window
+            .as_ref()
+            .and_then(|w| w.toplevel());
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -945,6 +981,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
 delegate_noop!(WaylandClientStatePtr: ignore wl_region::WlRegion);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
+delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
@@ -1079,6 +1116,31 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
 
         drop(state);
         let should_close = window.handle_toplevel_event(event);
+
+        if should_close {
+            // The close logic will be handled in drop_window()
+            window.close();
+        }
+    }
+}
+
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: <zwlr_layer_surface_v1::ZwlrLayerSurfaceV1 as Proxy>::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+
+        drop(state);
+        let should_close = window.handle_layersurface_event(event);
 
         if should_close {
             // The close logic will be handled in drop_window()
@@ -1350,6 +1412,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         let input = PlatformInput::KeyDown(KeyDownEvent {
                             keystroke: keystroke.clone(),
                             is_held: false,
+                            prefer_character_input: false,
                         });
 
                         state.repeat.current_id += 1;
@@ -1363,6 +1426,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 let input = PlatformInput::KeyDown(KeyDownEvent {
                                     keystroke,
                                     is_held: true,
+                                    prefer_character_input: false,
                                 });
                                 move |_event, _metadata, this| {
                                     let mut client = this.get_client();
@@ -1447,6 +1511,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                                 key_char: Some(commit_text),
                             },
                             is_held: false,
+                            prefer_character_input: false,
                         }));
                     } else {
                         window.handle_ime(ImeInput::InsertText(commit_text));

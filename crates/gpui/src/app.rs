@@ -169,6 +169,13 @@ impl Application {
         self
     }
 
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn with_quit_mode(self, mode: QuitMode) -> Self {
+        self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -237,6 +244,18 @@ type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'st
 type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+
+/// Defines when the application should automatically quit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuitMode {
+    /// Use [`QuitMode::Explicit`] on macOS and [`QuitMode::LastWindowClosed`] on other platforms.
+    #[default]
+    Default,
+    /// Quit automatically when the last window is closed.
+    LastWindowClosed,
+    /// Quit only when requested via [`App::quit`].
+    Explicit,
+}
 
 #[doc(hidden)]
 #[derive(Clone, PartialEq, Eq)]
@@ -344,13 +363,9 @@ impl SystemWindowTabController {
         let tab_group = self
             .tab_groups
             .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group));
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
 
-        if let Some(tab_group) = tab_group {
-            self.tab_groups.get(&tab_group)
-        } else {
-            None
-        }
+        self.tab_groups.get(&tab_group)
     }
 
     /// Initialize the visibility of the system window tab controller.
@@ -415,7 +430,8 @@ impl SystemWindowTabController {
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
-                    tab.title = title.clone();
+                    tab.title = title;
+                    return;
                 }
             }
         }
@@ -556,7 +572,7 @@ pub struct App {
     pub(crate) entities: EntityMap,
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
-    pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
@@ -591,6 +607,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    quit_mode: QuitMode,
     quitting: bool,
 }
 
@@ -662,6 +679,7 @@ impl App {
                 inspector_renderer: None,
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
+                quit_mode: QuitMode::default(),
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -967,7 +985,7 @@ impl App {
                     clear.clear();
 
                     cx.window_handles.insert(id, window.handle);
-                    cx.windows.get_mut(id).unwrap().replace(window);
+                    cx.windows.get_mut(id).unwrap().replace(Box::new(window));
                     Ok(handle)
                 }
                 Err(e) => {
@@ -1175,6 +1193,12 @@ impl App {
         self.http_client = new_client;
     }
 
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn set_quit_mode(&mut self, mode: QuitMode) {
+        self.quit_mode = mode;
+    }
+
     /// Returns the SVG renderer used by the application.
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
@@ -1242,7 +1266,7 @@ impl App {
                     .windows
                     .values()
                     .filter_map(|window| {
-                        let window = window.as_ref()?;
+                        let window = window.as_deref()?;
                         window.invalidator.is_dirty().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
@@ -1323,7 +1347,7 @@ impl App {
 
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
-            if let Some(window) = window.as_mut() {
+            if let Some(window) = window.as_deref_mut() {
                 window.refreshing = true;
                 window.invalidator.set_dirty(true);
             }
@@ -1382,6 +1406,16 @@ impl App {
                     callback(cx);
                     true
                 });
+
+                let quit_on_empty = match cx.quit_mode {
+                    QuitMode::Explicit => false,
+                    QuitMode::LastWindowClosed => true,
+                    QuitMode::Default => !cfg!(macos),
+                };
+
+                if quit_on_empty && cx.windows.is_empty() {
+                    cx.quit();
+                }
             } else {
                 cx.windows.get_mut(id)?.replace(window);
             }
@@ -2202,7 +2236,7 @@ impl AppContext for App {
             .windows
             .get(window.id)
             .context("window not found")?
-            .as_ref()
+            .as_deref()
             .expect("attempted to read a window that is already on the stack");
 
         let root_view = window.root.clone().unwrap();
@@ -2365,10 +2399,6 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 

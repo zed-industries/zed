@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use language::{markdown_lang, rust_lang};
 use serde_json::json;
 
 use crate::{Editor, ToPoint};
@@ -18,7 +19,6 @@ use language::{
     point_to_lsp,
 };
 use lsp::{notification, request};
-use multi_buffer::ToPointUtf16;
 use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};
@@ -30,55 +30,6 @@ pub struct EditorLspTestContext {
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: Entity<Workspace>,
     pub buffer_lsp_url: lsp::Uri,
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    let language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    )
-    .with_queries(LanguageQueries {
-        indents: Some(Cow::from(indoc! {r#"
-            [
-                ((where_clause) _ @end)
-                (field_expression)
-                (call_expression)
-                (assignment_expression)
-                (let_declaration)
-                (let_chain)
-                (await_expression)
-            ] @indent
-
-            (_ "[" "]" @end) @indent
-            (_ "<" ">" @end) @indent
-            (_ "{" "}" @end) @indent
-            (_ "(" ")" @end) @indent"#})),
-        brackets: Some(Cow::from(indoc! {r#"
-            ("(" @open ")" @close)
-            ("[" @open "]" @close)
-            ("{" @open "}" @close)
-            ("<" @open ">" @close)
-            ("\"" @open "\"" @close)
-            (closure_parameters "|" @open "|" @close)"#})),
-        text_objects: Some(Cow::from(indoc! {r#"
-            (function_item
-                body: (_
-                    "{"
-                    (_)* @function.inside
-                    "}" )) @function.around
-        "#})),
-        ..Default::default()
-    })
-    .expect("Could not parse queries");
-    Arc::new(language)
 }
 
 #[cfg(test)]
@@ -103,10 +54,8 @@ impl EditorLspTestContext {
 
         cx.update(|cx| {
             assets::Assets.load_test_fonts(cx);
-            language::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
         });
 
         let file_name = format!(
@@ -362,6 +311,22 @@ impl EditorLspTestContext {
         })
         .expect("Could not parse queries");
         Self::new(language, Default::default(), cx).await
+    }
+
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> Self {
+        let context = Self::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            Default::default(),
+            cx,
+        )
+        .await;
+
+        let language_registry = context.workspace.read_with(cx, |workspace, cx| {
+            workspace.project().read(cx).languages().clone()
+        });
+        language_registry.add(rust_lang());
+
+        context
     }
 
     /// Constructs lsp range using a marked string with '[', ']' range delimiters

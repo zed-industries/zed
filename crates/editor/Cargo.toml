@@ -64,6 +64,7 @@ project.workspace = true
 rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
+rope.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -92,7 +93,6 @@ uuid.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

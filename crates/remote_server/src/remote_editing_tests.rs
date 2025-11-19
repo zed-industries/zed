@@ -2,16 +2,16 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use assistant_tool::{Tool as _, ToolResultContent};
-use assistant_tools::{ReadFileTool, ReadFileToolInput};
+use agent::{AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
+use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
+use prompt_store::ProjectContext;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
@@ -20,7 +20,7 @@ use language::{
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    Project,
+    ProgressToken, Project,
     agent_server_store::AgentServerCommand,
     search::{SearchQuery, SearchResult},
 };
@@ -398,12 +398,17 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         json!({
             "settings.json": r#"
           {
-            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "languages": {"Rust":{"language_servers":["rust-analyzer", "fake-analyzer"]}},
             "lsp": {
               "rust-analyzer": {
                 "binary": {
                   "path": "~/.cargo/bin/rust-analyzer"
                 }
+              },
+              "fake-analyzer": {
+               "binary": {
+                "path": "~/.cargo/bin/rust-analyzer"
+               }
               }
             }
           }"#
@@ -431,12 +436,48 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
                 },
                 ..FakeLspAdapter::default()
             },
+        );
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    rename_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
         )
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
         headless.read(cx).languages.register_fake_language_server(
             LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                rename_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            None,
+        )
+    });
+
+    let mut fake_second_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "fake-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    rename_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("fake-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
                 rename_provider: Some(lsp::OneOf::Left(true)),
@@ -469,12 +510,13 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.run_until_parked();
 
     let fake_lsp = fake_lsp.next().await.unwrap();
+    let fake_second_lsp = fake_second_lsp.next().await.unwrap();
 
     cx.read(|cx| {
         let file = buffer.read(cx).file();
         assert_eq!(
             language_settings(Some("Rust".into()), file, cx).language_servers,
-            ["rust-analyzer".to_string()]
+            ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });
 
@@ -497,12 +539,19 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     server_cx.read(|cx| {
         let lsp_store = headless.read(cx).lsp_store.read(cx);
-        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
+        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 2);
     });
 
     fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
+            ..Default::default()
+        }])))
+    });
+
+    fake_second_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+            label: "beep".to_string(),
             ..Default::default()
         }])))
     });
@@ -528,7 +577,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
-        vec!["boop".to_string()]
+        vec!["boop".to_string(), "beep".to_string()]
     );
 
     fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
@@ -711,7 +760,11 @@ async fn test_remote_cancel_language_server_work(
         cx.executor().run_until_parked();
 
         project.update(cx, |project, cx| {
-            project.cancel_language_server_work(server_id, Some(progress_token.into()), cx)
+            project.cancel_language_server_work(
+                server_id,
+                Some(ProgressToken::String(SharedString::from(progress_token))),
+                cx,
+            )
         });
 
         cx.executor().run_until_parked();
@@ -722,7 +775,7 @@ async fn test_remote_cancel_language_server_work(
             .await;
         assert_eq!(
             cancel_notification.token,
-            lsp::NumberOrString::String(progress_token.into())
+            lsp::NumberOrString::String(progress_token.to_owned())
         );
     }
 }
@@ -1490,10 +1543,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         .await
         .unwrap();
     let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
-    cx.update(|cx| {
-        workspace::init_settings(cx);
-        editor::init_settings(cx);
-    });
+
     let cx = cx.add_empty_window();
     let editor = cx.new_window_entity(|window, cx| {
         Editor::for_buffer(buffer, Some(project.clone()), window, cx)
@@ -1662,7 +1712,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     // Also try creating a new branch
     cx.update(|cx| {
         repository.update(cx, |repo, _cx| {
-            repo.create_branch("totally-new-branch".to_string())
+            repo.create_branch("totally-new-branch".to_string(), None)
         })
     })
     .await
@@ -1721,47 +1771,41 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         .unwrap();
 
     let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+
+    // Create a minimal thread for the ReadFileTool
+    let context_server_registry =
+        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
     let model = Arc::new(FakeLanguageModel::default());
-    let request = Arc::new(LanguageModelRequest::default());
+    let thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            cx.new(|_cx| ProjectContext::default()),
+            context_server_registry,
+            Templates::new(),
+            Some(model),
+            cx,
+        )
+    });
 
     let input = ReadFileToolInput {
         path: "project/b.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let exists_result = cx.update(|cx| {
-        ReadFileTool::run(
-            Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
-            request.clone(),
-            project.clone(),
-            action_log.clone(),
-            model.clone(),
-            None,
-            cx,
-        )
-    });
-    let output = exists_result.output.await.unwrap().content;
-    assert_eq!(output, ToolResultContent::Text("B".to_string()));
+    let read_tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+    let (event_stream, _) = ToolCallEventStream::test();
+
+    let exists_result = cx.update(|cx| read_tool.clone().run(input, event_stream.clone(), cx));
+    let output = exists_result.await.unwrap();
+    assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
 
     let input = ReadFileToolInput {
         path: "project/c.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let does_not_exist_result = cx.update(|cx| {
-        ReadFileTool::run(
-            Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
-            request.clone(),
-            project.clone(),
-            action_log.clone(),
-            model.clone(),
-            None,
-            cx,
-        )
-    });
-    does_not_exist_result.output.await.unwrap_err();
+    let does_not_exist_result = cx.update(|cx| read_tool.run(input, event_stream, cx));
+    does_not_exist_result.await.unwrap_err();
 }
 
 #[gpui::test]
@@ -1871,8 +1915,6 @@ pub async fn init_test(
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
-        client::init_settings(cx);
-
         HeadlessProject::new(
             crate::HeadlessAppState {
                 session: ssh_server_client,
@@ -1924,7 +1966,6 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
 
     cx.update(|cx| {
         Project::init(&client, cx);
-        language::init(cx);
     });
 
     cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))

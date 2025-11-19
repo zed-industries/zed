@@ -11,7 +11,7 @@ Check out the [Anthropic news post](https://www.anthropic.com/news/model-context
 ### As Extensions
 
 One of the ways you can use MCP servers in Zed is by exposing them as an extension.
-To learn how to create your own, check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page for more details.
+Check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page to learn how to create your own.
 
 Thanks to our awesome community, many MCP servers have already been added as extensions.
 You can check which ones are available via any of these routes:
@@ -20,7 +20,7 @@ You can check which ones are available via any of these routes:
 2. in the app, open the Command Palette and run the `zed: extensions` action
 3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
 
-In any case, here are some of the ones available:
+In any case, here are some popular available servers:
 
 - [Context7](https://zed.dev/extensions/context7-mcp-server)
 - [GitHub](https://zed.dev/extensions/github-mcp-server)
@@ -57,9 +57,9 @@ From there, you can add it through the modal that appears when you click the "Ad
 
 ### Configuration Check
 
-Regardless of how you've installed MCP servers, whether as an extension or adding them directly, most servers out there still require some sort of configuration as part of the set up process.
+Regardless of how you've installed MCP servers, whether as an extension or adding them directly, most servers out there still require some sort of configuration as part of the setup process.
 
-In the case of server extensions, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
+In the case of extensions, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
 For example, the GitHub MCP extension requires you to add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
 In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.
@@ -68,14 +68,14 @@ To check if your MCP server is properly configured, go to the Agent Panel's sett
 If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
 If not, other colors and tooltip messages will indicate what is happening.
 
-### Using it in the Agent Panel
+### Agent Panel Usage
 
 Once installation is complete, you can return to the Agent Panel and start prompting.
 
 Some models are better than others when it comes to picking up tools from MCP servers.
 Mentioning your server by name always helps the model to pick it up.
 
-However, if you want to ensure a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
@@ -127,3 +127,10 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
 Zed's Agent Panel includes the `agent.always_allow_tool_actions` setting that, if set to `false`, will require you to give permission for any editing attempt as well as tool calls coming from MCP servers.
 
 You can change this by setting this key to `true` in either your `settings.json` or through the Agent Panel's settings view.
+
+### External Agents
+
+Note that for [external agents](./external-agents.md) connected through the [Agent Client Protocol](https://agentclientprotocol.com/), access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
+
+Regarding the built-in ones, Claude Code and Codex both support it, and Gemini CLI does not yet.
+In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).

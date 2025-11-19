@@ -4,13 +4,19 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
+use parking_lot::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
+use gpui::SharedString;
 use std::borrow::Cow;
 use util::command::new_smol_command;
 
@@ -50,12 +56,14 @@ use git::{
     repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-#[cfg(any(test, feature = "test-support"))]
-use parking_lot::Mutex;
+
 #[cfg(any(test, feature = "test-support"))]
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -144,6 +152,7 @@ pub trait Fs: Send + Sync {
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
+    fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -211,6 +220,55 @@ pub struct Metadata {
 #[serde(transparent)]
 pub struct MTime(SystemTime);
 
+pub type JobId = usize;
+
+#[derive(Clone, Debug)]
+pub struct JobInfo {
+    pub start: Instant,
+    pub message: SharedString,
+    pub id: JobId,
+}
+
+#[derive(Debug, Clone)]
+pub enum JobEvent {
+    Started { info: JobInfo },
+    Completed { id: JobId },
+}
+
+pub type JobEventSender = futures::channel::mpsc::UnboundedSender<JobEvent>;
+pub type JobEventReceiver = futures::channel::mpsc::UnboundedReceiver<JobEvent>;
+
+struct JobTracker {
+    id: JobId,
+    subscribers: Arc<Mutex<Vec<JobEventSender>>>,
+}
+
+impl JobTracker {
+    fn new(info: JobInfo, subscribers: Arc<Mutex<Vec<JobEventSender>>>) -> Self {
+        let id = info.id;
+        {
+            let mut subs = subscribers.lock();
+            subs.retain(|sender| {
+                sender
+                    .unbounded_send(JobEvent::Started { info: info.clone() })
+                    .is_ok()
+            });
+        }
+        Self { id, subscribers }
+    }
+}
+
+impl Drop for JobTracker {
+    fn drop(&mut self) {
+        let mut subs = self.subscribers.lock();
+        subs.retain(|sender| {
+            sender
+                .unbounded_send(JobEvent::Completed { id: self.id })
+                .is_ok()
+        });
+    }
+}
+
 impl MTime {
     /// Conversion intended for persistence and testing.
     pub fn from_seconds_and_nanos(secs: u64, nanos: u32) -> Self {
@@ -253,6 +311,8 @@ impl From<MTime> for proto::Timestamp {
 pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
+    next_job_id: Arc<AtomicUsize>,
+    job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -320,7 +380,33 @@ impl FileHandle for std::fs::File {
 
     #[cfg(target_os = "windows")]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
-        anyhow::bail!("unimplemented")
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use std::os::windows::io::AsRawHandle;
+
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
+        };
+
+        let handle = HANDLE(self.as_raw_handle() as _);
+
+        // Query required buffer size (in wide chars)
+        let required_len =
+            unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
+        if required_len == 0 {
+            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
+        }
+
+        // Allocate buffer and retrieve the path
+        let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
+        let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
+        if written == 0 {
+            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
+        }
+
+        let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        Ok(PathBuf::from(os_str))
     }
 }
 
@@ -331,6 +417,8 @@ impl RealFs {
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -347,7 +435,7 @@ impl Fs for RealFs {
 
         #[cfg(windows)]
         if smol::fs::metadata(&target).await?.is_dir() {
-            let status = smol::process::Command::new("cmd")
+            let status = new_smol_command("cmd")
                 .args(["/C", "mklink", "/J"])
                 .args([path, target.as_path()])
                 .status()
@@ -557,17 +645,29 @@ impl Fs for RealFs {
     }
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
-        Ok(Arc::new(std::fs::File::open(path)?))
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(windows::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS.0);
+        }
+        Ok(Arc::new(options.open(path)?))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
-        Ok(text)
+        self.executor
+            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
+            .await
     }
+
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         let path = path.to_path_buf();
-        let bytes = smol::unblock(|| std::fs::read(path)).await?;
+        let bytes = self
+            .executor
+            .spawn(async move { std::fs::read(path) })
+            .await?;
         Ok(bytes)
     }
 
@@ -635,53 +735,77 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        smol::fs::write(path, content).await?;
-        Ok(())
+        let path = path.to_owned();
+        let contents = content.to_owned();
+        self.executor
+            .spawn(async move {
+                std::fs::write(path, contents)?;
+                Ok(())
+            })
+            .await
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        Ok(smol::fs::canonicalize(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move {
+                std::fs::canonicalize(&path).with_context(|| format!("canonicalizing {path:?}"))
+            })
             .await
-            .with_context(|| format!("canonicalizing {path:?}"))?)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) })
             .await
-            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) })
             .await
-            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
-        let symlink_metadata = match smol::fs::symlink_metadata(path).await {
+        let path_buf = path.to_owned();
+        let symlink_metadata = match self
+            .executor
+            .spawn(async move { std::fs::symlink_metadata(&path_buf) })
+            .await
+        {
             Ok(metadata) => metadata,
             Err(err) => {
-                return match (err.kind(), err.raw_os_error()) {
-                    (io::ErrorKind::NotFound, _) => Ok(None),
-                    (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
+                return match err.kind() {
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
                 };
             }
         };
 
-        let path_buf = path.to_path_buf();
-        let path_exists = smol::unblock(move || {
-            path_buf
-                .try_exists()
-                .with_context(|| format!("checking existence for path {path_buf:?}"))
-        })
-        .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
-        let metadata = match (is_symlink, path_exists) {
-            (true, true) => smol::fs::metadata(path)
-                .await
-                .with_context(|| "accessing symlink for path {path}")?,
-            _ => symlink_metadata,
+        let metadata = if is_symlink {
+            let path_buf = path.to_path_buf();
+            let path_exists = self
+                .executor
+                .spawn(async move {
+                    path_buf
+                        .try_exists()
+                        .with_context(|| format!("checking existence for path {path_buf:?}"))
+                })
+                .await?;
+            if path_exists {
+                let path_buf = path.to_path_buf();
+                self.executor
+                    .spawn(async move { std::fs::metadata(path_buf) })
+                    .await
+                    .with_context(|| "accessing symlink for path {path}")?
+            } else {
+                symlink_metadata
+            }
+        } else {
+            symlink_metadata
         };
 
         #[cfg(unix)]
@@ -707,7 +831,11 @@ impl Fs for RealFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
-        let path = smol::fs::read_link(path).await?;
+        let path = path.to_owned();
+        let path = self
+            .executor
+            .spawn(async move { std::fs::read_link(&path) })
+            .await?;
         Ok(path)
     }
 
@@ -715,7 +843,13 @@ impl Fs for RealFs {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
-        let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
+        let path = path.to_owned();
+        let result = iter(
+            self.executor
+                .spawn(async move { std::fs::read_dir(path) })
+                .await?,
+        )
+        .map(|entry| match entry {
             Ok(entry) => Ok(entry.path()),
             Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
@@ -786,7 +920,6 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use parking_lot::Mutex;
         use util::{ResultExt as _, paths::SanitizedPath};
 
         let (tx, rx) = smol::channel::unbounded();
@@ -883,6 +1016,15 @@ impl Fs for RealFs {
     }
 
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+        let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
+        let job_info = JobInfo {
+            id: job_id,
+            start: Instant::now(),
+            message: SharedString::from(format!("Cloning {}", repo_url)),
+        };
+
+        let _job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
+
         let output = new_smol_command("git")
             .current_dir(abs_work_directory)
             .args(&["clone", repo_url])
@@ -901,6 +1043,12 @@ impl Fs for RealFs {
 
     fn is_fake(&self) -> bool {
         false
+    }
+
+    fn subscribe_to_jobs(&self) -> JobEventReceiver {
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        self.job_event_subscribers.lock().push(sender);
+        receiver
     }
 
     /// Checks whether the file system is case sensitive by attempting to create two files
@@ -973,6 +1121,7 @@ struct FakeFsState {
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
+    job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1257,6 +1406,7 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
+                job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             })),
         });
 
@@ -1675,6 +1825,26 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_merge_base_content_for_repo(
+        &self,
+        dot_git: &Path,
+        contents_by_path: &[(&str, String)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            use git::Oid;
+
+            state.merge_base_contents.clear();
+            let oids = (1..)
+                .map(|n| n.to_string())
+                .map(|n| Oid::from_bytes(n.repeat(20).as_bytes()).unwrap());
+            for ((path, content), oid) in contents_by_path.iter().zip(oids) {
+                state.merge_base_contents.insert(repo_path(path), oid);
+                state.oids.insert(oid, content.clone());
+            }
+        })
+        .unwrap();
+    }
+
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
@@ -1695,7 +1865,8 @@ impl FakeFs {
             for (path, content) in workdir_contents {
                 use util::{paths::PathStyle, rel_path::RelPath};
 
-                let repo_path: RepoPath = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
+                let repo_path = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap();
+                let repo_path = RepoPath::from_rel_path(&repo_path);
                 let status = statuses
                     .iter()
                     .find_map(|(p, status)| (*p == repo_path.as_unix_str()).then_some(status));
@@ -2490,6 +2661,12 @@ impl Fs for FakeFs {
         Ok(true)
     }
 
+    fn subscribe_to_jobs(&self) -> JobEventReceiver {
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        self.state.lock().job_event_subscribers.lock().push(sender);
+        receiver
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
@@ -3104,6 +3281,8 @@ mod tests {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3122,6 +3301,8 @@ mod tests {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
