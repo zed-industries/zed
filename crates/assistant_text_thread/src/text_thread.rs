@@ -2077,7 +2077,7 @@ impl TextThread {
                                     LanguageModelCompletionEvent::Started |
                                     LanguageModelCompletionEvent::Queued {..} |
                                     LanguageModelCompletionEvent::ToolUseLimitReached { .. } => {}
-                                    LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
+                                    LanguageModelCompletionEvent::RequestUsage { amount, limit } => {
                                         this.update_model_request_usage(
                                             amount as u32,
                                             limit,
@@ -2144,7 +2144,7 @@ impl TextThread {
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) |
                                     LanguageModelCompletionEvent::ToolUseJsonParseError { .. } |
-                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
+                                    LanguageModelCompletionEvent::TokenUsage(_) => {}
                                 }
                             });
 

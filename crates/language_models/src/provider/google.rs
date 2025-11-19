@@ -608,7 +608,7 @@ impl GoogleEventMapper {
         let mut wants_to_use_tool = false;
         if let Some(usage_metadata) = event.usage_metadata {
             update_usage(&mut self.usage, &usage_metadata);
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(
                 convert_usage(&self.usage),
             )))
         }

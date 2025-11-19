@@ -802,7 +802,7 @@ impl LanguageModel for CloudLanguageModel {
                         Box::pin(
                             response_lines(response, includes_status_messages)
                                 .chain(usage_updated_event(usage))
-                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)), // .map(|_| {}),
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
                         &provider_name,
                         move |event| mapper.map_event(event),

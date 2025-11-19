@@ -672,7 +672,7 @@ impl MistralEventMapper {
         }
 
         if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                 input_tokens: usage.prompt_tokens,
                 output_tokens: usage.completion_tokens,
                 cache_creation_input_tokens: 0,

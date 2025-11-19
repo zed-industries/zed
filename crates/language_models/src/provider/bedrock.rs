@@ -975,7 +975,7 @@ pub fn map_to_language_model_completion_events(
                                 ))
                             }),
                         ConverseStreamOutput::Metadata(cb_meta) => cb_meta.usage.map(|metadata| {
-                            Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                            Ok(LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                                 input_tokens: metadata.input_tokens as u64,
                                 output_tokens: metadata.output_tokens as u64,
                                 cache_creation_input_tokens: metadata

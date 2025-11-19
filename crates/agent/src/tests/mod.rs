@@ -1529,7 +1529,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
     });
 
     fake_model.send_last_completion_stream_text_chunk("Hey!");
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::TokenUsage(
         language_model::TokenUsage {
             input_tokens: 32_000,
             output_tokens: 16_000,
@@ -1587,7 +1587,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     fake_model.send_last_completion_stream_text_chunk("Ahoy!");
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::TokenUsage(
         language_model::TokenUsage {
             input_tokens: 40_000,
             output_tokens: 20_000,
@@ -1632,7 +1632,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     fake_model.send_last_completion_stream_text_chunk("Message 1 response");
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::TokenUsage(
         language_model::TokenUsage {
             input_tokens: 32_000,
             output_tokens: 16_000,
@@ -1679,7 +1679,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_text_chunk("Message 2 response");
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::TokenUsage(
         language_model::TokenUsage {
             input_tokens: 40_000,
             output_tokens: 20_000,

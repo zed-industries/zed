@@ -603,7 +603,7 @@ fn map_to_language_model_completion_events(
             };
 
             if delta.done {
-                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                events.push(Ok(LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                     input_tokens: delta.prompt_eval_count.unwrap_or(0),
                     output_tokens: delta.eval_count.unwrap_or(0),
                     cache_creation_input_tokens: 0,

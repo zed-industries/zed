@@ -756,7 +756,7 @@ impl AnthropicEventMapper {
             Event::MessageStart { message } => {
                 update_usage(&mut self.usage, &message.usage);
                 vec![
-                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
+                    Ok(LanguageModelCompletionEvent::TokenUsage(convert_usage(
                         &self.usage,
                     ))),
                     Ok(LanguageModelCompletionEvent::StartMessage {
@@ -778,7 +778,7 @@ impl AnthropicEventMapper {
                         }
                     };
                 }
-                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
+                vec![Ok(LanguageModelCompletionEvent::TokenUsage(
                     convert_usage(&self.usage),
                 ))]
             }

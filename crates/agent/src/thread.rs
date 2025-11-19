@@ -1416,7 +1416,7 @@ impl Thread {
                     ),
                 )));
             }
-            UsageUpdate(usage) => {
+            TokenUsage(usage) => {
                 telemetry::event!(
                     "Agent Thread Completion Usage Updated",
                     thread_id = self.id.to_string(),
@@ -1430,7 +1430,7 @@ impl Thread {
                 );
                 self.update_token_usage(usage, cx);
             }
-            UsageUpdated { amount, limit } => {
+            RequestUsage { amount, limit } => {
                 self.update_model_request_usage(amount, limit, cx);
             }
             ToolUseLimitReached => {
@@ -1683,7 +1683,7 @@ impl Thread {
                     let event = event.log_err()?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
+                        LanguageModelCompletionEvent::RequestUsage { amount, limit } => {
                             this.update(cx, |thread, cx| {
                                 thread.update_model_request_usage(amount, limit, cx);
                             })
@@ -1747,7 +1747,7 @@ impl Thread {
                     let event = event?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
+                        LanguageModelCompletionEvent::RequestUsage { amount, limit } => {
                             this.update(cx, |thread, cx| {
                                 thread.update_model_request_usage(amount, limit, cx);
                             })?;

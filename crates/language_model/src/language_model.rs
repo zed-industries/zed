@@ -74,7 +74,7 @@ pub enum LanguageModelCompletionEvent {
         position: usize,
     },
     Started,
-    UsageUpdated {
+    RequestUsage {
         amount: usize,
         limit: UsageLimit,
     },
@@ -98,7 +98,7 @@ pub enum LanguageModelCompletionEvent {
     StartMessage {
         message_id: String,
     },
-    UsageUpdate(TokenUsage),
+    TokenUsage(TokenUsage),
 }
 
 impl LanguageModelCompletionEvent {
@@ -112,7 +112,7 @@ impl LanguageModelCompletionEvent {
             }
             CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
             CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
+                Ok(LanguageModelCompletionEvent::RequestUsage { amount, limit })
             }
             CompletionRequestStatus::ToolUseLimitReached => {
                 Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
@@ -674,7 +674,7 @@ pub trait LanguageModel: Send + Sync {
                             match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
-                                Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::RequestUsage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
@@ -685,7 +685,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..
                                 }) => None,
-                                Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                                Ok(LanguageModelCompletionEvent::TokenUsage(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None
                                 }

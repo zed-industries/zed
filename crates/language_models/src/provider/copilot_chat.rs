@@ -422,7 +422,7 @@ pub fn map_to_language_model_completion_events(
                         }
 
                         if let Some(usage) = event.usage {
-                            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                            events.push(Ok(LanguageModelCompletionEvent::TokenUsage(
                                 TokenUsage {
                                     input_tokens: usage.prompt_tokens,
                                     output_tokens: usage.completion_tokens,
@@ -610,7 +610,7 @@ impl CopilotResponsesEventMapper {
             copilot::copilot_responses::StreamEvent::Completed { response } => {
                 let mut events = Vec::new();
                 if let Some(usage) = response.usage {
-                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    events.push(Ok(LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                         input_tokens: usage.input_tokens.unwrap_or(0),
                         output_tokens: usage.output_tokens.unwrap_or(0),
                         cache_creation_input_tokens: 0,
@@ -643,7 +643,7 @@ impl CopilotResponsesEventMapper {
 
                 let mut events = Vec::new();
                 if let Some(usage) = response.usage {
-                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    events.push(Ok(LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                         input_tokens: usage.input_tokens.unwrap_or(0),
                         output_tokens: usage.output_tokens.unwrap_or(0),
                         cache_creation_input_tokens: 0,
@@ -1099,7 +1099,7 @@ mod tests {
         ));
         assert!(matches!(
             mapped[2],
-            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+            LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                 input_tokens: 5,
                 output_tokens: 3,
                 ..
@@ -1207,7 +1207,7 @@ mod tests {
         let mapped = map_events(events);
         assert!(matches!(
             mapped[0],
-            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+            LanguageModelCompletionEvent::TokenUsage(TokenUsage {
                 input_tokens: 10,
                 output_tokens: 0,
                 ..
