@@ -10,9 +10,9 @@ use language_models::MistralLanguageModelProvider;
 use settings::{EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
-use sweep_ai::SweepFeatureFlag;
 use ui::Window;
 use zeta::ZetaEditPredictionProvider;
+use zeta2::SweepFeatureFlag;
 use zeta2::Zeta2FeatureFlag;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {

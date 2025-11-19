@@ -60,6 +60,11 @@ const EVENT_COUNT_MAX_SWEEP: usize = 6;
 const EVENT_COUNT_MAX_ZETA: usize = 16;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 
+pub struct SweepFeatureFlag;
+
+impl FeatureFlag for SweepFeatureFlag {
+    const NAME: &str = "sweep-ai";
+}
 pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
     max_bytes: 512,
     min_bytes: 128,

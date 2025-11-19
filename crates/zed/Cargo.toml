@@ -133,7 +133,6 @@ snippet_provider.workspace = true
 snippets_ui.workspace = true
 supermaven.workspace = true
 svg_preview.workspace = true
-sweep_ai.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
 task.workspace = true

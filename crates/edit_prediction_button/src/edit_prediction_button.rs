@@ -26,7 +26,6 @@ use std::{
     time::Duration,
 };
 use supermaven::{AccountStatus, Supermaven};
-use sweep_ai::SweepFeatureFlag;
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
     IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -37,6 +36,7 @@ use workspace::{
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
+use zeta2::SweepFeatureFlag;
 
 actions!(
     edit_prediction,
