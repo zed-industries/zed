@@ -117,9 +117,9 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, Point, Runnable,
-    RunnableRange, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
-    WordsQuery,
+    IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, PLAIN_TEXT, Point,
+    Runnable, RunnableRange, Selection, SelectionGoal, TextObject, TransactionId,
+    TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -22366,7 +22366,10 @@ impl Editor {
         let Some(current_language) = buffer.language().clone() else {
             return;
         };
-        // TODO: check that current_language is unset (now always set to plain text)
+
+        if current_language.id() != PLAIN_TEXT.id() {
+            return;
+        }
 
         let Some(language_registry) = buffer.language_registry() else {
             return;
