@@ -4110,50 +4110,33 @@ impl Editor {
         cx.propagate();
     }
 
+    // TODO!: Double-check that we actually want to dismiss all menus and
+    // popups, which seems to be what the function should be doing but, it was
+    // simply early-returning `true` as soon as it was able to dismiss a single
+    // menu or popup, instead of trying to dismiss as many as possible.
     pub fn dismiss_menus_and_popups(
         &mut self,
         is_user_requested: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.take_rename(false, window, cx).is_some() {
-            return true;
-        }
+        let mut dismissed = false;
 
-        if self.hide_blame_popover(true, cx) {
-            return true;
-        }
-
-        if hide_hover(self, cx) {
-            return true;
-        }
-
-        if self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape) {
-            return true;
-        }
-
-        if self.hide_context_menu(window, cx).is_some() {
-            return true;
-        }
-
-        if self.mouse_context_menu.take().is_some() {
-            return true;
-        }
-
-        if is_user_requested && self.discard_edit_prediction(true, cx) {
-            return true;
-        }
-
-        if self.snippet_stack.pop().is_some() {
-            return true;
-        }
+        dismissed |= self.take_rename(false, window, cx).is_some();
+        dismissed |= self.hide_blame_popover(true, cx);
+        dismissed |= hide_hover(self, cx);
+        dismissed |= self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+        dismissed |= self.hide_context_menu(window, cx).is_some();
+        dismissed |= self.mouse_context_menu.take().is_some();
+        dismissed |= is_user_requested && self.discard_edit_prediction(true, cx);
+        dismissed |= self.snippet_stack.pop().is_some();
 
         if self.mode.is_full() && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_)) {
             self.dismiss_diagnostics(cx);
-            return true;
+            dismissed = true;
         }
 
-        false
+        dismissed
     }
 
     fn linked_editing_ranges_for(
