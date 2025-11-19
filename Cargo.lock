@@ -21754,6 +21754,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "brotli",
  "chrono",
  "client",
  "clock",
