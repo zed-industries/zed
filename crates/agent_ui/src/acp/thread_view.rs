@@ -5412,7 +5412,7 @@ impl AcpThreadView {
         if let Some(thread) = self.as_native_thread(cx) {
             Some(thread.read(cx).profile().0.clone())
         } else if let Some(mode_selector) = self.mode_selector() {
-            Some(mode_selector.read(cx).mode().0.clone())
+            Some(mode_selector.read(cx).mode().0)
         } else {
             None
         }
