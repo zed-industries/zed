@@ -461,6 +461,14 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         Ok(None)
     }
 
+    /// Returns the JSON schema of the initialization_options for the language server.
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        _language_server_binary: &LanguageServerBinary,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
