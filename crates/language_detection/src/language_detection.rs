@@ -3,8 +3,6 @@ use gpui::{App, AppContext, Task};
 use language::{BufferSnapshot, Language, LanguageRegistry};
 use magika::ContentType;
 use parking_lot::Mutex;
-use project::DisableAiSettings;
-use settings::Settings;
 use std::sync::Arc;
 
 fn content_type_to_language_name(content_type: ContentType) -> Option<&'static str> {
