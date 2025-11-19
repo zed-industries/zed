@@ -15,7 +15,7 @@ on:
     - v[0-9]+.[0-9]+.x
 jobs:
   orchestrate:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -59,7 +59,7 @@ jobs:
       run_nix: ${{ steps.filter.outputs.run_nix }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -158,26 +158,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clippy
-      run: |
-        #!/usr/bin/env bash
-
-        set -euo pipefail
-
-        if [[ ! " $* " == *" -p "* && ! " $* " == *" --package "* ]]; then
-            set -- "$@" --workspace
-        fi
-
-        set -x
-        "${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings
-
-        # If local, run other checks if we have the tools installed.
-        if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
-            which cargo-machete >/dev/null 2>&1 || exit 0
-            cargo machete
-
-            which typos >/dev/null 2>&1 || exit 0
-            typos --config typos.toml
-        fi
+      run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
@@ -213,26 +194,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clippy
-      run: |
-        #!/usr/bin/env bash
-
-        set -euo pipefail
-
-        if [[ ! " $* " == *" -p "* && ! " $* " == *" --package "* ]]; then
-            set -- "$@" --workspace
-        fi
-
-        set -x
-        "${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings
-
-        # If local, run other checks if we have the tools installed.
-        if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
-            which cargo-machete >/dev/null 2>&1 || exit 0
-            cargo machete
-
-            which typos >/dev/null 2>&1 || exit 0
-            typos --config typos.toml
-        fi
+      run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
@@ -576,7 +538,7 @@ jobs:
     - check_scripts
     - build_nix_linux_x86_64
     - build_nix_mac_aarch64
-    if: github.repository_owner == 'zed-industries' && always()
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass

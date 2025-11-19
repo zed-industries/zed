@@ -7,6 +7,7 @@ pub mod after_release;
 pub mod cherry_pick;
 pub mod compare_perf;
 pub mod danger;
+pub mod extension_tests;
 pub mod nix_build;
 pub mod release_nightly;
 pub mod run_bundling;
@@ -22,8 +23,6 @@ pub mod vars;
 pub struct GenerateWorkflowArgs {}
 
 pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
-    steps::set_repo_owner("zed-industries");
-
     let dir = Path::new(".github/workflows");
 
     let workflows = vec![
@@ -41,6 +40,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ),
         ("run_agent_evals.yml", run_agent_evals::run_agent_evals()),
         ("after_release.yml", after_release::after_release()),
+        ("extension_tests.yml", extension_tests::extension_tests()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;

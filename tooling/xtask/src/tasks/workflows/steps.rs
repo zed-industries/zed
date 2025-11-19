@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use gh_workflow::*;
 
 use crate::tasks::workflows::{runners::Platform, vars};
@@ -99,7 +97,7 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
 pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash(include_str!("../../../../../script/clippy")),
+        _ => named::bash("./script/clippy"),
     }
 }
 
@@ -108,7 +106,7 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
 }
 
 pub fn setup_linux() -> Step<Run> {
-    named::bash(include_str!("../../../../../script/linux"))
+    named::bash("./script/linux")
 }
 
 fn install_mold() -> Step<Run> {
@@ -147,21 +145,11 @@ pub struct NamedJob {
 //     }
 // }
 
-static REPO_OWNER: OnceLock<&'static str> = OnceLock::new();
-
-pub fn set_repo_owner(owner: &'static str) {
-    REPO_OWNER.set(owner).unwrap();
-}
-
 pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
-    Expression::new(
-        format!(
-            "github.repository_owner == '{}' {}",
-            REPO_OWNER.get().expect("Call set_repo_owner first"),
-            trigger_always.then_some("&& always()").unwrap_or_default()
-        )
-        .trim(),
-    )
+    Expression::new(format!(
+        "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'){}",
+        trigger_always.then_some(" && always()").unwrap_or_default()
+    ))
 }
 
 pub trait CommonJobConditions: Sized {
