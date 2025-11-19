@@ -752,7 +752,7 @@ impl LanguageModel for CloudLanguageModel {
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         let thinking_allowed = request.thinking_allowed;
-        let provider_name = LanguageModelProviderName(provider_name(&self.model.provider));
+        let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
@@ -981,12 +981,14 @@ where
         .boxed()
 }
 
-fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> SharedString {
+fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> LanguageModelProviderName {
     match provider {
-        cloud_llm_client::LanguageModelProvider::Anthropic => "Anthropic".into(),
-        cloud_llm_client::LanguageModelProvider::OpenAi => "OpenAI".into(),
-        cloud_llm_client::LanguageModelProvider::Google => "Google".into(),
-        cloud_llm_client::LanguageModelProvider::XAi => "XAi".into(),
+        cloud_llm_client::LanguageModelProvider::Anthropic => {
+            language_model::ANTHROPIC_PROVIDER_NAME
+        }
+        cloud_llm_client::LanguageModelProvider::OpenAi => language_model::OPEN_AI_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::Google => language_model::GOOGLE_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::XAi => language_model::X_AI_PROVIDER_NAME,
     }
 }
 
