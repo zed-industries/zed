@@ -22363,7 +22363,7 @@ impl Editor {
         };
 
         let buffer = buffer_entity.read(cx);
-        let Some(current_language) = buffer.language().clone() else {
+        let Some(current_language) = buffer.language() else {
             return;
         };
 
