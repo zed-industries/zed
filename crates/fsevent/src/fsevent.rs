@@ -500,12 +500,17 @@ mod tests {
     }
 
     fn flush_historical_events() {
-        thread::sleep(timeout());
+        let timeout = if std::env::var("CI").is_ok() {
+            Duration::from_secs(2)
+        } else {
+            Duration::from_millis(500)
+        };
+        thread::sleep(timeout);
     }
 
     fn timeout() -> Duration {
         if std::env::var("CI").is_ok() {
-            Duration::from_secs(4)
+            Duration::from_secs(30)
         } else {
             Duration::from_millis(500)
         }
