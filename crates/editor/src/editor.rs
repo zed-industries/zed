@@ -21642,6 +21642,11 @@ impl Editor {
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
+                    let is_project_file = buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| project::File::from_dyn(Some(file)).is_some())
+                        .unwrap_or(false);
                     let editor = buffer
                         .read(cx)
                         .file()
@@ -21679,6 +21684,9 @@ impl Editor {
                         });
 
                     editor.update(cx, |editor, cx| {
+                        if !is_project_file {
+                            editor.set_read_only(true);
+                        }
                         let autoscroll = match scroll_offset {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
                             None => Autoscroll::newest(),
@@ -21702,7 +21710,7 @@ impl Editor {
     // For now, don't allow opening excerpts in buffers that aren't backed by
     // regular project files.
     fn can_open_excerpts_in_file(file: Option<&Arc<dyn language::File>>) -> bool {
-        file.is_none_or(|file| project::File::from_dyn(Some(file)).is_some())
+        file.is_some()
     }
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<OffsetUtf16>>> {

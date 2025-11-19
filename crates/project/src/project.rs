@@ -5486,7 +5486,8 @@ impl ProjectItem for Buffer {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.file().map(|file| ProjectPath {
+        let file = self.file()?;
+        File::from_dyn(Some(file)).map(|_| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
