@@ -49,7 +49,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, Summary, TreeMap};
+use sum_tree::{Bias, Cursor, Dimension, Dimensions, Item, SumTree, Summary, TreeMap};
 use text::{
     BufferId, Edit, LineIndent, TextSummary,
     locator::Locator,
@@ -255,9 +255,20 @@ pub struct MultiBufferSnapshot {
 
 #[derive(Debug, Clone)]
 enum DiffTransform {
-    BufferContent {
+    Unmodified {
         summary: TextSummary,
-        inserted_hunk_info: Option<DiffTransformHunkInfo>,
+    },
+    InsertedHunk {
+        summary: TextSummary,
+        hunk_info: DiffTransformHunkInfo,
+    },
+    // Note: there is no `FilteredDeletedHunk` because we will simply not expand
+    // them. `FilteredInsertedHunk` is required because we need to know how much
+    // of the buffer text to skip. Deleted hunks, however, refer to the base
+    // text, so this isn't needed.
+    FilteredInsertedHunk {
+        summary: TextSummary,
+        hunk_info: DiffTransformHunkInfo,
     },
     DeletedHunk {
         summary: TextSummary,
@@ -297,6 +308,14 @@ pub struct ExcerptInfo {
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
     pub end_row: MultiBufferRow,
+}
+
+/// Used with [`MultiBuffer::push_buffer_content_transform`]
+#[derive(Clone, Copy, Debug)]
+struct CurrentInsertedHunk {
+    insertion_end_offset: ExcerptOffset,
+    hunk_info: DiffTransformHunkInfo,
+    is_filtered: bool,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -2580,6 +2599,11 @@ impl MultiBuffer {
             if changed_diff_hunks || matches!(change_kind, DiffChangeKind::BufferEdited) {
                 output_edits.push(output_edit);
             }
+            //              <--------------------------->
+            //          <--e-->              current
+            //  vvvvvvvvvvvvvvvvvv        <--->    next
+            // |-------a---------|-------b--------|
+            //    current             next
 
             // If this is the last edit that intersects the current diff transform,
             // then recreate the content up to the end of this transform, to prepare
@@ -2590,11 +2614,11 @@ impl MultiBuffer {
             {
                 let keep_next_old_transform = (old_diff_transforms.start().0 >= edit.old.end)
                     && match old_diff_transforms.item() {
-                        Some(DiffTransform::BufferContent {
-                            inserted_hunk_info: Some(hunk),
-                            ..
-                        }) => excerpts.item().is_some_and(|excerpt| {
-                            hunk.hunk_start_anchor.is_valid(&excerpt.buffer)
+                        Some(
+                            DiffTransform::InsertedHunk { hunk_info, .. }
+                            | DiffTransform::FilteredInsertedHunk { hunk_info, .. },
+                        ) => excerpts.item().is_some_and(|excerpt| {
+                            hunk_info.hunk_start_anchor.is_valid(&excerpt.buffer)
                         }),
                         _ => true,
                     };
@@ -2622,9 +2646,8 @@ impl MultiBuffer {
         // Ensure there's always at least one buffer content transform.
         if new_diff_transforms.is_empty() {
             new_diff_transforms.push(
-                DiffTransform::BufferContent {
+                DiffTransform::Unmodified {
                     summary: Default::default(),
-                    inserted_hunk_info: None,
                 },
                 (),
             );
@@ -2645,7 +2668,7 @@ impl MultiBuffer {
         excerpts: &mut Cursor<Excerpt, TypedOffset<Excerpt>>,
         old_diff_transforms: &mut Cursor<DiffTransform, Dimensions<TypedOffset<Excerpt>, usize>>,
         new_diff_transforms: &mut SumTree<DiffTransform>,
-        end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, DiffTransformHunkInfo)>,
+        end_of_current_insert: &mut Option<CurrentInsertedHunk>,
         old_expanded_hunks: &mut HashSet<DiffTransformHunkInfo>,
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
@@ -2788,8 +2811,11 @@ impl MultiBuffer {
                         }
 
                         if !hunk_buffer_range.is_empty() {
-                            *end_of_current_insert =
-                                Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
+                            *end_of_current_insert = Some(CurrentInsertedHunk {
+                                insertion_end_offset: hunk_excerpt_end.min(excerpt_end),
+                                hunk_info,
+                                is_filtered: false, // FIXME
+                            });
                         }
                     }
                 }
@@ -2809,15 +2835,8 @@ impl MultiBuffer {
         new_transforms: &mut SumTree<DiffTransform>,
         subtree: SumTree<DiffTransform>,
     ) {
-        if let Some(DiffTransform::BufferContent {
-            inserted_hunk_info,
-            summary,
-        }) = subtree.first()
-            && Self::extend_last_buffer_content_transform(
-                new_transforms,
-                *inserted_hunk_info,
-                *summary,
-            )
+        if let Some(transform) = subtree.first()
+            && Self::extend_last_buffer_content_transform(new_transforms, transform)
         {
             let mut cursor = subtree.cursor::<()>(());
             cursor.next();
@@ -2829,16 +2848,7 @@ impl MultiBuffer {
     }
 
     fn push_diff_transform(new_transforms: &mut SumTree<DiffTransform>, transform: DiffTransform) {
-        if let DiffTransform::BufferContent {
-            inserted_hunk_info: inserted_hunk_anchor,
-            summary,
-        } = transform
-            && Self::extend_last_buffer_content_transform(
-                new_transforms,
-                inserted_hunk_anchor,
-                summary,
-            )
-        {
+        if Self::extend_last_buffer_content_transform(new_transforms, &transform) {
             return;
         }
         new_transforms.push(transform, ());
@@ -2848,59 +2858,124 @@ impl MultiBuffer {
         old_snapshot: &MultiBufferSnapshot,
         new_transforms: &mut SumTree<DiffTransform>,
         end_offset: ExcerptOffset,
-        current_inserted_hunk: Option<(ExcerptOffset, DiffTransformHunkInfo)>,
+        current_inserted_hunk: Option<CurrentInsertedHunk>,
     ) {
-        let inserted_region = current_inserted_hunk.map(|(insertion_end_offset, hunk_info)| {
-            (end_offset.min(insertion_end_offset), Some(hunk_info))
-        });
-        let unchanged_region = [(end_offset, None)];
-
-        for (end_offset, inserted_hunk_info) in inserted_region.into_iter().chain(unchanged_region)
-        {
+        if let Some(current_inserted_hunk) = current_inserted_hunk {
             let start_offset = new_transforms.summary().excerpt_len();
-            if end_offset <= start_offset {
-                continue;
+            let end_offset = current_inserted_hunk.insertion_end_offset.min(end_offset);
+            if end_offset > start_offset {
+                let summary_to_add = old_snapshot
+                    .text_summary_for_excerpt_offset_range::<TextSummary>(start_offset..end_offset);
+
+                let transform = if current_inserted_hunk.is_filtered {
+                    DiffTransform::FilteredInsertedHunk {
+                        summary: summary_to_add,
+                        hunk_info: current_inserted_hunk.hunk_info,
+                    }
+                } else {
+                    DiffTransform::InsertedHunk {
+                        summary: summary_to_add,
+                        hunk_info: current_inserted_hunk.hunk_info,
+                    }
+                };
+                if !Self::extend_last_buffer_content_transform(new_transforms, &transform) {
+                    new_transforms.push(transform, ())
+                }
             }
+        }
+
+        let start_offset = new_transforms.summary().excerpt_len();
+        if end_offset > start_offset {
             let summary_to_add = old_snapshot
                 .text_summary_for_excerpt_offset_range::<TextSummary>(start_offset..end_offset);
 
-            if !Self::extend_last_buffer_content_transform(
-                new_transforms,
-                inserted_hunk_info,
-                summary_to_add,
-            ) {
-                new_transforms.push(
-                    DiffTransform::BufferContent {
-                        summary: summary_to_add,
-                        inserted_hunk_info,
-                    },
-                    (),
-                )
+            let transform = DiffTransform::Unmodified {
+                summary: summary_to_add,
+            };
+            if !Self::extend_last_buffer_content_transform(new_transforms, &transform) {
+                new_transforms.push(transform, ())
             }
         }
     }
 
     fn extend_last_buffer_content_transform(
         new_transforms: &mut SumTree<DiffTransform>,
-        new_inserted_hunk_info: Option<DiffTransformHunkInfo>,
-        summary_to_add: TextSummary,
+        transform: &DiffTransform,
     ) -> bool {
         let mut did_extend = false;
         new_transforms.update_last(
             |last_transform| {
-                if let DiffTransform::BufferContent {
-                    summary,
-                    inserted_hunk_info: inserted_hunk_anchor,
-                } = last_transform
-                    && *inserted_hunk_anchor == new_inserted_hunk_info
-                {
-                    *summary += summary_to_add;
-                    did_extend = true;
-                }
+                did_extend = last_transform.merge_with(&transform);
             },
             (),
         );
         did_extend
+    }
+}
+
+impl DiffTransform {
+    /// Ergonomic wrapper for [`DiffTransform::merged_with`] that applies the
+    /// merging in-place. Returns `true` if merging was possible.
+    #[must_use = "check whether merging actually succeeded"]
+    fn merge_with(&mut self, other: &Self) -> bool {
+        match self.to_owned().merged_with(other) {
+            Some(merged) => {
+                *self = merged;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Attempt to merge `self` with `other`, and return the merged transform.
+    ///
+    /// This will succeed if all of the following are true:
+    /// - both transforms are the same variant
+    /// - neither transform is [`DiffTransform::DeletedHunk`]
+    /// - if both transform are either [`DiffTransform::InsertedHunk`] or
+    ///   [`DiffTransform::FilteredInsertedHunk`], then their
+    ///   `hunk_info.hunk_start_anchor`s match
+    #[must_use = "check whether merging actually succeeded"]
+    #[rustfmt::skip]
+    fn merged_with(self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (
+                DiffTransform::Unmodified { mut summary },
+                DiffTransform::Unmodified { summary: other_summary },
+            ) => {
+                summary += other_summary;
+                Some(DiffTransform::Unmodified { summary })
+            }
+            (
+                DiffTransform::FilteredInsertedHunk { mut summary, hunk_info },
+                DiffTransform::FilteredInsertedHunk {
+                    hunk_info: other_hunk_info,
+                    summary: other_summary,
+                },
+            ) => {
+                if hunk_info.hunk_start_anchor == other_hunk_info.hunk_start_anchor {
+                    summary += other_summary;
+                    Some(DiffTransform::FilteredInsertedHunk { summary, hunk_info })
+                } else {
+                    None
+                }
+            }
+            (
+                DiffTransform::InsertedHunk { mut summary, hunk_info },
+                DiffTransform::InsertedHunk {
+                    hunk_info: other_hunk_info,
+                    summary: other_summary,
+                },
+            ) => {
+                if hunk_info.hunk_start_anchor == other_hunk_info.hunk_start_anchor {
+                    summary += other_summary;
+                    Some(DiffTransform::InsertedHunk { summary, hunk_info })
+                } else {
+                    None
+                }
+            }
+            _ => return None,
+        }
     }
 }
 
@@ -3258,6 +3333,7 @@ impl MultiBufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.start);
+
         std::iter::from_fn(move || {
             let region = cursor.region()?;
             if region.range.start > range.end
@@ -4104,11 +4180,12 @@ impl MultiBufferSnapshot {
         let end_overshoot = std::cmp::min(range.end, diff_transform_end) - diff_transform_start;
 
         let mut result = match first_transform {
-            DiffTransform::BufferContent { .. } => {
+            DiffTransform::Unmodified { .. } | DiffTransform::InsertedHunk { .. } => {
                 let excerpt_start = cursor.start().1 + ExcerptOffset::new(start_overshoot);
                 let excerpt_end = cursor.start().1 + ExcerptOffset::new(end_overshoot);
                 self.text_summary_for_excerpt_offset_range(excerpt_start..excerpt_end)
             }
+            DiffTransform::FilteredInsertedHunk { .. } => D::zero(()),
             DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
@@ -4152,10 +4229,11 @@ impl MultiBufferSnapshot {
 
         let overshoot = range.end - cursor.start().0;
         let suffix = match last_transform {
-            DiffTransform::BufferContent { .. } => {
+            DiffTransform::Unmodified { .. } | DiffTransform::InsertedHunk { .. } => {
                 let end = cursor.start().1 + ExcerptOffset::new(overshoot);
                 self.text_summary_for_excerpt_offset_range::<D>(cursor.start().1..end)
             }
+            DiffTransform::FilteredInsertedHunk { .. } => D::zero(()),
             DiffTransform::DeletedHunk {
                 base_text_byte_range,
                 buffer_id,
@@ -5827,6 +5905,11 @@ impl MultiBufferSnapshot {
         let excerpts = self.excerpts.items(());
         let excerpt_ids = self.excerpt_ids.items(());
 
+        assert!(
+            !self.diff_transforms.is_empty(),
+            "diff_transforms must always contain at least one transform"
+        );
+
         for (ix, excerpt) in excerpts.iter().enumerate() {
             if ix == 0 {
                 if excerpt.locator <= Locator::min() {
@@ -5856,29 +5939,14 @@ impl MultiBufferSnapshot {
             );
         }
 
-        let mut prev_transform: Option<&DiffTransform> = None;
-        for item in self.diff_transforms.iter() {
-            if let DiffTransform::BufferContent {
-                summary,
-                inserted_hunk_info,
-            } = item
-            {
-                if let Some(DiffTransform::BufferContent {
-                    inserted_hunk_info: prev_inserted_hunk_info,
-                    ..
-                }) = prev_transform
-                    && *inserted_hunk_info == *prev_inserted_hunk_info
-                {
-                    panic!(
-                        "multiple adjacent buffer content transforms with is_inserted_hunk = {inserted_hunk_info:?}. transforms: {:+?}",
-                        self.diff_transforms.items(())
-                    );
-                }
-                if summary.len == 0 && !self.is_empty() {
-                    panic!("empty buffer content transform");
-                }
+        for (left, right) in self.diff_transforms.iter().tuple_windows() {
+            if left.is_buffer_content() && left.summary(()).input.len == 0 && !self.is_empty() {
+                panic!("empty buffer content transform in non-empty snapshot");
             }
-            prev_transform = Some(item);
+            assert!(
+                left.clone().merged_with(right).is_none(),
+                "two consecutive diff transforms could have been merged, but weren't"
+            );
         }
     }
 }
@@ -5894,11 +5962,14 @@ where
         if self.diff_transforms.item().is_none()
             && *position == self.diff_transforms.start().output_dimension.0
         {
+            // FIXME this could put us on a filtered region
             self.diff_transforms.prev();
         }
 
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension.0;
-        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+        if let Some(item) = self.diff_transforms.item()
+            && item.is_buffer_content()
+        {
             let overshoot = *position - self.diff_transforms.start().output_dimension.0;
             excerpt_position.add_assign(&overshoot);
         }
@@ -5922,7 +5993,9 @@ where
 
         let overshoot = *position - self.diff_transforms.start().output_dimension.0;
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension.0;
-        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+        if let Some(item) = self.diff_transforms.item()
+            && item.is_buffer_content()
+        {
             excerpt_position.add_assign(&overshoot);
         }
 
@@ -6022,9 +6095,7 @@ where
         let prev_transform = self.diff_transforms.item();
         self.diff_transforms.next();
 
-        prev_transform.is_none_or(|next_transform| {
-            matches!(next_transform, DiffTransform::BufferContent { .. })
-        })
+        prev_transform.is_none_or(|prev_transform| prev_transform.is_buffer_content())
     }
 
     fn is_at_end_of_excerpt(&mut self) -> bool {
@@ -6038,13 +6109,17 @@ where
 
         let next_transform = self.diff_transforms.next_item();
         next_transform.is_none_or(|next_transform| match next_transform {
-            DiffTransform::BufferContent { .. } => true,
+            DiffTransform::Unmodified { .. }
+            | DiffTransform::InsertedHunk { .. }
+            | DiffTransform::FilteredInsertedHunk { .. } => true,
             DiffTransform::DeletedHunk { hunk_info, .. } => self
                 .excerpts
                 .item()
                 .is_some_and(|excerpt| excerpt.id != hunk_info.excerpt_id),
         })
     }
+
+    //
 
     fn main_buffer_position(&self) -> Option<D> {
         let excerpt = self.excerpts.item()?;
@@ -6059,6 +6134,10 @@ where
     fn build_region(&self) -> Option<MultiBufferRegion<'a, D>> {
         let excerpt = self.excerpts.item()?;
         match self.diff_transforms.item()? {
+            DiffTransform::FilteredInsertedHunk { .. } => {
+                // FIXME
+                panic!("parked on filtered inserted hunk")
+            }
             DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
@@ -6087,9 +6166,13 @@ where
                     range: start..end,
                 })
             }
-            DiffTransform::BufferContent {
-                inserted_hunk_info, ..
-            } => {
+            transform @ (DiffTransform::Unmodified { .. } | DiffTransform::InsertedHunk { .. }) => {
+                let hunk_info = match transform {
+                    DiffTransform::Unmodified { .. } => None,
+                    DiffTransform::InsertedHunk { hunk_info, .. } => Some(hunk_info),
+                    _ => unreachable!(),
+                };
+
                 let buffer = &excerpt.buffer;
                 let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
 
@@ -6129,7 +6212,7 @@ where
                     excerpt,
                     has_trailing_newline,
                     is_main_buffer: true,
-                    diff_hunk_status: inserted_hunk_info
+                    diff_hunk_status: hunk_info
                         .map(|info| DiffHunkStatus::added(info.hunk_secondary_status)),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
@@ -6286,6 +6369,7 @@ impl<'a> MultiBufferExcerpt<'a> {
 
     /// Maps a range within the [`MultiBuffer`] to a range within the [`Buffer`]
     pub fn map_range_to_buffer(&mut self, range: Range<usize>) -> Range<usize> {
+        // todo! make sure "always exclude filtered regions" is OK
         self.diff_transforms
             .seek(&OutputDimension(range.start), Bias::Right);
         let start = self.map_offset_to_buffer_internal(range.start);
@@ -6299,9 +6383,14 @@ impl<'a> MultiBufferExcerpt<'a> {
         start..end
     }
 
+    /// `bias` controls which direction we seek in the case where the offset lands in a filtered transform
     fn map_offset_to_buffer_internal(&self, offset: usize) -> usize {
         let mut excerpt_offset = self.diff_transforms.start().excerpt_dimension.clone();
-        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+        if self
+            .diff_transforms
+            .item()
+            .is_some_and(|t| t.is_buffer_content())
+        {
             excerpt_offset.0 += offset - self.diff_transforms.start().output_dimension.0;
         };
         let offset_in_excerpt = excerpt_offset.0.saturating_sub(self.excerpt_offset.0);
@@ -6438,10 +6527,19 @@ impl sum_tree::KeyedItem for ExcerptIdMapping {
 impl DiffTransform {
     fn hunk_info(&self) -> Option<DiffTransformHunkInfo> {
         match self {
-            DiffTransform::DeletedHunk { hunk_info, .. } => Some(*hunk_info),
-            DiffTransform::BufferContent {
-                inserted_hunk_info, ..
-            } => *inserted_hunk_info,
+            DiffTransform::DeletedHunk { hunk_info, .. }
+            | DiffTransform::InsertedHunk { hunk_info, .. }
+            | DiffTransform::FilteredInsertedHunk { hunk_info, .. } => Some(*hunk_info),
+            DiffTransform::Unmodified { .. } => None,
+        }
+    }
+
+    fn is_buffer_content(&self) -> bool {
+        match self {
+            Self::Unmodified { .. }
+            | Self::InsertedHunk { .. }
+            | Self::FilteredInsertedHunk { .. } => true,
+            Self::DeletedHunk { .. } => false,
         }
     }
 }
@@ -6451,13 +6549,18 @@ impl sum_tree::Item for DiffTransform {
 
     fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
         match self {
-            DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
+            DiffTransform::InsertedHunk { summary, .. }
+            | DiffTransform::Unmodified { summary, .. } => DiffTransformSummary {
                 input: *summary,
                 output: *summary,
             },
             DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
                 input: TextSummary::default(),
                 output: *summary,
+            },
+            DiffTransform::FilteredInsertedHunk { summary, .. } => DiffTransformSummary {
+                input: *summary,
+                output: TextSummary::default(),
             },
         }
     }
@@ -6813,14 +6916,22 @@ impl<'a> MultiBufferChunks<'a> {
     pub fn seek(&mut self, range: Range<usize>) {
         self.diff_transforms.seek(&range.end, Bias::Right);
         let mut excerpt_end = self.diff_transforms.start().1;
-        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+        if self
+            .diff_transforms
+            .item()
+            .is_some_and(|t| t.is_buffer_content())
+        {
             let overshoot = range.end - self.diff_transforms.start().0;
             excerpt_end.value += overshoot;
         }
 
         self.diff_transforms.seek(&range.start, Bias::Right);
         let mut excerpt_start = self.diff_transforms.start().1;
-        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+        if self
+            .diff_transforms
+            .item()
+            .is_some_and(|t| t.is_buffer_content())
+        {
             let overshoot = range.start - self.diff_transforms.start().0;
             excerpt_start.value += overshoot;
         }
@@ -6901,6 +7012,16 @@ impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
     }
 }
 
+// chunks   |--1--|---2--|-3-|--4--|----5---|
+// buffers: |-------A--------|------B-------|
+// excerpts    |-------|        |------|
+//
+// multibufferchunks: [
+//   &1[5..]
+//   2,
+//   &4[4..]
+// ]
+
 impl<'a> Iterator for MultiBufferChunks<'a> {
     type Item = Chunk<'a>;
 
@@ -6911,6 +7032,11 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         if self.range.start == self.diff_transforms.end().0 {
             self.diff_transforms.next();
         }
+        while let Some(item) = self.diff_transforms.item()
+            && matches!(item, DiffTransform::FilteredInsertedHunk { .. })
+        {
+            self.diff_transforms.next();
+        }
 
         let diff_transform_start = self.diff_transforms.start().0;
         let diff_transform_end = self.diff_transforms.end().0;
@@ -6918,7 +7044,10 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
 
         let diff_transform = self.diff_transforms.item()?;
         match diff_transform {
-            DiffTransform::BufferContent { .. } => {
+            DiffTransform::FilteredInsertedHunk { .. } => {
+                unreachable!("we make sure we're not in a filtered hunk before this match");
+            }
+            DiffTransform::Unmodified { .. } | DiffTransform::InsertedHunk { .. } => {
                 let chunk = if let Some(chunk) = &mut self.buffer_chunk {
                     chunk
                 } else {
