@@ -421,6 +421,7 @@ pub fn into_open_router(
                                     .unwrap_or_default(),
                             },
                         },
+                        thought_signature: tool_use.thought_signature.clone(),
                     };
 
                     if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
@@ -600,6 +601,10 @@ impl OpenRouterEventMapper {
                     entry.id = tool_id;
                 }
 
+                if let Some(thought_signature) = tool_call.thought_signature.clone() {
+                    entry.thought_signature = Some(thought_signature);
+                }
+
                 if let Some(function) = tool_call.function.as_ref() {
                     if let Some(name) = function.name.clone() {
                         entry.name = name;
@@ -635,7 +640,7 @@ impl OpenRouterEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
+                                thought_signature: tool_call.thought_signature.clone(),
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -665,6 +670,7 @@ struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+    thought_signature: Option<String>,
 }
 
 pub fn count_open_router_tokens(
