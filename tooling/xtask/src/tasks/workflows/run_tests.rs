@@ -4,7 +4,10 @@ use gh_workflow::{
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix, runners::Arch, steps::BASH_SHELL, vars::PathCondition,
+    nix_build::build_nix,
+    runners::Arch,
+    steps::{BASH_SHELL, CommonJobConditions},
+    vars::PathCondition,
 };
 
 use super::{
@@ -162,9 +165,7 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .outputs(outputs)
         .add_step(steps::checkout_repo().add_with((
             "fetch-depth",
@@ -214,9 +215,11 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .map(|j| j.name.to_string())
                 .collect::<Vec<String>>(),
         )
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries' && always()",
-        ))
+        // todo! is this always relevant? Should not be
+        // .cond(Expression::new(
+        //     "github.repository_owner == 'zed-industries' && always()",
+        // ))
+        .with_repository_owner_guard()
         .add_step(named::bash(&script));
 
     named::job(job)

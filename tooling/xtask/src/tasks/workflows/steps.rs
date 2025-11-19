@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use gh_workflow::*;
 
 use crate::tasks::workflows::{runners::Platform, vars};
@@ -145,11 +147,28 @@ pub struct NamedJob {
 //     }
 // }
 
+static REPO_OWNER: OnceLock<&'static str> = OnceLock::new();
+
+pub fn set_repo_owner(owner: &'static str) {
+    REPO_OWNER.set(owner).unwrap();
+}
+
+pub trait CommonJobConditions: Sized {
+    fn with_repository_owner_guard(self) -> Self;
+}
+
+impl CommonJobConditions for Job {
+    fn with_repository_owner_guard(self) -> Self {
+        self.cond(Expression::new(format!(
+            "github.repository_owner == '{}'",
+            REPO_OWNER.get().expect("Call set_repo_owner first")
+        )))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .timeout_minutes(60u32)
 }
 

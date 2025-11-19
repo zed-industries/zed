@@ -22,6 +22,8 @@ pub mod vars;
 pub struct GenerateWorkflowArgs {}
 
 pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
+    steps::set_repo_owner("zed-industries");
+
     let dir = Path::new(".github/workflows");
 
     let workflows = vec![
