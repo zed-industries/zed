@@ -857,6 +857,7 @@ mod foo «1{
             cx.update_editor(|editor, window, cx| {
                 editor.apply_scroll_delta(gpui::Point::new(0.0, 0.25), window, cx);
             });
+            cx.executor().advance_clock(Duration::from_millis(100));
             cx.executor().run_until_parked();
 
             let colored_brackets = cx.update_editor(|editor, window, cx| {
