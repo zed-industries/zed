@@ -116,7 +116,7 @@ To quickly fetch the latest code for only specific extension (and avoid updating
 
 ```sh
 # From the root of the repository:
-git submodule update extensions/your-extension-name
+git submodule update --remote extensions/your-extension-name
 ```
 
 > Note: If you need to update all submodules (e.g., if multiple extensions have changed, or for a full clean build), you can run `git submodule update` without a path, but this will take longer.
