@@ -13,7 +13,6 @@ use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use db::kvp::KEY_VALUE_STORE;
-use diffy;
 use editor::{
     Direction, Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks,
 };
@@ -55,7 +54,6 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
-use std::fmt::Write;
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
@@ -274,67 +272,65 @@ impl GitStatusEntry {
 }
 
 struct FileHunkInfo {
-    patch_str: String,
+    header: String,
+    hunks: Vec<String>,
     hunks_to_keep: usize,
-    original_hunk_count: usize,
+    
 }
 
 impl FileHunkInfo {
-    fn parse(&self) -> Option<diffy::Patch<'_, str>> {
-        diffy::Patch::from_str(&self.patch_str).ok()
-    }
-    fn calculate_size(&self) -> usize {
-        let Some(parsed) = self.parse() else {
-            return 0;
-        };
-        let mut size = 0;
-        size += format!("--- {}\n", parsed.original().unwrap_or("a")).len();
-        size += format!("+++ {}\n", parsed.modified().unwrap_or("b")).len();
-        for (i, hunk) in parsed.hunks().into_iter().enumerate() {
-            if i < self.hunks_to_keep {
-                size += format!("@@ -{} +{} @@\n", hunk.old_range(), hunk.new_range()).len();
-                for line in hunk.lines() {
-                    match line {
-                        diffy::Line::Context(s)
-                        | diffy::Line::Insert(s)
-                        | diffy::Line::Delete(s) => {
-                            size += format!("{}\n", s).len();
-                        }
-                    }
+    fn build_file_hunk(patch_str: &str) -> Option<Self> {
+        let lines: Vec<&str> = patch_str.lines().collect();
+        if lines.len() < 2 {
+            return None;
+        }
+        let header = format!("{}\n{}\n", lines[0], lines[1]);
+        let mut hunks = Vec::new();
+        let mut current_hunk = String::new();
+        for line in &lines[2..] {
+            if line.starts_with("@@") {
+                if !current_hunk.is_empty() {
+                    hunks.push(current_hunk);
                 }
+                current_hunk = format!("{}\n", line);
+            } else if !current_hunk.is_empty() {
+                current_hunk.push_str(line);
+                current_hunk.push('\n');
             }
         }
+        if !current_hunk.is_empty() {
+            hunks.push(current_hunk);
+        }
+        if hunks.is_empty() {
+            return None;
+        }
+        let hunks_to_keep = hunks.len();
+        Some(FileHunkInfo {
+            header,
+            hunks,
+            hunks_to_keep,
+        })
 
+    }
+    fn calculate_size(&self) -> usize {
+        let mut size = self.header.len();
+        for (i, hunk) in self.hunks.iter().enumerate() {
+            if i < self.hunks_to_keep {
+                size += hunk.len();
+            }
+        }
         size
     }
     fn build_final_hunked_patch(&self) -> String {
-        let Some(parsed) = self.parse() else {
-            return String::new();
-        };
-        let mut out = String::new();
-        writeln!(&mut out, "--- {}", parsed.original().unwrap_or("a")).ok();
-        writeln!(&mut out, "+++ {}", parsed.modified().unwrap_or("b")).ok();
-        for (i, hunk) in parsed.hunks().into_iter().enumerate() {
+        let mut out = self.header.clone();
+        for (i, hunk) in self.hunks.iter().enumerate() {
             if i < self.hunks_to_keep {
-                writeln!(
-                    &mut out,
-                    "@@ -{} +{} @@",
-                    hunk.old_range(),
-                    hunk.new_range()
-                )
-                .ok();
-                for line in hunk.lines() {
-                    match line {
-                        diffy::Line::Context(v) => write!(&mut out, " {}", v).ok(),
-                        diffy::Line::Insert(v) => write!(&mut out, "+{}", v).ok(),
-                        diffy::Line::Delete(v) => write!(&mut out, "-{}", v).ok(),
-                    };
-                }
+                out.push_str(hunk);
             }
         }
-        let skipped = self.original_hunk_count - self.hunks_to_keep;
-        if skipped > 0 {
-            writeln!(&mut out, "[...skipped {} hunks...]", skipped).ok();
+        let skipped_hunks = self.hunks.len() - self.hunks_to_keep;
+        if skipped_hunks > 0 {
+            out.push_str(&format!("[...skipped {} hunks...]\n", skipped_hunks));
         }
         out
     }
@@ -1904,37 +1900,26 @@ impl GitPanel {
         let file_patches = Self::split_patch(text);
         let mut file_infos: Vec<FileHunkInfo> = file_patches
             .iter()
-            .filter_map(|patch_str| {
-                diffy::Patch::from_str(patch_str).ok().map(|parsed| {
-                    let hunk_count = parsed.hunks().len();
-                    FileHunkInfo {
-                        patch_str: patch_str.clone(),
-                        hunks_to_keep: hunk_count,
-                        original_hunk_count: hunk_count,
-                    }
-                })
-            })
+            .filter_map(|patch| FileHunkInfo::build_file_hunk(patch))
             .collect();
 
-        current_size = file_infos.iter().map(|f| f.calculate_size()).sum::<usize>();
-        while current_size > max_bytes {
+        if file_infos.is_empty() {
+            return text.to_string();
+        }
+        current_size = file_infos.iter().map (|f| f.calculate_size()).sum::<usize>();
+        while current_size > max_bytes  {
             let file_idx = file_infos
                 .iter()
                 .enumerate()
                 .filter(|(_, f)| f.hunks_to_keep > 1)
                 .max_by_key(|(_, f)| f.hunks_to_keep)
                 .map(|(idx, _)| idx);
-
             match file_idx {
                 Some(idx) => {
                     let file = &mut file_infos[idx];
-
                     let size_before = file.calculate_size();
-
                     file.hunks_to_keep -= 1;
-
                     let size_after = file.calculate_size();
-
                     let saved = size_before.saturating_sub(size_after);
                     current_size = current_size.saturating_sub(saved);
                 }
@@ -1945,10 +1930,10 @@ impl GitPanel {
         }
 
         file_infos
-            .iter()
-            .map(|info| info.build_final_hunked_patch())
-            .collect::<Vec<_>>()
-            .join("\n\n")
+        .iter()
+        .map(|info| info.build_final_hunked_patch())
+        .collect::<Vec<_>>()
+        .join("\n")
     }
 
     pub fn compress_commit_diff(diff_text: &str, max_bytes: usize) -> String {
