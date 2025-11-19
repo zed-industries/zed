@@ -97,6 +97,7 @@ pub fn cache_zed_extension_cli() -> (Step<Use>, StepOutput) {
         "cache",
         "0057852bfaa89a56745cba8c7296529d2fc39830",
     )
+    .id("cache-zed-extension-cli")
     .with(
         Input::default()
             .add("path", "zed-extension")
