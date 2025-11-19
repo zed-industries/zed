@@ -294,31 +294,35 @@ pub async fn perform_predict(
 
             prediction
         }
-        crate::PredictionProvider::Sweep => {
-            sweep
-                .unwrap()
-                .update(cx, |sweep, cx| {
-                    // todo! these should be sorted by timestamp
-                    let recent_buffers = zeta
-                        .read(cx)
-                        .history_for_project(&project)
-                        .filter_map(|event| event.project_path(cx))
-                        .collect::<Box<[_]>>();
-                    sweep.request_completion(
-                        &project,
-                        recent_buffers.into_iter(),
-                        &cursor_buffer,
-                        cursor_anchor,
-                        cx,
-                    )
-                })?
-                .await?
-                .map(
-                    |sweep_ai::EditPrediction {
-                         edits, snapshot, ..
-                     }| { (cursor_buffer.clone(), snapshot, edits) },
+        crate::PredictionProvider::Sweep => sweep
+            .unwrap()
+            .update(cx, |sweep, cx| {
+                let mut recent_paths = Vec::new();
+                for path in zeta
+                    .read(cx)
+                    .history_for_project(&project)
+                    .rev()
+                    .filter_map(|event| event.project_path(cx))
+                {
+                    if !recent_paths.contains(&path) {
+                        recent_paths.push(path);
+                    }
+                }
+
+                sweep.request_completion(
+                    &project,
+                    recent_paths.into_iter(),
+                    &cursor_buffer,
+                    cursor_anchor,
+                    cx,
                 )
-        }
+            })?
+            .await?
+            .map(
+                |sweep_ai::EditPrediction {
+                     edits, snapshot, ..
+                 }| { (cursor_buffer.clone(), snapshot, edits) },
+            ),
     };
 
     let mut result = Arc::into_inner(result).unwrap().into_inner().unwrap();

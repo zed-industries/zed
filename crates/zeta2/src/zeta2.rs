@@ -409,7 +409,10 @@ impl Zeta {
         }
     }
 
-    pub fn history_for_project(&self, project: &Entity<Project>) -> impl Iterator<Item = &Event> {
+    pub fn history_for_project(
+        &self,
+        project: &Entity<Project>,
+    ) -> impl DoubleEndedIterator<Item = &Event> {
         self.projects
             .get(&project.entity_id())
             .map(|project| project.events.iter())
