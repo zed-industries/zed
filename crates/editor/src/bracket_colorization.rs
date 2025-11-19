@@ -4,7 +4,7 @@ use gpui::{Context, HighlightStyle};
 use language::language_settings;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
-struct RainbowBracketHighlight;
+struct ColorizedBracketsHighlight;
 
 impl Editor {
     pub(crate) fn colorize_brackets(&mut self, invalidate: bool, cx: &mut Context<Editor>) {
@@ -82,7 +82,7 @@ impl Editor {
         );
 
         if invalidate {
-            self.clear_highlights::<RainbowBracketHighlight>(cx);
+            self.clear_highlights::<ColorizedBracketsHighlight>(cx);
         }
 
         let editor_background = cx.theme().colors().editor_background;
@@ -94,7 +94,7 @@ impl Editor {
                 ..HighlightStyle::default()
             };
 
-            self.highlight_text_key::<RainbowBracketHighlight>(
+            self.highlight_text_key::<ColorizedBracketsHighlight>(
                 accent_number,
                 bracket_highlights,
                 style,
@@ -173,7 +173,7 @@ where
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        assert_bracket_colors(
+        assert_eq!(
             r#"use std::«1{collections::HashMap, future::Future}1»;
 
 fn main«1()1» «1{
@@ -211,7 +211,8 @@ where
 6 hsla(95.00, 38.00%, 62.00%, 1.00)
 7 hsla(39.00, 67.00%, 69.00%, 1.00)
 "#,
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "All brackets should be colored based on their depth"
         );
     }
 
@@ -242,7 +243,7 @@ fn process_data() {
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        assert_bracket_colors(
+        assert_eq!(
             indoc! {r#"
 struct Foo«1<'a, T>1» «1{
     data: Vec«2<Option«3<&'a T>3»>2»,
@@ -256,7 +257,8 @@ fn process_data«1()1» «1{
 2 hsla(29.00, 54.00%, 65.88%, 1.00)
 3 hsla(286.00, 51.00%, 75.25%, 1.00)
 "#},
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "Brackets without pairs should be ignored and not colored"
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -264,7 +266,7 @@ fn process_data«1()1» «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        assert_bracket_colors(
+        assert_eq!(
             indoc! {r#"
 struct Foo«1<'a, T>1» «1{
     data: Vec«2<Option«3<&'a T>3»>2»,
@@ -278,7 +280,7 @@ fn process_data«1()1» «1{
 2 hsla(29.00, 54.00%, 65.88%, 1.00)
 3 hsla(286.00, 51.00%, 75.25%, 1.00)
 "#},
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -286,7 +288,7 @@ fn process_data«1()1» «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        assert_bracket_colors(
+        assert_eq!(
             indoc! {r#"
 struct Foo«1<'a, T>1» «1{
     data: Vec«2<Option«3<&'a T>3»>2»,
@@ -300,7 +302,8 @@ fn process_data«1()1» «1{
 2 hsla(29.00, 54.00%, 65.88%, 1.00)
 3 hsla(286.00, 51.00%, 75.25%, 1.00)
 "#},
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "When brackets start to get closed, inner brackets are re-colored based on their depth"
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -308,7 +311,7 @@ fn process_data«1()1» «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        assert_bracket_colors(
+        assert_eq!(
             indoc! {r#"
 struct Foo«1<'a, T>1» «1{
     data: Vec«2<Option«3<&'a T>3»>2»,
@@ -323,7 +326,7 @@ fn process_data«1()1» «1{
 3 hsla(286.00, 51.00%, 75.25%, 1.00)
 4 hsla(187.00, 47.00%, 59.22%, 1.00)
 "#},
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -331,7 +334,7 @@ fn process_data«1()1» «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        assert_bracket_colors(
+        assert_eq!(
             indoc! {r#"
 struct Foo«1<'a, T>1» «1{
     data: Vec«2<Option«3<&'a T>3»>2»,
@@ -347,7 +350,7 @@ fn process_data«1()1» «1{
 4 hsla(187.00, 47.00%, 59.22%, 1.00)
 5 hsla(355.00, 65.00%, 75.94%, 1.00)
 "#},
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
         );
     }
 
@@ -383,8 +386,7 @@ mod foo {
 
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        // First, the only visible, chunk is getting the bracket highlights.
-        assert_bracket_colors(
+        assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
 mod foo «1{
@@ -406,7 +408,8 @@ mod foo «1{
 "#},
                 comment_lines,
             ),
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "First, the only visible chunk is getting the bracket highlights"
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -415,8 +418,7 @@ mod foo «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        // When scrolled below, both chunks have the highlights now.
-        assert_bracket_colors(
+        assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
 mod foo «1{
@@ -438,7 +440,8 @@ mod foo «1{
 "#},
                 comment_lines,
             ),
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "After scrolling to the bottom, both chunks should have the highlights"
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -446,9 +449,7 @@ mod foo «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        // When edited while having the other chunk visible,
-        // first chunk's data is invalidated.
-        assert_bracket_colors(
+        assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
 mod foo «1{
@@ -470,7 +471,8 @@ mod foo «1{
 "#},
                 comment_lines,
             ),
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "First chunk's brackets are invalidated after an edit, and only 2nd (visible) chunk is re-colorized"
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -478,8 +480,7 @@ mod foo «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
-        // When scrolled back to top, all brackets are re-highlighted.
-        assert_bracket_colors(
+        assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
 mod foo «1{
@@ -501,10 +502,10 @@ mod foo «1{
 "#},
                 comment_lines,
             ),
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "Scrolling back to top should re-colorize all chunks' brackets"
         );
 
-        // Turning bracket colorization off should remove all bracket colors
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
@@ -512,7 +513,7 @@ mod foo «1{
                 });
             });
         });
-        assert_bracket_colors(
+        assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
 mod foo {
@@ -528,10 +529,10 @@ mod foo {
 "#,
                 comment_lines,
             ),
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "Turning bracket colorization off should remove all bracket colors"
         );
 
-        // Turning it back on refreshes the visible excerpts' bracket colors
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
@@ -539,7 +540,7 @@ mod foo {
                 });
             });
         });
-        assert_bracket_colors(
+        assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
 mod foo «1{
@@ -560,7 +561,8 @@ mod foo «1{
 "#,
                 comment_lines,
             ),
-            &mut cx,
+            &bracket_colors_markup(&mut cx),
+            "Turning bracket colorization back on refreshes the visible excerpts' bracket colors"
         );
     }
 
@@ -573,10 +575,10 @@ mod foo «1{
     }
 
     #[track_caller]
-    fn assert_bracket_colors(expected_markup: &str, cx: &mut EditorTestContext) {
-        let result = cx.update_editor(|editor, window, cx| {
+    fn bracket_colors_markup(cx: &mut EditorTestContext) -> String {
+        let markup = cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let actual_ranges = snapshot.all_text_highlight_ranges::<RainbowBracketHighlight>();
+            let actual_ranges = snapshot.all_text_highlight_ranges::<ColorizedBracketsHighlight>();
             let editor_text = snapshot.text();
 
             let mut next_index = 1;
@@ -627,7 +629,7 @@ mod foo «1{
 
             text_with_annotations
         });
-        assert_eq!(expected_markup, result);
+        markup
     }
 
     #[gpui::test]
@@ -868,7 +870,7 @@ mod foo «1{
         let actual_ranges = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<RainbowBracketHighlight>()
+                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
         });
 
         let mut highlighted_brackets = HashMap::default();
@@ -896,7 +898,7 @@ mod foo «1{
         let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<RainbowBracketHighlight>()
+                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
         });
         let new_last_bracket = ranges_after_scrolling
             .iter()
@@ -924,7 +926,7 @@ mod foo «1{
             let colored_brackets = cx.update_editor(|editor, window, cx| {
                 editor
                     .snapshot(window, cx)
-                    .all_text_highlight_ranges::<RainbowBracketHighlight>()
+                    .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
             });
             for (color, range) in colored_brackets.clone() {
                 assert!(
