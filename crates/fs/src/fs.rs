@@ -4,6 +4,7 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
+use crate::fs::metadata;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -35,13 +36,7 @@ use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
-use std::{
-    io::{self, Write},
-    path::{Component, Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{fs, io::{self, Write}, path::{Component, Path, PathBuf}, pin::Pin, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 use tempfile::TempDir;
 use text::LineEnding;
 
@@ -61,7 +56,8 @@ use git::{
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
-
+use std::os::unix::fs::PermissionsExt;
+use serde::de::IntoDeserializer;
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
 
@@ -722,13 +718,53 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        let file = smol::fs::File::create(path).await?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+        let md = metadata(path)?;
+        let perms = md.permissions();
+        if !perms.readonly() { // Is file not read-only to ALL users?
+            // Attempt to check file perms early.
+            // If this is on unsupported OSs, simply attempt and hope.
+            if cfg!(linux) {
+                let uid = users::get_current_uid();
+                let gid = users::get_current_gid();
+                if md.uid() != uid { // Is user not the current file owner?
+                    if md.gid() != gid { // Is user not within current file group?
+                        let mode = perms.mode();
+                        let mode_digits: Vec<_> = mode.to_string().chars().map(|d| d.to_digit(10).unwrap()).collect();
+                        if !matches!(mode_digits[2], 2 | 3 | 6 | 7) { // Is "other" permissions unwritable?
+                            // This will fail, so attempt sudo elevation request.
+                            let mut arg_conv = "conv=notrunc".to_owned();
+                            let mut arg_file = "of=".to_owned();
+                            arg_file.push_str(path.to_str().unwrap());
+                            if !cfg!(netbsd) { // TODO: Should add check for illumos too, but unsupported by cfg.
+                                arg_conv.push_str(",fsync");
+                            }
+                            assert!(
+                                // TODO: Add sucmd option, add su_cmd to config, have it read instead of raw "sudo", to provide user options.
+                                std::process::Command::new("sudo")
+                                    .arg("-E")
+                                    .arg("dd")
+                                    .arg("bs=4k")
+                                    .arg(arg_conv)
+                                    .arg(arg_file)
+                                    .output()?
+                                    .status
+                                    .success()
+                            )
+                        }
+                    }
+                }
+            }
+
+            let file = smol::fs::File::create(path).await?;
+            let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+            for chunk in chunks(text, line_ending) {
+                writer.write_all(chunk.as_bytes()).await?;
+            }
+            writer.flush().await?;
+            Ok(())
+        } else {
+            Err(anyhow!("The save operation failed. Reason: File is read-only to all users."))
         }
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
