@@ -104,10 +104,10 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
-    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, point, prelude::*, pulsating_between, px, relative, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
+    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -22061,6 +22061,21 @@ impl Editor {
                     );
                 }
             });
+
+            if let Some(position_map) = self.last_position_map.clone() {
+                let points = window.mouse_position();
+                EditorElement::mouse_moved(
+                    self,
+                    &MouseMoveEvent {
+                        position: points,
+                        pressed_button: None,
+                        modifiers: window.modifiers(),
+                    },
+                    &position_map,
+                    window,
+                    cx,
+                );
+            }
         }
     }
 
