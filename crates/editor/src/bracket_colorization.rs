@@ -70,42 +70,44 @@ impl Editor {
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
                                 ..buffer_snapshot.anchor_after(pair.open_range.end);
-                            let multi_buffer_open_range =
-                                anchor_in_multi_buffer(excerpt_id, buffer_open_range.start)?
-                                    ..anchor_in_multi_buffer(excerpt_id, buffer_open_range.end)?;
-                            // todo! need to anyway color single brackets whos pair is not in the editor's multi buffer
                             let buffer_close_range = buffer_snapshot
                                 .anchor_before(pair.close_range.start)
                                 ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            let multi_buffer_open_range =
+                                anchor_in_multi_buffer(excerpt_id, buffer_open_range.start)
+                                    .zip(anchor_in_multi_buffer(excerpt_id, buffer_open_range.end));
                             let multi_buffer_close_range =
-                                anchor_in_multi_buffer(excerpt_id, buffer_close_range.start)?
-                                    ..anchor_in_multi_buffer(excerpt_id, buffer_close_range.end)?;
+                                anchor_in_multi_buffer(excerpt_id, buffer_close_range.start).zip(
+                                    anchor_in_multi_buffer(excerpt_id, buffer_close_range.end),
+                                );
 
-                            Some((
-                                color_index % accents_count,
-                                multi_buffer_open_range,
-                                multi_buffer_close_range,
-                            ))
+                            let mut ranges = Vec::with_capacity(2);
+                            if let Some((open_start, open_end)) = multi_buffer_open_range {
+                                ranges.push(open_start..open_end);
+                            }
+                            if let Some((close_start, close_end)) = multi_buffer_close_range {
+                                ranges.push(close_start..close_end);
+                            }
+                            if ranges.is_empty() {
+                                None
+                            } else {
+                                Some((color_index % accents_count, ranges))
+                            }
                         });
 
-                    for (accent_number, open_range, close_range) in brackets_by_accent {
+                    for (accent_number, new_ranges) in brackets_by_accent {
                         let ranges = acc
                             .entry(accent_number)
                             .or_insert_with(Vec::<Range<Anchor>>::new);
 
-                        let i = ranges
-                            .binary_search_by(|probe| {
-                                probe.start.cmp(&open_range.start, &multi_buffer_snapshot)
-                            })
-                            .unwrap_or_else(|i| i);
-                        ranges.insert(i, open_range);
-
-                        let j = ranges
-                            .binary_search_by(|probe| {
-                                probe.start.cmp(&close_range.start, &multi_buffer_snapshot)
-                            })
-                            .unwrap_or_else(|j| j);
-                        ranges.insert(j, close_range);
+                        for new_range in new_ranges {
+                            let i = ranges
+                                .binary_search_by(|probe| {
+                                    probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
+                                })
+                                .unwrap_or_else(|i| i);
+                            ranges.insert(i, new_range);
+                        }
                     }
                 }
 
@@ -1106,6 +1108,44 @@ mod foo «1{
             &editor_bracket_colors_markup(&editor_snapshot),
             "Multi buffers should have their brackets colored even if no excerpts contain the bracket counterpart (after fn `process_data_2()`) \
 or if the buffer pair spans across multiple excerpts (the one after `mod foo`)"
+        );
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.handle_input("{[]", window, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        let editor_snapshot = editor
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+        assert_eq!(
+            indoc! {r#"
+
+
+{«1[]1»fn main«1()1» «1{«2{«3()3»}2»}1»
+
+
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+        // a
+        // b
+
+
+    fn process_data_2«2()2» «2{
+        let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#,},
+            &editor_bracket_colors_markup(&editor_snapshot),
         );
     }
 
