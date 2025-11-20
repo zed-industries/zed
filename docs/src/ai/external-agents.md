@@ -168,6 +168,8 @@ To ensure you're using your billing method of choice, [open a new Codex thread](
 
 If you are already logged in and want to change your authentication method, type `/logout` in the thread and authenticate again.
 
+If you want to use a third-party provider with Codex, you can configure that with your [Codex config.toml](https://github.com/openai/codex/blob/main/docs/config.md#model-selection) or pass extra [args/env variables](https://github.com/openai/codex/blob/main/docs/config.md#model-selection) to your Codex agent servers settings.
+
 #### Installation
 
 The first time you create a Codex thread, Zed will install [codex-acp](https://github.com/zed-industries/codex-acp). This installation is only available to Zed and is kept up to date as you use the agent.

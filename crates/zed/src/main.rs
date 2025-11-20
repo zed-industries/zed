@@ -341,7 +341,9 @@ pub fn main() {
         } else {
             None
         };
-    log::info!("Using git binary path: {:?}", git_binary_path);
+    if let Some(git_binary_path) = &git_binary_path {
+        log::info!("Using git binary path: {:?}", git_binary_path);
+    }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
     let user_settings_file_rx = watch_config_file(
@@ -547,11 +549,7 @@ pub fn main() {
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
-        reliability::init(
-            client.http_client(),
-            system_id.as_ref().map(|id| id.to_string()),
-            cx,
-        );
+        reliability::init(client.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),

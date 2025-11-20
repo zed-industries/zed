@@ -33,10 +33,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         SettingField {
                             json_path: Some("project_name"),
                             pick: |settings_content| {
-                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                                settings_content.project.worktree.project_name.as_ref().or(DEFAULT_EMPTY_STRING)
                             },
                             write: |settings_content, value| {
-                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                                settings_content.project.worktree.project_name = value.filter(|name| !name.is_empty());
                             },
                         }
                     ),
@@ -3818,6 +3818,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         write: |settings_content, value| {
                             settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
                         },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sort Mode",
+                    description: "Sort order for entries in the project panel.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.sort_mode.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .sort_mode = value;
+                        },
+                        json_path: Some("project_panel.sort_mode"),
                     }),
                     metadata: None,
                     files: USER,

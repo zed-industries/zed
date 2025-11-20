@@ -289,15 +289,11 @@ impl minidumper::ServerHandler for CrashServer {
 pub fn panic_hook(info: &PanicHookInfo) {
     // Don't handle a panic on threads that are not relevant to the main execution.
     if extension_host::wasm_host::IS_WASM_THREAD.with(|v| v.load(Ordering::Acquire)) {
+        log::error!("wasm thread panicked!");
         return;
     }
 
-    let message = info
-        .payload()
-        .downcast_ref::<&str>()
-        .map(|s| s.to_string())
-        .or_else(|| info.payload().downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "Box<Any>".to_string());
+    let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
 
     let span = info
         .location()

@@ -1071,9 +1071,9 @@ where
         window.spawn(cx, async move |cx| {
             let result = self.await;
             if let Err(err) = result.as_ref() {
-                log::error!("{err:?}");
+                log::error!("{err:#}");
                 if let Ok(prompt) = cx.update(|window, cx| {
-                    let mut display = format!("{err}");
+                    let mut display = format!("{err:#}");
                     if !display.ends_with('\n') {
                         display.push('.');
                         display.push(' ')

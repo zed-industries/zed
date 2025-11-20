@@ -66,7 +66,7 @@ impl Settings for WorktreeSettings {
             .collect();
 
         Self {
-            project_name: worktree.project_name.into_inner(),
+            project_name: worktree.project_name,
             prevent_sharing_in_public_channels: worktree.prevent_sharing_in_public_channels,
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()

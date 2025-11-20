@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use debugger_panel::DebugPanel;
-use editor::Editor;
+use editor::{Editor, MultiBufferOffsetUtf16};
 use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use onboarding_modal::DebuggerOnboardingModal;
@@ -390,11 +390,14 @@ pub fn init(cx: &mut App) {
                             maybe!({
                                 let text = editor
                                     .update(cx, |editor, cx| {
+                                        let range = editor
+                                            .selections
+                                            .newest::<MultiBufferOffsetUtf16>(
+                                                &editor.display_snapshot(cx),
+                                            )
+                                            .range();
                                         editor.text_for_range(
-                                            editor
-                                                .selections
-                                                .newest(&editor.display_snapshot(cx))
-                                                .range(),
+                                            range.start.0.0..range.end.0.0,
                                             &mut None,
                                             window,
                                             cx,

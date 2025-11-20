@@ -10,9 +10,8 @@ use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, VimFlavor,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset,
     actions::{Backtab, Tab},
-    vim_flavor,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -828,8 +827,7 @@ impl BufferSearchBar {
                 .searchable_items_with_matches
                 .get(&active_searchable_item.downgrade())
         {
-            let collapse = editor::vim_flavor(cx) == Some(VimFlavor::Vim);
-            active_searchable_item.activate_match(match_ix, matches, collapse, window, cx)
+            active_searchable_item.activate_match(match_ix, matches, window, cx)
         }
     }
 
@@ -870,7 +868,11 @@ impl BufferSearchBar {
                     .buffer()
                     .update(cx, |replacement_buffer, cx| {
                         let len = replacement_buffer.len(cx);
-                        replacement_buffer.edit([(0..len, replacement.unwrap())], None, cx);
+                        replacement_buffer.edit(
+                            [(MultiBufferOffset(0)..len, replacement.unwrap())],
+                            None,
+                            cx,
+                        );
                     });
             });
     }
@@ -894,7 +896,7 @@ impl BufferSearchBar {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
+                    query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, cx);
                 });
             });
             self.set_search_options(options, cx);
@@ -976,8 +978,7 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-        self.select_match(Direction::Next, 1, collapse, window, cx);
+        self.select_match(Direction::Next, 1, window, cx);
     }
 
     fn select_prev_match(
@@ -986,8 +987,7 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-        self.select_match(Direction::Prev, 1, collapse, window, cx);
+        self.select_match(Direction::Prev, 1, window, cx);
     }
 
     pub fn select_all_matches(
@@ -1012,7 +1012,6 @@ impl BufferSearchBar {
         &mut self,
         direction: Direction,
         count: usize,
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1035,7 +1034,7 @@ impl BufferSearchBar {
                 .match_index_for_direction(matches, index, direction, count, window, cx);
 
             searchable_item.update_matches(matches, window, cx);
-            searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
+            searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
 
@@ -1049,8 +1048,7 @@ impl BufferSearchBar {
                 return;
             }
             searchable_item.update_matches(matches, window, cx);
-            let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-            searchable_item.activate_match(0, matches, collapse, window, cx);
+            searchable_item.activate_match(0, matches, window, cx);
         }
     }
 
@@ -1065,8 +1063,7 @@ impl BufferSearchBar {
             }
             let new_match_index = matches.len() - 1;
             searchable_item.update_matches(matches, window, cx);
-            let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-            searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
+            searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
 

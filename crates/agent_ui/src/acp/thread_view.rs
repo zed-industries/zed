@@ -51,7 +51,7 @@ use ui::{
     PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, Workspace};
+use workspace::{CollaboratorId, NewTerminal, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -69,8 +69,8 @@ use crate::ui::{
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
-    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
-    RejectOnce, ToggleBurnMode, ToggleProfileSelector,
+    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory,
+    RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1135,6 +1135,7 @@ impl AcpThreadView {
 
         self.is_loading_contents = true;
         let model_id = self.current_model_id(cx);
+        let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
             this.is_loading_contents = false;
@@ -1169,7 +1170,8 @@ impl AcpThreadView {
                     "Agent Message Sent",
                     agent = agent_telemetry_id,
                     session = session_id,
-                    model = model_id
+                    model = model_id,
+                    mode = mode_id
                 );
 
                 thread.send(contents, cx)
@@ -1182,6 +1184,7 @@ impl AcpThreadView {
                 agent = agent_telemetry_id,
                 session = session_id,
                 model = model_id,
+                mode = mode_id,
                 status,
                 turn_time_ms,
             );
@@ -3144,7 +3147,7 @@ impl AcpThreadView {
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
-                            if terminal_view
+                            let element = if terminal_view
                                 .read(cx)
                                 .content_mode(window, cx)
                                 .is_scrollable()
@@ -3152,7 +3155,15 @@ impl AcpThreadView {
                                 div().h_72().child(terminal_view).into_any_element()
                             } else {
                                 terminal_view.into_any_element()
-                            }
+                            };
+
+                            div()
+                                .on_action(cx.listener(|_this, _: &NewTerminal, window, cx| {
+                                    window.dispatch_action(NewThread.boxed_clone(), cx);
+                                    cx.stop_propagation();
+                                }))
+                                .child(element)
+                                .into_any_element()
                         })),
                 )
             })
@@ -5397,6 +5408,16 @@ impl AcpThreadView {
         )
     }
 
+    fn current_mode_id(&self, cx: &App) -> Option<Arc<str>> {
+        if let Some(thread) = self.as_native_thread(cx) {
+            Some(thread.read(cx).profile().0.clone())
+        } else if let Some(mode_selector) = self.mode_selector() {
+            Some(mode_selector.read(cx).mode().0)
+        } else {
+            None
+        }
+    }
+
     fn current_model_id(&self, cx: &App) -> Option<String> {
         self.model_selector
             .as_ref()
@@ -6045,6 +6066,7 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
+    use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
     use project::Project;
@@ -7213,7 +7235,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor
@@ -7275,7 +7297,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor

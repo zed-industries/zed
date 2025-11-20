@@ -12,7 +12,7 @@ use language::ToPoint as _;
 use project::Project;
 use util::ResultExt as _;
 
-use crate::{BufferEditPrediction, Zeta};
+use crate::{BufferEditPrediction, Zeta, ZetaEditPredictionModel};
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
@@ -85,9 +85,14 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         &self,
         _buffer: &Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _cx: &App,
+        cx: &App,
     ) -> bool {
-        true
+        let zeta = self.zeta.read(cx);
+        if zeta.edit_prediction_model == ZetaEditPredictionModel::Sweep {
+            zeta.sweep_api_token.is_some()
+        } else {
+            true
+        }
     }
 
     fn is_refreshing(&self) -> bool {

@@ -24,8 +24,9 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButton,
-    Tooltip, WithScrollbar, prelude::*,
+    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
+    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -805,37 +806,47 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
-                    .gap_1()
                     .justify_between()
                     .child(
-                        Icon::new(IconName::Person)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(extension.manifest.authors.join(", "))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .truncate(),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Person)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(extension.manifest.authors.join(", "))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            ),
                     )
                     .child(
                         h_flex()
-                            .ml_auto()
                             .gap_1()
-                            .child(
+                            .child({
+                                let repo_url_for_tooltip = repository_url.clone();
+
                                 IconButton::new(
                                     SharedString::from(format!("repository-{}", extension.id)),
                                     IconName::Github,
                                 )
                                 .icon_size(IconSize::Small)
-                                .on_click(cx.listener({
-                                    let repository_url = repository_url.clone();
+                                .tooltip(move |_, cx| {
+                                    Tooltip::with_meta(
+                                        "Visit Extension Repository",
+                                        None,
+                                        repo_url_for_tooltip.clone(),
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(
                                     move |_, _, _, cx| {
                                         cx.open_url(&repository_url);
-                                    }
-                                }))
-                                .tooltip(Tooltip::text(repository_url)),
-                            )
+                                    },
+                                ))
+                            })
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
                                     "more-{}",
@@ -1136,15 +1147,14 @@ impl ExtensionsPage {
         h_flex()
             .key_context(key_context)
             .h_8()
-            .flex_1()
             .min_w(rems_from_px(384.))
+            .flex_1()
             .pl_1p5()
             .pr_2()
-            .py_1()
             .gap_2()
             .border_1()
             .border_color(editor_border)
-            .rounded_lg()
+            .rounded_md()
             .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
             .child(self.render_text_input(&self.query_editor, cx))
     }
@@ -1544,13 +1554,13 @@ impl Render for ExtensionsPage {
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
+                            .gap_1p5()
                             .justify_between()
                             .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
                             .child(
                                 Button::new("install-dev-extension", "Install Dev Extension")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
                                     .on_click(|_event, window, cx| {
                                         window.dispatch_action(Box::new(InstallDevExtension), cx)
                                     }),
@@ -1559,58 +1569,51 @@ impl Render for ExtensionsPage {
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_4()
                             .flex_wrap()
+                            .gap_2()
                             .child(self.render_search(cx))
                             .child(
-                                h_flex()
-                                    .child(
-                                        ToggleButton::new("filter-all", "All")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .toggle_state(self.filter == ExtensionFilter::All)
-                                            .on_click(cx.listener(|this, _event, _, cx| {
-                                                this.filter = ExtensionFilter::All;
-                                                this.filter_extension_entries(cx);
-                                                this.scroll_to_top(cx);
-                                            }))
-                                            .tooltip(move |_, cx| {
-                                                Tooltip::simple("Show all extensions", cx)
-                                            })
-                                            .first(),
+                                div().child(
+                                    ToggleButtonGroup::single_row(
+                                        "filter-buttons",
+                                        [
+                                            ToggleButtonSimple::new(
+                                                "All",
+                                                cx.listener(|this, _event, _, cx| {
+                                                    this.filter = ExtensionFilter::All;
+                                                    this.filter_extension_entries(cx);
+                                                    this.scroll_to_top(cx);
+                                                }),
+                                            ),
+                                            ToggleButtonSimple::new(
+                                                "Installed",
+                                                cx.listener(|this, _event, _, cx| {
+                                                    this.filter = ExtensionFilter::Installed;
+                                                    this.filter_extension_entries(cx);
+                                                    this.scroll_to_top(cx);
+                                                }),
+                                            ),
+                                            ToggleButtonSimple::new(
+                                                "Not Installed",
+                                                cx.listener(|this, _event, _, cx| {
+                                                    this.filter = ExtensionFilter::NotInstalled;
+                                                    this.filter_extension_entries(cx);
+                                                    this.scroll_to_top(cx);
+                                                }),
+                                            ),
+                                        ],
                                     )
-                                    .child(
-                                        ToggleButton::new("filter-installed", "Installed")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .toggle_state(self.filter == ExtensionFilter::Installed)
-                                            .on_click(cx.listener(|this, _event, _, cx| {
-                                                this.filter = ExtensionFilter::Installed;
-                                                this.filter_extension_entries(cx);
-                                                this.scroll_to_top(cx);
-                                            }))
-                                            .tooltip(move |_, cx| {
-                                                Tooltip::simple("Show installed extensions", cx)
-                                            })
-                                            .middle(),
-                                    )
-                                    .child(
-                                        ToggleButton::new("filter-not-installed", "Not Installed")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .toggle_state(
-                                                self.filter == ExtensionFilter::NotInstalled,
-                                            )
-                                            .on_click(cx.listener(|this, _event, _, cx| {
-                                                this.filter = ExtensionFilter::NotInstalled;
-                                                this.filter_extension_entries(cx);
-                                                this.scroll_to_top(cx);
-                                            }))
-                                            .tooltip(move |_, cx| {
-                                                Tooltip::simple("Show not installed extensions", cx)
-                                            })
-                                            .last(),
-                                    ),
+                                    .style(ToggleButtonGroupStyle::Outlined)
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30.))) // Perfectly matches the input
+                                    .label_size(LabelSize::Default)
+                                    .auto_width()
+                                    .selected_index(match self.filter {
+                                        ExtensionFilter::All => 0,
+                                        ExtensionFilter::Installed => 1,
+                                        ExtensionFilter::NotInstalled => 2,
+                                    })
+                                    .into_any_element(),
+                                ),
                             ),
                     ),
             )

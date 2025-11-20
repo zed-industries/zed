@@ -67,7 +67,7 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 struct GitBlameBuffer {
     entries: SumTree<GitBlameEntry>,
     buffer_snapshot: BufferSnapshot,
-    buffer_edits: text::Subscription,
+    buffer_edits: text::Subscription<usize>,
     commit_details: HashMap<Oid, ParsedCommitMessage>,
 }
 

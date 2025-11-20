@@ -429,7 +429,12 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(
+                user_prompt,
+                language_name,
+                buffer,
+                range.start.0..range.end.0,
+            )
             .context("generating content prompt")?;
 
         let context_task = self.context_store.as_ref().and_then(|context_store| {

@@ -2083,7 +2083,7 @@ impl Buffer {
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
-    pub fn subscribe(&mut self) -> Subscription {
+    pub fn subscribe(&mut self) -> Subscription<usize> {
         self.text.subscribe()
     }
 

@@ -229,6 +229,10 @@ pub struct GenerativeContentBlob {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionCallPart {
     pub function_call: FunctionCall,
+    /// Thought signature returned by the model for function calls.
+    /// Only present on the first function call in parallel call scenarios.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -517,6 +521,8 @@ pub enum Model {
         alias = "gemini-2.5-pro-preview-06-05"
     )]
     Gemini25Pro,
+    #[serde(rename = "gemini-3-pro-preview")]
+    Gemini3ProPreview,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -543,6 +549,7 @@ impl Model {
             Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
+            Self::Gemini3ProPreview => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -556,6 +563,7 @@ impl Model {
             Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview-06-17",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
+            Self::Gemini3ProPreview => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -570,6 +578,7 @@ impl Model {
             Self::Gemini25FlashLitePreview => "Gemini 2.5 Flash-Lite Preview",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
+            Self::Gemini3ProPreview => "Gemini 3 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -586,6 +595,7 @@ impl Model {
             Self::Gemini25FlashLitePreview => 1_000_000,
             Self::Gemini25Flash => 1_048_576,
             Self::Gemini25Pro => 1_048_576,
+            Self::Gemini3ProPreview => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -600,6 +610,7 @@ impl Model {
             Model::Gemini25FlashLitePreview => Some(64_000),
             Model::Gemini25Flash => Some(65_536),
             Model::Gemini25Pro => Some(65_536),
+            Model::Gemini3ProPreview => Some(65_536),
             Model::Custom { .. } => None,
         }
     }
@@ -619,7 +630,10 @@ impl Model {
             | Self::Gemini15Flash
             | Self::Gemini20FlashLite
             | Self::Gemini20Flash => GoogleModelMode::Default,
-            Self::Gemini25FlashLitePreview | Self::Gemini25Flash | Self::Gemini25Pro => {
+            Self::Gemini25FlashLitePreview
+            | Self::Gemini25Flash
+            | Self::Gemini25Pro
+            | Self::Gemini3ProPreview => {
                 GoogleModelMode::Thinking {
                     // By default these models are set to "auto", so we preserve that behavior
                     // but indicate they are capable of thinking mode
@@ -634,5 +648,111 @@ impl Model {
 impl std::fmt::Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.id())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_function_call_part_with_signature_serializes_correctly() {
+        let part = FunctionCallPart {
+            function_call: FunctionCall {
+                name: "test_function".to_string(),
+                args: json!({"arg": "value"}),
+            },
+            thought_signature: Some("test_signature".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&part).unwrap();
+
+        assert_eq!(serialized["functionCall"]["name"], "test_function");
+        assert_eq!(serialized["functionCall"]["args"]["arg"], "value");
+        assert_eq!(serialized["thoughtSignature"], "test_signature");
+    }
+
+    #[test]
+    fn test_function_call_part_without_signature_omits_field() {
+        let part = FunctionCallPart {
+            function_call: FunctionCall {
+                name: "test_function".to_string(),
+                args: json!({"arg": "value"}),
+            },
+            thought_signature: None,
+        };
+
+        let serialized = serde_json::to_value(&part).unwrap();
+
+        assert_eq!(serialized["functionCall"]["name"], "test_function");
+        assert_eq!(serialized["functionCall"]["args"]["arg"], "value");
+        // thoughtSignature field should not be present when None
+        assert!(serialized.get("thoughtSignature").is_none());
+    }
+
+    #[test]
+    fn test_function_call_part_deserializes_with_signature() {
+        let json = json!({
+            "functionCall": {
+                "name": "test_function",
+                "args": {"arg": "value"}
+            },
+            "thoughtSignature": "test_signature"
+        });
+
+        let part: FunctionCallPart = serde_json::from_value(json).unwrap();
+
+        assert_eq!(part.function_call.name, "test_function");
+        assert_eq!(part.thought_signature, Some("test_signature".to_string()));
+    }
+
+    #[test]
+    fn test_function_call_part_deserializes_without_signature() {
+        let json = json!({
+            "functionCall": {
+                "name": "test_function",
+                "args": {"arg": "value"}
+            }
+        });
+
+        let part: FunctionCallPart = serde_json::from_value(json).unwrap();
+
+        assert_eq!(part.function_call.name, "test_function");
+        assert_eq!(part.thought_signature, None);
+    }
+
+    #[test]
+    fn test_function_call_part_round_trip() {
+        let original = FunctionCallPart {
+            function_call: FunctionCall {
+                name: "test_function".to_string(),
+                args: json!({"arg": "value", "nested": {"key": "val"}}),
+            },
+            thought_signature: Some("round_trip_signature".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&original).unwrap();
+        let deserialized: FunctionCallPart = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(deserialized.function_call.name, original.function_call.name);
+        assert_eq!(deserialized.function_call.args, original.function_call.args);
+        assert_eq!(deserialized.thought_signature, original.thought_signature);
+    }
+
+    #[test]
+    fn test_function_call_part_with_empty_signature_serializes() {
+        let part = FunctionCallPart {
+            function_call: FunctionCall {
+                name: "test_function".to_string(),
+                args: json!({"arg": "value"}),
+            },
+            thought_signature: Some("".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&part).unwrap();
+
+        // Empty string should still be serialized (normalization happens at a higher level)
+        assert_eq!(serialized["thoughtSignature"], "");
     }
 }

@@ -476,6 +476,9 @@
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
 
+      "n": "vim::HelixSelectNext",
+      "shift-n": "vim::HelixSelectPrevious",
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",

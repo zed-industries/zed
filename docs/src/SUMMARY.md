@@ -126,6 +126,7 @@
 - [Markdown](./languages/markdown.md)
 - [Nim](./languages/nim.md)
 - [OCaml](./languages/ocaml.md)
+- [OpenTofu](./languages/opentofu.md)
 - [PHP](./languages/php.md)
 - [PowerShell](./languages/powershell.md)
 - [Prisma](./languages/prisma.md)

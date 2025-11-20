@@ -1002,7 +1002,7 @@ fn register_actions(
         .register_action(open_project_debug_tasks_file)
         .register_action(
             |workspace: &mut Workspace,
-             _: &project_panel::ToggleFocus,
+             _: &zed_actions::project_panel::ToggleFocus,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -1918,53 +1918,67 @@ fn open_telemetry_log_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
-        let app_state = workspace.app_state().clone();
-        cx.spawn_in(window, async move |workspace, cx| {
-            async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                let path = client::telemetry::Telemetry::log_file_path();
-                app_state.fs.load(&path).await.log_err()
-            }
+    const HEADER: &str = concat!(
+        "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
+        "// Telemetry can be disabled via the `settings.json` file.\n",
+        "// Here is the data that has been reported for the current session:\n",
+    );
+    workspace
+        .with_local_workspace(window, cx, move |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            cx.spawn_in(window, async move |workspace, cx| {
+                async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
+                    let path = client::telemetry::Telemetry::log_file_path();
+                    app_state.fs.load(&path).await.log_err()
+                }
 
-            let log = fetch_log_string(&app_state).await.unwrap_or_else(|| "// No data has been collected yet".to_string());
+                let log = fetch_log_string(&app_state)
+                    .await
+                    .unwrap_or_else(|| "// No data has been collected yet".to_string());
 
-            const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
-            let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
-            if let Some(newline_offset) = log[start_offset..].find('\n') {
-                start_offset += newline_offset + 1;
-            }
-            let log_suffix = &log[start_offset..];
-            let header = concat!(
-                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-                "// Telemetry can be disabled via the `settings.json` file.\n",
-                "// Here is the data that has been reported for the current session:\n",
-            );
-            let content = format!("{}\n{}", header, log_suffix);
-            let json = app_state.languages.language_for_name("JSON").await.log_err();
+                const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
+                let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
+                if let Some(newline_offset) = log[start_offset..].find('\n') {
+                    start_offset += newline_offset + 1;
+                }
+                let log_suffix = &log[start_offset..];
+                let content = format!("{}\n{}", HEADER, log_suffix);
+                let json = app_state
+                    .languages
+                    .language_for_name("JSON")
+                    .await
+                    .log_err();
 
-            workspace.update_in( cx, |workspace, window, cx| {
-                let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json,false, cx));
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
-                });
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor = Editor::for_multibuffer(buffer, Some(project), window, cx);
-                        editor.set_read_only(true);
-                        editor.set_breadcrumb_header("Telemetry Log".into());
-                        editor
-                    })),
-                    None,
-                    true,
-                    window, cx,
-                );
-            }).log_err()?;
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer(&content, json, false, cx)
+                        });
+                        let buffer = cx.new(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
+                        });
+                        workspace.add_item_to_active_pane(
+                            Box::new(cx.new(|cx| {
+                                let mut editor =
+                                    Editor::for_multibuffer(buffer, Some(project), window, cx);
+                                editor.set_read_only(true);
+                                editor.set_breadcrumb_header("Telemetry Log".into());
+                                editor
+                            })),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err()?;
 
-            Some(())
+                Some(())
+            })
+            .detach();
         })
         .detach();
-    }).detach();
 }
 
 fn open_bundled_file(
@@ -2227,7 +2241,9 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
+    use editor::{
+        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
+    };
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
@@ -3494,7 +3510,11 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "untitled");
                     assert!(Arc::ptr_eq(
-                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap(),
                         &languages::PLAIN_TEXT
                     ));
                     editor.handle_input("hi", window, cx);
@@ -3528,7 +3548,12 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap()
+                            .name(),
                         "Rust".into()
                     );
                 });
@@ -3634,7 +3659,11 @@ mod tests {
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(Arc::ptr_eq(
-                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap(),
                         &languages::PLAIN_TEXT
                     ));
                     editor.handle_input("hi", window, cx);
@@ -3658,7 +3687,12 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap()
+                            .name(),
                         "Rust".into()
                     )
                 });
@@ -4640,132 +4674,6 @@ mod tests {
         cx.update(|cx| {
             // Make sure it doesn't panic.
             KeymapFile::generate_json_schema_for_registered_actions(cx);
-        });
-    }
-
-    /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
-    /// and let you know when introducing a new namespace.
-    #[gpui::test]
-    async fn test_action_namespaces(cx: &mut gpui::TestAppContext) {
-        use itertools::Itertools;
-
-        init_keymap_test(cx);
-        cx.update(|cx| {
-            let all_actions = cx.all_action_names();
-
-            let mut actions_without_namespace = Vec::new();
-            let all_namespaces = all_actions
-                .iter()
-                .filter_map(|action_name| {
-                    let namespace = action_name
-                        .split("::")
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .skip(1)
-                        .rev()
-                        .join("::");
-                    if namespace.is_empty() {
-                        actions_without_namespace.push(*action_name);
-                    }
-                    if &namespace == "test_only" || &namespace == "stories" {
-                        None
-                    } else {
-                        Some(namespace)
-                    }
-                })
-                .sorted()
-                .dedup()
-                .collect::<Vec<_>>();
-            assert_eq!(actions_without_namespace, Vec::<&str>::new());
-
-            let expected_namespaces = vec![
-                "action",
-                "activity_indicator",
-                "agent",
-                #[cfg(not(target_os = "macos"))]
-                "app_menu",
-                "assistant",
-                "assistant2",
-                "auto_update",
-                "branches",
-                "buffer_search",
-                "channel_modal",
-                "cli",
-                "client",
-                "collab",
-                "collab_panel",
-                "command_palette",
-                "console",
-                "context_server",
-                "copilot",
-                "debug_panel",
-                "debugger",
-                "dev",
-                "diagnostics",
-                "edit_prediction",
-                "editor",
-                "feedback",
-                "file_finder",
-                "git",
-                "git_onboarding",
-                "git_panel",
-                "go_to_line",
-                "icon_theme_selector",
-                "journal",
-                "keymap_editor",
-                "keystroke_input",
-                "language_selector",
-                "line_ending_selector",
-                "lsp_tool",
-                "markdown",
-                "menu",
-                "notebook",
-                "notification_panel",
-                "onboarding",
-                "outline",
-                "outline_panel",
-                "pane",
-                "panel",
-                "picker",
-                "project_panel",
-                "project_search",
-                "project_symbols",
-                "projects",
-                "repl",
-                "rules_library",
-                "search",
-                "settings_editor",
-                "settings_profile_selector",
-                "snippets",
-                "stash_picker",
-                "supermaven",
-                "svg",
-                "syntax_tree_view",
-                "tab_switcher",
-                "task",
-                "terminal",
-                "terminal_panel",
-                "theme_selector",
-                "toast",
-                "toolchain",
-                "variable_list",
-                "vim",
-                "window",
-                "workspace",
-                "zed",
-                "zed_actions",
-                "zed_predict_onboarding",
-                "zeta",
-            ];
-            assert_eq!(
-                all_namespaces,
-                expected_namespaces
-                    .into_iter()
-                    .map(|namespace| namespace.to_string())
-                    .sorted()
-                    .collect::<Vec<_>>()
-            );
         });
     }
 

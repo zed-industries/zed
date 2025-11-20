@@ -13,7 +13,8 @@ use anyhow::{Context as _, anyhow};
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    Direction, Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks,
+    Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
+    actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
@@ -389,6 +390,7 @@ impl GitPanel {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
                     this.entries.clear();
+                    this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = is_sort_by_path
@@ -1580,7 +1582,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let git_commit_language = self.commit_editor.read(cx).language_at(0, cx);
+        let git_commit_language = self
+            .commit_editor
+            .read(cx)
+            .language_at(MultiBufferOffset(0), cx);
         let message = self.commit_editor.read(cx).text(cx);
         if message.is_empty() {
             return self
@@ -2743,14 +2748,8 @@ impl GitPanel {
                         self.single_staged_entry = single_staged_entry;
                     }
                 }
-            } else if repo
-                .pending_ops_by_path
-                .summary()
-                .item_summary
-                .staging_count
-                == 1
-            {
-                self.single_staged_entry = repo.pending_ops_by_path.iter().find_map(|ops| {
+            } else if repo.pending_ops_summary().item_summary.staging_count == 1 {
+                self.single_staged_entry = repo.pending_ops().find_map(|ops| {
                     if ops.staging() {
                         repo.status_for_path(&ops.repo_path)
                             .map(|status| GitStatusEntry {

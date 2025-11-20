@@ -1,6 +1,7 @@
 use crate::{Editor, RangeToAnchorExt};
 use gpui::{Context, HighlightStyle, Window};
 use language::CursorShape;
+use multi_buffer::MultiBufferOffset;
 use theme::ActiveTheme;
 
 enum MatchingBracketHighlight {}
@@ -15,7 +16,7 @@ impl Editor {
 
         let snapshot = self.snapshot(window, cx);
         let buffer_snapshot = snapshot.buffer_snapshot();
-        let newest_selection = self.selections.newest::<usize>(&snapshot);
+        let newest_selection = self.selections.newest::<MultiBufferOffset>(&snapshot);
         // Don't highlight brackets if the selection isn't empty
         if !newest_selection.is_empty() {
             return;

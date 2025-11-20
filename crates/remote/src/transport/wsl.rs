@@ -92,7 +92,7 @@ impl WslRemoteConnection {
             .detect_platform()
             .await
             .context("failed detecting platform")?;
-        log::info!("Remote platform discovered: {}", this.shell);
+        log::info!("Remote platform discovered: {:?}", this.platform);
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
                 .await

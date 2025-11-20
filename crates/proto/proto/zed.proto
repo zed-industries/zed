@@ -410,7 +410,6 @@ message Envelope {
         AgentServerCommand agent_server_command = 374;
 
         ExternalAgentsUpdated external_agents_updated = 375;
-
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
         NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
@@ -436,7 +435,9 @@ message Envelope {
 
         OpenImageByPath open_image_by_path = 391;
         OpenImageResponse open_image_response = 392;
-        CreateImageForPeer create_image_for_peer = 393; // current max
+        CreateImageForPeer create_image_for_peer = 393;
+
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 394; // current max
     }
 
     reserved 87 to 88;

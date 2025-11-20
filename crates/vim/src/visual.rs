@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
-    Bias, DisplayPoint, Editor, SelectionEffects,
+    Bias, DisplayPoint, Editor, MultiBufferOffset, SelectionEffects,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
@@ -778,7 +778,7 @@ impl Vim {
                     {
                         let range = row_range.start.to_offset(&display_map, Bias::Right)
                             ..row_range.end.to_offset(&display_map, Bias::Right);
-                        let text = text.repeat(range.len());
+                        let text = text.repeat(range.end - range.start);
                         edits.push((range, text));
                     }
                 }
@@ -844,9 +844,12 @@ impl Vim {
             return;
         };
         let vim_is_normal = self.mode == Mode::Normal;
-        let mut start_selection = 0usize;
-        let mut end_selection = 0usize;
+        let mut start_selection = MultiBufferOffset(0);
+        let mut end_selection = MultiBufferOffset(0);
 
+        self.update_editor(cx, |_, editor, _| {
+            editor.set_collapse_matches(false);
+        });
         if vim_is_normal {
             pane.update(cx, |pane, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
@@ -857,7 +860,7 @@ impl Vim {
                         }
                         // without update_match_index there is a bug when the cursor is before the first match
                         search_bar.update_match_index(window, cx);
-                        search_bar.select_match(direction.opposite(), 1, false, window, cx);
+                        search_bar.select_match(direction.opposite(), 1, window, cx);
                     });
                 }
             });
@@ -865,7 +868,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let latest = editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx));
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             start_selection = latest.start;
             end_selection = latest.end;
         });
@@ -875,7 +878,7 @@ impl Vim {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.update_match_index(window, cx);
-                    search_bar.select_match(direction, count, false, window, cx);
+                    search_bar.select_match(direction, count, window, cx);
                     match_exists = search_bar.match_exists(window, cx);
                 });
             }
@@ -888,7 +891,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let latest = editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx));
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             if vim_is_normal {
                 start_selection = latest.start;
                 end_selection = latest.end;
@@ -902,6 +905,7 @@ impl Vim {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([start_selection..end_selection]);
             });
+            editor.set_collapse_matches(true);
         });
 
         match self.maybe_pop_operator() {
