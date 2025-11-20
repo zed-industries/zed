@@ -314,7 +314,7 @@ impl FileHistoryView {
                 }
             }))
             .child(
-                div().flex_none().min_w(rems(4.5)).child(
+                div().flex_none().min_w(rems(4.0)).child(
                     div()
                         .px(rems(0.5))
                         .py(rems(0.25))
@@ -356,7 +356,7 @@ impl FileHistoryView {
                 ),
             )
             .child(
-                div().flex_none().w(rems(9.0)).child(
+                div().flex_none().child(
                     Label::new(relative_timestamp)
                         .size(LabelSize::Small)
                         .color(Color::Muted)
@@ -409,6 +409,7 @@ impl Asset for CommitAvatarAsset {
             {
                 Ok(Some(url)) => Some(SharedString::from(url.to_string())),
                 Ok(None) => None,
+                Err(_) => None,
             }
         }
     }

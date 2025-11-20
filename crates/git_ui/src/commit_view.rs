@@ -623,8 +623,8 @@ impl Asset for CommitAvatarAsset {
             {
                 Ok(Some(url)) => Some(SharedString::from(url.to_string())),
                 Ok(None) => None,
-                // TODO: Handle errors appropriately
-                Err(e) => None,
+                Err(_) => None,
+            }
         }
     }
 }
