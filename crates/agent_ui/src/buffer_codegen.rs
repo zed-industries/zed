@@ -15,7 +15,7 @@ use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Ta
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role, report_assistant_event,
+    LanguageModelTextStream, MessageContent, Role, report_assistant_event,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -719,6 +719,7 @@ impl CodegenAlternative {
                             output_tokens = usage.output_tokens,
                         )
                     }
+
                     cx.emit(CodegenEvent::Finished);
                     cx.notify();
                 })
