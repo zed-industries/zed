@@ -29,6 +29,7 @@ http_client.workspace = true
 icons.workspace = true
 image.workspace = true
 log.workspace = true
+open_ai = { workspace = true, features = ["schemars"] }
 open_router.workspace = true
 parking_lot.workspace = true
 proto.workspace = true

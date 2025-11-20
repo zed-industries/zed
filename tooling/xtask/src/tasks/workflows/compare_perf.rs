@@ -35,8 +35,8 @@ pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
         ))
     }
 
-    fn install_hyperfine() -> Step<Run> {
-        named::bash("cargo install hyperfine")
+    fn install_hyperfine() -> Step<Use> {
+        named::uses("taiki-e", "install-action", "hyperfine")
     }
 
     fn compare_runs(head: &Input, base: &Input) -> Step<Run> {

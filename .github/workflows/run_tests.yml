@@ -15,7 +15,7 @@ on:
     - v[0-9]+.[0-9]+.x
 jobs:
   orchestrate:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -59,7 +59,7 @@ jobs:
       run_nix: ${{ steps.filter.outputs.run_nix }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -113,9 +113,6 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -164,8 +161,7 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
@@ -199,9 +195,6 @@ jobs:
         node-version: '20'
     - name: steps::clippy
       run: ./script/clippy
-      shell: bash -euxo pipefail {0}
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
@@ -500,7 +493,10 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      GIT_AUTHOR_NAME: Protobuf Action
+      GIT_AUTHOR_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -545,7 +541,7 @@ jobs:
     - check_scripts
     - build_nix_linux_x86_64
     - build_nix_mac_aarch64
-    if: github.repository_owner == 'zed-industries' && always()
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass

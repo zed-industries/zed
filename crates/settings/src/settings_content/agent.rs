@@ -332,6 +332,12 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
+    /// The default model to use for this agent.
+    ///
+    /// This should be the model ID as reported by the agent.
+    ///
+    /// Default: None
+    pub default_model: Option<String>,
 }
 
 #[skip_serializing_none]
@@ -348,4 +354,10 @@ pub struct CustomAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
+    /// The default model to use for this agent.
+    ///
+    /// This should be the model ID as reported by the agent.
+    ///
+    /// Default: None
+    pub default_model: Option<String>,
 }

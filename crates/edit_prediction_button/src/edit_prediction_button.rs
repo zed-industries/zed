@@ -3,7 +3,9 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralCompletionProvider;
 use copilot::{Copilot, Status};
-use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
+use editor::{
+    Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
+};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
@@ -18,7 +20,9 @@ use language::{
 };
 use project::DisableAiSettings;
 use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{
+    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
+};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
@@ -34,6 +38,7 @@ use workspace::{
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
+use zeta2::SweepFeatureFlag;
 
 actions!(
     edit_prediction,
@@ -43,7 +48,8 @@ actions!(
     ]
 );
 
-const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
+const COPILOT_SETTINGS_PATH: &str = "/settings/copilot";
+const COPILOT_SETTINGS_URL: &str = concat!("https://github.com", "/settings/copilot");
 const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
@@ -77,7 +83,7 @@ impl Render for EditPredictionButton {
 
         let all_language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.edit_predictions.provider {
+        match &all_language_settings.edit_predictions.provider {
             EditPredictionProvider::None => div().hidden(),
 
             EditPredictionProvider::Copilot => {
@@ -295,6 +301,15 @@ impl Render for EditPredictionButton {
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
+            }
+            EditPredictionProvider::Experimental(provider_name) => {
+                if *provider_name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                    && cx.has_flag::<SweepFeatureFlag>()
+                {
+                    div().child(Icon::new(IconName::SweepAi))
+                } else {
+                    div()
+                }
             }
 
             EditPredictionProvider::Zed => {
@@ -524,7 +539,7 @@ impl EditPredictionButton {
                             set_completion_provider(fs.clone(), cx, provider);
                         })
                     }
-                    EditPredictionProvider::None => continue,
+                    EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => continue,
                 };
             }
         }
@@ -836,6 +851,16 @@ impl EditPredictionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
+        let all_language_settings = all_language_settings(None, cx);
+        let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
+            enterprise_uri: all_language_settings
+                .edit_predictions
+                .copilot
+                .enterprise_uri
+                .clone(),
+        };
+        let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
+
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
@@ -844,10 +869,7 @@ impl EditPredictionButton {
             menu.separator()
                 .link(
                     "Go to Copilot Settings",
-                    OpenBrowser {
-                        url: COPILOT_SETTINGS_URL.to_string(),
-                    }
-                    .boxed_clone(),
+                    OpenBrowser { url: settings_url }.boxed_clone(),
                 )
                 .action("Sign Out", copilot::SignOut.boxed_clone())
         })
@@ -1087,7 +1109,12 @@ async fn open_disabled_globs_setting_in_editor(
             });
 
             if !edits.is_empty() {
-                item.edit(edits, cx);
+                item.edit(
+                    edits
+                        .into_iter()
+                        .map(|(r, s)| (MultiBufferOffset(r.start)..MultiBufferOffset(r.end), s)),
+                    cx,
+                );
             }
 
             let text = item.buffer().read(cx).snapshot(cx).text();
@@ -1102,6 +1129,7 @@ async fn open_disabled_globs_setting_in_editor(
                     .map(|inner_match| inner_match.start()..inner_match.end())
             });
             if let Some(range) = range {
+                let range = MultiBufferOffset(range.start)..MultiBufferOffset(range.end);
                 item.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
                     window,
@@ -1174,5 +1202,101 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                     });
             }
         });
+    }
+}
+
+fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
+    match enterprise_uri {
+        Some(uri) => {
+            format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH)
+        }
+        None => COPILOT_SETTINGS_URL.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_copilot_settings_url_with_enterprise_uri(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_user_settings(
+                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com"}}}"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let url = cx.update(|cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            )
+        });
+
+        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    async fn test_copilot_settings_url_with_enterprise_uri_trailing_slash(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_user_settings(
+                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com/"}}}"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let url = cx.update(|cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            )
+        });
+
+        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    async fn test_copilot_settings_url_without_enterprise_uri(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let url = cx.update(|cx| {
+            let all_language_settings = all_language_settings(None, cx);
+            copilot_settings_url(
+                all_language_settings
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .as_deref(),
+            )
+        });
+
+        assert_eq!(url, "https://github.com/settings/copilot");
     }
 }
