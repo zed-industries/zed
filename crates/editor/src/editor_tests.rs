@@ -17588,12 +17588,12 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
     // When outside a bracket and inside, favor jumping to the inside bracket
     assert(
         "console.log('foo', [1, 2, 3]ˇ);",
-        "console.log(ˇ'foo', [1, 2, 3]);",
+        "console.log('foo', ˇ[1, 2, 3]);",
         &mut cx,
     );
     assert(
         "console.log(ˇ'foo', [1, 2, 3]);",
-        "console.log('foo', [1, 2, 3]ˇ);",
+        "console.log('foo'ˇ, [1, 2, 3]);",
         &mut cx,
     );
 
