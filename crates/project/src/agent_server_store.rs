@@ -1777,6 +1777,7 @@ pub struct BuiltinAgentServerSettings {
     pub env: Option<HashMap<String, String>>,
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
+    pub default_model: Option<String>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1799,6 +1800,7 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             env: value.env,
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
+            default_model: value.default_model,
         }
     }
 }
@@ -1823,6 +1825,12 @@ pub struct CustomAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
+    /// The default model to use for this agent.
+    ///
+    /// This should be the model ID as reported by the agent.
+    ///
+    /// Default: None
+    pub default_model: Option<String>,
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1834,6 +1842,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 env: value.env,
             },
             default_mode: value.default_mode,
+            default_model: value.default_model,
         }
     }
 }
@@ -2156,6 +2165,7 @@ mod extension_agent_tests {
             env: None,
             ignore_system_version: None,
             default_mode: None,
+            default_model: None,
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2171,6 +2181,7 @@ mod extension_agent_tests {
             args: vec!["serve".into()],
             env: None,
             default_mode: None,
+            default_model: None,
         };
 
         let CustomAgentServerSettings {
