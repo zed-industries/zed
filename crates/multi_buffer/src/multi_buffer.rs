@@ -143,10 +143,20 @@ pub struct MultiBufferDiffHunk {
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
     /// The word diffs for this hunk.
-    pub base_word_diffs: Vec<Range<usize>>,
+    pub word_diffs: Vec<Range<usize>>,
     /// The word diffs for this hunk.
     pub buffer_word_diffs: Vec<Range<text::Anchor>>,
 }
+
+// - make base_word_diffs and buffer_word_diffs be Range<usize>, which are absolute multibuffer offsets
+
+// todo! Do i want this around?
+// impl MultiBufferDiffHunk {
+//     fn anchor_in_deleted_text(&self, offset_from_start_of_deletion: usize, base_text: &BufferSnapshot) -> Anchor {
+//         let diff_base_anchor = self.
+//         self.multi_buffer_range().start.with_diff_base_anchor(diff_base_anchor)
+//     }
+// }
 
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
@@ -3213,12 +3223,36 @@ impl MultiBufferSnapshot {
             } else {
                 range.end.row + 1
             };
+
+            // todo! We only need to get this information if word_diffs is not empty
+            // maybe we could also pass up if the hunk is expanded or not?
+            let hunk_start_offset = ToOffset::to_offset(&range.start, self);
+            let diff_base_offset = hunk.diff_base_byte_range.len();
+            let buffer = &excerpt.buffer;
+            let hunk_buffer_start_offset = hunk.buffer_range.start.to_offset(buffer);
+
+            let base_word_diffs_absolute: Vec<Range<usize>> = hunk
+                .base_word_diffs
+                .iter()
+                .map(|diff| diff.start + hunk_start_offset..diff.end + hunk_start_offset)
+                .chain(hunk.buffer_word_diffs.iter().map(|diff| {
+                    let range = diff.to_offset(buffer);
+                    let start = range.start.saturating_sub(hunk_buffer_start_offset)
+                        + hunk_start_offset
+                        + diff_base_offset;
+                    let end = range.end.saturating_sub(hunk_buffer_start_offset)
+                        + hunk_start_offset
+                        + diff_base_offset;
+                    start..end
+                }))
+                .collect();
+
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
-                base_word_diffs: hunk.base_word_diffs.clone(),
+                word_diffs: base_word_diffs_absolute,
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
@@ -6832,7 +6866,7 @@ impl Iterator for MultiBufferRows<'_> {
         let line_start = ToOffset::to_offset(&Point::new(self.point.row, 0), &self.snapshot);
         let line_end = ToOffset::to_offset(&(Point::new(1, 0) + self.point), &self.snapshot);
 
-        let offset = ToOffset::to_offset(&region.range.start, self.snapshot);
+        let region_start_offset = ToOffset::to_offset(&region.range.start, self.snapshot);
 
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
@@ -6841,8 +6875,8 @@ impl Iterator for MultiBufferRows<'_> {
             word_diffs: region
                 .word_diffs
                 .iter()
-                .map(|diff| diff.start + offset..diff.end + offset)
-                .filter(|diff| (diff.start >= line_start && diff.end < line_end) || true)
+                .map(|diff| diff.start + region_start_offset..diff.end + region_start_offset)
+                .filter(|diff| diff.start >= line_start && diff.end < line_end)
                 .collect(), //todo!
             diff_status: region
                 .diff_hunk_status

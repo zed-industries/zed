@@ -3969,3 +3969,166 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
         }
     }
 }
+
+#[gpui::test(iterations = 10)]
+async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng) {
+    log::info!("Starting word diff test iteration");
+    // Generate random base text with words and lines
+    let word_count = rng.random_range(5..30);
+    let mut base_text = String::new();
+    let mut words = Vec::new();
+
+    for i in 0..word_count {
+        let word: String = (0..rng.random_range(3..10))
+            .map(|_| rng.random_range(b'a'..=b'z') as char)
+            .collect();
+        words.push(word.clone());
+        base_text.push_str(&word);
+
+        // Randomly add newlines or spaces
+        if i < word_count - 1 {
+            if rng.random_range(0..100) < 30 {
+                base_text.push('\n');
+            } else {
+                base_text.push(' ');
+            }
+        }
+    }
+
+    log::info!("Base text: {:?}", base_text);
+
+    let mut modified_text = base_text.clone();
+    let mut expected_total_word_diff_count = 0;
+    let mutation_count = rng.random_range(1..word_count.min(5));
+
+    for _ in 0..mutation_count {
+        if words.is_empty() {
+            break;
+        }
+
+        let word_idx = rng.random_range(0..words.len());
+        let word = &words[word_idx];
+
+        if let Some(word_pos) = modified_text.find(word) {
+            let action = rng.random_range(0..100);
+
+            if action < 70 {
+                let new_word: String = (0..rng.random_range(3..10))
+                    .map(|_| rng.random_range(b'A'..=b'Z') as char)
+                    .collect();
+
+                expected_total_word_diff_count += 2;
+                modified_text.replace_range(word_pos..word_pos + word.len(), &new_word);
+            } else {
+                let end = word_pos + word.len();
+                let delete_end = if modified_text.as_bytes().get(end) == Some(&b' ') {
+                    end + 1
+                } else {
+                    end
+                };
+                expected_total_word_diff_count += 1;
+                modified_text.replace_range(word_pos..delete_end, "");
+            }
+
+            // Remove this word from the list so we don't try to mutate it again
+            words.remove(word_idx);
+        }
+    }
+
+    log::info!("Base text: {:?}", base_text);
+    log::info!("Modified text: {:?}", modified_text);
+
+    let buffer = cx.new(|cx| Buffer::local(&modified_text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer
+    });
+
+    // todo! Make another assertion at the end of this test that there's no word diffs
+    // when all diff hanks are not expanded
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let text = snapshot.text();
+    let row_infos: Vec<_> = snapshot.row_infos(MultiBufferRow(0)).collect();
+
+    log::info!("Expanded multibuffer text:\n{}", text);
+
+    let mut found_word_diffs = false;
+    let mut actual_total_word_diff_count = 0;
+
+    for (row_idx, row_info) in row_infos.iter().enumerate() {
+        let multibuffer_row = row_info.multibuffer_row.unwrap();
+
+        let line_start = snapshot.point_to_offset(Point::new(multibuffer_row.0, 0));
+        let line_end = if multibuffer_row.0 + 1 < snapshot.max_point().row {
+            snapshot.point_to_offset(Point::new(multibuffer_row.0 + 1, 0))
+        } else {
+            snapshot.len()
+        };
+
+        if !row_info.word_diffs.is_empty() {
+            found_word_diffs = true;
+            dbg!(
+                snapshot
+                    .chunks(line_start..line_end, false)
+                    .map(|chunk| chunk.text)
+                    .collect::<String>(),
+                &row_info.word_diffs,
+            );
+            actual_total_word_diff_count += row_info.word_diffs.len();
+
+            // Word diffs should only appear on rows with diff status (added or modified)
+            assert!(
+                row_info.diff_status.is_some(),
+                "Row {} has word_diffs but no diff_status",
+                row_idx
+            );
+
+            // Verify all word_diffs are valid ranges within text bounds
+            // Note: Word diffs are currently hunk-level, not line-level, so they may
+            // extend beyond the current line's boundaries
+            // todo! make a hash set of base text words that have been changed or deleted
+            // and of modified words
+            // then removed all
+            for word_diff in &row_info.word_diffs {
+                // Word diff should be non-empty
+                assert!(
+                    word_diff.start < word_diff.end,
+                    "Word diff is empty on row {}",
+                    row_idx
+                );
+
+                // Verify the word diff is within the text bounds
+                assert!(
+                    word_diff.end <= text.len(),
+                    "Word diff end {} exceeds text length {} on row {}",
+                    word_diff.end,
+                    text.len(),
+                    row_idx
+                );
+
+                // Verify the word diff points to actual text content
+                let word_diff_text = &text[word_diff.clone()];
+                assert!(
+                    !word_diff_text.is_empty(),
+                    "Word diff at {:?} points to empty text on row {}",
+                    word_diff,
+                    row_idx
+                );
+            }
+        }
+    }
+
+    assert!(
+        found_word_diffs,
+        "Expected to find word_diffs after expanding hunks with mutations"
+    );
+    assert_eq!(actual_total_word_diff_count, expected_total_word_diff_count);
+}

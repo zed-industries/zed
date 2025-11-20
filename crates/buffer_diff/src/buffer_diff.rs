@@ -89,7 +89,7 @@ pub struct DiffHunk {
 struct InternalDiffHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
-    base_word_diffs: Vec<Range<usize>>, // TODO maybe opt: smallvec?
+    base_word_diffs: Vec<Range<usize>>, // todo!: maybe opt: smallvec?
     buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
@@ -903,9 +903,11 @@ fn process_patch_hunk(
             let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
             let diff = similar::TextDiff::configure()
-                .algorithm(similar::Algorithm::Patience)
-                .diff_words(&base_text, &buffer_text);
+                .algorithm(similar::Algorithm::Myers)
+                .diff_chars(&base_text, &buffer_text);
 
+            // todo! make sure ranges in in these vecs don't overlap and are merged
+            // can do so by popping the last element and merging it with the next element
             let mut base_word_diffs = Vec::default();
             let mut buffer_word_diffs = Vec::default();
 
@@ -922,14 +924,23 @@ fn process_patch_hunk(
                         base_offset += change_offset;
                     }
                     similar::ChangeTag::Insert => {
+                        if change.value().trim().is_empty() {
+                            buffer_offset += change_offset;
+                            continue;
+                        }
+
                         let start = buffer.anchor_before(buffer_offset);
                         buffer_offset += change_offset;
                         let end = buffer.anchor_after(buffer_offset);
+
                         buffer_word_diffs.push(start..end);
                     }
                     similar::ChangeTag::Delete => {
-                        base_word_diffs.push(base_offset..base_offset + change_offset);
                         base_offset += change_offset;
+
+                        if !change.value().trim().is_empty() {
+                            base_word_diffs.push(base_offset - change_offset..base_offset);
+                        }
                     }
                 }
             }

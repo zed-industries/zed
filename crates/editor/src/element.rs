@@ -5333,6 +5333,48 @@ impl EditorElement {
         }
     }
 
+    fn layout_word_diff_highlights(
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        row_infos: &[RowInfo],
+        start_row: DisplayRow,
+        snapshot: &EditorSnapshot,
+        highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
+        cx: &mut App,
+    ) {
+        for (hunk, _) in display_hunks {
+            if let DisplayDiffHunk::Unfolded { word_diffs, .. } = hunk {
+                for word_diff in word_diffs {
+                    let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
+                    let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
+
+                    let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
+
+                    if start_row_offset < row_infos.len() {
+                        if let Some(row_info) = row_infos.get(start_row_offset) {
+                            if let Some(diff_status) = row_info.diff_status {
+                                let background_color = match diff_status.kind {
+                                    DiffHunkStatusKind::Added => {
+                                        cx.theme().colors().version_control_added
+                                    }
+                                    DiffHunkStatusKind::Deleted => {
+                                        cx.theme().colors().version_control_deleted
+                                    }
+                                    DiffHunkStatusKind::Modified => {
+                                        debug_panic!("modified diff status for row info");
+                                        continue;
+                                    }
+                                };
+
+                                highlighted_ranges
+                                    .push((start_point..end_point, background_color.opacity(0.6)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn layout_diff_hunk_controls(
         &self,
         row_range: Range<DisplayRow>,
@@ -8763,11 +8805,12 @@ impl Element for EditorElement {
                             DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
 
                         for word_diff in row_info.word_diffs.clone() {
-                            let start =
-                                (word_diff.start).to_display_point(&snapshot.display_snapshot);
-                            let end = (word_diff.end).to_display_point(&snapshot.display_snapshot);
+                            // todo! remove this
+                            // let start =
+                            //     (word_diff.start).to_display_point(&snapshot.display_snapshot);
+                            // let end = (word_diff.end).to_display_point(&snapshot.display_snapshot);
 
-                            highlighted_ranges.push((start..end, background_color.alpha(0.6)));
+                            // highlighted_ranges.push((start..end, background_color.alpha(0.6)));
                         }
 
                         highlighted_rows
@@ -8936,6 +8979,15 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &snapshot,
                         window,
+                        cx,
+                    );
+
+                    Self::layout_word_diff_highlights(
+                        &display_hunks,
+                        &row_infos,
+                        start_row,
+                        &snapshot,
+                        &mut highlighted_ranges,
                         cx,
                     );
 

@@ -302,6 +302,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
+        word_diffs: Vec<Range<usize>>,
     },
 }
 
@@ -19020,7 +19021,7 @@ impl Editor {
                         buffer_range: hunk.buffer_range,
                         // todo! We might be able to ignore passing in the word diffs here
                         // because they're not going to be used in staged or unstage
-                        base_word_diffs: hunk.base_word_diffs,
+                        base_word_diffs: hunk.word_diffs,
                         buffer_word_diffs: hunk.buffer_word_diffs,
                         diff_base_byte_range: hunk.diff_base_byte_range,
                         secondary_status: hunk.secondary_status,
@@ -23524,9 +23525,11 @@ impl EditorSnapshot {
                         end_row.0 += 1;
                     }
                     let is_created_file = hunk.is_created_file();
+
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range,
+                        word_diffs: hunk.word_diffs,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(
                             hunk.excerpt_id,
