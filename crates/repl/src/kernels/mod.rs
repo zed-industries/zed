@@ -213,6 +213,13 @@ impl From<&Kernel> for KernelStatus {
             Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                 ExecutionState::Idle => KernelStatus::Idle,
                 ExecutionState::Busy => KernelStatus::Busy,
+                ExecutionState::Unknown => KernelStatus::Error,
+                ExecutionState::Starting => KernelStatus::Starting,
+                ExecutionState::Restarting => KernelStatus::Restarting,
+                ExecutionState::Terminating => KernelStatus::ShuttingDown,
+                ExecutionState::AutoRestarting => KernelStatus::Restarting,
+                ExecutionState::Dead => KernelStatus::Error,
+                ExecutionState::Other(_) => KernelStatus::Error,
             },
             Kernel::StartingKernel(_) => KernelStatus::Starting,
             Kernel::ErroredLaunch(_) => KernelStatus::Error,

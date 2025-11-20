@@ -128,9 +128,11 @@ You can use the following configuration:
   "lsp": {
     "basedpyright": {
       "settings": {
-        "analysis": {
+        "basedpyright.analysis": {
           "diagnosticMode": "workspace",
-          "inlayHints.callArgumentNames": false
+          "inlayHints": {
+            "callArgumentNames": false
+          }
         }
       }
     }

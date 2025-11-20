@@ -49,7 +49,7 @@ pub async fn parse_diff<'a>(
             DiffEvent::FileEnd { renamed_to } => {
                 let (buffer, _) = edited_buffer
                     .take()
-                    .expect("Got a FileEnd event before an Hunk event");
+                    .context("Got a FileEnd event before an Hunk event")?;
 
                 if renamed_to.is_some() {
                     anyhow::bail!("edit predictions cannot rename files");
@@ -133,7 +133,7 @@ pub async fn apply_diff<'a>(
             DiffEvent::FileEnd { renamed_to } => {
                 let (buffer, _) = current_file
                     .take()
-                    .expect("Got a FileEnd event before an Hunk event");
+                    .context("Got a FileEnd event before an Hunk event")?;
 
                 if let Some(renamed_to) = renamed_to {
                     project
@@ -391,10 +391,12 @@ impl<'a> DiffLine<'a> {
                 return Some(Self::HunkHeader(None));
             }
 
-            let (start_line_old, header) = header.strip_prefix('-')?.split_once(',')?;
-            let mut parts = header.split_ascii_whitespace();
-            let count_old = parts.next()?;
-            let (start_line_new, count_new) = parts.next()?.strip_prefix('+')?.split_once(',')?;
+            let mut tokens = header.split_whitespace();
+            let old_range = tokens.next()?.strip_prefix('-')?;
+            let new_range = tokens.next()?.strip_prefix('+')?;
+
+            let (start_line_old, count_old) = old_range.split_once(',').unwrap_or((old_range, "1"));
+            let (start_line_new, count_new) = new_range.split_once(',').unwrap_or((new_range, "1"));
 
             Some(Self::HunkHeader(Some(HunkLocation {
                 start_line_old: start_line_old.parse::<u32>().ok()?.saturating_sub(1),

@@ -16,6 +16,7 @@ use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+use util::command::new_smol_command;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
@@ -321,6 +322,7 @@ fn init_paths() -> anyhow::Result<()> {
         paths::languages_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
         paths::remote_extensions_dir(),
         paths::remote_extensions_uploads_dir(),
     ]
@@ -655,7 +657,7 @@ pub(crate) fn execute_proxy(
 
 async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
-    smol::process::Command::new("kill")
+    new_smol_command("kill")
         .arg(pid.to_string())
         .output()
         .await
@@ -706,7 +708,7 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
-    let mut server_process = smol::process::Command::new(binary_name);
+    let mut server_process = new_smol_command(binary_name);
     server_process
         .arg("run")
         .arg("--log-file")
@@ -771,7 +773,7 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match smol::process::Command::new("kill")
+    match new_smol_command("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()

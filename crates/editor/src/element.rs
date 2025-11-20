@@ -6,10 +6,10 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    OpenExcerptsSplit, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
-    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -74,6 +74,7 @@ use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::Cell,
     cmp::{self, Ordering},
     fmt::{self, Write},
     iter, mem,
@@ -183,6 +184,13 @@ impl SelectionLayout {
             user_name,
         }
     }
+}
+
+#[derive(Default)]
+struct RenderBlocksOutput {
+    blocks: Vec<BlockLayout>,
+    row_block_types: HashMap<DisplayRow, bool>,
+    resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
 
 pub struct EditorElement {
@@ -3664,8 +3672,10 @@ impl EditorElement {
         row_block_types: &mut HashMap<DisplayRow, bool>,
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
+        latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
+        block_resize_offset: &mut i32,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, Size<Pixels>, DisplayRow, Pixels)> {
@@ -3739,7 +3749,13 @@ impl EditorElement {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let result = v_flex().id(block_id).w_full().pr(editor_margins.right);
 
-                let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
+                let jump_data = header_jump_data(
+                    snapshot,
+                    block_row_start,
+                    *height,
+                    first_excerpt,
+                    latest_selection_anchors,
+                );
                 result
                     .child(self.render_buffer_header(
                         first_excerpt,
@@ -3774,7 +3790,13 @@ impl EditorElement {
             Block::BufferHeader { excerpt, height } => {
                 let mut result = v_flex().id(block_id).w_full();
 
-                let jump_data = header_jump_data(snapshot, block_row_start, *height, excerpt);
+                let jump_data = header_jump_data(
+                    snapshot,
+                    block_row_start,
+                    *height,
+                    excerpt,
+                    latest_selection_anchors,
+                );
 
                 if sticky_header_excerpt_id != Some(excerpt.id) {
                     let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
@@ -3807,7 +3829,10 @@ impl EditorElement {
         };
         let mut element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
 
-        let mut row = block_row_start;
+        let effective_row_start = block_row_start.0 as i32 + *block_resize_offset;
+        debug_assert!(effective_row_start >= 0);
+        let mut row = DisplayRow(effective_row_start.max(0) as u32);
+
         let mut x_offset = px(0.);
         let mut is_block = true;
 
@@ -3837,6 +3862,7 @@ impl EditorElement {
                 }
             };
             if element_height_in_lines != block.height() {
+                *block_resize_offset += element_height_in_lines as i32 - block.height() as i32;
                 resized_blocks.insert(custom_block_id, element_height_in_lines);
             }
         }
@@ -4042,24 +4068,17 @@ impl EditorElement {
                                                     )
                                                     .group_hover("", |div| div.underline()),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                     .when_some(parent_path, |then, path| {
                                         then.child(div().child(path).text_color(
@@ -4087,24 +4106,17 @@ impl EditorElement {
                                                         cx,
                                                     )),
                                             )
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |event, window, cx| {
-                                                    if event.modifiers().secondary() {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerptsSplit,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        focus_handle.dispatch_action(
-                                                            &OpenExcerpts,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
+                                            .on_click(window.listener_for(&self.editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
-                                            }),
+                                            })),
                                     )
                                 },
                             )
@@ -4250,11 +4262,12 @@ impl EditorElement {
         line_layouts: &mut [LineWithInvisibles],
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
+        latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(Vec<BlockLayout>, HashMap<DisplayRow, bool>), HashMap<CustomBlockId, u32>> {
+    ) -> RenderBlocksOutput {
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
@@ -4266,6 +4279,7 @@ impl EditorElement {
         let mut blocks = Vec::new();
         let mut resized_blocks = HashMap::default();
         let mut row_block_types = HashMap::default();
+        let mut block_resize_offset: i32 = 0;
 
         for (row, block) in fixed_blocks {
             let block_id = block.id();
@@ -4293,8 +4307,10 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                &mut block_resize_offset,
                 window,
                 cx,
             ) {
@@ -4350,8 +4366,10 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                &mut block_resize_offset,
                 window,
                 cx,
             ) {
@@ -4405,8 +4423,10 @@ impl EditorElement {
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
+                latest_selection_anchors,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
+                &mut block_resize_offset,
                 window,
                 cx,
             ) {
@@ -4426,9 +4446,12 @@ impl EditorElement {
         if resized_blocks.is_empty() {
             *scroll_width =
                 (*scroll_width).max(fixed_block_max_width - editor_margins.gutter.width);
-            Ok((blocks, row_block_types))
-        } else {
-            Err(resized_blocks)
+        }
+
+        RenderBlocksOutput {
+            blocks,
+            row_block_types,
+            resized_blocks: (!resized_blocks.is_empty()).then_some(resized_blocks),
         }
     }
 
@@ -4487,6 +4510,7 @@ impl EditorElement {
         hitbox: &Hitbox,
         selected_buffer_ids: &Vec<BufferId>,
         blocks: &[BlockLayout],
+        latest_selection_anchors: &HashMap<BufferId, Anchor>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -4495,6 +4519,7 @@ impl EditorElement {
             DisplayRow(scroll_position.y as u32),
             FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
             excerpt,
+            latest_selection_anchors,
         );
 
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -7794,18 +7819,52 @@ fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
 }
 
 fn header_jump_data(
+    editor_snapshot: &EditorSnapshot,
+    block_row_start: DisplayRow,
+    height: u32,
+    first_excerpt: &ExcerptInfo,
+    latest_selection_anchors: &HashMap<BufferId, Anchor>,
+) -> JumpData {
+    let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
+        && let Some(range) = editor_snapshot.context_range_for_excerpt(anchor.excerpt_id)
+        && let Some(buffer) = editor_snapshot
+            .buffer_snapshot()
+            .buffer_for_excerpt(anchor.excerpt_id)
+    {
+        JumpTargetInExcerptInput {
+            id: anchor.excerpt_id,
+            buffer,
+            excerpt_start_anchor: range.start,
+            jump_anchor: anchor.text_anchor,
+        }
+    } else {
+        JumpTargetInExcerptInput {
+            id: first_excerpt.id,
+            buffer: &first_excerpt.buffer,
+            excerpt_start_anchor: first_excerpt.range.context.start,
+            jump_anchor: first_excerpt.range.primary.start,
+        }
+    };
+    header_jump_data_inner(editor_snapshot, block_row_start, height, &jump_target)
+}
+
+struct JumpTargetInExcerptInput<'a> {
+    id: ExcerptId,
+    buffer: &'a language::BufferSnapshot,
+    excerpt_start_anchor: text::Anchor,
+    jump_anchor: text::Anchor,
+}
+
+fn header_jump_data_inner(
     snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
-    for_excerpt: &ExcerptInfo,
+    for_excerpt: &JumpTargetInExcerptInput,
 ) -> JumpData {
-    let range = &for_excerpt.range;
     let buffer = &for_excerpt.buffer;
-    let jump_anchor = range.primary.start;
-
-    let excerpt_start = range.context.start;
-    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-    let rows_from_excerpt_start = if jump_anchor == excerpt_start {
+    let jump_position = language::ToPoint::to_point(&for_excerpt.jump_anchor, buffer);
+    let excerpt_start = for_excerpt.excerpt_start_anchor;
+    let rows_from_excerpt_start = if for_excerpt.jump_anchor == excerpt_start {
         0
     } else {
         let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
@@ -7822,7 +7881,7 @@ fn header_jump_data(
 
     JumpData::MultiBufferPoint {
         excerpt_id: for_excerpt.id,
-        anchor: jump_anchor,
+        anchor: for_excerpt.jump_anchor,
         position: jump_position,
         line_offset_from_top,
     }
@@ -8620,7 +8679,7 @@ impl LineWithInvisibles {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
-                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x),
+                            fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
                         );
                     }
                     fragment_start_x = fragment_end_x;
@@ -8733,8 +8792,48 @@ impl EditorElement {
     }
 }
 
+#[derive(Default)]
+pub struct EditorRequestLayoutState {
+    // We use prepaint depth to limit the number of times prepaint is
+    // called recursively. We need this so that we can update stale
+    // data for e.g. block heights in block map.
+    prepaint_depth: Rc<Cell<usize>>,
+}
+
+impl EditorRequestLayoutState {
+    // In ideal conditions we only need one more subsequent prepaint call for resize to take effect.
+    // i.e. MAX_PREPAINT_DEPTH = 2, but since moving blocks inline (place_near), more lines from
+    // below get exposed, and we end up querying blocks for those lines too in subsequent renders.
+    // Setting MAX_PREPAINT_DEPTH = 3, passes all tests. Just to be on the safe side we set it to 5, so
+    // that subsequent shrinking does not lead to incorrect block placing.
+    const MAX_PREPAINT_DEPTH: usize = 5;
+
+    fn increment_prepaint_depth(&self) -> EditorPrepaintGuard {
+        let depth = self.prepaint_depth.get();
+        self.prepaint_depth.set(depth + 1);
+        EditorPrepaintGuard {
+            prepaint_depth: self.prepaint_depth.clone(),
+        }
+    }
+
+    fn can_prepaint(&self) -> bool {
+        self.prepaint_depth.get() < Self::MAX_PREPAINT_DEPTH
+    }
+}
+
+struct EditorPrepaintGuard {
+    prepaint_depth: Rc<Cell<usize>>,
+}
+
+impl Drop for EditorPrepaintGuard {
+    fn drop(&mut self) {
+        let depth = self.prepaint_depth.get();
+        self.prepaint_depth.set(depth.saturating_sub(1));
+    }
+}
+
 impl Element for EditorElement {
-    type RequestLayoutState = ();
+    type RequestLayoutState = EditorRequestLayoutState;
     type PrepaintState = EditorLayout;
 
     fn id(&self) -> Option<ElementId> {
@@ -8751,7 +8850,7 @@ impl Element for EditorElement {
         _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (gpui::LayoutId, ()) {
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             self.editor.update(cx, |editor, cx| {
@@ -8818,7 +8917,7 @@ impl Element for EditorElement {
                     }
                 };
 
-                (layout_id, ())
+                (layout_id, EditorRequestLayoutState::default())
             })
         })
     }
@@ -8828,10 +8927,11 @@ impl Element for EditorElement {
         _: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let _prepaint_depth_guard = request_layout.increment_prepaint_depth();
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
             line_height: Some(self.style.text.line_height),
@@ -9139,15 +9239,18 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let (local_selections, selected_buffer_ids): (
+                    let (local_selections, selected_buffer_ids, latest_selection_anchors): (
                         Vec<Selection<Point>>,
                         Vec<BufferId>,
+                        HashMap<BufferId, Anchor>,
                     ) = self
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
                                 let all_selections =
                                     editor.selections.all::<Point>(&snapshot.display_snapshot);
+                                let all_anchor_selections =
+                                    editor.selections.all_anchors(&snapshot.display_snapshot);
                                 let selected_buffer_ids =
                                     if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
                                         Vec::new()
@@ -9176,10 +9279,31 @@ impl Element for EditorElement {
                                 selections
                                     .extend(editor.selections.pending(&snapshot.display_snapshot));
 
-                                (selections, selected_buffer_ids)
+                                let mut anchors_by_buffer: HashMap<BufferId, (usize, Anchor)> =
+                                    HashMap::default();
+                                for selection in all_anchor_selections.iter() {
+                                    let head = selection.head();
+                                    if let Some(buffer_id) = head.buffer_id {
+                                        anchors_by_buffer
+                                            .entry(buffer_id)
+                                            .and_modify(|(latest_id, latest_anchor)| {
+                                                if selection.id > *latest_id {
+                                                    *latest_id = selection.id;
+                                                    *latest_anchor = head;
+                                                }
+                                            })
+                                            .or_insert((selection.id, head));
+                                    }
+                                }
+                                let latest_selection_anchors = anchors_by_buffer
+                                    .into_iter()
+                                    .map(|(buffer_id, (_, anchor))| (buffer_id, anchor))
+                                    .collect();
+
+                                (selections, selected_buffer_ids, latest_selection_anchors)
                             })
                         })
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| (Vec::new(), Vec::new(), HashMap::default()));
 
                     let (selections, mut active_rows, newest_selection_head) = self
                         .layout_selections(
@@ -9331,7 +9455,20 @@ impl Element for EditorElement {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in
                         // wrapping.
-                        return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
+                        if request_layout.can_prepaint() {
+                            return self.prepaint(
+                                None,
+                                _inspector_id,
+                                bounds,
+                                request_layout,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            debug_panic!(
+                                "skipping recursive prepaint at max depth. renderer widths may be stale."
+                            );
+                        }
                     }
 
                     let longest_line_blame_width = self
@@ -9410,6 +9547,7 @@ impl Element for EditorElement {
                                     &mut line_layouts,
                                     &local_selections,
                                     &selected_buffer_ids,
+                                    &latest_selection_anchors,
                                     is_row_soft_wrapped,
                                     sticky_header_excerpt_id,
                                     window,
@@ -9417,20 +9555,35 @@ impl Element for EditorElement {
                                 )
                             })
                         })
-                        .unwrap_or_else(|| Ok((Vec::default(), HashMap::default())));
-                    let (mut blocks, row_block_types) = match blocks {
-                        Ok(blocks) => blocks,
-                        Err(resized_blocks) => {
-                            self.editor.update(cx, |editor, cx| {
-                                editor.resize_blocks(
-                                    resized_blocks,
-                                    autoscroll_request.map(|(autoscroll, _)| autoscroll),
-                                    cx,
-                                )
-                            });
-                            return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
+                        .unwrap_or_default();
+                    let RenderBlocksOutput {
+                        mut blocks,
+                        row_block_types,
+                        resized_blocks,
+                    } = blocks;
+                    if let Some(resized_blocks) = resized_blocks {
+                        self.editor.update(cx, |editor, cx| {
+                            editor.resize_blocks(
+                                resized_blocks,
+                                autoscroll_request.map(|(autoscroll, _)| autoscroll),
+                                cx,
+                            )
+                        });
+                        if request_layout.can_prepaint() {
+                            return self.prepaint(
+                                None,
+                                _inspector_id,
+                                bounds,
+                                request_layout,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            debug_panic!(
+                                "skipping recursive prepaint at max depth. block layout may be stale."
+                            );
                         }
-                    };
+                    }
 
                     let sticky_buffer_header = sticky_header_excerpt.map(|sticky_header_excerpt| {
                         window.with_element_namespace("blocks", |window| {
@@ -9443,6 +9596,7 @@ impl Element for EditorElement {
                                 &hitbox,
                                 &selected_buffer_ids,
                                 &blocks,
+                                &latest_selection_anchors,
                                 window,
                                 cx,
                             )

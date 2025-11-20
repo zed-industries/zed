@@ -648,6 +648,7 @@ mod tests {
             inlay_map::InlayMap,
         },
     };
+    use multi_buffer::MultiBufferOffset;
     use rand::{Rng, prelude::StdRng};
     use util;
 
@@ -1156,7 +1157,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
-            FoldOffset(0)..fold_snapshot.len(),
+            FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
             false,
             Default::default(),
         );
@@ -1318,7 +1319,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
-            FoldOffset(0)..fold_snapshot.len(),
+            FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
             false,
             Default::default(),
         );
