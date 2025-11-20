@@ -26983,7 +26983,7 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
         .unwrap();
 
     assert_eq!(
-        handle.to_any().entity_type(),
+        handle.to_any_view().entity_type(),
         TypeId::of::<InvalidItemView>()
     );
 }
