@@ -113,6 +113,8 @@ if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n 
     security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
     security default-keychain -s zed.keychain
     security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+    # Calling set-keychain-settings without `-t` disables the auto-lock timeout
+    security set-keychain-settings zed.keychain
     echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
     security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
