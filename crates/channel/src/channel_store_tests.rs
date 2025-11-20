@@ -1,7 +1,7 @@
 use super::*;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use gpui::{App, AppContext as _, Entity, SemanticVersion};
+use gpui::{App, AppContext as _, Entity};
 use http_client::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;
