@@ -104,7 +104,6 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -186,7 +185,6 @@ pub trait SearchableItemHandle: ItemHandle {
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
-        collapse: bool,
         window: &mut Window,
         cx: &mut App,
     );
@@ -279,13 +277,12 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
-        collapse: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.activate_match(index, matches.as_slice(), collapse, window, cx)
+            this.activate_match(index, matches.as_slice(), window, cx)
         });
     }
 
@@ -402,13 +399,13 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
 
 impl From<Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.to_any_view()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.to_any_view()
     }
 }
 

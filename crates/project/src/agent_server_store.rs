@@ -17,7 +17,10 @@ use gpui::{
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
-use rpc::{AnyProtoClient, TypedEnvelope, proto};
+use rpc::{
+    AnyProtoClient, TypedEnvelope,
+    proto::{self, ExternalExtensionAgent},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
@@ -114,6 +117,13 @@ enum AgentServerStoreState {
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
         http_client: Arc<dyn HttpClient>,
+        extension_agents: Vec<(
+            Arc<str>,
+            String,
+            HashMap<String, extension::TargetConfig>,
+            HashMap<String, String>,
+            Option<String>,
+        )>,
         _subscriptions: [Subscription; 1],
     },
     Remote {
@@ -257,20 +267,15 @@ impl AgentServerStore {
         });
 
         // Insert agent servers from extension manifests
-        match &self.state {
+        match &mut self.state {
             AgentServerStoreState::Local {
-                node_runtime,
-                project_environment,
-                fs,
-                http_client,
-                ..
+                extension_agents, ..
             } => {
+                extension_agents.clear();
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
-                        let display = SharedString::from(agent_entry.name.clone());
-
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
-                        if let Some(icon) = &agent_entry.icon {
+                        let icon_path = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
                             // Canonicalize to resolve symlinks (dev extensions are symlinked)
                             let absolute_icon_path = icon_path
@@ -279,30 +284,81 @@ impl AgentServerStore {
                                 .to_string_lossy()
                                 .to_string();
                             self.agent_icons.insert(
-                                ExternalAgentServerName(display.clone()),
-                                SharedString::from(absolute_icon_path),
+                                ExternalAgentServerName(agent_name.clone().into()),
+                                SharedString::from(absolute_icon_path.clone()),
                             );
-                        }
+                            Some(absolute_icon_path)
+                        } else {
+                            None
+                        };
 
-                        // Archive-based launcher (download from URL)
-                        self.external_agents.insert(
-                            ExternalAgentServerName(display),
-                            Box::new(LocalExtensionArchiveAgent {
-                                fs: fs.clone(),
-                                http_client: http_client.clone(),
-                                node_runtime: node_runtime.clone(),
-                                project_environment: project_environment.clone(),
-                                extension_id: Arc::from(ext_id),
-                                agent_id: agent_name.clone(),
-                                targets: agent_entry.targets.clone(),
-                                env: agent_entry.env.clone(),
-                            }) as Box<dyn ExternalAgentServer>,
-                        );
+                        extension_agents.push((
+                            agent_name.clone(),
+                            ext_id.to_owned(),
+                            agent_entry.targets.clone(),
+                            agent_entry.env.clone(),
+                            icon_path,
+                        ));
                     }
                 }
+                self.reregister_agents(cx);
             }
-            _ => {
-                // Only local projects support local extension agents
+            AgentServerStoreState::Remote {
+                project_id,
+                upstream_client,
+            } => {
+                let mut agents = vec![];
+                for (ext_id, manifest) in manifests {
+                    for (agent_name, agent_entry) in &manifest.agent_servers {
+                        // Store absolute icon path if provided, resolving symlinks for dev extensions
+                        let icon = if let Some(icon) = &agent_entry.icon {
+                            let icon_path = extensions_dir.join(ext_id).join(icon);
+                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
+                            let absolute_icon_path = icon_path
+                                .canonicalize()
+                                .unwrap_or(icon_path)
+                                .to_string_lossy()
+                                .to_string();
+
+                            // Store icon locally for remote client
+                            self.agent_icons.insert(
+                                ExternalAgentServerName(agent_name.clone().into()),
+                                SharedString::from(absolute_icon_path.clone()),
+                            );
+
+                            Some(absolute_icon_path)
+                        } else {
+                            None
+                        };
+
+                        agents.push(ExternalExtensionAgent {
+                            name: agent_name.to_string(),
+                            icon_path: icon,
+                            extension_id: ext_id.to_string(),
+                            targets: agent_entry
+                                .targets
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.to_proto()))
+                                .collect(),
+                            env: agent_entry
+                                .env
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                        });
+                    }
+                }
+                upstream_client
+                    .read(cx)
+                    .proto_client()
+                    .send(proto::ExternalExtensionAgentsUpdated {
+                        project_id: *project_id,
+                        agents,
+                    })
+                    .log_err();
+            }
+            AgentServerStoreState::Collab => {
+                // Do nothing
             }
         }
 
@@ -320,6 +376,7 @@ impl AgentServerStore {
     }
 
     pub fn init_headless(session: &AnyProtoClient) {
+        session.add_entity_message_handler(Self::handle_external_extension_agents_updated);
         session.add_entity_request_handler(Self::handle_get_agent_server_command);
     }
 
@@ -354,6 +411,7 @@ impl AgentServerStore {
             downstream_client,
             settings: old_settings,
             http_client,
+            extension_agents,
             ..
         } = &mut self.state
         else {
@@ -411,15 +469,46 @@ impl AgentServerStore {
             }),
         );
         self.external_agents
-            .extend(new_settings.custom.iter().map(|(name, settings)| {
+            .extend(
+                new_settings
+                    .custom
+                    .iter()
+                    .filter_map(|(name, settings)| match settings {
+                        CustomAgentServerSettings::Custom { command, .. } => Some((
+                            ExternalAgentServerName(name.clone()),
+                            Box::new(LocalCustomAgent {
+                                command: command.clone(),
+                                project_environment: project_environment.clone(),
+                            }) as Box<dyn ExternalAgentServer>,
+                        )),
+                        CustomAgentServerSettings::Extension { .. } => None,
+                    }),
+            );
+        self.external_agents.extend(extension_agents.iter().map(
+            |(agent_name, ext_id, targets, env, icon_path)| {
+                let name = ExternalAgentServerName(agent_name.clone().into());
+
+                // Restore icon if present
+                if let Some(icon) = icon_path {
+                    self.agent_icons
+                        .insert(name.clone(), SharedString::from(icon.clone()));
+                }
+
                 (
-                    ExternalAgentServerName(name.clone()),
-                    Box::new(LocalCustomAgent {
-                        command: settings.command.clone(),
+                    name,
+                    Box::new(LocalExtensionArchiveAgent {
+                        fs: fs.clone(),
+                        http_client: http_client.clone(),
+                        node_runtime: node_runtime.clone(),
                         project_environment: project_environment.clone(),
+                        extension_id: Arc::from(&**ext_id),
+                        targets: targets.clone(),
+                        env: env.clone(),
+                        agent_id: agent_name.clone(),
                     }) as Box<dyn ExternalAgentServer>,
                 )
-            }));
+            },
+        ));
 
         *old_settings = Some(new_settings.clone());
 
@@ -463,6 +552,7 @@ impl AgentServerStore {
                 http_client,
                 downstream_client: None,
                 settings: None,
+                extension_agents: vec![],
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
@@ -723,6 +813,55 @@ impl AgentServerStore {
                     )
                 })
                 .collect();
+            cx.emit(AgentServersUpdated);
+            Ok(())
+        })?
+    }
+
+    async fn handle_external_extension_agents_updated(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExternalExtensionAgentsUpdated>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let AgentServerStoreState::Local {
+                extension_agents, ..
+            } = &mut this.state
+            else {
+                panic!(
+                    "handle_external_extension_agents_updated \
+                    should not be called for a non-remote project"
+                );
+            };
+
+            for ExternalExtensionAgent {
+                name,
+                icon_path,
+                extension_id,
+                targets,
+                env,
+            } in envelope.payload.agents
+            {
+                let icon_path_string = icon_path.clone();
+                if let Some(icon_path) = icon_path {
+                    this.agent_icons.insert(
+                        ExternalAgentServerName(name.clone().into()),
+                        icon_path.into(),
+                    );
+                }
+                extension_agents.push((
+                    Arc::from(&*name),
+                    extension_id,
+                    targets
+                        .into_iter()
+                        .map(|(k, v)| (k, extension::TargetConfig::from_proto(v)))
+                        .collect(),
+                    env.into_iter().collect(),
+                    icon_path_string,
+                ));
+            }
+
+            this.reregister_agents(cx);
             cx.emit(AgentServersUpdated);
             Ok(())
         })?
@@ -1644,6 +1783,7 @@ pub struct BuiltinAgentServerSettings {
     pub env: Option<HashMap<String, String>>,
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
+    pub default_model: Option<String>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1666,6 +1806,7 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             env: value.env,
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
+            default_model: value.default_model,
         }
     }
 }
@@ -1682,25 +1823,88 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
 }
 
 #[derive(Clone, JsonSchema, Debug, PartialEq)]
-pub struct CustomAgentServerSettings {
-    pub command: AgentServerCommand,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
-    pub default_mode: Option<String>,
+pub enum CustomAgentServerSettings {
+    Custom {
+        command: AgentServerCommand,
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
+    Extension {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
+}
+
+impl CustomAgentServerSettings {
+    pub fn command(&self) -> Option<&AgentServerCommand> {
+        match self {
+            CustomAgentServerSettings::Custom { command, .. } => Some(command),
+            CustomAgentServerSettings::Extension { .. } => None,
+        }
+    }
+
+    pub fn default_mode(&self) -> Option<&str> {
+        match self {
+            CustomAgentServerSettings::Custom { default_mode, .. }
+            | CustomAgentServerSettings::Extension { default_mode, .. } => default_mode.as_deref(),
+        }
+    }
+
+    pub fn default_model(&self) -> Option<&str> {
+        match self {
+            CustomAgentServerSettings::Custom { default_model, .. }
+            | CustomAgentServerSettings::Extension { default_model, .. } => {
+                default_model.as_deref()
+            }
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
     fn from(value: settings::CustomAgentServerSettings) -> Self {
-        CustomAgentServerSettings {
-            command: AgentServerCommand {
-                path: PathBuf::from(shellexpand::tilde(&value.path.to_string_lossy()).as_ref()),
-                args: value.args,
-                env: value.env,
+        match value {
+            settings::CustomAgentServerSettings::Custom {
+                path,
+                args,
+                env,
+                default_mode,
+                default_model,
+            } => CustomAgentServerSettings::Custom {
+                command: AgentServerCommand {
+                    path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
+                    args,
+                    env,
+                },
+                default_mode,
+                default_model,
             },
-            default_mode: value.default_mode,
+            settings::CustomAgentServerSettings::Extension {
+                default_mode,
+                default_model,
+            } => CustomAgentServerSettings::Extension {
+                default_mode,
+                default_model,
+            },
         }
     }
 }
@@ -1830,6 +2034,7 @@ mod extension_agent_tests {
                 cmd: "./agent".into(),
                 args: vec![],
                 sha256: None,
+                env: Default::default(),
             },
         );
 
@@ -1870,6 +2075,7 @@ mod extension_agent_tests {
                         cmd: "./my-agent".into(),
                         args: vec!["--serve".into()],
                         sha256: None,
+                        env: Default::default(),
                     },
                 );
                 map
@@ -1907,6 +2113,7 @@ mod extension_agent_tests {
                 cmd: "./release-agent".into(),
                 args: vec!["serve".into()],
                 sha256: None,
+                env: Default::default(),
             },
         );
 
@@ -1949,6 +2156,7 @@ mod extension_agent_tests {
                         cmd: "node".into(),
                         args: vec!["index.js".into()],
                         sha256: None,
+                        env: Default::default(),
                     },
                 );
                 map
@@ -1995,6 +2203,7 @@ mod extension_agent_tests {
                             "./config.json".into(),
                         ],
                         sha256: None,
+                        env: Default::default(),
                     },
                 );
                 map
@@ -2018,6 +2227,7 @@ mod extension_agent_tests {
             env: None,
             ignore_system_version: None,
             default_mode: None,
+            default_model: None,
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2028,17 +2238,22 @@ mod extension_agent_tests {
             "Tilde should be expanded for builtin agent path"
         );
 
-        let settings = settings::CustomAgentServerSettings {
+        let settings = settings::CustomAgentServerSettings::Custom {
             path: PathBuf::from("~/custom/agent"),
             args: vec!["serve".into()],
             env: None,
             default_mode: None,
+            default_model: None,
         };
 
-        let CustomAgentServerSettings {
+        let converted: CustomAgentServerSettings = settings.into();
+        let CustomAgentServerSettings::Custom {
             command: AgentServerCommand { path, .. },
             ..
-        } = settings.into();
+        } = converted
+        else {
+            panic!("Expected Custom variant");
+        };
 
         assert!(
             !path.to_string_lossy().starts_with("~"),

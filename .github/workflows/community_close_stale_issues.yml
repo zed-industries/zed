@@ -1,7 +1,7 @@
 name: "Close Stale Issues"
 on:
   schedule:
-    - cron: "0 7,9,11 * * 3"
+    - cron: "0 8 31 DEC *"
   workflow_dispatch:
 
 jobs:
@@ -26,3 +26,4 @@ jobs:
           ascending: true
           enable-statistics: true
           stale-issue-label: "stale"
+          exempt-issue-labels: "never stale"

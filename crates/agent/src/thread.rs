@@ -15,7 +15,7 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage, UserStore};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
+use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -607,6 +607,8 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Tracks the last time files were read by the agent, to detect external modifications
+    pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
 }
 
 impl Thread {
@@ -665,6 +667,7 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -860,6 +863,7 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -999,6 +1003,7 @@ impl Thread {
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
         self.add_tool(ReadFileTool::new(
+            cx.weak_entity(),
             self.project.clone(),
             self.action_log.clone(),
         ));
@@ -1425,20 +1430,16 @@ impl Thread {
                 );
                 self.update_token_usage(usage, cx);
             }
-            StatusUpdate(CompletionRequestStatus::UsageUpdated { amount, limit }) => {
+            UsageUpdated { amount, limit } => {
                 self.update_model_request_usage(amount, limit, cx);
             }
-            StatusUpdate(
-                CompletionRequestStatus::Started
-                | CompletionRequestStatus::Queued { .. }
-                | CompletionRequestStatus::Failed { .. },
-            ) => {}
-            StatusUpdate(CompletionRequestStatus::ToolUseLimitReached) => {
+            ToolUseLimitReached => {
                 self.tool_use_limit_reached = true;
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
+            Started | Queued { .. } => {}
         }
 
         Ok(None)
@@ -1682,9 +1683,7 @@ impl Thread {
                     let event = event.log_err()?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::StatusUpdate(
-                            CompletionRequestStatus::UsageUpdated { amount, limit },
-                        ) => {
+                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
                             this.update(cx, |thread, cx| {
                                 thread.update_model_request_usage(amount, limit, cx);
                             })
@@ -1748,9 +1747,7 @@ impl Thread {
                     let event = event?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::StatusUpdate(
-                            CompletionRequestStatus::UsageUpdated { amount, limit },
-                        ) => {
+                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
                             this.update(cx, |thread, cx| {
                                 thread.update_model_request_usage(amount, limit, cx);
                             })?;

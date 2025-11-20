@@ -38,7 +38,6 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
-use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -162,18 +161,7 @@ pub enum ExternalAgent {
     ClaudeCode,
     Codex,
     NativeAgent,
-    Custom {
-        name: SharedString,
-        command: AgentServerCommand,
-    },
-}
-
-fn placeholder_command() -> AgentServerCommand {
-    AgentServerCommand {
-        path: "/placeholder".into(),
-        args: vec![],
-        env: None,
-    }
+    Custom { name: SharedString },
 }
 
 impl ExternalAgent {
@@ -197,9 +185,7 @@ impl ExternalAgent {
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, command: _ } => {
-                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
-            }
+            Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
 }
@@ -346,7 +332,9 @@ fn update_command_palette_filter(cx: &mut App) {
                     filter.show_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
-                EditPredictionProvider::Zed | EditPredictionProvider::Codestral => {
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Codestral
+                | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.hide_namespace("supermaven");

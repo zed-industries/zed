@@ -78,6 +78,8 @@ pub enum PromptFormat {
     OnlySnippets,
     /// One-sentence instructions used in fine-tuned models
     Minimal,
+    /// One-sentence instructions + FIM-like template
+    MinimalQwen,
 }
 
 impl PromptFormat {
@@ -105,6 +107,7 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::NumLinesUniDiff => write!(f, "Numbered Lines / Unified Diff"),
             PromptFormat::OldTextNewText => write!(f, "Old Text / New Text"),
             PromptFormat::Minimal => write!(f, "Minimal"),
+            PromptFormat::MinimalQwen => write!(f, "Minimal + Qwen FIM"),
         }
     }
 }

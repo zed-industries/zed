@@ -492,17 +492,15 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .start_slot(
-                            Icon::new(model_info.icon)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
-                        )
                         .child(
                             h_flex()
                                 .w_full()
-                                .pl_0p5()
                                 .gap_1p5()
-                                .w(px(240.))
+                                .child(
+                                    Icon::new(model_info.icon)
+                                        .color(model_icon_color)
+                                        .size(IconSize::Small),
+                                )
                                 .child(Label::new(model_info.model.name().0).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {

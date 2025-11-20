@@ -4687,6 +4687,18 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 },
 ```
 
+## Colorize Brackets
+
+- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
+- Setting: `colorize_brackets`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
 ## Unnecessary Code Fade
 
 - Description: How much to fade out unused code.

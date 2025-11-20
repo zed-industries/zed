@@ -409,16 +409,25 @@ pub fn init(cx: &mut App) {
 
 fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
-        .add_basic_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
-            Button::new("open-in-settings-file", "Edit in settings.json")
-                .style(ButtonStyle::Outlined)
-                .size(ButtonSize::Medium)
-                .tab_index(0_isize)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(OpenCurrentFile), cx);
-                })
-                .into_any_element()
-        })
+        .add_renderer::<UnimplementedSettingField>(
+            |settings_window, item, _, settings_file, _, sub_field, _, cx| {
+                render_settings_item(
+                    settings_window,
+                    item,
+                    settings_file,
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .tab_index(0_isize)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
+                        }))
+                        .into_any_element(),
+                    sub_field,
+                    cx,
+                )
+            },
+        )
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
@@ -443,6 +452,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
@@ -498,7 +508,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
-        .add_basic_renderer::<settings::MaybeDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
         .add_basic_renderer::<settings::ShowIndentGuides>(render_dropdown)
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
@@ -2832,17 +2841,30 @@ impl SettingsWindow {
                 .into_any_element();
         } else {
             page_header = h_flex()
-                .ml_neg_1p5()
-                .gap_1()
+                .w_full()
+                .justify_between()
                 .child(
-                    IconButton::new("back-btn", IconName::ArrowLeft)
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.pop_sub_page(cx);
+                    h_flex()
+                        .ml_neg_1p5()
+                        .gap_1()
+                        .child(
+                            IconButton::new("back-btn", IconName::ArrowLeft)
+                                .icon_size(IconSize::Small)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.pop_sub_page(cx);
+                                })),
+                        )
+                        .child(self.render_sub_page_breadcrumbs()),
+                )
+                .child(
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .tab_index(0_isize)
+                        .style(ButtonStyle::OutlinedGhost)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
                         })),
                 )
-                .child(self.render_sub_page_breadcrumbs())
                 .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
