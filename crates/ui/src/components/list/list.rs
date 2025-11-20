@@ -2,7 +2,7 @@ use component::{Component, ComponentScope, example_group_with_title, single_exam
 use gpui::AnyElement;
 use smallvec::SmallVec;
 
-use crate::{Label, ListHeader, ListItem, prelude::*, v_flex};
+use crate::{Label, ListHeader, ListItem, prelude::*};
 
 pub enum EmptyMessage {
     Text(SharedString),

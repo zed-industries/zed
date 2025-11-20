@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use crate::{Icon, IconName, IconSize, Label, h_flex};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 
 #[derive(IntoElement, RegisterComponent)]
