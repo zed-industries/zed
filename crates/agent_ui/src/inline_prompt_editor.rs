@@ -40,6 +40,9 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
+    workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -220,6 +223,18 @@ impl<T: 'static> PromptEditor<T> {
         ));
     }
 
+    fn assign_completion_provider(&mut self, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, _cx| {
+            editor.set_completion_provider(Some(Rc::new(PromptCompletionProvider::new(
+                PromptEditorCompletionProviderDelegate,
+                self.mention_set.clone(),
+                self.history_store.clone(),
+                self.prompt_store.clone(),
+                self.workspace.clone(),
+            ))));
+        });
+    }
+
     pub fn set_show_cursor_when_unfocused(
         &mut self,
         show_cursor_when_unfocused: bool,
@@ -247,6 +262,7 @@ impl<T: 'static> PromptEditor<T> {
             }
             editor
         });
+        self.assign_completion_provider(cx);
         self.subscribe_to_editor(window, cx);
     }
 
@@ -804,7 +820,7 @@ impl PromptEditor<BufferCodegen> {
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
         fs: Arc<dyn Fs>,
-        thread_store: Entity<HistoryStore>,
+        history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -848,21 +864,11 @@ impl PromptEditor<BufferCodegen> {
             MentionSet::new(
                 prompt_editor.clone(),
                 project,
-                thread_store.clone(),
+                history_store.clone(),
                 prompt_store.clone(),
                 window,
                 cx,
             )
-        });
-
-        prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Rc::new(PromptCompletionProvider::new(
-                PromptEditorCompletionProviderDelegate,
-                mention_set.clone(),
-                thread_store.clone(),
-                prompt_store.clone(),
-                workspace,
-            ))));
         });
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -870,6 +876,9 @@ impl PromptEditor<BufferCodegen> {
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
+            history_store,
+            prompt_store,
+            workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
                     fs,
@@ -891,6 +900,7 @@ impl PromptEditor<BufferCodegen> {
             _phantom: Default::default(),
         };
 
+        this.assign_completion_provider(cx);
         this.subscribe_to_editor(window, cx);
         this
     }
@@ -966,7 +976,7 @@ impl PromptEditor<TerminalCodegen> {
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<TerminalCodegen>,
         fs: Arc<dyn Fs>,
-        thread_store: Entity<HistoryStore>,
+        history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1005,21 +1015,11 @@ impl PromptEditor<TerminalCodegen> {
             MentionSet::new(
                 prompt_editor.clone(),
                 project,
-                thread_store.clone(),
+                history_store.clone(),
                 prompt_store.clone(),
                 window,
                 cx,
             )
-        });
-
-        prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Rc::new(PromptCompletionProvider::new(
-                PromptEditorCompletionProviderDelegate,
-                mention_set.clone(),
-                thread_store.clone(),
-                prompt_store.clone(),
-                workspace,
-            ))));
         });
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -1027,6 +1027,9 @@ impl PromptEditor<TerminalCodegen> {
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
+            history_store,
+            prompt_store,
+            workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
                     fs,
@@ -1048,6 +1051,7 @@ impl PromptEditor<TerminalCodegen> {
             _phantom: Default::default(),
         };
         this.count_lines(cx);
+        this.assign_completion_provider(cx);
         this.subscribe_to_editor(window, cx);
         this
     }
