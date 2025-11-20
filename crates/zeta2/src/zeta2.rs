@@ -518,18 +518,61 @@ impl Zeta {
                 _subscription: cx.subscribe(&project, |this, project, event, cx| {
                     // TODO [zeta2] init with recent paths
                     if let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) {
-                        if let project::Event::ActiveEntryChanged(Some(active_entry_id)) = event {
-                            let path = project.read(cx).path_for_entry(*active_entry_id, cx);
-                            if let Some(path) = path {
-                                if let Some(ix) = zeta_project
-                                    .recent_paths
-                                    .iter()
-                                    .position(|probe| probe == &path)
-                                {
-                                    zeta_project.recent_paths.remove(ix);
+                        match event {
+                            project::Event::ActiveEntryChanged(Some(active_entry_id)) => {
+                                let path = project.read(cx).path_for_entry(*active_entry_id, cx);
+                                if let Some(path) = path {
+                                    if let Some(ix) = zeta_project
+                                        .recent_paths
+                                        .iter()
+                                        .position(|probe| probe == &path)
+                                    {
+                                        zeta_project.recent_paths.remove(ix);
+                                    }
+                                    zeta_project.recent_paths.push_front(path);
                                 }
-                                zeta_project.recent_paths.push_front(path);
                             }
+                            project::Event::DiagnosticsUpdated { .. } => {
+                                if zeta_project.current_prediction.is_none() {
+                                    cx.defer(move |cx| {
+                                        let workspace_window =
+                                            cx.windows().iter().find_map(|window| {
+                                                window.downcast::<workspace::Workspace>().and_then(
+                                                    |workspace| {
+                                                        if workspace
+                                                            .read(cx)
+                                                            .ok()?
+                                                            .project()
+                                                            .entity_id()
+                                                            == project.entity_id()
+                                                        {
+                                                            Some(workspace)
+                                                        } else {
+                                                            None
+                                                        }
+                                                    },
+                                                )
+                                            });
+
+                                        if let Some(workspace_window) = workspace_window {
+                                            workspace_window
+                                                .update(cx, |workspace, window, cx| {
+                                                    if let Some(editor) =
+                                                        workspace.active_item_as::<Editor>(cx)
+                                                    {
+                                                        editor.update(cx, |editor, cx| {
+                                                            editor.refresh_edit_prediction(
+                                                                true, false, window, cx,
+                                                            );
+                                                        });
+                                                    }
+                                                })
+                                                .log_err();
+                                        }
+                                    });
+                                }
+                            }
+                            _ => (),
                         }
                     }
                 }),
