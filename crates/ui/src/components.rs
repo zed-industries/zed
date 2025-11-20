@@ -1,5 +1,4 @@
 mod avatar;
-mod badge;
 mod banner;
 mod button;
 mod callout;
@@ -44,7 +43,6 @@ mod tree_view_item;
 mod stories;
 
 pub use avatar::*;
-pub use badge::*;
 pub use banner::*;
 pub use button::*;
 pub use callout::*;
