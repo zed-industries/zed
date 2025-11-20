@@ -4,8 +4,7 @@ use crate::Editor;
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use language::language_settings;
-use multi_buffer::Anchor;
-use text::{OffsetRangeExt, ToPoint};
+use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 struct ColorizedBracketsHighlight;
@@ -22,11 +21,24 @@ impl Editor {
 
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let all_excerpts = self.buffer().read(cx).excerpt_ids();
+        let anchor_in_multi_buffer = |current_excerpt: ExcerptId, text_anchor: text::Anchor| {
+            multi_buffer_snapshot
+                .anchor_in_excerpt(current_excerpt, text_anchor)
+                .or_else(|| {
+                    all_excerpts
+                        .iter()
+                        .filter(|&&excerpt_id| excerpt_id != current_excerpt)
+                        .find_map(|&excerpt_id| {
+                            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)
+                        })
+                })
+        };
+
         let bracket_matches_by_accent = self.visible_excerpts(cx).into_iter().fold(
             HashMap::default(),
             |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
-                dbg!(buffer_snapshot.file().map(|f| f.path()));
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
                     buffer_snapshot.file(),
@@ -38,10 +50,6 @@ impl Editor {
                         .fetched_tree_sitter_chunks
                         .entry(excerpt_id)
                         .or_default();
-                    dbg!(
-                        &fetched_chunks,
-                        (buffer_range.start..buffer_range.end).to_point(&buffer_snapshot),
-                    );
 
                     let brackets_by_accent = buffer_snapshot
                         .fetch_bracket_ranges(
@@ -50,7 +58,7 @@ impl Editor {
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
-                            if fetched_chunks.insert(dbg!(chunk_range)) {
+                            if fetched_chunks.insert(chunk_range) {
                                 pairs
                             } else {
                                 Vec::new()
@@ -58,36 +66,21 @@ impl Editor {
                         })
                         .filter_map(|pair| {
                             let color_index = pair.color_index?;
+
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
                                 ..buffer_snapshot.anchor_after(pair.open_range.end);
+                            let multi_buffer_open_range =
+                                anchor_in_multi_buffer(excerpt_id, buffer_open_range.start)?
+                                    ..anchor_in_multi_buffer(excerpt_id, buffer_open_range.end)?;
+                            // todo! need to anyway color single brackets whos pair is not in the editor's multi buffer
                             let buffer_close_range = buffer_snapshot
                                 .anchor_before(pair.close_range.start)
                                 ..buffer_snapshot.anchor_after(pair.close_range.end);
-                            eprintln!(
-                                "buffer bracket range {:?}..{:?}",
-                                buffer_open_range.start.to_point(&buffer_snapshot),
-                                buffer_close_range.end.to_point(&buffer_snapshot)
-                            );
-                            let multi_buffer_open_range = multi_buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, buffer_open_range.start)?
-                                ..multi_buffer_snapshot
-                                    .anchor_in_excerpt(excerpt_id, buffer_open_range.end)?;
-                            let multi_buffer_close_range = multi_buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, buffer_close_range.start)?
-                                ..multi_buffer_snapshot
-                                    .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
-                            eprintln!(
-                                "multi buffer bracket range {:?}..{:?}",
-                                multi_buffer::ToPoint::to_point(
-                                    &multi_buffer_open_range.start,
-                                    &multi_buffer_snapshot
-                                ),
-                                multi_buffer::ToPoint::to_point(
-                                    &multi_buffer_close_range.end,
-                                    &multi_buffer_snapshot
-                                )
-                            );
+                            let multi_buffer_close_range =
+                                anchor_in_multi_buffer(excerpt_id, buffer_close_range.start)?
+                                    ..anchor_in_multi_buffer(excerpt_id, buffer_close_range.end)?;
+
                             Some((
                                 color_index % accents_count,
                                 multi_buffer_open_range,
@@ -120,7 +113,7 @@ impl Editor {
             },
         );
 
-        if dbg!(invalidate) {
+        if invalidate {
             self.clear_highlights::<ColorizedBracketsHighlight>(cx);
         }
 
@@ -1095,10 +1088,10 @@ mod foo «1{
     }2»
 }1»
 
-1 hsla(29.00, 54.00%, 65.88%, 1.00)
-2 hsla(286.00, 51.00%, 75.25%, 1.00)
-3 hsla(187.00, 47.00%, 59.22%, 1.00)
-4 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
 5 hsla(355.00, 65.00%, 75.94%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
