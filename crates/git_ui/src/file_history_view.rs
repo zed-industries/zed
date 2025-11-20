@@ -1,17 +1,23 @@
 use anyhow::Result;
+use futures::Future;
 use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
+use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, AnyView, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ListSizingBehavior, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, rems,
-    uniform_list,
+    AnyElement, AnyView, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, ListSizingBehavior, Render, Task, UniformListScrollHandle, WeakEntity, Window,
+    actions, rems, uniform_list,
 };
 use project::{
     Project, ProjectPath,
     git_store::{GitStore, Repository},
 };
 use std::any::{Any, TypeId};
+
 use time::OffsetDateTime;
-use ui::{Icon, IconName, Label, LabelCommon as _, SharedString, prelude::*};
+use ui::{
+    Avatar, Button, ButtonStyle, Color, Icon, IconName, IconSize, Label, LabelCommon as _,
+    LabelSize, SharedString, prelude::*,
+};
 use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
     Item, Workspace,
@@ -21,22 +27,29 @@ use workspace::{
 
 use crate::commit_view::CommitView;
 
-actions!(git, [ViewCommitFromHistory]);
+actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {});
+        workspace.register_action(|_workspace, _: &LoadMoreHistory, _window, _cx| {});
     })
     .detach();
 }
 
+const PAGE_SIZE: usize = 50;
+
 pub struct FileHistoryView {
     history: FileHistory,
     repository: WeakEntity<Repository>,
+    git_store: WeakEntity<GitStore>,
     workspace: WeakEntity<Workspace>,
+    remote: Option<GitRemote>,
     selected_entry: Option<usize>,
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
+    loading_more: bool,
+    has_more: bool,
 }
 
 impl FileHistoryView {
@@ -50,8 +63,9 @@ impl FileHistoryView {
     ) {
         let file_history_task = git_store
             .update(cx, |git_store, cx| {
-                repo.upgrade()
-                    .map(|repo| git_store.file_history(&repo, path.clone(), cx))
+                repo.upgrade().map(|repo| {
+                    git_store.file_history_paginated(&repo, path.clone(), 0, Some(PAGE_SIZE), cx)
+                })
             })
             .ok()
             .flatten();
@@ -67,6 +81,7 @@ impl FileHistoryView {
                         let view = cx.new(|cx| {
                             FileHistoryView::new(
                                 file_history,
+                                git_store.clone(),
                                 repo.clone(),
                                 workspace.weak_handle(),
                                 project.clone(),
@@ -95,6 +110,7 @@ impl FileHistoryView {
 
     fn new(
         history: FileHistory,
+        git_store: WeakEntity<GitStore>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         _project: Entity<Project>,
@@ -103,33 +119,145 @@ impl FileHistoryView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
+        let has_more = history.entries.len() >= PAGE_SIZE;
+
+        let snapshot = repository.read(cx).snapshot();
+        let remote_url = snapshot
+            .remote_upstream_url
+            .as_ref()
+            .or(snapshot.remote_origin_url.as_ref());
+
+        let remote = remote_url.and_then(|url| {
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
+            parse_git_remote_url(provider_registry, url).map(|(host, parsed)| GitRemote {
+                host,
+                owner: parsed.owner.into(),
+                repo: parsed.repo.into(),
+            })
+        });
 
         Self {
             history,
+            git_store,
             repository: repository.downgrade(),
             workspace,
+            remote,
             selected_entry: None,
             scroll_handle,
             focus_handle,
+            loading_more: false,
+            has_more,
         }
     }
 
+    fn load_more(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading_more || !self.has_more {
+            return;
+        }
+
+        self.loading_more = true;
+        cx.notify();
+
+        let current_count = self.history.entries.len();
+        let path = self.history.path.clone();
+        let git_store = self.git_store.clone();
+        let repo = self.repository.clone();
+
+        let this = cx.weak_entity();
+        let task = window.spawn(cx, async move |cx| {
+            let file_history_task = git_store
+                .update(cx, |git_store, cx| {
+                    repo.upgrade().map(|repo| {
+                        git_store.file_history_paginated(
+                            &repo,
+                            path,
+                            current_count,
+                            Some(PAGE_SIZE),
+                            cx,
+                        )
+                    })
+                })
+                .ok()
+                .flatten();
+
+            if let Some(task) = file_history_task {
+                if let Ok(more_history) = task.await {
+                    this.update(cx, |this, cx| {
+                        this.loading_more = false;
+                        this.has_more = more_history.entries.len() >= PAGE_SIZE;
+                        this.history.entries.extend(more_history.entries);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        });
+
+        task.detach();
+    }
+
     fn list_item_height(&self) -> Rems {
-        rems(1.75)
+        rems(2.0)
+    }
+
+    fn render_commit_avatar(
+        &self,
+        sha: &SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
+
+        if let Some(remote) = remote {
+            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
+            match window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
+                None => Icon::new(IconName::Person)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_element()
+                    .into_any(),
+                Some(None) => Icon::new(IconName::Person)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_element()
+                    .into_any(),
+                Some(Some(url)) => Avatar::new(url.to_string())
+                    .size(rems(1.25))
+                    .into_element()
+                    .into_any(),
+            }
+        } else {
+            Icon::new(IconName::Person)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+                .into_element()
+                .into_any()
+        }
     }
 
     fn render_commit_entry(
         &self,
         ix: usize,
         entry: &FileHistoryEntry,
-        _window: &Window,
-        cx: &Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
-        let short_sha = if entry.sha.len() >= 7 {
-            entry.sha[..7].to_string()
-        } else {
-            entry.sha.to_string()
-        };
+        let pr_number = entry
+            .subject
+            .rfind("(#")
+            .and_then(|start| {
+                let rest = &entry.subject[start + 2..];
+                rest.find(')')
+                    .and_then(|end| rest[..end].parse::<u32>().ok())
+            })
+            .map(|num| format!("#{}", num))
+            .unwrap_or_else(|| {
+                if entry.sha.len() >= 7 {
+                    entry.sha[..7].to_string()
+                } else {
+                    entry.sha.to_string()
+                }
+            });
 
         let commit_time = OffsetDateTime::from_unix_timestamp(entry.commit_timestamp)
             .unwrap_or_else(|_| OffsetDateTime::UNIX_EPOCH);
@@ -147,13 +275,13 @@ impl FileHistoryView {
         let file_path = self.history.path.clone();
 
         let base_bg = if selected {
-            cx.theme().status().info.alpha(0.15)
+            cx.theme().status().info.alpha(0.1)
         } else {
-            cx.theme().colors().element_background
+            cx.theme().colors().editor_background
         };
 
         let hover_bg = if selected {
-            cx.theme().status().info.alpha(0.2)
+            cx.theme().status().info.alpha(0.15)
         } else {
             cx.theme().colors().element_hover
         };
@@ -172,7 +300,6 @@ impl FileHistoryView {
                 this.selected_entry = Some(ix);
                 cx.notify();
 
-                // Open the commit view filtered to show only this file's changes
                 if let Some(repo) = repo.upgrade() {
                     let sha_str = sha.to_string();
                     CommitView::open(
@@ -187,34 +314,103 @@ impl FileHistoryView {
                 }
             }))
             .child(
+                div().flex_none().min_w(rems(4.5)).child(
+                    div()
+                        .px(rems(0.5))
+                        .py(rems(0.25))
+                        .rounded_md()
+                        .bg(cx.theme().colors().element_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Label::new(pr_number)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .single_line(),
+                        ),
+                ),
+            )
+            .child(
                 div()
                     .flex_none()
-                    .w(rems(4.5))
-                    .text_color(cx.theme().status().info)
-                    .font_family(".SystemUIFontMonospaced-Regular")
-                    .child(short_sha),
+                    .w(rems(1.75))
+                    .child(self.render_commit_avatar(&entry.sha, window, cx)),
             )
             .child(
-                Label::new(truncate_and_trailoff(&entry.subject, 60))
-                    .single_line()
-                    .color(ui::Color::Default),
+                div().flex_1().overflow_hidden().child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            Label::new(entry.author_name.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default)
+                                .single_line(),
+                        )
+                        .child(
+                            Label::new(truncate_and_trailoff(&entry.subject, 100))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .single_line(),
+                        ),
+                ),
             )
-            .child(div().flex_1())
             .child(
-                Label::new(truncate_and_trailoff(&entry.author_name, 20))
-                    .size(LabelSize::Small)
-                    .color(ui::Color::Muted)
-                    .single_line(),
-            )
-            .child(
-                div().flex_none().w(rems(6.5)).child(
+                div().flex_none().w(rems(9.0)).child(
                     Label::new(relative_timestamp)
                         .size(LabelSize::Small)
-                        .color(ui::Color::Muted)
+                        .color(Color::Muted)
                         .single_line(),
                 ),
             )
             .into_any_element()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CommitAvatarAsset {
+    sha: SharedString,
+    remote: GitRemote,
+}
+
+impl std::hash::Hash for CommitAvatarAsset {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.sha.hash(state);
+        self.remote.host.name().hash(state);
+    }
+}
+
+impl CommitAvatarAsset {
+    fn new(remote: GitRemote, sha: SharedString) -> Self {
+        Self { remote, sha }
+    }
+}
+
+impl Asset for CommitAvatarAsset {
+    type Source = Self;
+    type Output = Option<SharedString>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+        async move {
+            match source
+                .remote
+                .host
+                .commit_author_avatar_url(
+                    &source.remote.owner,
+                    &source.remote.repo,
+                    source.sha.clone(),
+                    client,
+                )
+                .await
+            {
+                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
+                Ok(None) => None,
+            }
+        }
     }
 }
 
@@ -228,7 +424,7 @@ impl Focusable for FileHistoryView {
 
 impl Render for FileHistoryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let file_name = self.history.path.file_name().unwrap_or("File");
+        let _file_name = self.history.path.file_name().unwrap_or("File");
         let entry_count = self.history.entries.len();
 
         v_flex()
@@ -243,50 +439,64 @@ impl Render for FileHistoryView {
                     .items_center()
                     .justify_between()
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Icon::new(IconName::FileGit)
-                                    .size(IconSize::Small)
-                                    .color(ui::Color::Muted),
-                            )
-                            .child(
-                                Label::new(format!("History: {}", file_name))
-                                    .size(LabelSize::Default),
-                            ),
+                        h_flex().gap_2().items_center().child(
+                            Label::new(format!("History: {}", self.history.path.as_unix_str()))
+                                .size(LabelSize::Default),
+                        ),
                     )
                     .child(
                         Label::new(format!("{} commits", entry_count))
                             .size(LabelSize::Small)
-                            .color(ui::Color::Muted),
+                            .color(Color::Muted),
                     ),
             )
-            .child({
-                let view = cx.weak_entity();
-                uniform_list(
-                    "file-history-list",
-                    entry_count,
-                    move |range, window, cx| {
-                        let Some(view) = view.upgrade() else {
-                            return Vec::new();
-                        };
-                        view.update(cx, |this, cx| {
-                            let mut items = Vec::with_capacity(range.end - range.start);
-                            for ix in range {
-                                if let Some(entry) = this.history.entries.get(ix) {
-                                    items.push(this.render_commit_entry(ix, entry, window, cx));
-                                }
-                            }
-                            items
-                        })
-                    },
-                )
-                .flex_1()
-                .size_full()
-                .with_sizing_behavior(ListSizingBehavior::Auto)
-                .track_scroll(self.scroll_handle.clone())
-            })
+            .child(
+                v_flex()
+                    .flex_1()
+                    .size_full()
+                    .child({
+                        let view = cx.weak_entity();
+                        uniform_list(
+                            "file-history-list",
+                            entry_count,
+                            move |range, window, cx| {
+                                let Some(view) = view.upgrade() else {
+                                    return Vec::new();
+                                };
+                                view.update(cx, |this, cx| {
+                                    let mut items = Vec::with_capacity(range.end - range.start);
+                                    for ix in range {
+                                        if let Some(entry) = this.history.entries.get(ix) {
+                                            items.push(
+                                                this.render_commit_entry(ix, entry, window, cx),
+                                            );
+                                        }
+                                    }
+                                    items
+                                })
+                            },
+                        )
+                        .flex_1()
+                        .size_full()
+                        .with_sizing_behavior(ListSizingBehavior::Auto)
+                        .track_scroll(self.scroll_handle.clone())
+                    })
+                    .when(self.has_more, |this| {
+                        this.child(
+                            div().p(rems(0.75)).flex().justify_start().child(
+                                Button::new("load-more", "Load more")
+                                    .style(ButtonStyle::Subtle)
+                                    .disabled(self.loading_more)
+                                    .label_size(LabelSize::Small)
+                                    .icon(IconName::ArrowCircle)
+                                    .icon_position(IconPosition::Start)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.load_more(window, cx);
+                                    })),
+                            ),
+                        )
+                    }),
+            )
     }
 }
 

@@ -1021,6 +1021,19 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn file_history_paginated(
+        &self,
+        repo: &Entity<Repository>,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::FileHistory>> {
+        let rx = repo.update(cx, |repo, _| repo.file_history_paginated(path, skip, limit));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -2253,10 +2266,12 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let path = RepoPath::from_proto(&envelope.payload.path)?;
+        let skip = envelope.payload.skip as usize;
+        let limit = envelope.payload.limit.map(|l| l as usize);
 
         let file_history = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.file_history(path)
+                repository_handle.file_history_paginated(path, skip, limit)
             })?
             .await??;
 
@@ -3943,10 +3958,21 @@ impl Repository {
         &mut self,
         path: RepoPath,
     ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    pub fn file_history_paginated(
+        &mut self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
         let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
-                RepositoryState::Local { backend, .. } => backend.file_history(path).await,
+                RepositoryState::Local { backend, .. } => {
+                    backend.file_history_paginated(path, skip, limit).await
+                }
                 RepositoryState::Remote {
                     client, project_id, ..
                 } => {
@@ -3955,6 +3981,8 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             path: path.to_proto(),
+                            skip: skip as u64,
+                            limit: limit.map(|l| l as u64),
                         })
                         .await?;
                     Ok(git::repository::FileHistory {
