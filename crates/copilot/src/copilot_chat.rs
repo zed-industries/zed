@@ -341,7 +341,11 @@ pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "thoughtSignature"
+    )]
     pub thought_signature: Option<String>,
 }
 
@@ -392,6 +396,11 @@ pub struct ToolCallChunk {
     pub index: Option<usize>,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "thoughtSignature"
+    )]
     pub thought_signature: Option<String>,
 }
 
