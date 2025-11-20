@@ -6,9 +6,7 @@ mod agent_panel;
 mod buffer_codegen;
 mod completion_provider;
 mod context;
-mod context_picker;
 mod context_server_configuration;
-mod context_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -89,10 +87,6 @@ actions!(
         FocusLeft,
         /// Moves focus right in the interface.
         FocusRight,
-        /// Removes the currently focused context item.
-        RemoveFocusedContext,
-        /// Accepts the suggested context item.
-        AcceptSuggestedContext,
         /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.

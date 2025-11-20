@@ -19,6 +19,7 @@ use settings::{
 
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
+use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -38,7 +39,6 @@ use crate::{
 use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
-use crate::{ManageProfiles, context_store::ContextStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -436,7 +436,6 @@ pub struct AgentPanel {
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,
-    inline_assist_context_store: Entity<ContextStore>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     active_view: ActiveView,
@@ -548,7 +547,6 @@ impl AgentPanel {
         let client = workspace.client().clone();
         let workspace = workspace.weak_handle();
 
-        let inline_assist_context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
@@ -685,7 +683,6 @@ impl AgentPanel {
             configuration: None,
             configuration_subscription: None,
             context_server_registry,
-            inline_assist_context_store,
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),

@@ -1,9 +1,9 @@
 use agent::HistoryStore;
-use collections::{HashMap, VecDeque};
+use collections::VecDeque;
+use editor::ToOffset as _;
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
-use editor::display_map::{CreaseId, EditorMargins};
-use editor::{Addon, AnchorRangeExt as _, ToOffset as _};
+use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
@@ -19,7 +19,6 @@ use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
 use std::cmp;
-use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -30,11 +29,10 @@ use zed_actions::agent::ToggleModelSelector;
 
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
-use crate::completion_provider::{PromptCompletionProvider, PromptCompletionProviderDelegate};
-use crate::context::{AgentContextHandle, AgentContextKey};
-use crate::context_picker::ContextType;
-use crate::context_store::{ContextStore, ContextStoreEvent};
-use crate::mention_set::{MentionSet, crease_for_mention, insert_pasted_images};
+use crate::completion_provider::{
+    PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
+};
+use crate::mention_set::{MentionSet, insert_pasted_images};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 
@@ -42,7 +40,6 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    // context_store: Entity<ContextStore>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -235,21 +232,15 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
-        let existing_creases = self.editor.update(cx, extract_message_creases);
-
+        // let existing_creases = self.editor.update(cx, extract_message_creases);
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
-            insert_message_creases(
-                &mut editor,
-                &existing_creases,
-                &self.context_store,
-                window,
-                cx,
-            );
+            //todo
+            // insert_message_creases(&mut editor, &existing_creases, window, cx);
 
             if focus {
                 window.focus(&editor.focus_handle(cx));
@@ -784,13 +775,13 @@ impl InlineAssistId {
 struct PromptEditorCompletionProviderDelegate;
 
 impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate {
-    fn supported_modes(&self, _cx: &App) -> Vec<ContextType> {
+    fn supported_modes(&self, _cx: &App) -> Vec<PromptContextType> {
         vec![
-            ContextType::File,
-            ContextType::Symbol,
-            ContextType::Thread,
-            ContextType::Fetch,
-            ContextType::Rules,
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Thread,
+            PromptContextType::Fetch,
+            PromptContextType::Rules,
         ]
     }
 
@@ -844,7 +835,6 @@ impl PromptEditor<BufferCodegen> {
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
             editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
-            editor.register_addon(ContextCreasesAddon::new());
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -946,6 +936,10 @@ impl PromptEditor<BufferCodegen> {
         }
     }
 
+    pub fn mention_set(&self) -> &Entity<MentionSet> {
+        &self.mention_set
+    }
+
     pub fn editor_margins(&self) -> &Arc<Mutex<EditorMargins>> {
         match &self.mode {
             PromptEditorMode::Buffer { editor_margins, .. } => editor_margins,
@@ -1018,7 +1012,6 @@ impl PromptEditor<TerminalCodegen> {
             )
         });
 
-        let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
             editor.set_completion_provider(Some(Rc::new(PromptCompletionProvider::new(
                 PromptEditorCompletionProviderDelegate,
@@ -1101,6 +1094,10 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
+    pub fn mention_set(&self) -> &Entity<MentionSet> {
+        &self.mention_set
+    }
+
     pub fn codegen(&self) -> &Entity<TerminalCodegen> {
         match &self.mode {
             PromptEditorMode::Buffer { .. } => unreachable!(),
@@ -1174,159 +1171,6 @@ impl GenerationMode {
         match self {
             GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",
-        }
-    }
-}
-
-/// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
-#[derive(Clone, Debug)]
-pub struct MessageCrease {
-    pub range: Range<usize>,
-    pub icon_path: SharedString,
-    pub label: SharedString,
-    /// None for a deserialized message, Some otherwise.
-    pub context: Option<AgentContextHandle>,
-}
-
-#[derive(Default)]
-pub struct ContextCreasesAddon {
-    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
-    _subscription: Option<Subscription>,
-}
-
-impl Addon for ContextCreasesAddon {
-    fn to_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
-        Some(self)
-    }
-}
-
-impl ContextCreasesAddon {
-    pub fn new() -> Self {
-        Self {
-            creases: HashMap::default(),
-            _subscription: None,
-        }
-    }
-
-    pub fn add_creases(
-        &mut self,
-        context_store: &Entity<ContextStore>,
-        key: AgentContextKey,
-        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
-        cx: &mut Context<Editor>,
-    ) {
-        self.creases.entry(key).or_default().extend(creases);
-        self._subscription = Some(
-            cx.subscribe(context_store, |editor, _, event, cx| match event {
-                ContextStoreEvent::ContextRemoved(key) => {
-                    let Some(this) = editor.addon_mut::<Self>() else {
-                        return;
-                    };
-                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
-                        .creases
-                        .remove(key)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .unzip();
-                    let ranges = editor
-                        .remove_creases(crease_ids, cx)
-                        .into_iter()
-                        .map(|(_, range)| range)
-                        .collect::<Vec<_>>();
-                    editor.unfold_ranges(&ranges, false, false, cx);
-                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
-                    cx.notify();
-                }
-            }),
-        )
-    }
-
-    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
-        self.creases
-    }
-}
-
-pub fn extract_message_creases(
-    editor: &mut Editor,
-    cx: &mut Context<'_, Editor>,
-) -> Vec<MessageCrease> {
-    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-    let mut contexts_by_crease_id = editor
-        .addon_mut::<ContextCreasesAddon>()
-        .map(std::mem::take)
-        .unwrap_or_default()
-        .into_inner()
-        .into_iter()
-        .flat_map(|(key, creases)| {
-            let context = key.0;
-            creases
-                .into_iter()
-                .map(move |(id, _)| (id, context.clone()))
-        })
-        .collect::<HashMap<_, _>>();
-    // Filter the addon's list of creases based on what the editor reports,
-    // since the addon might have removed creases in it.
-
-    editor.display_map.update(cx, |display_map, cx| {
-        display_map
-            .snapshot(cx)
-            .crease_snapshot
-            .creases()
-            .filter_map(|(id, crease)| {
-                Some((
-                    id,
-                    (
-                        crease.range().to_offset(&buffer_snapshot),
-                        crease.metadata()?.clone(),
-                    ),
-                ))
-            })
-            .map(|(id, (range, metadata))| {
-                let context = contexts_by_crease_id.remove(&id);
-                MessageCrease {
-                    range,
-                    context,
-                    label: metadata.label,
-                    icon_path: metadata.icon_path,
-                }
-            })
-            .collect()
-    })
-}
-
-pub fn insert_message_creases(
-    editor: &mut Editor,
-    message_creases: &[MessageCrease],
-    context_store: &Entity<ContextStore>,
-    window: &mut Window,
-    cx: &mut Context<'_, Editor>,
-) {
-    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-    let creases = message_creases
-        .iter()
-        .map(|crease| {
-            let start = buffer_snapshot.anchor_after(crease.range.start);
-            let end = buffer_snapshot.anchor_before(crease.range.end);
-            crease_for_mention(
-                crease.label.clone(),
-                crease.icon_path.clone(),
-                start..end,
-                cx.weak_entity(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let ids = editor.insert_creases(creases.clone(), cx);
-    editor.fold_creases(creases, false, window, cx);
-    if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
-        for (crease, id) in message_creases.iter().zip(ids) {
-            if let Some(context) = crease.context.as_ref() {
-                let key = AgentContextKey(context.clone());
-                addon.add_creases(context_store, key, vec![(id, crease.label.clone())], cx);
-            }
         }
     }
 }

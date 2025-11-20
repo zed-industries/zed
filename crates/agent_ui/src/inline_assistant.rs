@@ -4,6 +4,8 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::context::load_context;
+use crate::mention_set::MentionSet;
 use crate::{
     AgentPanel,
     buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent},
@@ -28,6 +30,7 @@ use editor::{
     },
 };
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
@@ -211,17 +214,10 @@ impl InlineAssistant {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 if is_ai_enabled {
-                    let panel = workspace
-                        .read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .expect("Missing agent panel");
-                    let thread_store = panel.read(cx).thread_store().clone();
-
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
                             editor: cx.entity().downgrade(),
                             workspace: workspace.downgrade(),
-                            thread_store,
                         }),
                         window,
                         cx,
@@ -233,9 +229,6 @@ impl InlineAssistant {
                             editor.cancel(&Default::default(), window, cx);
                         }
                     }
-
-                    // Remove the Assistant1 code action provider, as it still might be registered.
-                    editor.remove_code_action_provider("assistant".into(), window, cx);
                 } else {
                     editor.remove_code_action_provider(
                         ASSISTANT_CODE_ACTION_PROVIDER_ID.into(),
@@ -487,8 +480,6 @@ impl InlineAssistant {
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
-                    project.clone(),
-                    prompt_store.clone(),
                     self.telemetry.clone(),
                     self.prompt_builder.clone(),
                     cx,
@@ -505,8 +496,8 @@ impl InlineAssistant {
                     codegen.clone(),
                     self.fs.clone(),
                     thread_store.clone(),
-                    prompt_store,
-                    project,
+                    prompt_store.clone(),
+                    project.clone(),
                     workspace.clone(),
                     window,
                     cx,
@@ -603,8 +594,6 @@ impl InlineAssistant {
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
-                project.clone(),
-                prompt_store.clone(),
                 self.telemetry.clone(),
                 self.prompt_builder.clone(),
                 cx,
@@ -1268,7 +1257,8 @@ impl InlineAssistant {
             return;
         }
 
-        let Some(user_prompt) = assist.user_prompt(cx) else {
+        let Some((user_prompt, mention_set)) = assist.user_prompt(cx).zip(assist.mention_set(cx))
+        else {
             return;
         };
 
@@ -1284,9 +1274,12 @@ impl InlineAssistant {
             return;
         };
 
+        let context_task = load_context(&mention_set, cx).shared();
         assist
             .codegen
-            .update(cx, |codegen, cx| codegen.start(model, user_prompt, cx))
+            .update(cx, |codegen, cx| {
+                codegen.start(model, user_prompt, context_task, cx)
+            })
             .log_err();
     }
 
@@ -1752,6 +1745,11 @@ impl InlineAssist {
         let decorations = self.decorations.as_ref()?;
         Some(decorations.prompt_editor.read(cx).prompt(cx))
     }
+
+    fn mention_set(&self, cx: &App) -> Option<Entity<MentionSet>> {
+        let decorations = self.decorations.as_ref()?;
+        Some(decorations.prompt_editor.read(cx).mention_set().clone())
+    }
 }
 
 struct InlineAssistDecorations {
@@ -1764,10 +1762,9 @@ struct InlineAssistDecorations {
 struct AssistantCodeActionProvider {
     editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
-    thread_store: Entity<HistoryStore>,
 }
 
-const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant2";
+const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant";
 
 impl CodeActionProvider for AssistantCodeActionProvider {
     fn id(&self) -> Arc<str> {
@@ -1835,10 +1832,20 @@ impl CodeActionProvider for AssistantCodeActionProvider {
     ) -> Task<Result<ProjectTransaction>> {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
+            let thread_store = cx.update(|_window, cx| {
+                anyhow::Ok(
+                    workspace
+                        .read(cx)
+                        .panel::<AgentPanel>(cx)
+                        .context("missing agent panel")?
+                        .read(cx)
+                        .thread_store()
+                        .clone(),
+                )
+            })??;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
                 .update(cx, |editor, cx| {

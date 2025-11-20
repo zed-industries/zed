@@ -1,9 +1,9 @@
 use crate::{
     ChatWithFollow,
     completion_provider::{
-        PromptCompletionProvider, PromptCompletionProviderDelegate, SlashCommandCompletion,
+        PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextAction,
+        PromptContextType, SlashCommandCompletion,
     },
-    context_picker::{ContextAction, ContextType},
     mention_set::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, insert_pasted_images,
     },
@@ -40,8 +40,6 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    history_store: Entity<HistoryStore>,
-    prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     agent_name: SharedString,
@@ -66,10 +64,14 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
         self.read(cx).prompt_capabilities.borrow().image
     }
 
-    fn supported_modes(&self, cx: &App) -> Vec<ContextType> {
-        let mut supported = vec![ContextType::File, ContextType::Symbol];
+    fn supported_modes(&self, cx: &App) -> Vec<PromptContextType> {
+        let mut supported = vec![PromptContextType::File, PromptContextType::Symbol];
         if self.read(cx).prompt_capabilities.borrow().embedded_context {
-            supported.extend(&[ContextType::Thread, ContextType::Fetch, ContextType::Rules]);
+            supported.extend(&[
+                PromptContextType::Thread,
+                PromptContextType::Fetch,
+                PromptContextType::Rules,
+            ]);
         }
         supported
     }
@@ -196,8 +198,6 @@ impl MessageEditor {
             project,
             mention_set,
             workspace,
-            history_store,
-            prompt_store,
             prompt_capabilities,
             available_commands,
             agent_name,
@@ -312,12 +312,9 @@ impl MessageEditor {
             .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
+    #[cfg(test)]
     pub fn mention_set(&self) -> &Entity<MentionSet> {
         &self.mention_set
-    }
-
-    pub fn mentions(&self, cx: &App) -> HashSet<MentionUri> {
-        self.mention_set.read(cx).mentions()
     }
 
     fn validate_slash_commands(
@@ -685,7 +682,7 @@ impl MessageEditor {
         };
         let Some(completion) =
             PromptCompletionProvider::<Entity<MessageEditor>>::completion_for_action(
-                ContextAction::AddSelections,
+                PromptContextAction::AddSelections,
                 anchor..anchor,
                 self.mention_set.downgrade(),
                 &workspace,
@@ -2111,7 +2108,7 @@ mod tests {
                 text
             );
 
-            let mentions = editor.mentions(cx);
+            let mentions = editor.mention_set().read(cx).mentions();
             assert_eq!(
                 mentions.len(),
                 1,

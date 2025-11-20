@@ -607,12 +607,16 @@ pub fn insert_pasted_images(
                 let mention_set = mention_set.clone();
                 async move |cx| {
                     if task.await.notify_async_err(cx).is_none() {
-                        editor.update(cx, |editor, cx| {
-                            editor.edit([(start_anchor..end_anchor, "")], cx);
-                        });
-                        mention_set.update(cx, |mention_set, _cx| {
-                            mention_set.remove_mention(&crease_id)
-                        });
+                        editor
+                            .update(cx, |editor, cx| {
+                                editor.edit([(start_anchor..end_anchor, "")], cx);
+                            })
+                            .ok();
+                        mention_set
+                            .update(cx, |mention_set, _cx| {
+                                mention_set.remove_mention(&crease_id)
+                            })
+                            .ok();
                     }
                 }
             })
