@@ -408,7 +408,12 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(
+                user_prompt,
+                language_name,
+                buffer,
+                range.start.0..range.end.0,
+            )
             .context("generating content prompt")?;
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
@@ -450,6 +455,14 @@ impl CodegenAlternative {
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
+
+        // Make a new snapshot and re-resolve anchor in case the document was modified.
+        // This can happen often if the editor loses focus and is saved + reformatted,
+        // as in https://github.com/zed-industries/zed/issues/39088
+        self.snapshot = self.buffer.read(cx).snapshot(cx);
+        self.range = self.snapshot.anchor_after(self.range.start)
+            ..self.snapshot.anchor_after(self.range.end);
+
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)

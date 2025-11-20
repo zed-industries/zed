@@ -4,7 +4,10 @@ use gh_workflow::{
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix, runners::Arch, steps::BASH_SHELL, vars::PathCondition,
+    nix_build::build_nix,
+    runners::Arch,
+    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    vars::PathCondition,
 };
 
 use super::{
@@ -76,21 +79,26 @@ pub(crate) fn run_tests() -> Workflow {
     jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
 
     named::workflow()
-        .add_event(Event::default()
-            .push(
-                Push::default()
-                    .add_branch("main")
-                    .add_branch("v[0-9]+.[0-9]+.x")
-            )
-            .pull_request(PullRequest::default().add_branch("**"))
+        .add_event(
+            Event::default()
+                .push(
+                    Push::default()
+                        .add_branch("main")
+                        .add_branch("v[0-9]+.[0-9]+.x"),
+                )
+                .pull_request(PullRequest::default().add_branch("**")),
         )
-        .concurrency(Concurrency::default()
-            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
-            .cancel_in_progress(true)
+        .concurrency(
+            Concurrency::default()
+                .group(concat!(
+                    "${{ github.workflow }}-${{ github.ref_name }}-",
+                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
+                ))
+                .cancel_in_progress(true),
         )
-        .add_env(( "CARGO_TERM_COLOR", "always" ))
-        .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ))
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("RUST_BACKTRACE", 1))
+        .add_env(("CARGO_INCREMENTAL", 0))
         .map(|mut workflow| {
             for job in jobs {
                 workflow = workflow.add_job(job.name, job.job)
@@ -102,7 +110,7 @@ pub(crate) fn run_tests() -> Workflow {
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
-fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -157,9 +165,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .outputs(outputs)
         .add_step(steps::checkout_repo().add_with((
             "fetch-depth",
@@ -175,7 +181,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     NamedJob { name, job }
 }
 
-pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0
@@ -209,9 +215,7 @@ pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .map(|j| j.name.to_string())
                 .collect::<Vec<String>>(),
         )
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries' && always()",
-        ))
+        .cond(repository_owner_guard_expression(true))
         .add_step(named::bash(&script));
 
     named::job(job)
@@ -359,7 +363,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::MAC_DEFAULT)
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
+            .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_step(steps::checkout_repo().with(("fetch-depth", 0))) // fetch full history
             .add_step(remove_untracked_files())
             .add_step(ensure_fresh_merge())

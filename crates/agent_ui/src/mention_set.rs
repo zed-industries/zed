@@ -167,9 +167,9 @@ impl MentionSet {
             return Task::ready(());
         };
         let excerpt_id = start_anchor.excerpt_id;
-        let end_anchor = snapshot
-            .buffer_snapshot()
-            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
+        let end_anchor = snapshot.buffer_snapshot().anchor_before(
+            start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
+        );
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && let Some(extension) = abs_path.extension()
@@ -526,101 +526,6 @@ impl MentionSet {
                 tracked_buffers: Vec::new(),
             })
         })
-    }
-}
-
-pub fn insert_pasted_images(
-    images: Vec<gpui::Image>,
-    editor: Entity<Editor>,
-    mention_set: Entity<MentionSet>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
-    for image in images {
-        let (excerpt_id, text_anchor, multibuffer_anchor) = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let (excerpt_id, _, buffer_snapshot) =
-                snapshot.buffer_snapshot().as_singleton().unwrap();
-
-            let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
-            let multibuffer_anchor = snapshot
-                .buffer_snapshot()
-                .anchor_in_excerpt(*excerpt_id, text_anchor);
-            editor.edit(
-                [(
-                    multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                    format!("{replacement_text} "),
-                )],
-                cx,
-            );
-            (*excerpt_id, text_anchor, multibuffer_anchor)
-        });
-
-        let content_len = replacement_text.len();
-        let Some(start_anchor) = multibuffer_anchor else {
-            continue;
-        };
-        let end_anchor = editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
-        });
-        let image = Arc::new(image);
-        let Some((crease_id, tx)) = insert_crease_for_mention(
-            excerpt_id,
-            text_anchor,
-            content_len,
-            MentionUri::PastedImage.name().into(),
-            IconName::Image.path().into(),
-            Some(Task::ready(Ok(image.clone())).shared()),
-            editor.clone(),
-            window,
-            cx,
-        ) else {
-            continue;
-        };
-        let task = cx
-            .spawn(async move |cx| {
-                let format = image.format;
-                let image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))
-                    .map_err(|e| e.to_string())?
-                    .await;
-                drop(tx);
-                if let Some(image) = image {
-                    Ok(Mention::Image(MentionImage {
-                        data: image.source,
-                        format,
-                    }))
-                } else {
-                    Err("Failed to convert image".into())
-                }
-            })
-            .shared();
-
-        mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
-        });
-        window
-            .spawn(cx, {
-                let editor = editor.clone();
-                let mention_set = mention_set.clone();
-                async move |cx| {
-                    if task.await.notify_async_err(cx).is_none() {
-                        editor
-                            .update(cx, |editor, cx| {
-                                editor.edit([(start_anchor..end_anchor, "")], cx);
-                            })
-                            .ok();
-                        mention_set
-                            .update(cx, |mention_set, _cx| {
-                                mention_set.remove_mention(&crease_id)
-                            })
-                            .ok();
-                    }
-                }
-            })
-            .detach();
     }
 }
 

@@ -3,8 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, RegisterSetting, Settings, ShowDiagnostics,
-    ShowIndentGuides,
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
+    ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
     px,
@@ -33,6 +33,7 @@ pub struct ProjectPanelSettings {
     pub hide_hidden: bool,
     pub drag_and_drop: bool,
     pub auto_open: AutoOpenSettings,
+    pub sort_mode: ProjectPanelSortMode,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -115,6 +116,9 @@ impl Settings for ProjectPanelSettings {
                     on_drop: auto_open.on_drop.unwrap(),
                 }
             },
+            sort_mode: project_panel
+                .sort_mode
+                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
         }
     }
 }

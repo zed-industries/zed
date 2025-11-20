@@ -370,7 +370,7 @@ pub struct ThemeStyleContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct AccentContent(pub Option<String>);
+pub struct AccentContent(pub Option<SharedString>);
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct PlayerColorContent {

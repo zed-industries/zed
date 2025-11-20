@@ -10,8 +10,8 @@ use editor::{
 };
 use fs::Fs;
 use gpui::{
-    AnyElement, App, ClipboardEntry, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, TextStyle, WeakEntity, Window,
+    AnyElement, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
@@ -32,7 +32,7 @@ use crate::buffer_codegen::BufferCodegen;
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
-use crate::mention_set::{MentionSet, insert_pasted_images};
+use crate::mention_set::MentionSet;
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 
@@ -290,34 +290,8 @@ impl<T: 'static> PromptEditor<T> {
         self.editor.read(cx).text(cx)
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        let images = cx
-            .read_from_clipboard()
-            .map(|item| {
-                item.into_entries()
-                    .filter_map(|entry| {
-                        if let ClipboardEntry::Image(image) = entry {
-                            Some(image)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        if images.is_empty() {
-            return;
-        }
-        cx.stop_propagation();
-
-        insert_pasted_images(
-            images,
-            self.editor.clone(),
-            self.mention_set.clone(),
-            window,
-            cx,
-        );
+    fn paste(&mut self, _: &Paste, _window: &mut Window, _cx: &mut Context<Self>) {
+        //todo
     }
 
     fn handle_prompt_editor_events(
@@ -380,7 +354,7 @@ impl<T: 'static> PromptEditor<T> {
                 let snapshot = editor.display_snapshot(cx);
                 let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                 let offset = cursor.to_offset(&snapshot);
-                if offset > 0 {
+                if offset.0 > 0 {
                     snapshot
                         .buffer_snapshot()
                         .reversed_chars_at(offset)

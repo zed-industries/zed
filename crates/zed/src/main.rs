@@ -341,7 +341,9 @@ pub fn main() {
         } else {
             None
         };
-    log::info!("Using git binary path: {:?}", git_binary_path);
+    if let Some(git_binary_path) = &git_binary_path {
+        log::info!("Using git binary path: {:?}", git_binary_path);
+    }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
     let user_settings_file_rx = watch_config_file(
@@ -547,11 +549,7 @@ pub fn main() {
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
-        reliability::init(
-            client.http_client(),
-            system_id.as_ref().map(|id| id.to_string()),
-            cx,
-        );
+        reliability::init(client.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -1248,7 +1246,7 @@ pub fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true)]
+#[command(name = "zed", disable_version_flag = true, max_term_width = 100)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///
@@ -1263,11 +1261,12 @@ struct Args {
     diff: Vec<String>,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
+    ///
     /// This overrides the default platform-specific data directory location.
     /// On macOS, the default is `~/Library/Application Support/Zed`.
     /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
     /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", verbatim_doc_comment)]
     user_data_dir: Option<String>,
 
     /// The username and WSL distribution to use when opening paths. If not specified,
@@ -1287,8 +1286,11 @@ struct Args {
     #[arg(long)]
     dev_server_token: Option<String>,
 
-    /// Prints system specs. Useful for submitting issues on GitHub when encountering a bug
-    /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
+    /// Prints system specs.
+    ///
+    /// Useful for submitting issues on GitHub when encountering a bug that
+    /// prevents Zed from starting, so you can't run `zed: copy system specs to
+    /// clipboard`
     #[arg(long)]
     system_specs: bool,
 

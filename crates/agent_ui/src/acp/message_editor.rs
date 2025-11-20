@@ -4,9 +4,7 @@ use crate::{
         PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextAction,
         PromptContextType, SlashCommandCompletion,
     },
-    mention_set::{
-        Mention, MentionImage, MentionSet, insert_crease_for_mention, insert_pasted_images,
-    },
+    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
 use acp_thread::MentionUri;
 use agent::HistoryStore;
@@ -15,15 +13,17 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, ToOffset, actions::Paste,
-    code_context_menus::CodeContextMenu, scroll::Autoscroll,
+    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, ToOffset,
+    actions::Paste, code_context_menus::CodeContextMenu, scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
     KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
+use itertools::Either;
 use language::{Buffer, Language, language_settings::InlayHintKind};
+use language_model::LanguageModelImage;
 use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
 use prompt_store::PromptStore;
 use rope::Point;
@@ -32,7 +32,7 @@ use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{ResultExt, debug_panic};
-use workspace::{CollaboratorId, Workspace};
+use workspace::{CollaboratorId, Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
 pub struct MessageEditor {
@@ -226,7 +226,7 @@ impl MessageEditor {
         let acp::AvailableCommandInput::Unstructured { mut hint } =
             available_command.input.clone()?;
 
-        let mut hint_pos = parsed_command.source_range.end + 1;
+        let mut hint_pos = MultiBufferOffset(parsed_command.source_range.end) + 1usize;
         if hint_pos > snapshot.len() {
             hint_pos = snapshot.len();
             hint.insert(0, ' ');
@@ -389,8 +389,8 @@ impl MessageEditor {
                         };
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
-                        if crease_range.start > ix {
-                            let chunk = text[ix..crease_range.start].into();
+                        if crease_range.start.0 > ix {
+                            let chunk = text[ix..crease_range.start.0].into();
                             chunks.push(chunk);
                         }
                         let chunk = match mention {
@@ -458,7 +458,7 @@ impl MessageEditor {
                             }),
                         };
                         chunks.push(chunk);
-                        ix = crease_range.end;
+                        ix = crease_range.end.0;
                     }
 
                     if ix < text.len() {
@@ -514,7 +514,7 @@ impl MessageEditor {
                         let snapshot = editor.display_snapshot(cx);
                         let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                         let offset = cursor.to_offset(&snapshot);
-                        if offset > 0 {
+                        if offset.0 > 0 {
                             snapshot
                                 .buffer_snapshot()
                                 .reversed_chars_at(offset)
@@ -565,34 +565,152 @@ impl MessageEditor {
         if !self.prompt_capabilities.borrow().image {
             return;
         }
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            use itertools::Itertools;
+            let (mut images, paths) = clipboard
+                .into_entries()
+                .filter_map(|entry| match entry {
+                    ClipboardEntry::Image(image) => Some(Either::Left(image)),
+                    ClipboardEntry::ExternalPaths(paths) => Some(Either::Right(paths)),
+                    _ => None,
+                })
+                .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
 
-        let images = cx
-            .read_from_clipboard()
-            .map(|item| {
-                item.into_entries()
-                    .filter_map(|entry| {
-                        if let ClipboardEntry::Image(image) = entry {
-                            Some(image)
+            if !paths.is_empty() {
+                images.extend(
+                    cx.background_spawn(async move {
+                        let mut images = vec![];
+                        for path in paths.into_iter().flat_map(|paths| paths.paths().to_owned()) {
+                            let Ok(content) = async_fs::read(path).await else {
+                                continue;
+                            };
+                            let Ok(format) = image::guess_format(&content) else {
+                                continue;
+                            };
+                            images.push(gpui::Image::from_bytes(
+                                match format {
+                                    image::ImageFormat::Png => gpui::ImageFormat::Png,
+                                    image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                                    image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                                    image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                                    image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                                    image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                                    image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                                    _ => continue,
+                                },
+                                content,
+                            ));
+                        }
+                        images
+                    })
+                    .await,
+                );
+            }
+
+            if images.is_empty() {
+                return;
+            }
+
+            let replacement_text = MentionUri::PastedImage.as_link().to_string();
+            let Ok(editor) = this.update(cx, |this, cx| {
+                cx.stop_propagation();
+                this.editor.clone()
+            }) else {
+                return;
+            };
+            for image in images {
+                let Ok((excerpt_id, text_anchor, multibuffer_anchor)) =
+                    editor.update_in(cx, |message_editor, window, cx| {
+                        let snapshot = message_editor.snapshot(window, cx);
+                        let (excerpt_id, _, buffer_snapshot) =
+                            snapshot.buffer_snapshot().as_singleton().unwrap();
+
+                        let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                        let multibuffer_anchor = snapshot
+                            .buffer_snapshot()
+                            .anchor_in_excerpt(*excerpt_id, text_anchor);
+                        message_editor.edit(
+                            [(
+                                multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                                format!("{replacement_text} "),
+                            )],
+                            cx,
+                        );
+                        (*excerpt_id, text_anchor, multibuffer_anchor)
+                    })
+                else {
+                    break;
+                };
+
+                let content_len = replacement_text.len();
+                let Some(start_anchor) = multibuffer_anchor else {
+                    continue;
+                };
+                let Ok(end_anchor) = editor.update(cx, |editor, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+                }) else {
+                    continue;
+                };
+                let image = Arc::new(image);
+                let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
+                    insert_crease_for_mention(
+                        excerpt_id,
+                        text_anchor,
+                        content_len,
+                        MentionUri::PastedImage.name().into(),
+                        IconName::Image.path().into(),
+                        Some(Task::ready(Ok(image.clone())).shared()),
+                        editor.clone(),
+                        window,
+                        cx,
+                    )
+                }) else {
+                    continue;
+                };
+                let task = cx
+                    .spawn(async move |cx| {
+                        let format = image.format;
+                        let image = cx
+                            .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                            .map_err(|e| e.to_string())?
+                            .await;
+                        drop(tx);
+                        if let Some(image) = image {
+                            Ok(Mention::Image(MentionImage {
+                                data: image.source,
+                                format,
+                            }))
                         } else {
-                            None
+                            Err("Failed to convert image".into())
                         }
                     })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+                    .shared();
 
-        if images.is_empty() {
-            return;
-        }
-        cx.stop_propagation();
+                this.update(cx, |this, cx| {
+                    this.mention_set.update(cx, |mention_set, _cx| {
+                        mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+                    });
+                })
+                .ok();
 
-        insert_pasted_images(
-            images,
-            self.editor.clone(),
-            self.mention_set.clone(),
-            window,
-            cx,
-        );
+                if task.await.notify_async_err(cx).is_none() {
+                    this.update(cx, |this, cx| {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.edit([(start_anchor..end_anchor, "")], cx);
+                        });
+                        this.mention_set.update(cx, |mention_set, _cx| {
+                            mention_set.remove_mention(&crease_id)
+                        });
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     pub fn insert_dragged_files(
@@ -675,7 +793,7 @@ impl MessageEditor {
         let cursor_anchor = editor.selections.newest_anchor().head();
         let cursor_offset = cursor_anchor.to_offset(&editor_buffer.snapshot(cx));
         let anchor = buffer.update(cx, |buffer, _cx| {
-            buffer.anchor_before(cursor_offset.min(buffer.len()))
+            buffer.anchor_before(cursor_offset.0.min(buffer.len()))
         });
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -803,7 +921,7 @@ impl MessageEditor {
         });
 
         for (range, mention_uri, mention) in mentions {
-            let anchor = snapshot.anchor_before(range.start);
+            let anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
             let Some((crease_id, tx)) = insert_crease_for_mention(
                 anchor.excerpt_id,
                 anchor.text_anchor,
@@ -929,7 +1047,7 @@ mod tests {
     use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
     use assistant_text_thread::TextThreadStore;
-    use editor::{AnchorRangeExt as _, Editor, EditorMode};
+    use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
@@ -1898,7 +2016,7 @@ mod tests {
         editor.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
-                .folds_in_range(0..snapshot.len())
+                .folds_in_range(MultiBufferOffset(0)..snapshot.len())
                 .map(|fold| fold.range.to_point(&snapshot))
                 .collect()
         })
