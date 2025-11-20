@@ -890,6 +890,7 @@ pub enum ImageFileSizeUnit {
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
+    pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 
@@ -899,16 +900,9 @@ pub struct RemoteSettingsContent {
 )]
 pub struct DevContainerConnection {
     pub name: SharedString,
+    pub image: SharedString,
+    pub container_id: SharedString,
 }
-
-// impl From<settings::De> for DevContainerConnection {
-//     fn from(val: settings::WslConnection) -> Self {
-//         WslConnectionOptions {
-//             distro_name: val.distro_name.into(),
-//             user: val.user,
-//         }
-//     }
-// }
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
@@ -919,7 +913,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: collections::BTreeSet<SshProject>,
+    pub projects: collections::BTreeSet<RemoteProject>,
     /// Name to use for this server in UI.
     pub nickname: Option<String>,
     // By default Zed will download the binary to the host directly.
@@ -936,14 +930,14 @@ pub struct WslConnection {
     pub distro_name: SharedString,
     pub user: Option<String>,
     #[serde(default)]
-    pub projects: BTreeSet<SshProject>,
+    pub projects: BTreeSet<RemoteProject>,
 }
 
 #[skip_serializing_none]
 #[derive(
     Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
 )]
-pub struct SshProject {
+pub struct RemoteProject {
     pub paths: Vec<String>,
 }
 

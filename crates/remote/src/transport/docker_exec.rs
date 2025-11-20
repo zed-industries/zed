@@ -19,7 +19,6 @@ use util::{
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
 use gpui::{App, AppContext, AsyncApp, SemanticVersion, Task};
 use rpc::proto::Envelope;
-use std::fmt::Write;
 
 use crate::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemotePlatform,
@@ -29,15 +28,8 @@ use crate::{
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct DockerExecConnectionOptions {
     pub name: String,
+    pub container_id: String,
     pub upload_binary_over_docker_exec: bool,
-    // pub username: Option<String>,
-    // pub port: Option<u16>,
-    // pub password: Option<String>,
-    // pub args: Option<Vec<String>>,
-    // pub port_forwards: Option<Vec<SshPortForwardOption>>,
-
-    // pub nickname: Option<String>,
-    // pub upload_binary_over_ssh: bool,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -46,7 +38,6 @@ pub(crate) struct DockerExecConnection {
     remote_platform: Option<RemotePlatform>,
     path_style: Option<PathStyle>,
     shell: Option<String>,
-    container_id: String,
 }
 
 impl DockerExecConnection {
@@ -58,14 +49,9 @@ impl DockerExecConnection {
         let mut this = Self {
             remote_binary_path: None,
             connection_options,
-            remote_platform: None, /*RemotePlatform {
-                                       // TODO hard-coded
-                                       os: "linux",
-                                       arch: "aarch64",
-                                   },*/
+            remote_platform: None,
             path_style: None,
             shell: None,
-            container_id: "fa75b942d27c".to_string(), // TODO also hard-coded
         };
         let (release_channel, version, commit) = cx.update(|cx| {
             (
@@ -330,11 +316,13 @@ impl DockerExecConnection {
         let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
 
-        log::debug!("using SCP for file upload");
         let mut command = util::command::new_smol_command("docker");
         command.arg("cp");
         command.arg(&src_path_display);
-        command.arg(format!("{}:{}", &self.container_id, dest_path_str));
+        command.arg(format!(
+            "{}:{}",
+            &self.connection_options.container_id, dest_path_str
+        ));
 
         let output = command.output().await?;
 
@@ -344,10 +332,10 @@ impl DockerExecConnection {
 
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::debug!(
-            "failed to upload file via SCP {src_path_display} -> {dest_path_str}: {stderr}",
+            "failed to upload file via docker cp {src_path_display} -> {dest_path_str}: {stderr}",
         );
         anyhow::bail!(
-            "failed to upload file via STFP/SCP {} -> {}: {}",
+            "failed to upload file via docker cp {} -> {}: {}",
             src_path_display,
             dest_path_str,
             stderr,
@@ -358,7 +346,7 @@ impl DockerExecConnection {
         let mut command = util::command::new_smol_command("docker"); // TODO docker needs to be a field
         command.arg("exec");
 
-        command.arg(&self.container_id);
+        command.arg(&self.connection_options.container_id);
 
         command.arg(program);
 
@@ -454,7 +442,7 @@ impl RemoteConnection for DockerExecConnection {
         //     PathStyle::Posix,
         // ));
 
-        let mut docker_args = vec!["exec", "-i", &self.container_id];
+        let mut docker_args = vec!["exec", "-i", &self.connection_options.container_id];
         // TODO not sure how you do this best in an exec context
         // for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
         //     if let Some(value) = std::env::var(env_var).ok() {
@@ -513,7 +501,10 @@ impl RemoteConnection for DockerExecConnection {
         let mut command = util::command::new_smol_command("docker");
         command.arg("cp");
         command.arg(src_path_display);
-        command.arg(format!("{}:{}", "fa75b942d27c", dest_path_str));
+        command.arg(format!(
+            "{}:{}",
+            self.connection_options.container_id, dest_path_str
+        ));
 
         cx.background_spawn(async move {
             let output = command.output().await?;
@@ -610,11 +601,8 @@ impl RemoteConnection for DockerExecConnection {
             the_args.push(env_str);
         }
 
-        // The hard-coded part
-        // TODO this basically assumes that we're using this case to open a terminal window in Zed
-        // That seems like a safe assumption, but perhaps warrants a switch?
         the_args.push("-it".to_string());
-        the_args.push("fa75b942d27c".to_string());
+        the_args.push(self.connection_options.container_id.to_string());
 
         the_args.append(&mut inner_program);
 

@@ -96,6 +96,7 @@ impl From<Connection> for RemoteConnectionOptions {
             Connection::DevContainer(conn) => {
                 RemoteConnectionOptions::DockerExec(DockerExecConnectionOptions {
                     name: conn.name.to_string(),
+                    container_id: conn.container_id.to_string(),
                     upload_binary_over_docker_exec: false,
                 })
             }
@@ -592,6 +593,7 @@ pub async fn open_remote_project(
         let workspace_position = cx
             .update(|cx| {
                 // todo: These paths are wrong they may have column and line information
+                // todo probably needed for containers too
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
             })?
             .await

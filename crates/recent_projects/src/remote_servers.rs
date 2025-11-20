@@ -20,11 +20,12 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
-    remote_client::ConnectionIdentifier,
+    DockerExecConnectionOptions, RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
+    WslConnectionOptions, remote_client::ConnectionIdentifier,
 };
+use serde::de;
 use settings::{
-    DevContainerConnection, RemoteSettingsContent, Settings as _, SettingsStore, SshProject,
+    DevContainerConnection, RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore,
     update_settings_file, watch_config_file,
 };
 use smol::stream::StreamExt as _;
@@ -83,17 +84,21 @@ impl CreateRemoteServer {
             _creating: None,
         }
     }
-    fn new_devcontainer(window: &mut Window, cx: &mut App) -> Self {
-        let address_editor = cx.new(|cx| Editor::single_line(window, cx));
-        address_editor.update(cx, |this, cx| {
-            this.focus_handle(cx).focus(window);
-        });
-        Self {
-            address_editor,
-            address_error: None,
-            ssh_prompt: None,
-            _creating: None,
-        }
+}
+
+struct CreateRemoteDevContainer {
+    // What are the options here?
+    // - Create from devcontainer.json
+    // - Edit devcontainer.json
+    // - Go back
+    entries: [NavigableEntry; 3],
+}
+
+impl CreateRemoteDevContainer {
+    fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
+        let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
+        entries[0].focus_handle.focus(window);
+        Self { entries }
     }
 }
 
@@ -276,7 +281,7 @@ impl ProjectPicker {
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
                                     {
-                                        server.projects.insert(SshProject { paths });
+                                        server.projects.insert(RemoteProject { paths });
                                     };
                                 }
                                 ServerIndex::Wsl(index) => {
@@ -286,7 +291,7 @@ impl ProjectPicker {
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
                                     {
-                                        server.projects.insert(SshProject { paths });
+                                        server.projects.insert(RemoteProject { paths });
                                     };
                                 }
                                 ServerIndex::DevContainer(_) => {
@@ -436,7 +441,7 @@ impl From<WslServerIndex> for ServerIndex {
 enum RemoteEntry {
     Project {
         open_folder: NavigableEntry,
-        projects: Vec<(NavigableEntry, SshProject)>,
+        projects: Vec<(NavigableEntry, RemoteProject)>,
         configure: NavigableEntry,
         connection: Connection,
         index: ServerIndex,
@@ -525,25 +530,7 @@ impl DefaultState {
                 }
             });
 
-        let test_devcontainer_servers = vec![RemoteEntry::Project {
-            open_folder: NavigableEntry::new(&handle, cx),
-            configure: NavigableEntry::new(&handle, cx),
-            projects: vec![(
-                NavigableEntry::new(&handle, cx),
-                SshProject {
-                    paths: vec!["/workspaces/zed".to_string()],
-                },
-            )],
-            index: ServerIndex::DevContainer(DevContainerIndex(0)),
-            connection: Connection::DevContainer(DevContainerConnection {
-                name: "test".into(),
-            }),
-        }];
-
-        let mut servers = ssh_servers
-            .chain(wsl_servers)
-            .chain(test_devcontainer_servers)
-            .collect::<Vec<RemoteEntry>>();
+        let mut servers = ssh_servers.chain(wsl_servers).collect::<Vec<RemoteEntry>>();
 
         if read_ssh_config {
             let mut extra_servers_from_config = ssh_config_servers.clone();
@@ -603,7 +590,7 @@ enum Mode {
     EditNickname(EditNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
-    CreateRemoteDevContainer(CreateRemoteServer),
+    CreateRemoteDevContainer(CreateRemoteDevContainer),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
 }
@@ -1034,7 +1021,9 @@ impl RemoteServerProjects {
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
             Mode::CreateRemoteDevContainer(state) => {
-                println!("Creating remote dev container woo!");
+                println!(
+                    "This should only have to execute in the cases where the user wants to go back."
+                );
             }
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
@@ -1079,14 +1068,14 @@ impl RemoteServerProjects {
         }
     }
 
-    fn render_ssh_connection(
+    fn render_remote_connection(
         &mut self,
         ix: usize,
-        ssh_server: RemoteEntry,
+        remote_server: RemoteEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection = ssh_server.connection().into_owned();
+        let connection = remote_server.connection().into_owned();
 
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
@@ -1140,7 +1129,7 @@ impl RemoteServerProjects {
                         }),
                     ),
             )
-            .child(match &ssh_server {
+            .child(match &remote_server {
                 RemoteEntry::Project {
                     open_folder,
                     projects,
@@ -1152,9 +1141,9 @@ impl RemoteServerProjects {
                     List::new()
                         .empty_message("No projects.")
                         .children(projects.iter().enumerate().map(|(pix, p)| {
-                            v_flex().gap_0p5().child(self.render_ssh_project(
+                            v_flex().gap_0p5().child(self.render_remote_project(
                                 index,
-                                ssh_server.clone(),
+                                remote_server.clone(),
                                 pix,
                                 p,
                                 window,
@@ -1280,12 +1269,12 @@ impl RemoteServerProjects {
             })
     }
 
-    fn render_ssh_project(
+    fn render_remote_project(
         &mut self,
         server_ix: ServerIndex,
         server: RemoteEntry,
         ix: usize,
-        (navigation, project): &(NavigableEntry, SshProject),
+        (navigation, project): &(NavigableEntry, RemoteProject),
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1431,7 +1420,7 @@ impl RemoteServerProjects {
     fn delete_remote_project(
         &mut self,
         server: ServerIndex,
-        project: &SshProject,
+        project: &RemoteProject,
         cx: &mut Context<Self>,
     ) {
         match server {
@@ -1450,7 +1439,7 @@ impl RemoteServerProjects {
     fn delete_ssh_project(
         &mut self,
         server: SshServerIndex,
-        project: &SshProject,
+        project: &RemoteProject,
         cx: &mut Context<Self>,
     ) {
         let project = project.clone();
@@ -1468,7 +1457,7 @@ impl RemoteServerProjects {
     fn delete_wsl_project(
         &mut self,
         server: WslServerIndex,
-        project: &SshProject,
+        project: &RemoteProject,
         cx: &mut Context<Self>,
     ) {
         let project = project.clone();
@@ -1515,67 +1504,163 @@ impl RemoteServerProjects {
 
     fn render_create_dev_container(
         &self,
-        state: &CreateRemoteServer,
+        state: &CreateRemoteDevContainer,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
-        v_flex()
-            .track_focus(&self.focus_handle(cx))
-            .id("create-remote-server")
-            .overflow_hidden()
-            .size_full()
-            .flex_1()
-            .child(
-                div()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(theme.colors().border_variant)
-                    .child(state.address_editor.clone()),
-            )
-            .child(
-                h_flex()
-                    .bg(theme.colors().editor_background)
-                    .rounded_b_sm()
-                    .w_full(), // .map(|this| {
-                               //     if let Some(ssh_prompt) = ssh_prompt {
-                               //         this.child(h_flex().w_full().child(ssh_prompt))
-                               //     } else if let Some(address_error) = &state.address_error {
-                               //         this.child(
-                               //             h_flex().p_2().w_full().gap_2().child(
-                               //                 Label::new(address_error.clone())
-                               //                     .size(LabelSize::Small)
-                               //                     .color(Color::Error),
-                               //             ),
-                               //         )
-                               //     } else {
-                               //         this.child(
-                               //             h_flex()
-                               //                 .p_2()
-                               //                 .w_full()
-                               //                 .gap_1()
-                               //                 .child(
-                               //                     Label::new(
-                               //                         "Enter the command you use to SSH into this server.",
-                               //                     )
-                               //                     .color(Color::Muted)
-                               //                     .size(LabelSize::Small),
-                               //                 )
-                               //                 .child(
-                               //                     Button::new("learn-more", "Learn More")
-                               //                         .label_size(LabelSize::Small)
-                               //                         .icon(IconName::ArrowUpRight)
-                               //                         .icon_size(IconSize::XSmall)
-                               //                         .on_click(|_, _, cx| {
-                               //                             cx.open_url(
-                               //                                 "https://zed.dev/docs/remote-development",
-                               //                             );
-                               //                         }),
-                               //                 ),
-                               //         )
-                               //     }
-                               // }),
-            )
+        // self.focus_handle.focus(window);
+        // state.entries[0].focus_handle.focus(window);
+        //
+        let callback = Rc::new({
+            |remote_server_projects: &mut Self,
+             secondary_confirm: bool,
+             window: &mut Window,
+             cx: &mut Context<Self>| {
+                match get_dev_container_project(cx) {
+                    RemoteEntry::Project {
+                        open_folder,
+                        projects,
+                        configure,
+                        connection,
+                        index,
+                    } => {
+                        let Some(app_state) = remote_server_projects
+                            .workspace
+                            .read_with(cx, |workspace, _| workspace.app_state().clone())
+                            .log_err()
+                        else {
+                            return;
+                        };
+                        let (_, project) = projects.first().expect("TODO handle");
+                        let project = project.clone();
+                        // let server = connection.into_owned();
+                        cx.emit(DismissEvent);
+
+                        // let replace_window = match (create_new_window, secondary_confirm) {
+                        //     (true, false) | (false, true) => None,
+                        //     (true, true) | (false, false) => {
+                        //         window.window_handle().downcast::<Workspace>()
+                        //     }
+                        // };
+                        // For now, we always want to replace the current window
+                        let replace_window = window.window_handle().downcast::<Workspace>();
+
+                        cx.spawn_in(window, async move |_, cx| {
+                            let result = open_remote_project(
+                                connection.into(),
+                                project.paths.into_iter().map(PathBuf::from).collect(),
+                                app_state,
+                                OpenOptions {
+                                    replace_window,
+                                    ..OpenOptions::default()
+                                },
+                                cx,
+                            )
+                            .await;
+                            if let Err(e) = result {
+                                log::error!("Failed to connect: {e:#}");
+                                cx.prompt(
+                                    gpui::PromptLevel::Critical,
+                                    "Failed to connect",
+                                    Some(&e.to_string()),
+                                    &["Ok"],
+                                )
+                                .await
+                                .ok();
+                            }
+                        })
+                        .detach();
+                    }
+                    _ => todo!("Shouldn't hit this"),
+                }
+            }
+        });
+
+        let mut view = Navigable::new(
+            div()
+                .track_focus(&self.focus_handle(cx))
+                .size_full()
+                .child(
+                    v_flex()
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .id("confirm-create-from-devcontainer-json")
+                                .track_focus(&state.entries[0].focus_handle)
+                                .on_action(cx.listener(
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        // this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                        // println!("Confirm create from devcontainer.json");
+                                        // cx.focus_self(window);
+                                        // cx.notify();
+                                        callback(this, false, window, cx)
+                                    },
+                                ))
+                                .child(
+                                    ListItem::new("doit")
+                                        .toggle_state(
+                                            state.entries[0]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .child(Label::new("Create from devcontainer.json?")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("edit-devcontainer-json")
+                                .track_focus(&state.entries[1].focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    // this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    println!("Confirm edit devcontainer.json");
+                                    cx.focus_self(window);
+                                    cx.notify();
+                                }))
+                                .child(
+                                    ListItem::new("li-edit-devcontainer-json")
+                                        .toggle_state(
+                                            state.entries[1]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .child(Label::new("Edit devcontainer.json")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("devcontainer-go-back")
+                                .track_focus(&state.entries[2].focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    // this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    println!("Confirm go back");
+                                    cx.focus_self(window);
+                                    cx.notify();
+                                }))
+                                .child(
+                                    ListItem::new("li-devcontainer-go-back")
+                                        .toggle_state(
+                                            state.entries[2]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .child(Label::new("Go Back")),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        );
+        view = view.entry(state.entries[0].clone());
+        view = view.entry(state.entries[1].clone());
+        view = view.entry(state.entries[2].clone());
+
+        view.render(window, cx).into_any_element()
     }
 
     fn render_create_remote_server(
@@ -2125,7 +2210,7 @@ impl RemoteServerProjects {
             .track_focus(&state.add_new_server.focus_handle)
             .anchor_scroll(state.add_new_server.scroll_anchor.clone())
             .child(
-                ListItem::new("register-remove-server-button")
+                ListItem::new("register-remote-server-button")
                     .toggle_state(
                         state
                             .add_new_server
@@ -2135,7 +2220,7 @@ impl RemoteServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                    .child(Label::new("Connect New Server"))
+                    .child(Label::new("Connect New Ssh Server"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let state = CreateRemoteServer::new(window, cx);
                         this.mode = Mode::CreateRemoteServer(state);
@@ -2143,8 +2228,19 @@ impl RemoteServerProjects {
                         cx.notify();
                     })),
             )
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let state = CreateRemoteServer::new(window, cx);
+                this.mode = Mode::CreateRemoteServer(state);
+
+                cx.notify();
+            }));
+
+        let connect_dev_container_button = div()
+            .id("connect-new-dev-container")
+            .track_focus(&state.add_new_devcontainer.focus_handle)
+            .anchor_scroll(state.add_new_devcontainer.scroll_anchor.clone())
             .child(
-                ListItem::new("register-remove-server-button")
+                ListItem::new("register-dev-container-button")
                     .toggle_state(
                         state
                             .add_new_devcontainer
@@ -2154,17 +2250,17 @@ impl RemoteServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                    .child(Label::new("Connect to Dev Container"))
+                    .child(Label::new("Connect Dev Container"))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let state = CreateRemoteServer::new_devcontainer(window, cx);
+                        let state = CreateRemoteDevContainer::new(window, cx);
                         this.mode = Mode::CreateRemoteDevContainer(state);
 
                         cx.notify();
                     })),
             )
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                let state = CreateRemoteServer::new(window, cx);
-                this.mode = Mode::CreateRemoteServer(state);
+                let state = CreateRemoteDevContainer::new(window, cx);
+                this.mode = Mode::CreateRemoteDevContainer(state);
 
                 cx.notify();
             }));
@@ -2201,7 +2297,8 @@ impl RemoteServerProjects {
             .overflow_y_scroll()
             .track_scroll(&state.scroll_handle)
             .size_full()
-            .child(connect_button);
+            .child(connect_button)
+            .child(connect_dev_container_button);
 
         #[cfg(target_os = "windows")]
         let modal_section = modal_section.child(wsl_connect_button);
@@ -2223,13 +2320,14 @@ impl RemoteServerProjects {
                                 .into_any_element(),
                         )
                         .children(state.servers.iter().enumerate().map(|(ix, connection)| {
-                            self.render_ssh_connection(ix, connection.clone(), window, cx)
+                            self.render_remote_connection(ix, connection.clone(), window, cx)
                                 .into_any_element()
                         })),
                 )
                 .into_any_element(),
         )
-        .entry(state.add_new_server.clone());
+        .entry(state.add_new_server.clone())
+        .entry(state.add_new_devcontainer.clone());
 
         if cfg!(target_os = "windows") {
             modal_section = modal_section.entry(state.add_new_wsl.clone());
@@ -2455,4 +2553,29 @@ impl Render for RemoteServerProjects {
                     .into_any_element(),
             })
     }
+}
+
+// TODO, parse devcontainer.json from here
+// Output from `devcontainer up --workspace-folder .`: {"outcome":"success","containerId":"ad1397a548f2bda8d691c9ed42c2eeb4e5f4a2f0d698cfc0330574cf884963ac","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}
+// (idempotent)
+pub fn get_dev_container_project(cx: &mut App) -> RemoteEntry {
+    let scroll_handle = ScrollHandle::new();
+    let remote_project = RemoteEntry::Project {
+        open_folder: NavigableEntry::new(&scroll_handle, cx),
+        configure: NavigableEntry::new(&scroll_handle, cx),
+        projects: vec![(
+            NavigableEntry::new(&scroll_handle, cx),
+            RemoteProject {
+                paths: vec!["/workspaces/zed".to_string()],
+            },
+        )],
+        connection: Connection::DevContainer(DevContainerConnection {
+            name: "test".into(),
+            image: "mcr.microsoft.com/devcontainers/rust:latest".into(),
+            container_id: "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a".into(),
+        }),
+        index: ServerIndex::DevContainer(DevContainerIndex(0)),
+    };
+
+    remote_project
 }
