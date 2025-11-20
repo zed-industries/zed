@@ -342,22 +342,39 @@ pub struct BuiltinAgentServerSettings {
 
 #[skip_serializing_none]
 #[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct CustomAgentServerSettings {
-    #[serde(rename = "command")]
-    pub path: PathBuf,
-    #[serde(default)]
-    pub args: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
-    pub default_mode: Option<String>,
-    /// The default model to use for this agent.
-    ///
-    /// This should be the model ID as reported by the agent.
-    ///
-    /// Default: None
-    pub default_model: Option<String>,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomAgentServerSettings {
+    Custom {
+        #[serde(rename = "command")]
+        path: PathBuf,
+        #[serde(default)]
+        args: Vec<String>,
+        env: Option<HashMap<String, String>>,
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
+    Extension {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
 }

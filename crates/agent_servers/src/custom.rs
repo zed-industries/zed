@@ -44,7 +44,7 @@ impl crate::AgentServer for CustomAgentServer {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+            .and_then(|s| s.default_mode().map(|m| acp::SessionModeId(m.into())))
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -56,7 +56,12 @@ impl crate::AgentServer for CustomAgentServer {
                 .custom
                 .get_mut(&name)
             {
-                settings.default_mode = mode_id.map(|m| m.to_string())
+                match settings {
+                    settings::CustomAgentServerSettings::Custom { default_mode, .. }
+                    | settings::CustomAgentServerSettings::Extension { default_mode, .. } => {
+                        *default_mode = mode_id.map(|m| m.to_string());
+                    }
+                }
             }
         });
     }
@@ -72,7 +77,7 @@ impl crate::AgentServer for CustomAgentServer {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_model.clone().map(|m| acp::ModelId(m.into())))
+            .and_then(|s| s.default_model().map(|m| acp::ModelId(m.into())))
     }
 
     fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -84,7 +89,12 @@ impl crate::AgentServer for CustomAgentServer {
                 .custom
                 .get_mut(&name)
             {
-                settings.default_model = model_id.map(|m| m.to_string())
+                match settings {
+                    settings::CustomAgentServerSettings::Custom { default_model, .. }
+                    | settings::CustomAgentServerSettings::Extension { default_model, .. } => {
+                        *default_model = model_id.map(|m| m.to_string());
+                    }
+                }
             }
         });
     }

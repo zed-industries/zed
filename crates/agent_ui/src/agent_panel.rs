@@ -2098,7 +2098,7 @@ impl AgentPanel {
 
                                     let command = custom_settings
                                         .get(&agent_name.0)
-                                        .map(|settings| settings.command.clone())
+                                        .and_then(|settings| settings.command().cloned())
                                         .unwrap_or(placeholder_command());
 
                                     if let Some(icon_path) = icon_path {
@@ -2136,10 +2136,10 @@ impl AgentPanel {
                                                                             .into(),
                                                                         command: custom_settings
                                                                             .get(&agent_name.0)
-                                                                            .map(|settings| {
+                                                                            .and_then(|settings| {
                                                                                 settings
-                                                                                    .command
-                                                                                    .clone()
+                                                                                    .command()
+                                                                                    .cloned()
                                                                             })
                                                                             .unwrap_or(
                                                                                 placeholder_command(
