@@ -1002,6 +1002,9 @@ mod foo «1{
     mod foo {
         fn process_data_1() {
             let map: Option<Vec<()>> = None;
+            // a
+            // b
+            // c
         }
     "#},
                     indoc! {r#"
@@ -1041,16 +1044,22 @@ mod foo «1{
                 cx,
             );
 
-            let first_excerpt_rows = 5;
-            let second_excerpt_rows = 5;
+            let excerpt_rows = 5;
+            let rest_of_first_except_rows = 3;
             multi_buffer.push_excerpts(
                 buffer_1.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(first_excerpt_rows, 0)),
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(excerpt_rows, 0)),
                     ExcerptRange::new(
-                        Point::new(comment_lines as u32 + first_excerpt_rows, 0)
+                        Point::new(
+                            comment_lines as u32 + excerpt_rows + rest_of_first_except_rows,
+                            0,
+                        )
                             ..Point::new(
-                                comment_lines as u32 + first_excerpt_rows + second_excerpt_rows,
+                                comment_lines as u32
+                                    + excerpt_rows
+                                    + rest_of_first_except_rows
+                                    + excerpt_rows,
                                 0,
                             ),
                     ),
@@ -1079,8 +1088,8 @@ fn main«1()1» «1{«2{«3()3»}2»}1»
 mod foo «1{
     fn process_data_1«2()2» «2{
         let map: Option«3<Vec«4<«5()5»>4»>3» = None;
-    }2»
-
+        // a
+        // b
 
 
     fn process_data_2«2()2» «2{
@@ -1095,6 +1104,8 @@ mod foo «1{
 5 hsla(355.00, 65.00%, 75.94%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
+            "Multi buffers should have their brackets colored even if no excerpts contain the bracket counterpart (after fn `process_data_2()`) \
+or if the buffer pair spans across multiple excerpts (the one after `mod foo`)"
         );
     }
 
