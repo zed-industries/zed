@@ -9517,6 +9517,7 @@ dependencies = [
  "postage",
  "release_channel",
  "schemars 1.0.4",
+ "semver",
  "serde",
  "serde_json",
  "smol",
