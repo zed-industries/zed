@@ -8114,13 +8114,7 @@ impl LspStore {
                     )?;
 
                 update.diagnostics.diagnostics.extend(reused_diagnostics);
-            } else {
-                // Handle non-open buffers.
-                // TODO: This overlaps with `update_worktree_diagnostics`.
-                let local = match &mut self.mode {
-                    LspStoreMode::Local(local_lsp_store) => local_lsp_store,
-                    _ => anyhow::bail!("update_worktree_diagnostics called on remote"),
-                };
+            } else if let Some(local) = self.as_local_mut() {
                 let diagnostics_for_tree = local.diagnostics.entry(worktree_id).or_default();
                 let diagnostics_by_server_id = diagnostics_for_tree
                     .entry(project_path.path.clone())
