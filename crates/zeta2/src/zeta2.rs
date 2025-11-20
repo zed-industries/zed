@@ -402,17 +402,14 @@ impl Zeta {
             #[cfg(feature = "eval-support")]
             eval_cache: None,
             edit_prediction_model: ZetaEditPredictionModel::ZedCloud,
-            sweep_api_token: None,
+            sweep_api_token: std::env::var("SWEEP_AI_TOKEN")
+                .context("No SWEEP_AI_TOKEN environment variable set")
+                .log_err(),
             sweep_ai_debug_info: sweep_ai::debug_info(cx),
         }
     }
 
     pub fn set_edit_prediction_model(&mut self, model: ZetaEditPredictionModel) {
-        if model == ZetaEditPredictionModel::Sweep {
-            self.sweep_api_token = std::env::var("SWEEP_AI_TOKEN")
-                .context("No SWEEP_AI_TOKEN environment variable set")
-                .log_err();
-        }
         self.edit_prediction_model = model;
     }
 
@@ -476,7 +473,11 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.user_store.read(cx).edit_prediction_usage()
+        if self.edit_prediction_model == ZetaEditPredictionModel::ZedCloud {
+            self.user_store.read(cx).edit_prediction_usage()
+        } else {
+            None
+        }
     }
 
     pub fn register_project(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
