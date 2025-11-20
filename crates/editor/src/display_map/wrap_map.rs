@@ -996,7 +996,6 @@ impl Iterator for WrapRows<'_> {
         let buffer_row = self.input_buffer_row.clone();
         let soft_wrapped = self.soft_wrapped;
         let diff_status = self.input_buffer_row.diff_status;
-        let word_diffs = self.input_buffer_row.word_diffs.clone();
 
         self.output_row += 1;
         self.transforms
@@ -1014,8 +1013,8 @@ impl Iterator for WrapRows<'_> {
                 buffer_row: None,
                 multibuffer_row: None,
                 diff_status,
-                word_diffs,
                 expand_info: None,
+                wrapped_buffer_row: buffer_row.buffer_row,
             }
         } else {
             buffer_row

@@ -8804,15 +8804,6 @@ impl Element for EditorElement {
                         let base_display_point =
                             DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
 
-                        for word_diff in row_info.word_diffs.clone() {
-                            // todo! remove this
-                            // let start =
-                            //     (word_diff.start).to_display_point(&snapshot.display_snapshot);
-                            // let end = (word_diff.end).to_display_point(&snapshot.display_snapshot);
-
-                            // highlighted_ranges.push((start..end, background_color.alpha(0.6)));
-                        }
-
                         highlighted_rows
                             .entry(base_display_point.row())
                             .or_insert(background);
