@@ -2646,8 +2646,11 @@ impl MultiBuffer {
             }
 
             // Compute the start of the edit in output coordinates.
-            let edit_start_overshoot = if let Some(DiffTransform::FilteredInsertedHunk { .. }) = old_diff_transforms.item() {
-                dbg!(0)
+            // FIXME this is probably wrong when filtering
+            let edit_start_overshoot = if let Some(DiffTransform::FilteredInsertedHunk { .. }) =
+                old_diff_transforms.item()
+            {
+                0
             } else {
                 (edit.old.start - old_diff_transforms.start().0).value
             };
@@ -2669,26 +2672,36 @@ impl MultiBuffer {
             // the last hunk that intersects the edit could extend beyond the end of the edit
 
             // Compute the end of the edit in output coordinates.
-            let edit_old_end_overshoot = edit.old.end - old_diff_transforms.start().0;
+            // FIXME these two are probably wrong when filtering
+            let edit_old_end_overshoot = if let Some(DiffTransform::FilteredInsertedHunk {
+                ..
+            }) = old_diff_transforms.item()
+            {
+                ExcerptOffset::new(0)
+            } else {
+                edit.old.end - old_diff_transforms.start().0
+            };
             let edit_new_end_overshoot = if let Some(current_inserted_hunk) = end_of_current_insert
                 && current_inserted_hunk.is_filtered
             {
-                // Exclude any filtered content from the overshoot, since it does not appear in the output.
-                // FIXME this is kind of sketchy
-                ExcerptOffset::new(
-                    edit.new.end.value.saturating_sub(
-                        current_inserted_hunk
-                            .insertion_end_offset
-                            .max(new_diff_transforms.summary().excerpt_len())
-                            .value,
-                    ),
-                )
+                // FIXME this is still wrong (it should be larger in some cases)
+                // |--deleted---|----(filtered) inserted---| hunk
+                //                                         ^ insertion_end_offset (?)
+                //                                   <-----|-overshoot-> edit
+                
+                
+                let insertion_end_offset = dbg!(current_inserted_hunk.insertion_end_offset);
+                let excerpt_len = dbg!(new_diff_transforms.summary().excerpt_len());
+                
+                let base = insertion_end_offset.max(excerpt_len);
+                ExcerptOffset::new(edit.new.end.value.saturating_sub(base.value))
             } else {
                 edit.new.end - new_diff_transforms.summary().excerpt_len()
             };
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.value;
             let edit_new_end =
                 new_diff_transforms.summary().output.len + edit_new_end_overshoot.value;
+            dbg!(&edit);
             let output_edit = Edit {
                 old: dbg!(edit_old_start..edit_old_end),
                 new: dbg!(edit_new_start..edit_new_end),
@@ -2699,11 +2712,6 @@ impl MultiBuffer {
             if changed_diff_hunks || matches!(change_kind, DiffChangeKind::BufferEdited) {
                 output_edits.push(output_edit);
             }
-            //              <--------------------------->
-            //          <--e-->              current
-            //  vvvvvvvvvvvvvvvvvv        <--->    next
-            // |-------a---------|-------b--------|
-            //    current             next
 
             // If this is the last edit that intersects the current diff transform,
             // then recreate the content up to the end of this transform, to prepare
@@ -2912,7 +2920,6 @@ impl MultiBuffer {
                             );
                         }
 
-                        dbg!(&hunk_buffer_range);
                         if !hunk_buffer_range.is_empty() {
                             *end_of_current_insert = Some(CurrentInsertedHunk {
                                 insertion_end_offset: hunk_excerpt_end.min(excerpt_end),

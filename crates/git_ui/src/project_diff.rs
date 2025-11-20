@@ -139,7 +139,6 @@ impl ProjectDiff {
     ) {
         Self::deploy_at(workspace, None, window, cx);
         let Some(this) = workspace.item_of_type::<Self>(cx) else {
-            dbg!("whoops");
             return;
         };
         let follower = this.update(cx, |this, cx| {

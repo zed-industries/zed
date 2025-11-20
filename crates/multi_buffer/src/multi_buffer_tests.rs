@@ -3473,7 +3473,6 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
     });
 
     assert_eq!(snapshot.text(), base_text);
-
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -3483,27 +3482,15 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             "
               one
             - two
-              three
+              *t*hree
             - four
             - five
               six
             "
         ),
     );
-    
-    // let o = that offset;
-    // 
-    // Edit {
-    //  old: o..o,
-    //  new: o..o,
-    // }
-    // 
-    // let o2 = that offset;
-    // Edit {
-    //  old: 
-    //  new: 
-    // }
 
+    dbg!("-----------------");
     buffer.update(cx, |buffer, cx| {
         buffer.edit_via_marked_text(
             indoc!(
@@ -3519,18 +3506,25 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             cx,
         );
     });
-    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
-        (multibuffer.snapshot(cx), multibuffer.subscribe())
-    });
-
-    let s = snapshot
-        .chunks(0..snapshot.len(), false)
-        .map(|c| c.text)
-        .collect::<String>();
-
-    println!("{s}");
-
-    dbg!("aksdjhflaiksjhflaksdjhflkjh");
+    // expected output edits:
+    // 4..8 => 4..8
+    // 8..9 => 8..9
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            - two
+              Three
+            - four
+            - five
+              six
+            "
+        ),
+    );
 }
 
 #[track_caller]

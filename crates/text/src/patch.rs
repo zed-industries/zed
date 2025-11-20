@@ -74,7 +74,8 @@ where
         + Sub<T, Output = TDelta>
         + Add<TDelta, Output = T>
         + AddAssign<TDelta>
-        + Default + std::fmt::Debug,
+        + Default
+        + std::fmt::Debug,
     TDelta: Ord + Copy,
 {
     #[must_use]
@@ -114,7 +115,7 @@ where
             if let Some(new_edit) = new_edit.as_ref() {
                 let old_edit = old_edit.as_ref();
                 if old_edit.is_none_or(|old_edit| new_edit.old.end < old_edit.new.start) {
-                    let catchup = dbg!(new_edit.new.start) - dbg!(new_start);
+                    let catchup = new_edit.new.start - new_start;
                     old_start += catchup;
                     new_start += catchup;
 
