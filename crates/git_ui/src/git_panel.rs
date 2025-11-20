@@ -51,6 +51,7 @@ use panel::{
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
+    project_settings::{GitPathStyle, ProjectSettings},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -3954,6 +3955,7 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let path_style = self.project.read(cx).path_style(cx);
+        let git_path_style = ProjectSettings::get_global(cx).git.path_style;
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
@@ -4053,7 +4055,6 @@ impl GitPanel {
         } else {
             cx.theme().colors().ghost_element_active
         };
-
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -4151,26 +4152,68 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .flex_1()
-                    // .overflow_hidden()
-                    .when_some(entry.parent_dir(path_style), |this, parent| {
-                        if !parent.is_empty() {
-                            this.child(
-                                self.entry_label(
-                                    format!("{parent}{}", path_style.separator()),
-                                    path_color,
-                                )
-                                .when(status.is_deleted(), |this| this.strikethrough()),
-                            )
-                        } else {
-                            this
-                        }
-                    })
-                    .child(
-                        self.entry_label(display_name, label_color)
-                            .when(status.is_deleted(), |this| this.strikethrough()),
-                    ),
+                    .child(h_flex().items_center().flex_1().map(|this| {
+                        self.path_formatted(
+                            this,
+                            entry.parent_dir(path_style),
+                            path_color,
+                            display_name,
+                            label_color,
+                            path_style,
+                            git_path_style,
+                            status.is_deleted(),
+                        )
+                    })),
             )
             .into_any_element()
+    }
+
+    fn path_formatted(
+        &self,
+        parent: Div,
+        directory: Option<String>,
+        path_color: Color,
+        file_name: String,
+        label_color: Color,
+        path_style: PathStyle,
+        git_path_style: GitPathStyle,
+        strikethrough: bool,
+    ) -> Div {
+        parent
+            .when(git_path_style == GitPathStyle::FileNameFirst, |this| {
+                this.child(
+                    self.entry_label(
+                        match directory.as_ref().is_none_or(|d| d.is_empty()) {
+                            true => file_name.clone(),
+                            false => format!("{file_name} "),
+                        },
+                        label_color,
+                    )
+                    .when(strikethrough, Label::strikethrough),
+                )
+            })
+            .when_some(directory, |this, dir| {
+                match (
+                    !dir.is_empty(),
+                    git_path_style == GitPathStyle::FileNameFirst,
+                ) {
+                    (true, true) => this.child(
+                        self.entry_label(dir, path_color)
+                            .when(strikethrough, Label::strikethrough),
+                    ),
+                    (true, false) => this.child(
+                        self.entry_label(format!("{dir}{}", path_style.separator()), path_color)
+                            .when(strikethrough, Label::strikethrough),
+                    ),
+                    _ => this,
+                }
+            })
+            .when(git_path_style == GitPathStyle::FilePathFirst, |this| {
+                this.child(
+                    self.entry_label(file_name, label_color)
+                        .when(strikethrough, Label::strikethrough),
+                )
+            })
     }
 
     fn has_write_access(&self, cx: &App) -> bool {
