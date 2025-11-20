@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::{f32::consts::PI, time::Duration};
 
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, App, AppContext, Application, Bounds, Context,
     FragmentShader, IntoElement, Length, ParentElement, Radians, Render, RenderOnce, Rgba,
-    ShaderUniform, Styled, Window, WindowBounds, WindowOptions, div, px, relative, rgb,
+    ShaderUniform, Styled, Window, WindowBounds, WindowOptions, div, px, radians, relative, rgb,
     shader_element, shader_element_with_data, size,
 };
 
@@ -12,9 +12,8 @@ use gpui::{
 pub struct WarpShaderInstance {
     pub color_a: [f32; 4],
     pub color_b: [f32; 4],
-    pub color_c: [f32; 4],
-    pub time_a: f32,
-    pub time_b: f32,
+    pub time: f32,
+    pub hurst: f32,
 }
 
 struct ShaderExample {}
@@ -24,21 +23,24 @@ impl Render for ShaderExample {
         let warping_shader = FragmentShader::new(
             "
             // Based on https://iquilezles.org/articles/warp/
-            let m = (input.size.x + input.size.y) / 5.0;
-            let p = vec2<f32>(input.position.x / m, input.position.y / m);
+            let p = input.position.xy / 500.0;
 
-            let q = vec2<f32>(fbm(p, 0.5), fbm(p + vec2<f32>(data.time_a, data.time_b * 0.4), 0.5));
-            let r = vec2<f32>(fbm(p * 4.0 * q * 8.0 + vec2<f32>(data.time_b * 1.7, data.time_a * 1.3), 0.5), fbm(p * (data.time_b + 2.0) * (data.time_b + 2.0) / 5.0 * 4.0 * q + vec2<f32>(data.time_a * -0.2, 2.8), 0.5));
-            let x = fbm(p + 4.0 * r, 0.5);
+            let a = vec2<f32>(fbm(p + vec2<f32>(0.0, 0.0), data.hurst),
+                              fbm(p + vec2<f32>(5.2, 2.3), data.hurst));
+            let b = vec2<f32>(fbm(p + data.time * a + vec2<f32>(1.7, 9.2), data.hurst),
+                              fbm(p + data.time * a + vec2<f32>(8.3, 2.8), data.hurst));
+            let c = fbm(p + 4.0 * b, data.hurst);
 
-            var c = mix(data.color_a, data.color_b, (q.x + r.x) / 2.0);
-            c = mix(c, data.color_c, x);
-
-            return vec4<f32>(c.x, c.y, c.z, 1.0);
+            let color = mix(data.color_a, data.color_b, clamp(b.y - 0.1, 0.0, 1.0));
+            return mix(vec4<f32>(0.0, 0.0, 0.0, 1.0), color, clamp(c * 1.5 - 0.5, 0.0, 1.0));
             ",
         )
-        .with_item("fn rand22(n: vec2<f32>) -> f32 { return fract(sin(dot(n, vec2<f32>(12.9898, 4.1414))) * 43758.5453); }")
         .with_item("
+            // https://gist.github.com/munrocket/236ed5ba7e409b8bdf1ff6eca5dcdc39
+            fn rand22(n: vec2<f32>) -> f32 {
+                return fract(sin(dot(n, vec2<f32>(12.9898, 4.1414))) * 43758.5453);
+            }
+
             fn noise2(n: vec2<f32>) -> f32 {
                 let d = vec2<f32>(0., 1.);
                 let b = floor(n);
@@ -53,77 +55,48 @@ impl Render for ShaderExample {
                 var frequency: f32 = 1.0;
                 var amplitude: f32 = 1.0;
                 var sum: f32 = 0.0;
+                var max: f32 = 0.0;
 
                 for (var idx: i32 = 0; idx < 5; idx = idx + 1) {
                     sum = sum + amplitude * noise2(position * frequency);
+                    max = max + amplitude;
                     frequency = frequency * 2.0;
                     amplitude = amplitude * gain;
                 }
 
-                return sum / 5.0;
+                return sum / max;
             }
         ");
 
         div().flex().size_full().bg(rgb(0x202060)).with_animation(
             "animation",
-            Animation::new(Duration::from_secs(60)).repeat(),
+            Animation::new(Duration::from_secs(30)).repeat(),
             move |this, t| {
                 this.child(
                     shader_element_with_data(
                         warping_shader.clone(),
                         WarpShaderInstance {
-                            color_a: [0.15, 0.3, 0.8, 0.0],
-                            color_b: [0.9, 0.35, 0.4, 0.0],
-                            color_c: [1.0, 0.95, 0.7, 0.0],
-                            time_a: (2.0 * 3.0 * std::f32::consts::PI * t + 5.0).sin(),
-                            time_b: (2.0 * std::f32::consts::PI * t).sin(),
+                            color_a: [0.0, 0.5, 1.0, 1.0],
+                            color_b: [1.0, 0.0, 0.0, 1.0],
+                            time: (2.0 * PI * t).sin() * 0.25 + 4.0,
+                            hurst: 0.95,
                         },
                     )
-                    .size_full(),
+                    .size_full()
+                    .absolute(),
                 )
+                .child(star().size(relative(0.5)).border(px(20.0)).border_color(gpui::green()).rotation(radians(6.0 * PI * t)))
                 .child(
-                    shader_element_with_data(
-                        warping_shader.clone(),
-                        WarpShaderInstance {
-                            color_a: [0.45, 0.1, 0.1, 0.0],
-                            color_b: [0.9, 0.5, 0.0, 0.0],
-                            color_c: [1.0, 0.95, 0.7, 0.0],
-                            time_a: (2.0 * std::f32::consts::PI * t + 2.0).sin() * 2.0,
-                            time_b: (2.0 * 3.0 * std::f32::consts::PI * t + 3.0).sin(),
-                        },
-                    )
-                    .size_full(),
+                    star()
+                        .size(relative(0.2))
+                        .bg(gpui::blue())
+                        .border_color(gpui::white())
+                        .border(px(2.0))
+                        .rotation(radians(-24.0 * PI * t)),
                 )
-                .child(
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            star()
-                                .size(relative(0.9))
-                                .rotation(Radians(2.0 * std::f32::consts::PI * t * 10.0)),
-                        )
-                        .child(
-                            shader_element(FragmentShader::new(
-                                "
-                                let p = (vec2<f32>(input.position.x, input.position.y) - input.origin) / input.size;
-                                return vec4<f32>(p.x, p.y, 0.0, 1.0);
-                                ",
-                            ))
-                            .size_20().p_5(),
-                        )
-                        .child(
-                            star()
-                                .size(relative(0.3))
-                                .border(px(1.0))
-                                .border_color(gpui::white())
-                                .bg(gpui::green())
-                                .rotation(Radians(2.0 * std::f32::consts::PI * t * -30.0)),
-                        )
-                )
+                .child(shader_element(FragmentShader::new(
+                    "return vec4<f32>((input.position.xy - input.origin) / input.size, 0.0, 1.0);"
+                )).size_40())
             },
         )
     }
@@ -194,9 +167,9 @@ impl RenderOnce for Star {
             let p_rot = mat2x2<f32>(data.cosine, -data.sine, data.sine, data.cosine) * p;
             let d = sd_pentagram(p_rot, r * 0.90) - r * 0.1;
 
-            let bg = mix(data.bg, vec4<f32>(data.bg.x, data.bg.y, data.bg.z, 0.0), clamp(d, 0.0, 1.0));
-            let border = clamp(abs(d + data.border / 2.0) - data.border / 2.0 - 1.0, 0.0, 1.0);
-            let color = mix(data.border_color, bg, border);
+            let border = clamp(d + data.border, 0.0, 1.0);
+            var color = mix(data.bg, data.border_color, border);
+            color.w = 1.0 - clamp(d, 0.0, 1.0);
 
             return color;"
         ).with_item("
