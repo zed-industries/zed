@@ -703,7 +703,7 @@ mod foo «1{
 
                 let mut preorder = file.preorder();
                 while let Some(event) = preorder.next() {
-                    // FIXME: This can miss some hints that require the parent of the range to calculate
+                    // This can miss some hints that require the parent of the range to calculate
                     if matches!(&event, WalkEvent::Enter(node) if resolve_range.intersect(node.text_range()).is_none())
                     {
                         preorder.skip_subtree();
@@ -747,7 +747,7 @@ mod foo «1{
                 }
             }
 
-            // FIXME: At some point when our hir infra is fleshed out enough we should flip this and traverse the
+            // At some point when our hir infra is fleshed out enough we should flip this and traverse the
             // HIR instead of the syntax tree.
             fn hints(
                 hints: &mut Vec<InlayHint>,
@@ -819,7 +819,7 @@ mod foo «1{
                             ast::Item::ExternBlock(it) => extern_block::extern_block_hints(hints, famous_defs, config, it),
                             _ => None,
                         },
-                        // FIXME: trait object type elisions
+                        // trait object type elisions
                         ast::Type(ty) => match ty {
                             ast::Type::FnPtrType(ptr) => lifetime::fn_ptr_hints(hints, ctx, famous_defs, config,  ptr),
                             ast::Type::PathType(path) => {
