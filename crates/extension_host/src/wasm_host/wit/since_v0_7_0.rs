@@ -1194,6 +1194,9 @@ impl ExtensionImports for WasmState {
                                 command: None,
                                 settings: Some(settings),
                             })?),
+                            project::project_settings::ContextServerSettings::Http { .. } => {
+                                bail!("HTTP context servers are not supported in extensions")
+                            }
                         }
                     }
                     _ => {
