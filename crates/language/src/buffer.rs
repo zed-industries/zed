@@ -136,7 +136,7 @@ pub struct Buffer {
 #[derive(Debug, Clone)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Vec<Option<Vec<BracketMatch>>>,
+    brackets_by_chunks: Vec<Option<Vec<BracketMatch<usize>>>>,
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
@@ -847,16 +847,16 @@ impl EditPreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BracketMatch {
-    pub open_range: Range<usize>,
-    pub close_range: Range<usize>,
+pub struct BracketMatch<T> {
+    pub open_range: Range<T>,
+    pub close_range: Range<T>,
     pub newline_only: bool,
     pub syntax_layer_depth: usize,
     pub color_index: Option<usize>,
 }
 
-impl BracketMatch {
-    pub fn bracket_ranges(self) -> (Range<usize>, Range<usize>) {
+impl<T> BracketMatch<T> {
+    pub fn bracket_ranges(self) -> (Range<T>, Range<T>) {
         (self.open_range, self.close_range)
     }
 }
@@ -2128,7 +2128,7 @@ impl Buffer {
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
-    pub fn subscribe(&mut self) -> Subscription {
+    pub fn subscribe(&mut self) -> Subscription<usize> {
         self.text.subscribe()
     }
 
@@ -4174,7 +4174,7 @@ impl BufferSnapshot {
         &self,
         range: Range<usize>,
         known_chunks: Option<(&Global, &HashSet<Range<BufferRow>>)>,
-    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch>> {
+    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
         let mut tree_sitter_data = self.latest_tree_sitter_data().clone();
 
         let known_chunks = match known_chunks {
@@ -4307,7 +4307,10 @@ impl BufferSnapshot {
         tree_sitter_data
     }
 
-    pub fn all_bracket_ranges(&self, range: Range<usize>) -> impl Iterator<Item = BracketMatch> {
+    pub fn all_bracket_ranges(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = BracketMatch<usize>> {
         self.fetch_bracket_ranges(range.clone(), None)
             .into_values()
             .flatten()
@@ -4321,7 +4324,7 @@ impl BufferSnapshot {
     pub fn bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = BracketMatch> + '_ {
+    ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
         self.all_bracket_ranges(range)
@@ -4467,7 +4470,7 @@ impl BufferSnapshot {
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = BracketMatch> + '_ {
+    ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let result: Vec<_> = self.bracket_ranges(range.clone()).collect();

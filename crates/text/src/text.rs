@@ -54,7 +54,7 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     pub lamport_clock: clock::Lamport,
-    subscriptions: Topic,
+    subscriptions: Topic<usize>,
     edit_id_resolvers: HashMap<clock::Lamport, Vec<oneshot::Sender<()>>>,
     wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
 }
@@ -1619,7 +1619,7 @@ impl Buffer {
         self.edited_ranges_for_edit_ids(&transaction.edit_ids)
     }
 
-    pub fn subscribe(&mut self) -> Subscription {
+    pub fn subscribe(&mut self) -> Subscription<usize> {
         self.subscriptions.subscribe()
     }
 

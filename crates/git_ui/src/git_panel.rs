@@ -13,7 +13,8 @@ use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    Direction, Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks,
+    Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
+    actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
@@ -373,6 +374,7 @@ impl GitPanel {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
                     this.entries.clear();
+                    this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = is_sort_by_path
@@ -1550,7 +1552,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let git_commit_language = self.commit_editor.read(cx).language_at(0, cx);
+        let git_commit_language = self
+            .commit_editor
+            .read(cx)
+            .language_at(MultiBufferOffset(0), cx);
         let message = self.commit_editor.read(cx).text(cx);
         if message.is_empty() {
             return self

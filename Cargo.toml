@@ -165,7 +165,6 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
-    "crates/sweep_ai",
     "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
@@ -399,7 +398,6 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
-sweep_ai = { path = "crates/sweep_ai" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
@@ -784,6 +782,7 @@ features = [
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

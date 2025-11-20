@@ -4999,6 +4999,7 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
+        self.clear_pending_ops(cx);
         Ok(())
     }
 

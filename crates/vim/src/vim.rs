@@ -21,8 +21,8 @@ mod visual;
 
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
-    ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    SelectionEffects, ToPoint,
     actions::Paste,
     movement::{self, FindRange},
 };
@@ -666,7 +666,7 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
@@ -1388,7 +1388,7 @@ impl Vim {
         let newest_selection_empty = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx))
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .is_empty()
         });
         let editor = editor.read(cx);
@@ -1488,7 +1488,7 @@ impl Vim {
             let snapshot = &editor.snapshot(window, cx);
             let selection = editor
                 .selections
-                .newest::<usize>(&snapshot.display_snapshot);
+                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
 
             let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
@@ -1928,7 +1928,8 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            editor.set_collapse_matches(true);
+            let collapse_matches = !HelixModeSetting::get_global(cx).0;
+            editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor

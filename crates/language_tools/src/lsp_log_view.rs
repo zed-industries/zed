@@ -1,6 +1,6 @@
 use collections::VecDeque;
 use copilot::Copilot;
-use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
+use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
     AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
@@ -231,7 +231,7 @@ impl LspLogView {
                             let last_offset = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end = editor
                                 .selections
-                                .newest::<usize>(&editor.display_snapshot(cx))
+                                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                                 .start
                                 >= last_offset;
                             editor.edit(

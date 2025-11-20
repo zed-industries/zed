@@ -591,7 +591,6 @@ mod foo «1{
         result
     }
 
-    #[track_caller]
     fn bracket_colors_markup(cx: &mut EditorTestContext) -> String {
         let markup = cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
@@ -607,7 +606,7 @@ mod foo «1{
                     .or_insert_with(|| post_inc(&mut next_index));
                 let start_offset = snapshot.buffer_snapshot().point_to_offset(range.start);
                 let end_offset = snapshot.buffer_snapshot().point_to_offset(range.end);
-                let bracket_text = &editor_text[start_offset..end_offset];
+                let bracket_text = &editor_text[start_offset.0..end_offset.0];
                 let bracket_char = bracket_text.chars().next().unwrap();
 
                 if matches!(bracket_char, '{' | '[' | '(' | '<') {
@@ -632,7 +631,7 @@ mod foo «1{
 
             let mut text_with_annotations = editor_text;
             for (pos, text) in annotations {
-                text_with_annotations.insert_str(pos, &text);
+                text_with_annotations.insert_str(pos.0, &text);
             }
 
             text_with_annotations.push_str("\n");
