@@ -43,10 +43,10 @@ async fn test_sharing_an_ssh_remote_project(
 ) {
     let executor = cx_a.executor();
     cx_a.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -211,10 +211,10 @@ async fn test_ssh_collaboration_git_branches(
     server_cx.set_name("server");
 
     cx_a.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 
     let mut server = TestServer::start(executor.clone()).await;
@@ -396,10 +396,10 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     server_cx.set_name("server");
 
     cx_a.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 
     let mut server = TestServer::start(executor.clone()).await;
@@ -583,13 +583,13 @@ async fn test_remote_server_debugger(
     executor: BackgroundExecutor,
 ) {
     cx_a.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         command_palette_hooks::init(cx);
         zlog::init_test();
         dap_adapters::init(cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         dap_adapters::init(cx);
     });
     let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
@@ -691,13 +691,13 @@ async fn test_slow_adapter_startup_retries(
     executor: BackgroundExecutor,
 ) {
     cx_a.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         command_palette_hooks::init(cx);
         zlog::init_test();
         dap_adapters::init(cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         dap_adapters::init(cx);
     });
     let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
