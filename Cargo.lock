@@ -15105,6 +15105,7 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "pretty_assertions",
  "project",
  "schemars 1.0.4",
  "serde",

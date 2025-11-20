@@ -2449,6 +2449,7 @@ pub mod tests {
     use editor::{DisplayPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, rust_lang};
+    use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
     use settings::{InlayHintSettingsContent, SettingsStore};

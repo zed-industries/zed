@@ -1111,9 +1111,10 @@ fn test_text_objects(cx: &mut App) {
 
 #[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut App) {
-    let mut assert = |selection_text, range_markers| {
+    #[track_caller]
+    fn assert(selection_text: &'static str, range_markers: Vec<&'static str>, cx: &mut App) {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
-    };
+    }
 
     assert(
         indoc! {"
@@ -1130,6 +1131,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             «}»
             let foo = 1;"}],
+        cx,
     );
 
     assert(
@@ -1156,6 +1158,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
                 let foo = 1;"},
         ],
+        cx,
     );
 
     assert(
@@ -1182,6 +1185,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
                 let foo = 1;"},
         ],
+        cx,
     );
 
     assert(
@@ -1199,6 +1203,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             «}»
             let foo = 1;"}],
+        cx,
     );
 
     assert(
@@ -1209,7 +1214,8 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             }
             let fˇoo = 1;"},
-        vec![],
+        Vec::new(),
+        cx,
     );
 
     // Regression test: avoid crash when querying at the end of the buffer.
@@ -1221,7 +1227,8 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             }
             let foo = 1;ˇ"},
-        vec![],
+        Vec::new(),
+        cx,
     );
 }
 
