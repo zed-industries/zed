@@ -879,6 +879,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
+      "ctrl-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
       "ctrl-n": "project_panel::NewFile",
       "alt-n": "project_panel::NewDirectory",
