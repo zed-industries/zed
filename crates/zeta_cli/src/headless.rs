@@ -27,7 +27,7 @@ pub struct ZetaCliAppState {
 // TODO: dedupe with crates/eval/src/eval.rs
 pub fn init(cx: &mut App) -> ZetaCliAppState {
     let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
-    release_channel::init(app_version, cx);
+    release_channel::init(app_version.clone(), cx);
     gpui_tokio::init(cx);
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
