@@ -565,7 +565,13 @@ impl InlineAssistant {
             .entry(editor.downgrade())
             .or_insert_with(|| EditorInlineAssists::new(editor, window, cx));
 
-        let result = (assists.len() == 1).then(|| assists[0].0);
+        let assist_to_focus = if let Some(focus_id) = assist_to_focus {
+            Some(focus_id)
+        } else if assists.len() >= 1 {
+            Some(assists[0].0)
+        } else {
+            None
+        };
 
         let mut assist_group = InlineAssistGroup::new();
         for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
@@ -593,11 +599,7 @@ impl InlineAssistant {
 
         self.assist_groups.insert(assist_group_id, assist_group);
 
-        if let Some(assist_id) = assist_to_focus {
-            self.focus_assist(assist_id, window, cx);
-        }
-
-        result
+        assist_to_focus
     }
 
     pub fn assist(
@@ -620,7 +622,7 @@ impl InlineAssistant {
             return;
         };
 
-        self.batch_assist(
+        let assist_to_focus = self.batch_assist(
             editor,
             workspace,
             context_store,
@@ -634,6 +636,10 @@ impl InlineAssistant {
             None,
             cx,
         );
+
+        if let Some(assist_id) = assist_to_focus {
+            self.focus_assist(assist_id, window, cx);
+        }
     }
 
     pub fn suggest_assist(
