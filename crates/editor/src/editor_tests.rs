@@ -35,7 +35,7 @@ use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::CompletionParams;
-use multi_buffer::{IndentGuide, PathKey};
+use multi_buffer::{IndentGuide, MultiBufferFilterMode, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
@@ -28071,4 +28071,130 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         Z
         3
         "});
+}
+
+#[gpui::test]
+async fn test_filtered_editor_pair(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut leader_cx = EditorTestContext::new(cx).await;
+
+    let diff_base = indoc!(
+        r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        "#
+    );
+
+    let initial_state = indoc!(
+        r#"
+        ˇone
+        two
+        THREE
+        four
+        five
+        six
+        "#
+    );
+
+    leader_cx.set_state(initial_state);
+
+    leader_cx.set_head_text(&diff_base);
+    leader_cx.run_until_parked();
+
+    let follower = leader_cx.update_multibuffer(|leader, cx| {
+        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
+        leader.set_all_diff_hunks_expanded(cx);
+        leader.get_or_create_follower(cx)
+    });
+    follower.update(cx, |follower, cx| {
+        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+        follower.set_all_diff_hunks_expanded(cx);
+    });
+
+    let follower_editor =
+        leader_cx.new_window_entity(|window, cx| build_editor(follower, window, cx));
+    // leader_cx.window.focus(&follower_editor.focus_handle(cx));
+
+    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut *leader_cx).await;
+    cx.run_until_parked();
+
+    leader_cx.assert_editor_state(initial_state);
+    follower_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        "#
+    });
+
+    follower_cx.editor(|editor, _window, cx| {
+        assert!(editor.read_only(cx));
+    });
+
+    leader_cx.update_editor(|editor, _window, cx| {
+        editor.edit([(Point::new(4, 0)..Point::new(5, 0), "FIVE\n")], cx);
+    });
+    cx.run_until_parked();
+
+    leader_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        THREE
+        four
+        FIVE
+        six
+        "#
+    });
+
+    follower_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        "#
+    });
+
+    leader_cx.update_editor(|editor, _window, cx| {
+        editor.edit([(Point::new(6, 0)..Point::new(6, 0), "SEVEN")], cx);
+    });
+    cx.run_until_parked();
+
+    leader_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        THREE
+        four
+        FIVE
+        six
+        SEVEN"#
+    });
+
+    follower_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        "#
+    });
+
+    leader_cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.refresh_selected_text_highlights(true, window, cx);
+    });
+    leader_cx.run_until_parked();
 }

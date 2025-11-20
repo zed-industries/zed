@@ -2128,6 +2128,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
     diffs: HashMap<BufferId, Entity<BufferDiff>>,
+    mode: Option<MultiBufferFilterMode>,
 }
 
 #[derive(Debug)]
@@ -2145,6 +2146,7 @@ struct ReferenceRegion {
     buffer_start: Option<Point>,
     status: Option<DiffHunkStatus>,
     excerpt_id: Option<ExcerptId>,
+    // is_filtered: bool,
 }
 
 impl ReferenceMultibuffer {
@@ -2302,10 +2304,15 @@ impl ReferenceMultibuffer {
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: None,
                         excerpt_id: Some(excerpt.id),
+                        // is_filtered: false,
                     });
 
+                    let mode = self.mode;
+
                     // Add the deleted text for the hunk.
-                    if !hunk.diff_base_byte_range.is_empty() {
+                    if !hunk.diff_base_byte_range.is_empty()
+                        && mode != Some(MultiBufferFilterMode::KeepInsertions)
+                    {
                         let mut base_text = base_buffer
                             .text_for_range(hunk.diff_base_byte_range.clone())
                             .collect::<String>();
@@ -2322,6 +2329,7 @@ impl ReferenceMultibuffer {
                             ),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
                             excerpt_id: Some(excerpt.id),
+                            // is_filtered: mode != Some(DiffTransformFilterMode::KeepInsertions),
                         });
                     }
 
@@ -2565,14 +2573,24 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
 }
 
 #[gpui::test(iterations = 100)]
-async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
+async fn test_random_multibuffer() {}
+
+async fn test_random_multibuffer_impl(
+    filter_mode: Option<MultiBufferFilterMode>,
+    cx: &mut TestAppContext,
+    mut rng: StdRng,
+) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
     let mut base_texts: HashMap<BufferId, String> = HashMap::default();
-    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let multibuffer = cx.new(|_| {
+        let mut mb = MultiBuffer::new(Capability::ReadWrite);
+        mb.set_filter_mode(filter_mode);
+        mb
+    });
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
@@ -3453,25 +3471,8 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
-    
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
-    for chunk in chunks {
-        dbg!(chunk);
-    }
-    
-    dbg!(snapshot.diff_transforms.iter().collect::<Vec<_>>());
+
     assert_eq!(snapshot.text(), base_text);
-
-    // multibuffer.update(cx, |multibuffer, cx| {
-    //     multibuffer.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-    // });
-
-    // let (snapshot, subscription) = multibuffer.update(cx, |multibuffer, cx| {
-    //     (multibuffer.snapshot(cx), multibuffer.subscribe())
-    // });
-    // assert_eq!(snapshot.text(), text);
-
-    // cx.run_until_parked();
 
     assert_new_snapshot(
         &multibuffer,
@@ -3489,179 +3490,47 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             "
         ),
     );
+    
+    // let o = that offset;
+    // 
+    // Edit {
+    //  old: o..o,
+    //  new: o..o,
+    // }
+    // 
+    // let o2 = that offset;
+    // Edit {
+    //  old: 
+    //  new: 
+    // }
 
-    // assert_eq!(
-    //     snapshot
-    //         .row_infos(MultiBufferRow(0))
-    //         .map(|info| (info.buffer_row, info.diff_status))
-    //         .collect::<Vec<_>>(),
-    //     vec![
-    //         (Some(0), Some(DiffHunkStatus::added_none())),
-    //         (Some(1), None),
-    //         (Some(1), Some(DiffHunkStatus::deleted_none())),
-    //         (Some(2), Some(DiffHunkStatus::added_none())),
-    //         (Some(3), None),
-    //         (Some(3), Some(DiffHunkStatus::deleted_none())),
-    //         (Some(4), Some(DiffHunkStatus::deleted_none())),
-    //         (Some(4), None),
-    //         (Some(5), None)
-    //     ]
-    // );
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit_via_marked_text(
+            indoc!(
+                "
+                ZERO
+                one
+                «<inserted>»W«O
+                T»hree
+                six
+                "
+            ),
+            None,
+            cx,
+        );
+    });
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
 
-    // assert_chunks_in_ranges(&snapshot);
-    // assert_consistent_line_numbers(&snapshot);
-    // assert_position_translation(&snapshot);
-    // assert_line_indents(&snapshot);
+    let s = snapshot
+        .chunks(0..snapshot.len(), false)
+        .map(|c| c.text)
+        .collect::<String>();
 
-    // multibuffer.update(cx, |multibuffer, cx| {
-    //     multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
-    // });
-    // assert_new_snapshot(
-    //     &multibuffer,
-    //     &mut snapshot,
-    //     &mut subscription,
-    //     cx,
-    //     indoc!(
-    //         "
-    //         ZERO
-    //         one
-    //         TWO
-    //         three
-    //         six
-    //         "
-    //     ),
-    // );
+    println!("{s}");
 
-    // assert_chunks_in_ranges(&snapshot);
-    // assert_consistent_line_numbers(&snapshot);
-    // assert_position_translation(&snapshot);
-    // assert_line_indents(&snapshot);
-
-    // // Expand the first diff hunk
-    // multibuffer.update(cx, |multibuffer, cx| {
-    //     let position = multibuffer.read(cx).anchor_before(Point::new(2, 2));
-    //     multibuffer.expand_diff_hunks(vec![position..position], cx)
-    // });
-    // assert_new_snapshot(
-    //     &multibuffer,
-    //     &mut snapshot,
-    //     &mut subscription,
-    //     cx,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one
-    //         - two
-    //         + TWO
-    //           three
-    //           six
-    //         "
-    //     ),
-    // );
-
-    // // Expand the second diff hunk
-    // multibuffer.update(cx, |multibuffer, cx| {
-    //     let start = multibuffer.read(cx).anchor_before(Point::new(4, 0));
-    //     let end = multibuffer.read(cx).anchor_before(Point::new(5, 0));
-    //     multibuffer.expand_diff_hunks(vec![start..end], cx)
-    // });
-    // assert_new_snapshot(
-    //     &multibuffer,
-    //     &mut snapshot,
-    //     &mut subscription,
-    //     cx,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one
-    //         - two
-    //         + TWO
-    //           three
-    //         - four
-    //         - five
-    //           six
-    //         "
-    //     ),
-    // );
-
-    // assert_chunks_in_ranges(&snapshot);
-    // assert_consistent_line_numbers(&snapshot);
-    // assert_position_translation(&snapshot);
-    // assert_line_indents(&snapshot);
-
-    // // Edit the buffer before the first hunk
-    // buffer.update(cx, |buffer, cx| {
-    //     buffer.edit_via_marked_text(
-    //         indoc!(
-    //             "
-    //             ZERO
-    //             one« hundred
-    //               thousand»
-    //             TWO
-    //             three
-    //             six
-    //             "
-    //         ),
-    //         None,
-    //         cx,
-    //     );
-    // });
-    // assert_new_snapshot(
-    //     &multibuffer,
-    //     &mut snapshot,
-    //     &mut subscription,
-    //     cx,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one hundred
-    //             thousand
-    //         - two
-    //         + TWO
-    //           three
-    //         - four
-    //         - five
-    //           six
-    //         "
-    //     ),
-    // );
-
-    // assert_chunks_in_ranges(&snapshot);
-    // assert_consistent_line_numbers(&snapshot);
-    // assert_position_translation(&snapshot);
-    // assert_line_indents(&snapshot);
-
-    // // Recalculate the diff, changing the first diff hunk.
-    // diff.update(cx, |diff, cx| {
-    //     diff.recalculate_diff_sync(buffer.read(cx).text_snapshot(), cx);
-    // });
-    // cx.run_until_parked();
-    // assert_new_snapshot(
-    //     &multibuffer,
-    //     &mut snapshot,
-    //     &mut subscription,
-    //     cx,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one hundred
-    //             thousand
-    //           TWO
-    //           three
-    //         - four
-    //         - five
-    //           six
-    //         "
-    //     ),
-    // );
-
-    // assert_eq!(
-    //     snapshot
-    //         .diff_hunks_in_range(0..snapshot.len())
-    //         .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
-    //         .collect::<Vec<_>>(),
-    //     &[0..4, 5..7]
-    // );
+    dbg!("aksdjhflaiksjhflaksdjhflkjh");
 }
 
 #[track_caller]
