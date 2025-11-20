@@ -5215,10 +5215,6 @@ fn empty_icon() -> AnyElement {
         .into_any_element()
 }
 
-fn horizontal_separator(cx: &mut App) -> Div {
-    div().mx_2().border_primary(cx).border_t_1()
-}
-
 #[derive(Debug, Default)]
 struct GenerationState {
     entries: Vec<CachedEntry>,
