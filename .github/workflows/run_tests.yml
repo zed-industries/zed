@@ -47,7 +47,7 @@ jobs:
         }
 
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
-        check_pattern "run_docs" '^docs/' -qP
+        check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
