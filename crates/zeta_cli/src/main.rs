@@ -199,7 +199,6 @@ enum PredictionProvider {
 }
 
 fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
-    todo!("remove");
     zeta2::ZetaOptions {
         context: ContextMode::Syntax(EditPredictionContextOptions {
             max_retrieved_declarations: args.max_retrieved_definitions,
