@@ -5,7 +5,13 @@ pub(crate) mod memory_view;
 pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
-use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    ops::ControlFlow,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use crate::{
     ToggleExpandItem,
@@ -57,7 +63,8 @@ use workspace::{
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
-static PROCESS_ID_PLACEHOLDER: &str = "$PickProcessId";
+static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
+    LazyLock::new(|| task::VariableName::PickProcessId.template_value());
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -682,8 +689,8 @@ impl RunningState {
                 });
             }
             serde_json::Value::String(s) => {
-                if s.contains(PROCESS_ID_PLACEHOLDER) {
-                    *s = s.replace(PROCESS_ID_PLACEHOLDER, &process_id.to_string());
+                if s.contains(PROCESS_ID_PLACEHOLDER.as_str()) {
+                    *s = s.replace(PROCESS_ID_PLACEHOLDER.as_str(), &process_id.to_string());
                 }
             }
             _ => {}
@@ -992,7 +999,7 @@ impl RunningState {
             Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
-            if Self::contains_substring(&config, PROCESS_ID_PLACEHOLDER) || label.as_ref().contains(PROCESS_ID_PLACEHOLDER) {
+            if Self::contains_substring(&config, PROCESS_ID_PLACEHOLDER.as_str()) || label.as_ref().contains(PROCESS_ID_PLACEHOLDER.as_str()) {
                 let (tx, rx) = futures::channel::oneshot::channel::<Option<i32>>();
 
                 let weak_workspace_clone = weak_workspace.clone();
@@ -1011,7 +1018,7 @@ impl RunningState {
                 }).ok();
 
                 let Some(process_id) = rx.await.ok().flatten() else {
-                    bail!("No process selected with config that contains {}", PROCESS_ID_PLACEHOLDER)
+                    bail!("No process selected with config that contains {}", PROCESS_ID_PLACEHOLDER.as_str())
                 };
 
                 Self::substitute_process_id_in_config(&mut config, process_id);
