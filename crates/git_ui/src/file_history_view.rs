@@ -3,7 +3,7 @@ use futures::Future;
 use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, AnyView, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ListSizingBehavior, Render, Task, UniformListScrollHandle, WeakEntity, Window,
     actions, rems, uniform_list,
 };
@@ -625,10 +625,14 @@ impl Item for FileHistoryView {
 
     fn act_as_type<'a>(
         &'a self,
-        _type_id: TypeId,
-        _self_handle: &'a Entity<Self>,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
-        None
+    ) -> Option<AnyEntity> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.clone().into())
+        } else {
+            None
+        }
     }
 }
