@@ -38,7 +38,6 @@ use workspace::{
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
-use zeta2::SweepFeatureFlag;
 
 actions!(
     edit_prediction,
@@ -83,9 +82,7 @@ impl Render for EditPredictionButton {
 
         let all_language_settings = all_language_settings(None, cx);
 
-        match &all_language_settings.edit_predictions.provider {
-            EditPredictionProvider::None => div().hidden(),
-
+        match all_language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
                     return div().hidden();
@@ -302,23 +299,23 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            EditPredictionProvider::Experimental(provider_name) => {
-                if *provider_name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
-                    && cx.has_flag::<SweepFeatureFlag>()
-                {
-                    div().child(Icon::new(IconName::SweepAi))
-                } else {
-                    div()
-                }
-            }
-
-            EditPredictionProvider::Zed => {
+            provider @ (EditPredictionProvider::Experimental(
+                EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+            )
+            | EditPredictionProvider::Zed) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
-                let zeta_icon = if enabled {
-                    IconName::ZedPredict
-                } else {
-                    IconName::ZedPredictDisabled
+                let is_sweep = matches!(
+                    provider,
+                    EditPredictionProvider::Experimental(
+                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                    )
+                );
+
+                let zeta_icon = match (is_sweep, enabled) {
+                    (true, _) => IconName::SweepAi,
+                    (false, true) => IconName::ZedPredict,
+                    (false, false) => IconName::ZedPredictDisabled,
                 };
 
                 if zeta::should_show_upsell_modal() {
@@ -402,8 +399,10 @@ impl Render for EditPredictionButton {
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
-                        this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx))
-                            .ok()
+                        this.update(cx, |this, cx| {
+                            this.build_zeta_context_menu(provider, window, cx)
+                        })
+                        .ok()
                     })
                     .anchor(Corner::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
@@ -428,6 +427,10 @@ impl Render for EditPredictionButton {
                 }
 
                 div().child(popover_menu.into_any_element())
+            }
+
+            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => {
+                div().hidden()
             }
         }
     }
@@ -487,6 +490,14 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
+        if let Some(zeta) = zeta2::Zeta::try_global(cx) {
+            if zeta.read(cx).has_sweep_api_token() {
+                providers.push(EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+                ));
+            }
+        }
+
         providers
     }
 
@@ -536,6 +547,11 @@ impl EditPredictionButton {
                     }
                     EditPredictionProvider::Codestral => {
                         menu.entry("Codestral", None, move |_, cx| {
+                            set_completion_provider(fs.clone(), cx, provider);
+                        })
+                    }
+                    EditPredictionProvider::Experimental(EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME) => {
+                        menu.entry("Sweep", None, move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         })
                     }
@@ -909,6 +925,7 @@ impl EditPredictionButton {
 
     fn build_zeta_context_menu(
         &self,
+        provider: EditPredictionProvider,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
@@ -996,7 +1013,7 @@ impl EditPredictionButton {
             }
 
             let menu = self.build_language_settings_menu(menu, window, cx);
-            let menu = self.add_provider_switching_section(menu, EditPredictionProvider::Zed, cx);
+            let menu = self.add_provider_switching_section(menu, provider, cx);
 
             menu
         })

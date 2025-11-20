@@ -416,6 +416,10 @@ impl Zeta {
         self.edit_prediction_model = model;
     }
 
+    pub fn has_sweep_api_token(&self) -> bool {
+        self.sweep_api_token.is_some()
+    }
+
     #[cfg(feature = "eval-support")]
     pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
         self.eval_cache = Some(cache);
