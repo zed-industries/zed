@@ -1,7 +1,10 @@
+use std::ops::Range;
+
 use crate::Editor;
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use language::language_settings;
+use multi_buffer::Anchor;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 struct ColorizedBracketsHighlight;
@@ -71,9 +74,23 @@ impl Editor {
                         });
 
                     for (accent_number, open_range, close_range) in brackets_by_accent {
-                        let ranges = acc.entry(accent_number).or_insert_with(Vec::new);
-                        ranges.push(open_range);
-                        ranges.push(close_range);
+                        let ranges = acc
+                            .entry(accent_number)
+                            .or_insert_with(Vec::<Range<Anchor>>::new);
+
+                        let i = ranges
+                            .binary_search_by(|probe| {
+                                probe.start.cmp(&open_range.start, &multi_buffer_snapshot)
+                            })
+                            .unwrap_or_else(|i| i);
+                        ranges.insert(i, open_range);
+
+                        let j = ranges
+                            .binary_search_by(|probe| {
+                                probe.start.cmp(&close_range.start, &multi_buffer_snapshot)
+                            })
+                            .unwrap_or_else(|j| j);
+                        ranges.insert(j, close_range);
                     }
                 }
 
