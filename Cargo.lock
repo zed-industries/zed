@@ -6429,6 +6429,7 @@ dependencies = [
  "smol",
  "tempfile",
  "text",
+ "time",
  "util",
  "windows 0.61.3",
 ]

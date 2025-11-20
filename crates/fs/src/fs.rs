@@ -10,8 +10,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use settings::{RegisterSetting, RelativeLineNumbers, Settings};
-
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
@@ -39,7 +37,14 @@ use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
-use std::{fs, io::{self, Write}, path::{Component, Path, PathBuf}, pin::Pin, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    io::{self, Write},
+    path::{Component, Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tempfile::TempDir;
 use text::LineEnding;
 
@@ -782,13 +787,11 @@ impl Fs for RealFs {
                         // If it looks like a permission problem, fall back to sudo dd.
                         if e.error.kind() == io::ErrorKind::PermissionDenied {
                             // Build conv argument: always notrunc, fsync only on platforms that support it.
-                            let mut conv = String::from("conv=notrunc");
+                            let mut conv = "conv=notrunc".to_owned();
                             #[cfg(not(any(target_os = "illumos", target_os = "netbsd")))]
-                            {
-                                conv.push_str(",fsync");
-                            }
+                            conv.push_str(",fsync");
 
-                            let status = Command::new(su_cmd)
+                            let status = Command::new(std::env::var("ZED_SU_CMD").unwrap_or("sudo".to_owned()))
                                 .arg("-E")
                                 .arg("dd")
                                 .arg(format!("if={}", tmp_path.to_string_lossy()))
