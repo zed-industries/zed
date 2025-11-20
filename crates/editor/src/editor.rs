@@ -4110,10 +4110,6 @@ impl Editor {
         cx.propagate();
     }
 
-    // TODO!: Double-check that we actually want to dismiss all menus and
-    // popups, which seems to be what the function should be doing but, it was
-    // simply early-returning `true` as soon as it was able to dismiss a single
-    // menu or popup, instead of trying to dismiss as many as possible.
     pub fn dismiss_menus_and_popups(
         &mut self,
         is_user_requested: bool,
