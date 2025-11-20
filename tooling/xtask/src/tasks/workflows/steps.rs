@@ -48,8 +48,8 @@ pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
-pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
-    named::run(platform, "cargo install cargo-nextest --locked")
+pub fn cargo_install_nextest() -> Step<Use> {
+    named::uses("taiki-e", "install-action", "nextest")
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
@@ -86,43 +86,26 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
     step.if_condition(Expression::new("always()"))
 }
 
-pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
-    Step::new(format!("@actions/upload-artifact {}", name))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", name))
-        .add_with(("path", path))
-        .add_with(("if-no-files-found", "error"))
-}
-
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 100"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
         Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
     }
 }
 
-pub(crate) fn clippy(platform: Platform) -> Step<Run> {
+pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
         _ => named::bash("./script/clippy"),
     }
 }
 
-pub(crate) fn cache_rust_dependencies() -> Step<Use> {
-    named::uses(
-        "swatinem",
-        "rust-cache",
-        "9d47c6ad4b02e050fd481d890b2ea34778fd09d6", // v2
-    )
-    .with(("save-if", "${{ github.ref == 'refs/heads/main' }}"))
+pub fn cache_rust_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
-fn setup_linux() -> Step<Run> {
+pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
 
@@ -130,8 +113,14 @@ fn install_mold() -> Step<Run> {
     named::bash("./script/install-mold")
 }
 
+fn download_wasi_sdk() -> Step<Run> {
+    named::bash("./script/download-wasi-sdk")
+}
+
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux()).add_step(install_mold())
+    job.add_step(setup_linux())
+        .add_step(install_mold())
+        .add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -142,7 +131,7 @@ pub fn script(name: &str) -> Step<Run> {
     }
 }
 
-pub(crate) struct NamedJob {
+pub struct NamedJob {
     pub name: String,
     pub job: Job,
 }
@@ -156,11 +145,26 @@ pub(crate) struct NamedJob {
 //     }
 // }
 
+pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
+    Expression::new(format!(
+        "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'){}",
+        trigger_always.then_some(" && always()").unwrap_or_default()
+    ))
+}
+
+pub trait CommonJobConditions: Sized {
+    fn with_repository_owner_guard(self) -> Self;
+}
+
+impl CommonJobConditions for Job {
+    fn with_repository_owner_guard(self) -> Self {
+        self.cond(repository_owner_guard_expression(false))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .timeout_minutes(60u32)
 }
 
@@ -180,7 +184,7 @@ impl FluentBuilder for Workflow {}
 /// Copied from GPUI to avoid adding GPUI as dependency
 /// todo(ci) just put this in gh-workflow
 #[allow(unused)]
-pub(crate) trait FluentBuilder {
+pub trait FluentBuilder {
     /// Imperatively modify self with the given closure.
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where
@@ -234,34 +238,34 @@ pub(crate) trait FluentBuilder {
 
 // (janky) helper to generate steps with a name that corresponds
 // to the name of the calling function.
-pub(crate) mod named {
+pub mod named {
     use super::*;
 
     /// Returns a uses step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
+    pub fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
         Step::new(function_name(1)).uses(owner, repo, ref_)
     }
 
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn bash(script: &str) -> Step<Run> {
+    pub fn bash(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(BASH_SHELL)
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn pwsh(script: &str) -> Step<Run> {
+    pub fn pwsh(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
     }
 
     /// Runs the command in either powershell or bash, depending on platform.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn run(platform: Platform, script: &str) -> Step<Run> {
+    pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
             Platform::Linux | Platform::Mac => {
@@ -271,7 +275,7 @@ pub(crate) mod named {
     }
 
     /// Returns a Workflow with the same name as the enclosing module.
-    pub(crate) fn workflow() -> Workflow {
+    pub fn workflow() -> Workflow {
         Workflow::default().name(
             named::function_name(1)
                 .split("::")
@@ -283,7 +287,7 @@ pub(crate) mod named {
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub(crate) fn job(job: Job) -> NamedJob {
+    pub fn job(job: Job) -> NamedJob {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,
@@ -293,7 +297,7 @@ pub(crate) mod named {
     /// Returns the function name N callers above in the stack
     /// (typically 1).
     /// This only works because xtask always runs debug builds.
-    pub(crate) fn function_name(i: usize) -> String {
+    pub fn function_name(i: usize) -> String {
         let mut name = "<unknown>".to_string();
         let mut count = 0;
         backtrace::trace(|frame| {
@@ -308,10 +312,17 @@ pub(crate) mod named {
             });
             false
         });
+
         name.split("::")
             .skip_while(|s| s != &"workflows")
             .skip(1)
             .collect::<Vec<_>>()
             .join("::")
     }
+}
+
+pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
+    named::bash(&format!(
+        "git fetch origin {ref_name} && git checkout {ref_name}"
+    ))
 }

@@ -3,7 +3,6 @@ use std::ops::Range;
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
-use gpui::{AsyncApp, TestAppContext};
 use rand::prelude::*;
 use rand::rngs::StdRng;
 use rope::{Point, Rope};
@@ -27,10 +26,10 @@ fn generate_random_text(rng: &mut StdRng, len: usize) -> String {
     str
 }
 
-fn generate_random_rope(rng: &mut StdRng, text_len: usize, cx: &AsyncApp) -> Rope {
+fn generate_random_rope(rng: &mut StdRng, text_len: usize) -> Rope {
     let text = generate_random_text(rng, text_len);
     let mut rope = Rope::new();
-    rope.push(&text, cx.background_executor());
+    rope.push(&text);
     rope
 }
 
@@ -83,13 +82,11 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
             let text = generate_random_text(&mut rng, *size);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
 
             b.iter(|| {
                 let mut rope = Rope::new();
                 for _ in 0..10 {
-                    rope.push(&text, cx.background_executor());
+                    rope.push(&text);
                 }
             });
         });
@@ -102,10 +99,8 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
             let mut random_ropes = Vec::new();
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
             for _ in 0..5 {
-                let rope = generate_random_rope(&mut rng, *size, &cx);
+                let rope = generate_random_rope(&mut rng, *size);
                 random_ropes.push(rope);
             }
 
@@ -124,9 +119,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
-            let rope = generate_random_rope(&mut rng, *size, &cx);
+            let rope = generate_random_rope(&mut rng, *size);
 
             b.iter_batched(
                 || generate_random_rope_ranges(&mut rng, &rope),
@@ -146,9 +139,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
-            let rope = generate_random_rope(&mut rng, *size, &cx);
+            let rope = generate_random_rope(&mut rng, *size);
 
             b.iter_batched(
                 || generate_random_rope_ranges(&mut rng, &rope),
@@ -169,9 +160,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
-            let rope = generate_random_rope(&mut rng, *size, &cx);
+            let rope = generate_random_rope(&mut rng, *size);
 
             b.iter(|| {
                 let chars = rope.chars().count();
@@ -186,9 +175,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
-            let rope = generate_random_rope(&mut rng, *size, &cx);
+            let rope = generate_random_rope(&mut rng, *size);
 
             b.iter_batched(
                 || generate_random_rope_points(&mut rng, &rope),
@@ -209,9 +196,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
-            let rope = generate_random_rope(&mut rng, *size, &cx);
+            let rope = generate_random_rope(&mut rng, *size);
 
             b.iter_batched(
                 || generate_random_rope_points(&mut rng, &rope),
@@ -231,9 +216,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut rng = StdRng::seed_from_u64(SEED);
-            let cx = TestAppContext::single();
-            let cx = cx.to_async();
-            let rope = generate_random_rope(&mut rng, *size, &cx);
+            let rope = generate_random_rope(&mut rng, *size);
 
             b.iter_batched(
                 || {

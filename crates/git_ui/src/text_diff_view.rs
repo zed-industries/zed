@@ -446,7 +446,7 @@ impl Render for TextDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::test::editor_test_context::assert_state_with_diff;
+    use editor::{MultiBufferOffset, test::editor_test_context::assert_state_with_diff};
     use gpui::{TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -458,10 +458,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
@@ -695,7 +691,11 @@ mod tests {
             let (unmarked_text, selection_ranges) = marked_text_ranges(editor_text, false);
             editor.set_text(unmarked_text, window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(selection_ranges)
+                s.select_ranges(
+                    selection_ranges
+                        .into_iter()
+                        .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end)),
+                )
             });
 
             editor

@@ -30,16 +30,17 @@ use gpui::{
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
-    LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, update_settings_file};
+use settings::{LanguageModelSelection, Settings, update_settings_file};
 use smol::stream::StreamExt;
 use std::{
     collections::BTreeMap,
@@ -606,6 +607,8 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Tracks the last time files were read by the agent, to detect external modifications
+    pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
 }
 
 impl Thread {
@@ -664,6 +667,7 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -798,7 +802,8 @@ impl Thread {
         let profile_id = db_thread
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
-        let model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+
+        let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
                 .model
                 .and_then(|model| {
@@ -811,6 +816,16 @@ impl Thread {
                 .or_else(|| registry.default_model())
                 .map(|model| model.model)
         });
+
+        if model.is_none() {
+            model = Self::resolve_profile_model(&profile_id, cx);
+        }
+        if model.is_none() {
+            model = LanguageModelRegistry::global(cx).update(cx, |registry, _cx| {
+                registry.default_model().map(|model| model.model)
+            });
+        }
+
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
@@ -848,6 +863,7 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            file_read_times: HashMap::default(),
         }
     }
 
@@ -987,6 +1003,7 @@ impl Thread {
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
         self.add_tool(ReadFileTool::new(
+            cx.weak_entity(),
             self.project.clone(),
             self.action_log.clone(),
         ));
@@ -1007,8 +1024,17 @@ impl Thread {
         &self.profile_id
     }
 
-    pub fn set_profile(&mut self, profile_id: AgentProfileId) {
+    pub fn set_profile(&mut self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
+        if self.profile_id == profile_id {
+            return;
+        }
+
         self.profile_id = profile_id;
+
+        // Swap to the profile's preferred model when available.
+        if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
+            self.set_model(model, cx);
+        }
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
@@ -1062,6 +1088,35 @@ impl Thread {
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
             used_tokens: usage.total_tokens(),
+        })
+    }
+
+    /// Look up the active profile and resolve its preferred model if one is configured.
+    fn resolve_profile_model(
+        profile_id: &AgentProfileId,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<dyn LanguageModel>> {
+        let selection = AgentSettings::get_global(cx)
+            .profiles
+            .get(profile_id)?
+            .default_model
+            .clone()?;
+        Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    /// Translate a stored model selection into the configured model from the registry.
+    fn resolve_model_from_selection(
+        selection: &LanguageModelSelection,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<dyn LanguageModel>> {
+        let selected = SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        };
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry
+                .select_model(&selected, cx)
+                .map(|configured| configured.model)
         })
     }
 
@@ -2139,7 +2194,7 @@ where
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(format: LanguageModelToolSchemaFormat) -> Schema {
-        crate::tool_schema::root_schema_for::<Self::Input>(format)
+        language_model::tool_schema::root_schema_for::<Self::Input>(format)
     }
 
     /// Some tools rely on a provider for the underlying billing or other reasons.
@@ -2226,7 +2281,7 @@ where
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         let mut json = serde_json::to_value(T::input_schema(format))?;
-        crate::tool_schema::adapt_schema_to_format(&mut json, format)?;
+        language_model::tool_schema::adapt_schema_to_format(&mut json, format)?;
         Ok(json)
     }
 

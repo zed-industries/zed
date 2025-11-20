@@ -4,6 +4,7 @@ mod registry;
 mod request;
 mod role;
 mod telemetry;
+pub mod tool_schema;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
@@ -35,6 +36,7 @@ pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
+pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
@@ -136,7 +138,7 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         message: String,
     },
-    #[error("permission error with {provider}'s API: {message}")]
+    #[error("Permission error with {provider}'s API: {message}")]
     PermissionError {
         provider: LanguageModelProviderName,
         message: String,
@@ -343,6 +345,27 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
     }
 }
 
+impl From<open_ai::RequestError> for LanguageModelCompletionError {
+    fn from(error: open_ai::RequestError) -> Self {
+        match error {
+            open_ai::RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                let retry_after = headers
+                    .get(http::header::RETRY_AFTER)
+                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
+                    .map(Duration::from_secs);
+
+                Self::from_http_status(provider.into(), status_code, body, retry_after)
+            }
+            open_ai::RequestError::Other(e) => Self::Other(e),
+        }
+    }
+}
+
 impl From<OpenRouterError> for LanguageModelCompletionError {
     fn from(error: OpenRouterError) -> Self {
         let provider = LanguageModelProviderName::new("OpenRouter");
@@ -407,15 +430,6 @@ impl From<open_router::ApiError> for LanguageModelCompletionError {
             },
         }
     }
-}
-
-/// Indicates the format used to define the input schema for a language model tool.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum LanguageModelToolSchemaFormat {
-    /// A JSON schema, see https://json-schema.org
-    JsonSchema,
-    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
-    JsonSchemaSubset,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -501,6 +515,9 @@ pub struct LanguageModelToolUse {
     pub raw_input: String,
     pub input: serde_json::Value,
     pub is_input_complete: bool,
+    /// Thought signature the model sent us. Some models require that this
+    /// signature be preserved and sent back in conversation history for validation.
+    pub thought_signature: Option<String>,
 }
 
 pub struct LanguageModelTextStream {
@@ -906,5 +923,86 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[test]
+    fn test_language_model_tool_use_serializes_with_signature() {
+        use serde_json::json;
+
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("test_id"),
+            name: "test_tool".into(),
+            raw_input: json!({"arg": "value"}).to_string(),
+            input: json!({"arg": "value"}),
+            is_input_complete: true,
+            thought_signature: Some("test_signature".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&tool_use).unwrap();
+
+        assert_eq!(serialized["id"], "test_id");
+        assert_eq!(serialized["name"], "test_tool");
+        assert_eq!(serialized["thought_signature"], "test_signature");
+    }
+
+    #[test]
+    fn test_language_model_tool_use_deserializes_with_missing_signature() {
+        use serde_json::json;
+
+        let json = json!({
+            "id": "test_id",
+            "name": "test_tool",
+            "raw_input": "{\"arg\":\"value\"}",
+            "input": {"arg": "value"},
+            "is_input_complete": true
+        });
+
+        let tool_use: LanguageModelToolUse = serde_json::from_value(json).unwrap();
+
+        assert_eq!(tool_use.id, LanguageModelToolUseId::from("test_id"));
+        assert_eq!(tool_use.name.as_ref(), "test_tool");
+        assert_eq!(tool_use.thought_signature, None);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_round_trip_with_signature() {
+        use serde_json::json;
+
+        let original = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("round_trip_id"),
+            name: "round_trip_tool".into(),
+            raw_input: json!({"key": "value"}).to_string(),
+            input: json!({"key": "value"}),
+            is_input_complete: true,
+            thought_signature: Some("round_trip_sig".to_string()),
+        };
+
+        let serialized = serde_json::to_value(&original).unwrap();
+        let deserialized: LanguageModelToolUse = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(deserialized.id, original.id);
+        assert_eq!(deserialized.name, original.name);
+        assert_eq!(deserialized.thought_signature, original.thought_signature);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_round_trip_without_signature() {
+        use serde_json::json;
+
+        let original = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("no_sig_id"),
+            name: "no_sig_tool".into(),
+            raw_input: json!({"key": "value"}).to_string(),
+            input: json!({"key": "value"}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let serialized = serde_json::to_value(&original).unwrap();
+        let deserialized: LanguageModelToolUse = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(deserialized.id, original.id);
+        assert_eq!(deserialized.name, original.name);
+        assert_eq!(deserialized.thought_signature, None);
     }
 }

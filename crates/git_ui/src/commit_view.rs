@@ -1,6 +1,9 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
@@ -170,10 +173,7 @@ impl CommitView {
                     ReplicaId::LOCAL,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
-                    Rope::from_str(
-                        &format_commit(&commit, stash.is_some()),
-                        cx.background_executor(),
-                    ),
+                    format_commit(&commit, stash.is_some()).into(),
                 );
                 metadata_buffer_id = Some(buffer.remote_id());
                 Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
@@ -190,7 +190,7 @@ impl CommitView {
             editor.update(cx, |editor, cx| {
                 editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(vec![0..0]);
+                    selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
                 });
             });
         }
@@ -269,7 +269,7 @@ impl language::File for GitBlob {
     }
 
     fn path(&self) -> &Arc<RelPath> {
-        &self.path.0
+        self.path.as_ref()
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
@@ -339,7 +339,7 @@ async fn build_buffer(
 ) -> Result<Entity<Buffer>> {
     let line_ending = LineEnding::detect(&text);
     LineEnding::normalize(&mut text);
-    let text = Rope::from_str(&text, cx.background_executor());
+    let text = Rope::from(text);
     let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
     let language = if let Some(language) = language {
         language_registry
@@ -379,7 +379,7 @@ async fn build_buffer_diff(
     let base_buffer = cx
         .update(|cx| {
             Buffer::build_snapshot(
-                Rope::from_str(old_text.as_deref().unwrap_or(""), cx.background_executor()),
+                old_text.as_deref().unwrap_or("").into(),
                 buffer.language().cloned(),
                 Some(language_registry.clone()),
                 cx,
@@ -418,12 +418,14 @@ fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
         commit.author_name, commit.author_email
     )
     .unwrap();
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     writeln!(
         &mut result,
         "Date:   {}",
-        time_format::format_local_timestamp(
+        time_format::format_localized_timestamp(
             time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
             time::OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )

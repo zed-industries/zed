@@ -164,6 +164,19 @@ pub struct AgentServerManifestEntry {
     /// args = ["--serve"]
     /// sha256 = "abc123..."  # optional
     /// ```
+    ///
+    /// For Node.js-based agents, you can use "node" as the cmd to automatically
+    /// use Zed's managed Node.js runtime instead of relying on the user's PATH:
+    /// ```toml
+    /// [agent_servers.nodeagent.targets.darwin-aarch64]
+    /// archive = "https://example.com/nodeagent.zip"
+    /// cmd = "node"
+    /// args = ["index.js", "--port", "3000"]
+    /// ```
+    ///
+    /// Note: All commands are executed with the archive extraction directory as the
+    /// working directory, so relative paths in args (like "index.js") will resolve
+    /// relative to the extracted archive contents.
     pub targets: HashMap<String, TargetConfig>,
 }
 
@@ -180,6 +193,36 @@ pub struct TargetConfig {
     /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
     #[serde(default)]
     pub sha256: Option<String>,
+    /// Environment variables to set when launching the agent server.
+    /// These target-specific env vars will override any env vars set at the agent level.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+impl TargetConfig {
+    pub fn from_proto(proto: proto::ExternalExtensionAgentTarget) -> Self {
+        Self {
+            archive: proto.archive,
+            cmd: proto.cmd,
+            args: proto.args,
+            sha256: proto.sha256,
+            env: proto.env.into_iter().collect(),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ExternalExtensionAgentTarget {
+        proto::ExternalExtensionAgentTarget {
+            archive: self.archive.clone(),
+            cmd: self.cmd.clone(),
+            args: self.args.clone(),
+            sha256: self.sha256.clone(),
+            env: self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -252,27 +295,26 @@ impl ExtensionManifest {
             .and_then(OsStr::to_str)
             .context("invalid extension name")?;
 
-        let mut extension_manifest_path = extension_dir.join("extension.json");
+        let extension_manifest_path = extension_dir.join("extension.toml");
         if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
-        } else {
-            extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
+            })?;
             toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
             })
+        } else if let extension_manifest_path = extension_manifest_path.with_extension("json")
+            && fs.is_file(&extension_manifest_path).await
+        {
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
+            })?;
+
+            serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))
+        } else {
+            anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
     }
 }

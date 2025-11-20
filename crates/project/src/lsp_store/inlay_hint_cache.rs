@@ -6,6 +6,7 @@ use gpui::{App, Entity, Task};
 use language::{Buffer, BufferRow, BufferSnapshot};
 use lsp::LanguageServerId;
 use text::OffsetRangeExt;
+use util::RangeExt as _;
 
 use crate::{InlayHint, InlayId};
 
@@ -19,7 +20,10 @@ pub enum InvalidationStrategy {
     /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
     ///
     /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
-    RefreshRequested(LanguageServerId),
+    RefreshRequested {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
     /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
     BufferEdited,
@@ -36,7 +40,7 @@ impl InvalidationStrategy {
     pub fn should_invalidate(&self) -> bool {
         matches!(
             self,
-            InvalidationStrategy::RefreshRequested(_) | InvalidationStrategy::BufferEdited
+            InvalidationStrategy::RefreshRequested { .. } | InvalidationStrategy::BufferEdited
         )
     }
 }
@@ -47,6 +51,7 @@ pub struct BufferInlayHints {
     hints_by_chunks: Vec<Option<CacheInlayHints>>,
     fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
     hints_by_id: HashMap<InlayId, HintForId>,
+    latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
     pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
 }
 
@@ -104,6 +109,7 @@ impl BufferInlayHints {
         Self {
             hints_by_chunks: vec![None; buffer_chunks.len()],
             fetches_by_chunks: vec![None; buffer_chunks.len()],
+            latest_invalidation_requests: HashMap::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
             snapshot,
@@ -118,18 +124,17 @@ impl BufferInlayHints {
         let row_ranges = ranges
             .iter()
             .map(|range| range.to_point(&self.snapshot))
-            .map(|point_range| point_range.start.row..=point_range.end.row)
+            // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
+            // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
+            .map(|point_range| point_range.start.row..point_range.end.row + 1)
             .collect::<Vec<_>>();
         self.buffer_chunks
             .iter()
-            .filter(move |chunk| -> bool {
-                // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
-                // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
+            .filter(move |chunk| {
                 let chunk_range = chunk.start..=chunk.end;
-                row_ranges.iter().any(|row_range| {
-                    chunk_range.contains(&row_range.start())
-                        || chunk_range.contains(&row_range.end())
-                })
+                row_ranges
+                    .iter()
+                    .any(|row_range| chunk_range.overlaps(&row_range))
             })
             .copied()
     }
@@ -176,6 +181,7 @@ impl BufferInlayHints {
         self.fetches_by_chunks = vec![None; self.buffer_chunks.len()];
         self.hints_by_id.clear();
         self.hint_resolves.clear();
+        self.latest_invalidation_requests.clear();
     }
 
     pub fn insert_new_hints(
@@ -221,5 +227,49 @@ impl BufferInlayHints {
 
     pub fn buffer_chunks_len(&self) -> usize {
         self.buffer_chunks.len()
+    }
+
+    pub(crate) fn invalidate_for_server_refresh(
+        &mut self,
+        for_server: LanguageServerId,
+        request_id: Option<usize>,
+    ) -> bool {
+        match self.latest_invalidation_requests.entry(for_server) {
+            hash_map::Entry::Occupied(mut o) => {
+                if request_id > *o.get() {
+                    o.insert(request_id);
+                } else {
+                    return false;
+                }
+            }
+            hash_map::Entry::Vacant(v) => {
+                v.insert(request_id);
+            }
+        }
+
+        for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
+            if let Some(removed_hints) = chunk_data
+                .as_mut()
+                .and_then(|chunk_data| chunk_data.remove(&for_server))
+            {
+                for (id, _) in removed_hints {
+                    self.hints_by_id.remove(&id);
+                    self.hint_resolves.remove(&id);
+                }
+                self.fetches_by_chunks[chunk_id] = None;
+            }
+        }
+
+        true
+    }
+
+    pub(crate) fn invalidate_for_chunk(&mut self, chunk: BufferChunk) {
+        self.fetches_by_chunks[chunk.id] = None;
+        if let Some(hints_by_server) = self.hints_by_chunks[chunk.id].take() {
+            for (hint_id, _) in hints_by_server.into_values().flatten() {
+                self.hints_by_id.remove(&hint_id);
+                self.hint_resolves.remove(&hint_id);
+            }
+        }
     }
 }

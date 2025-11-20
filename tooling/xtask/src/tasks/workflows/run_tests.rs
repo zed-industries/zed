@@ -4,7 +4,10 @@ use gh_workflow::{
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix, runners::Arch, steps::BASH_SHELL, vars::PathCondition,
+    nix_build::build_nix,
+    runners::Arch,
+    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    vars::PathCondition,
 };
 
 use super::{
@@ -42,7 +45,7 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
-    let jobs = [
+    let mut jobs = vec![
         orchestrate,
         check_style(),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
@@ -50,7 +53,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(check_postgres_and_protobuf_migrations()), // could be more specific here?
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
@@ -65,7 +67,7 @@ pub(crate) fn run_tests() -> Workflow {
         )),
         should_build_nix.guard(build_nix(
             Platform::Mac,
-            Arch::ARM64,
+            Arch::AARCH64,
             "debug",
             // *don't* cache the built output
             Some("-zed-editor-[0-9.]*-nightly"),
@@ -74,31 +76,41 @@ pub(crate) fn run_tests() -> Workflow {
     ];
     let tests_pass = tests_pass(&jobs);
 
-    let mut workflow = named::workflow()
-        .add_event(Event::default()
-            .push(
-                Push::default()
-                    .add_branch("main")
-                    .add_branch("v[0-9]+.[0-9]+.x")
-            )
-            .pull_request(PullRequest::default().add_branch("**"))
+    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
+
+    named::workflow()
+        .add_event(
+            Event::default()
+                .push(
+                    Push::default()
+                        .add_branch("main")
+                        .add_branch("v[0-9]+.[0-9]+.x"),
+                )
+                .pull_request(PullRequest::default().add_branch("**")),
         )
-        .concurrency(Concurrency::default()
-            .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
-            .cancel_in_progress(true)
+        .concurrency(
+            Concurrency::default()
+                .group(concat!(
+                    "${{ github.workflow }}-${{ github.ref_name }}-",
+                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
+                ))
+                .cancel_in_progress(true),
         )
-        .add_env(( "CARGO_TERM_COLOR", "always" ))
-        .add_env(( "RUST_BACKTRACE", 1 ))
-        .add_env(( "CARGO_INCREMENTAL", 0 ));
-    for job in jobs {
-        workflow = workflow.add_job(job.name, job.job)
-    }
-    workflow.add_job(tests_pass.name, tests_pass.job)
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("RUST_BACKTRACE", 1))
+        .add_env(("CARGO_INCREMENTAL", 0))
+        .map(|mut workflow| {
+            for job in jobs {
+                workflow = workflow.add_job(job.name, job.job)
+            }
+            workflow
+        })
+        .add_job(tests_pass.name, tests_pass.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
-fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -153,9 +165,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .outputs(outputs)
         .add_step(steps::checkout_repo().add_with((
             "fetch-depth",
@@ -171,7 +181,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     NamedJob { name, job }
 }
 
-pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0
@@ -205,9 +215,7 @@ pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .map(|j| j.name.to_string())
                 .collect::<Vec<String>>(),
         )
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries' && always()",
-        ))
+        .cond(repository_owner_guard_expression(true))
         .add_step(named::bash(&script));
 
     named::job(job)
@@ -226,6 +234,7 @@ fn check_style() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
             .add_step(steps::script("./script/prettier"))
             .add_step(steps::script("./script/check-todos"))
@@ -273,6 +282,7 @@ fn check_dependencies() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_cargo_machete())
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
@@ -286,6 +296,7 @@ fn check_workspace_binaries() -> NamedJob {
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
@@ -305,13 +316,18 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
+            .when(platform == Platform::Linux, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
-            .add_step(steps::cargo_install_nextest(platform))
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::cargo_install_nextest())
+            })
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
@@ -368,7 +384,7 @@ fn doctests() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
-            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(run_doctests())
@@ -381,6 +397,7 @@ fn check_licenses() -> NamedJob {
         Job::default()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("./script/check-licenses"))
             .add_step(steps::script("./script/generate-licenses")),
     )
@@ -420,7 +437,7 @@ fn check_docs() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )

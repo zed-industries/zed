@@ -29,6 +29,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
+    telemetry_id: &'static str,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
@@ -52,6 +53,7 @@ pub struct AcpSession {
 
 pub async fn connect(
     server_name: SharedString,
+    telemetry_id: &'static str,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -60,6 +62,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
+        telemetry_id,
         command.clone(),
         root_dir,
         default_mode,
@@ -75,6 +78,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::V1;
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
+        telemetry_id: &'static str,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -132,7 +136,7 @@ impl AcpConnection {
             while let Ok(n) = stderr.read_line(&mut line).await
                 && n > 0
             {
-                log::warn!("agent stderr: {}", &line);
+                log::warn!("agent stderr: {}", line.trim());
                 line.clear();
             }
             Ok(())
@@ -178,6 +182,7 @@ impl AcpConnection {
                     meta: Some(serde_json::json!({
                         // Experimental: Allow for rendering terminal output from the agents
                         "terminal_output": true,
+                        "terminal-auth": true,
                     })),
                 },
                 client_info: Some(acp::Implementation {
@@ -198,6 +203,7 @@ impl AcpConnection {
             root_dir: root_dir.to_owned(),
             connection,
             server_name,
+            telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
             default_mode,
@@ -225,6 +231,10 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
+    fn telemetry_id(&self) -> &'static str {
+        self.telemetry_id
+    }
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -237,37 +247,58 @@ impl AgentConnection for AcpConnection {
         let default_mode = self.default_mode.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        let mcp_servers = if project.read(cx).is_local() {
-            context_server_store
-                .configured_server_ids()
-                .iter()
-                .filter_map(|id| {
-                    let configuration = context_server_store.configuration_for_server(id)?;
-                    let command = configuration.command();
-                    Some(acp::McpServer::Stdio {
-                        name: id.0.to_string(),
-                        command: command.path.clone(),
-                        args: command.args.clone(),
-                        env: if let Some(env) = command.env.as_ref() {
-                            env.iter()
-                                .map(|(name, value)| acp::EnvVariable {
-                                    name: name.clone(),
-                                    value: value.clone(),
-                                    meta: None,
-                                })
-                                .collect()
-                        } else {
-                            vec![]
-                        },
+        let mcp_servers =
+            if project.read(cx).is_local() {
+                context_server_store
+                    .configured_server_ids()
+                    .iter()
+                    .filter_map(|id| {
+                        let configuration = context_server_store.configuration_for_server(id)?;
+                        match &*configuration {
+                        project::context_server_store::ContextServerConfiguration::Custom {
+                            command,
+                            ..
+                        }
+                        | project::context_server_store::ContextServerConfiguration::Extension {
+                            command,
+                            ..
+                        } => Some(acp::McpServer::Stdio {
+                            name: id.0.to_string(),
+                            command: command.path.clone(),
+                            args: command.args.clone(),
+                            env: if let Some(env) = command.env.as_ref() {
+                                env.iter()
+                                    .map(|(name, value)| acp::EnvVariable {
+                                        name: name.clone(),
+                                        value: value.clone(),
+                                        meta: None,
+                                    })
+                                    .collect()
+                            } else {
+                                vec![]
+                            },
+                        }),
+                        project::context_server_store::ContextServerConfiguration::Http {
+                            url,
+                            headers,
+                        } => Some(acp::McpServer::Http {
+                            name: id.0.to_string(),
+                            url: url.to_string(),
+                            headers: headers.iter().map(|(name, value)| acp::HttpHeader {
+                                name: name.clone(),
+                                value: value.clone(),
+                                meta: None,
+                            }).collect(),
+                        }),
+                    }
                     })
-                })
-                .collect()
-        } else {
-            // In SSH projects, the external agent is running on the remote
-            // machine, and currently we only run MCP servers on the local
-            // machine. So don't pass any MCP servers to the agent in that case.
-            Vec::new()
-        };
+                    .collect()
+            } else {
+                // In SSH projects, the external agent is running on the remote
+                // machine, and currently we only run MCP servers on the local
+                // machine. So don't pass any MCP servers to the agent in that case.
+                Vec::new()
+            };
 
         cx.spawn(async move |cx| {
             let response = conn

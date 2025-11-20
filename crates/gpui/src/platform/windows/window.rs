@@ -6,19 +6,19 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{Arc, Once},
+    sync::{Arc, Once, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
 use ::util::ResultExt;
 use anyhow::{Context as _, Result};
-use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
+        Graphics::Dwm::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -45,7 +45,6 @@ pub struct WindowsWindowState {
     pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
     pub last_reported_capslock: Option<Capslock>,
-    pub system_key_handled: bool,
     pub hovered: bool,
 
     pub renderer: DirectXRenderer,
@@ -55,6 +54,9 @@ pub struct WindowsWindowState {
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    pub invalidate_devices: Arc<AtomicBool>,
     fullscreen: Option<StyleAndBounds>,
     initial_placement: Option<WindowOpenStatus>,
     hwnd: HWND,
@@ -62,17 +64,16 @@ pub struct WindowsWindowState {
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
-    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
+    system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
 }
 
@@ -86,6 +87,7 @@ impl WindowsWindowState {
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
         disable_direct_composition: bool,
+        invalidate_devices: Arc<AtomicBool>,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -112,7 +114,6 @@ impl WindowsWindowState {
         let pending_surrogate = None;
         let last_reported_modifiers = None;
         let last_reported_capslock = None;
-        let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
         let nc_button_pressed = None;
@@ -133,7 +134,6 @@ impl WindowsWindowState {
             pending_surrogate,
             last_reported_modifiers,
             last_reported_capslock,
-            system_key_handled,
             hovered,
             renderer,
             click_state,
@@ -143,6 +143,7 @@ impl WindowsWindowState {
             fullscreen,
             initial_placement,
             hwnd,
+            invalidate_devices,
         })
     }
 
@@ -216,11 +217,11 @@ impl WindowsWindowInner {
             context.min_size,
             context.appearance,
             context.disable_direct_composition,
+            context.invalidate_devices.clone(),
         )?);
 
-        Ok(Rc::new_cyclic(|this| Self {
+        Ok(Rc::new(Self {
             hwnd,
-            this: this.clone(),
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -235,11 +236,8 @@ impl WindowsWindowInner {
         }))
     }
 
-    fn toggle_fullscreen(&self) {
-        let Some(this) = self.this.upgrade() else {
-            log::error!("Unable to toggle fullscreen: window has been dropped");
-            return;
-        };
+    fn toggle_fullscreen(self: &Rc<Self>) {
+        let this = self.clone();
         self.executor
             .spawn(async move {
                 let mut lock = this.state.borrow_mut();
@@ -249,36 +247,42 @@ impl WindowsWindowInner {
                     y,
                     cx,
                     cy,
-                } = if let Some(state) = lock.fullscreen.take() {
-                    state
-                } else {
-                    let (window_bounds, _) = lock.calculate_window_bounds();
-                    lock.fullscreen_restore_bounds = window_bounds;
-                    let style = WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(this.hwnd, &mut rc) }
-                        .context("failed to get window rect")
-                        .log_err();
-                    let _ = lock.fullscreen.insert(StyleAndBounds {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    });
-                    let style = style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION);
-                    let physical_bounds = lock.display.physical_bounds();
-                    StyleAndBounds {
-                        style,
-                        x: physical_bounds.left().0,
-                        y: physical_bounds.top().0,
-                        cx: physical_bounds.size.width.0,
-                        cy: physical_bounds.size.height.0,
+                } = match lock.fullscreen.take() {
+                    Some(state) => state,
+                    None => {
+                        let (window_bounds, _) = lock.calculate_window_bounds();
+                        lock.fullscreen_restore_bounds = window_bounds;
+                        drop(lock);
+
+                        let style =
+                            WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
+                        let mut rc = RECT::default();
+                        unsafe { GetWindowRect(this.hwnd, &mut rc) }
+                            .context("failed to get window rect")
+                            .log_err();
+
+                        lock = this.state.borrow_mut();
+                        let _ = lock.fullscreen.insert(StyleAndBounds {
+                            style,
+                            x: rc.left,
+                            y: rc.top,
+                            cx: rc.right - rc.left,
+                            cy: rc.bottom - rc.top,
+                        });
+                        let style = style
+                            & !(WS_THICKFRAME
+                                | WS_SYSMENU
+                                | WS_MAXIMIZEBOX
+                                | WS_MINIMIZEBOX
+                                | WS_CAPTION);
+                        let physical_bounds = lock.display.physical_bounds();
+                        StyleAndBounds {
+                            style,
+                            x: physical_bounds.left().0,
+                            y: physical_bounds.top().0,
+                            cx: physical_bounds.size.width.0,
+                            cy: physical_bounds.size.height.0,
+                        }
                     }
                 };
                 drop(lock);
@@ -299,7 +303,7 @@ impl WindowsWindowInner {
             .detach();
     }
 
-    fn set_window_placement(&self) -> Result<()> {
+    fn set_window_placement(self: &Rc<Self>) -> Result<()> {
         let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
             return Ok(());
         };
@@ -322,6 +326,14 @@ impl WindowsWindowInner {
             },
         }
         Ok(())
+    }
+
+    pub(crate) fn system_settings(&self) -> std::cell::Ref<'_, WindowsSystemSettings> {
+        self.system_settings.borrow()
+    }
+
+    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<'_, WindowsSystemSettings> {
+        self.system_settings.borrow_mut()
     }
 }
 
@@ -351,11 +363,12 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_receiver: flume::Receiver<Runnable>,
+    main_receiver: flume::Receiver<RunnableVariant>,
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
+    invalidate_devices: Arc<AtomicBool>,
 }
 
 impl WindowsWindow {
@@ -375,6 +388,7 @@ impl WindowsWindow {
             platform_window_handle,
             disable_direct_composition,
             directx_devices,
+            invalidate_devices,
         } = creation_info;
         register_window_class(icon);
         let hide_title_bar = params
@@ -435,6 +449,7 @@ impl WindowsWindow {
             appearance,
             disable_direct_composition,
             directx_devices,
+            invalidate_devices,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -455,8 +470,9 @@ impl WindowsWindow {
 
         // Failure to create a `WindowsWindowState` can cause window creation to fail,
         // so check the inner result first.
-        let this = context.inner.take().unwrap()?;
+        let this = context.inner.take().transpose()?;
         let hwnd = creation_result?;
+        let this = this.unwrap();
 
         register_drag_drop(&this)?;
         configure_dwm_dark_mode(hwnd, appearance);
@@ -758,19 +774,25 @@ impl PlatformWindow for WindowsWindow {
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let hwnd = self.0.hwnd;
 
+        // using Dwm APIs for Mica and MicaAlt backdrops.
+        // others follow the set_window_composition_attribute approach
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
-                // ACCENT_DISABLED
                 set_window_composition_attribute(hwnd, None, 0);
             }
             WindowBackgroundAppearance::Transparent => {
-                // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
                 set_window_composition_attribute(hwnd, None, 2);
             }
             WindowBackgroundAppearance::Blurred => {
-                // Enable acrylic blur
-                // ACCENT_ENABLE_ACRYLICBLURBEHIND
                 set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
+            }
+            WindowBackgroundAppearance::MicaBackdrop => {
+                // DWMSBT_MAINWINDOW => MicaBase
+                dwm_set_window_composition_attribute(hwnd, 2);
+            }
+            WindowBackgroundAppearance::MicaAltBackdrop => {
+                // DWMSBT_TABBEDWINDOW => MicaAlt
+                dwm_set_window_composition_attribute(hwnd, 4);
             }
         }
     }
@@ -903,9 +925,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
-                let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let hdrop = HDROP(idata.u.hGlobal.0);
                 let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                with_file_names(*hdrop, |file_name| {
+                with_file_names(hdrop, |file_name| {
                     if let Some(path) = PathBuf::from_str(&file_name).log_err() {
                         paths.push(path);
                     }
@@ -1169,8 +1191,7 @@ unsafe extern "system" fn window_procedure(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_NCCREATE {
-        let window_params = lparam.0 as *const CREATESTRUCTW;
-        let window_params = unsafe { &*window_params };
+        let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
         let window_creation_context = unsafe { &mut *window_creation_context };
         return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
@@ -1316,9 +1337,34 @@ fn retrieve_window_placement(
     Ok(placement)
 }
 
+fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
+    let mut version = unsafe { std::mem::zeroed() };
+    let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+
+    // DWMWA_SYSTEMBACKDROP_TYPE is available only on version 22621 or later
+    // using SetWindowCompositionAttributeType as a fallback
+    if !status.is_ok() || version.dwBuildNumber < 22621 {
+        return;
+    }
+
+    unsafe {
+        let result = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &backdrop_type as *const _ as *const _,
+            std::mem::size_of_val(&backdrop_type) as u32,
+        );
+
+        if !result.is_ok() {
+            return;
+        }
+    }
+}
+
 fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
     let mut version = unsafe { std::mem::zeroed() };
     let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+
     if !status.is_ok() || version.dwBuildNumber < 17763 {
         return;
     }

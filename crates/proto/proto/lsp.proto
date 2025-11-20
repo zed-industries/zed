@@ -466,6 +466,7 @@ message ResolveInlayHintResponse {
 message RefreshInlayHints {
     uint64 project_id = 1;
     uint64 server_id = 2;
+    optional uint64 request_id = 3;
 }
 
 message CodeLens {
@@ -702,6 +703,7 @@ message GetCompletions {
     uint64 buffer_id = 2;
     Anchor position = 3;
     repeated VectorClockEntry version = 4;
+    optional uint64 server_id = 5;
 }
 
 message CancelLanguageServerWork {

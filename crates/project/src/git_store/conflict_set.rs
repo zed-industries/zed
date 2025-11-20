@@ -264,20 +264,17 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use git::{
-        repository::repo_path,
+        repository::{RepoPath, repo_path},
         status::{UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{BackgroundExecutor, TestAppContext};
-    use language::language_settings::AllLanguageSettings;
     use serde_json::json;
-    use settings::Settings as _;
     use text::{Buffer, BufferId, Point, ReplicaId, ToOffset as _};
     use unindent::Unindent as _;
     use util::{path, rel_path::rel_path};
-    use worktree::WorktreeSettings;
 
-    #[gpui::test]
-    fn test_parse_conflicts_in_buffer(cx: &mut TestAppContext) {
+    #[test]
+    fn test_parse_conflicts_in_buffer() {
         // Create a buffer with conflict markers
         let test_content = r#"
             This is some text before the conflict.
@@ -299,12 +296,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(
-            ReplicaId::LOCAL,
-            buffer_id,
-            test_content,
-            cx.background_executor(),
-        );
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -360,8 +352,8 @@ mod tests {
         assert_eq!(conflicts_in_range.len(), 0);
     }
 
-    #[gpui::test]
-    fn test_nested_conflict_markers(cx: &mut TestAppContext) {
+    #[test]
+    fn test_nested_conflict_markers() {
         // Create a buffer with nested conflict markers
         let test_content = r#"
             This is some text before the conflict.
@@ -379,12 +371,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(
-            ReplicaId::LOCAL,
-            buffer_id,
-            test_content,
-            cx.background_executor(),
-        );
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -406,8 +393,8 @@ mod tests {
         assert_eq!(their_text, "This is their version in a nested conflict\n");
     }
 
-    #[gpui::test]
-    fn test_conflict_markers_at_eof(cx: &mut TestAppContext) {
+    #[test]
+    fn test_conflict_markers_at_eof() {
         let test_content = r#"
             <<<<<<< ours
             =======
@@ -415,20 +402,15 @@ mod tests {
             >>>>>>> "#
             .unindent();
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(
-            ReplicaId::LOCAL,
-            buffer_id,
-            test_content,
-            cx.background_executor(),
-        );
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
     }
 
-    #[gpui::test]
-    fn test_conflicts_in_range(cx: &mut TestAppContext) {
+    #[test]
+    fn test_conflicts_in_range() {
         // Create a buffer with conflict markers
         let test_content = r#"
             one
@@ -462,12 +444,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(
-            ReplicaId::LOCAL,
-            buffer_id,
-            test_content.clone(),
-            cx.background_executor(),
-        );
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content.clone());
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -508,9 +485,6 @@ mod tests {
         zlog::init_test();
         cx.update(|cx| {
             settings::init(cx);
-            WorktreeSettings::register(cx);
-            Project::init_settings(cx);
-            AllLanguageSettings::register(cx);
         });
         let initial_text = "
             one
@@ -609,9 +583,6 @@ mod tests {
         zlog::init_test();
         cx.update(|cx| {
             settings::init(cx);
-            WorktreeSettings::register(cx);
-            Project::init_settings(cx);
-            AllLanguageSettings::register(cx);
         });
 
         let initial_text = "
@@ -646,7 +617,7 @@ mod tests {
         cx.run_until_parked();
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                rel_path("a.txt").into(),
+                RepoPath::from_rel_path(rel_path("a.txt")),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

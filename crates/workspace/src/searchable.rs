@@ -104,7 +104,6 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -166,6 +165,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
+    fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -185,7 +185,6 @@ pub trait SearchableItemHandle: ItemHandle {
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
-        collapse: bool,
         window: &mut Window,
         cx: &mut App,
     );
@@ -234,6 +233,8 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     );
+
+    fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -276,13 +277,12 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
-        collapse: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.activate_match(index, matches.as_slice(), collapse, window, cx)
+            this.activate_match(index, matches.as_slice(), window, cx)
         });
     }
 
@@ -388,6 +388,11 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     ) {
         self.update(cx, |this, cx| {
             this.toggle_filtered_search_ranges(enabled, window, cx)
+        });
+    }
+    fn set_search_is_case_sensitive(&self, enabled: Option<bool>, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_search_is_case_sensitive(enabled, cx)
         });
     }
 }

@@ -274,12 +274,13 @@
       "cmd-alt-n": "agent::NewTextThread",
       "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenSettings",
-      "cmd-alt-p": "agent::OpenRulesLibrary",
+      "cmd-alt-l": "agent::OpenRulesLibrary",
+      "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
-      "cmd-shift-i": "agent::ToggleOptionsMenu",
+      "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
@@ -311,7 +312,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
-      "cmd-alt-t": "agent::NewThread"
+      "cmd-alt-n": "agent::NewExternalAgentThread"
     }
   },
   {
@@ -468,6 +469,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "cmd-shift-j": "project_search::ToggleFilters",
+      "shift-enter": "project_search::ToggleAllSearchResults",
       "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
@@ -496,6 +498,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "cmd-shift-j": "project_search::ToggleFilters",
+      "shift-enter": "project_search::ToggleAllSearchResults",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex"
@@ -802,11 +805,17 @@
     }
   },
   {
-    "context": "Editor && in_snippet",
+    "context": "Editor && in_snippet && has_next_tabstop && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-right": "editor::NextSnippetTabstop",
-      "alt-left": "editor::PreviousSnippetTabstop"
+      "tab": "editor::NextSnippetTabstop"
+    }
+  },
+  {
+    "context": "Editor && in_snippet && has_previous_tabstop && !showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-tab": "editor::PreviousSnippetTabstop"
     }
   },
   {
@@ -1034,6 +1043,7 @@
       "ctrl-g ctrl-g": "git::Fetch",
       "ctrl-g up": "git::Push",
       "ctrl-g down": "git::Pull",
+      "ctrl-g shift-down": "git::PullRebase",
       "ctrl-g shift-up": "git::ForcePush",
       "ctrl-g d": "git::Diff",
       "ctrl-g backspace": "git::RestoreTrackedFiles",
@@ -1355,6 +1365,14 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem"
+    }
+  },
+  {
+    "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
+      "ctrl-space": "git::WorktreeFromDefault"
     }
   },
   {

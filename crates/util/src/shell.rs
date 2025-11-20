@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
+use crate::command::new_std_command;
+
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +62,7 @@ pub enum ShellKind {
     Nushell,
     Cmd,
     Xonsh,
+    Elvish,
 }
 
 pub fn get_system_shell() -> String {
@@ -107,16 +110,12 @@ pub fn get_windows_system_shell() -> String {
     use std::path::PathBuf;
 
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
-        #[cfg(target_pointer_width = "64")]
         let env_var = if find_alternate {
-            "ProgramFiles(x86)"
-        } else {
-            "ProgramFiles"
-        };
-
-        #[cfg(target_pointer_width = "32")]
-        let env_var = if find_alternate {
-            "ProgramW6432"
+            if cfg!(target_pointer_width = "64") {
+                "ProgramFiles(x86)"
+            } else {
+                "ProgramW6432"
+            }
         } else {
             "ProgramFiles"
         };
@@ -164,23 +163,19 @@ pub fn get_windows_system_shell() -> String {
         } else {
             "Microsoft.PowerShell_"
         };
-        msix_app_dir
-            .read_dir()
-            .ok()?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
-                    return None;
-                }
+        msix_app_dir.read_dir().ok()?.find_map(|entry| {
+            let entry = entry.ok()?;
+            if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
+                return None;
+            }
 
-                if !entry.file_name().to_string_lossy().starts_with(prefix) {
-                    return None;
-                }
+            if !entry.file_name().to_string_lossy().starts_with(prefix) {
+                return None;
+            }
 
-                let exe_path = entry.path().join("pwsh.exe");
-                exe_path.exists().then_some(exe_path)
-            })
-            .next()
+            let exe_path = entry.path().join("pwsh.exe");
+            exe_path.exists().then_some(exe_path)
+        })
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
@@ -189,16 +184,42 @@ pub fn get_windows_system_shell() -> String {
         pwsh_exe.exists().then_some(pwsh_exe)
     }
 
+    // check whether the found powershell is executable for us
     static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
-        find_pwsh_in_programfiles(false, false)
-            .or_else(|| find_pwsh_in_programfiles(true, false))
-            .or_else(|| find_pwsh_in_msix(false))
-            .or_else(|| find_pwsh_in_programfiles(false, true))
-            .or_else(|| find_pwsh_in_msix(true))
-            .or_else(|| find_pwsh_in_programfiles(true, true))
-            .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or("powershell.exe".to_string())
+        let can_execute_pwsh = |p: &PathBuf| {
+            #[allow(clippy::disallowed_methods)]
+            let status = new_std_command(p).arg("-NoProfile").arg("-Help").status();
+            let success = status.as_ref().is_ok_and(|status| status.success());
+            if !success {
+                log::warn!(
+                    "Powershell found at `{}` is not executable: {status:?}",
+                    p.display()
+                );
+            }
+            success
+        };
+
+        let locations = [
+            || find_pwsh_in_programfiles(false, false),
+            || find_pwsh_in_programfiles(true, false),
+            || find_pwsh_in_msix(false),
+            || find_pwsh_in_programfiles(false, true),
+            || find_pwsh_in_msix(true),
+            || find_pwsh_in_programfiles(true, true),
+            || find_pwsh_in_scoop(),
+            || which::which_global("pwsh.exe").ok(),
+            || which::which_global("powershell.exe").ok(),
+        ];
+        locations
+            .into_iter()
+            .filter_map(|f| f())
+            .find(|p| can_execute_pwsh(&p))
+            .map(|p| p.to_string_lossy().trim().to_owned())
+            .inspect(|shell| log::info!("Found powershell in: {}", shell))
+            .unwrap_or_else(|| {
+                log::warn!("Powershell not found, falling back to `cmd`");
+                "cmd.exe".to_string()
+            })
     });
 
     (*SYSTEM_SHELL).clone()
@@ -216,6 +237,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Cmd => write!(f, "cmd"),
             ShellKind::Rc => write!(f, "rc"),
             ShellKind::Xonsh => write!(f, "xonsh"),
+            ShellKind::Elvish => write!(f, "elvish"),
         }
     }
 }
@@ -241,6 +263,7 @@ impl ShellKind {
             "tcsh" => ShellKind::Tcsh,
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
+            "elvish" => ShellKind::Elvish,
             "sh" | "bash" | "zsh" => ShellKind::Posix,
             _ if is_windows => ShellKind::PowerShell,
             // Some other shell detected, the user might install and use a
@@ -260,6 +283,7 @@ impl ShellKind {
             Self::Rc => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
             Self::Xonsh => input.to_owned(),
+            Self::Elvish => input.to_owned(),
         }
     }
 
@@ -386,7 +410,8 @@ impl ShellKind {
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
-            | ShellKind::Xonsh => interactive
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -404,7 +429,17 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Cmd
-            | ShellKind::Xonsh => None,
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => None,
+        }
+    }
+
+    pub fn prepend_command_prefix<'a>(&self, command: &'a str) -> Cow<'a, str> {
+        match self.command_prefix() {
+            Some(prefix) if !command.starts_with(prefix) => {
+                Cow::Owned(format!("{prefix}{command}"))
+            }
+            _ => Cow::Borrowed(command),
         }
     }
 
@@ -418,7 +453,22 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Nushell
-            | ShellKind::Xonsh => ';',
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => ';',
+        }
+    }
+
+    pub const fn sequential_and_commands_separator(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd
+            | ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Xonsh => "&&",
+            ShellKind::Nushell | ShellKind::Elvish => ";",
         }
     }
 
@@ -434,8 +484,45 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Nushell
-            | ShellKind::Xonsh => arg,
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => arg,
         })
+    }
+
+    /// Quotes the given argument if necessary, taking into account the command prefix.
+    ///
+    /// In other words, this will consider quoting arg without its command prefix to not break the command.
+    /// You should use this over `try_quote` when you want to quote a shell command.
+    pub fn try_quote_prefix_aware<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
+        if let Some(char) = self.command_prefix() {
+            if let Some(arg) = arg.strip_prefix(char) {
+                // we have a command that is prefixed
+                for quote in ['\'', '"'] {
+                    if let Some(arg) = arg
+                        .strip_prefix(quote)
+                        .and_then(|arg| arg.strip_suffix(quote))
+                    {
+                        // and the command itself is wrapped as a literal, that
+                        // means the prefix exists to interpret a literal as a
+                        // command. So strip the quotes, quote the command, and
+                        // re-add the quotes if they are missing after requoting
+                        let quoted = self.try_quote(arg)?;
+                        return Some(if quoted.starts_with(['\'', '"']) {
+                            Cow::Owned(self.prepend_command_prefix(&quoted).into_owned())
+                        } else {
+                            Cow::Owned(
+                                self.prepend_command_prefix(&format!("{quote}{quoted}{quote}"))
+                                    .into_owned(),
+                            )
+                        });
+                    }
+                }
+                return self
+                    .try_quote(arg)
+                    .map(|quoted| Cow::Owned(self.prepend_command_prefix(&quoted).into_owned()));
+            }
+        }
+        self.try_quote(arg)
     }
 
     pub fn split(&self, input: &str) -> Option<Vec<String>> {
@@ -452,7 +539,8 @@ impl ShellKind {
             | ShellKind::Tcsh
             | ShellKind::Posix
             | ShellKind::Rc
-            | ShellKind::Xonsh => "source",
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => "source",
         }
     }
 
@@ -466,7 +554,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Nushell
-            | ShellKind::Xonsh => "clear",
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => "clear",
         }
     }
 
@@ -483,7 +572,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Nushell
-            | ShellKind::Xonsh => true,
+            | ShellKind::Xonsh
+            | ShellKind::Elvish => true,
         }
     }
 }
@@ -523,6 +613,77 @@ mod tests {
                 .unwrap()
                 .into_owned(),
             "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"".to_string()
+        );
+    }
+
+    #[test]
+    fn test_try_quote_nu_command() {
+        let shell_kind = ShellKind::Nushell;
+        assert_eq!(
+            shell_kind.try_quote("'uname'").unwrap().into_owned(),
+            "\"'uname'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("'uname'")
+                .unwrap()
+                .into_owned(),
+            "\"'uname'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("^uname").unwrap().into_owned(),
+            "'^uname'".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("^uname")
+                .unwrap()
+                .into_owned(),
+            "^uname".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("^'uname'").unwrap().into_owned(),
+            "'^'\"'uname\'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("^'uname'")
+                .unwrap()
+                .into_owned(),
+            "^'uname'".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("'uname a'").unwrap().into_owned(),
+            "\"'uname a'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("'uname a'")
+                .unwrap()
+                .into_owned(),
+            "\"'uname a'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("^'uname a'").unwrap().into_owned(),
+            "'^'\"'uname a'\"".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("^'uname a'")
+                .unwrap()
+                .into_owned(),
+            "^'uname a'".to_string()
+        );
+        assert_eq!(
+            shell_kind.try_quote("uname").unwrap().into_owned(),
+            "uname".to_string()
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote_prefix_aware("uname")
+                .unwrap()
+                .into_owned(),
+            "uname".to_string()
         );
     }
 }

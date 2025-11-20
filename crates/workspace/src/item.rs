@@ -17,7 +17,8 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
-    ActivateOnClose, ClosePosition, Settings, SettingsLocation, ShowCloseButton, ShowDiagnostics,
+    ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
+    ShowDiagnostics,
 };
 use smallvec::SmallVec;
 use std::{
@@ -50,6 +51,7 @@ impl Default for SaveOptions {
     }
 }
 
+#[derive(RegisterSetting)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -59,6 +61,7 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
+#[derive(RegisterSetting)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
@@ -296,6 +299,15 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         None
     }
 
+    /// Returns optional elements to render to the left of the breadcrumb.
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        None
+    }
+
     fn added_to_workspace(
         &mut self,
         _workspace: &mut Workspace,
@@ -479,6 +491,7 @@ pub trait ItemHandle: 'static + Send {
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
@@ -977,6 +990,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.read(cx).breadcrumbs(theme, cx)
+    }
+
+    fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
+        self.update(cx, |item, cx| item.breadcrumb_prefix(window, cx))
     }
 
     fn show_toolbar(&self, cx: &App) -> bool {

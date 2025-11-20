@@ -3,17 +3,17 @@ use core::num;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
-use settings::Settings;
 pub use settings::{
     CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
+use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Clone)]
+#[derive(Clone, RegisterSetting)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
@@ -33,7 +33,8 @@ pub struct EditorSettings {
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub fast_scroll_sensitivity: f32,
-    pub relative_line_numbers: bool,
+    pub sticky_scroll: StickyScroll,
+    pub relative_line_numbers: RelativeLineNumbers,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
@@ -55,12 +56,18 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
+    pub completion_menu_scrollbar: ShowScrollbar,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
     /// Whether the Jupyter feature is enabled.
     ///
     /// Default: true
+    pub enabled: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct StickyScroll {
     pub enabled: bool,
 }
 
@@ -155,10 +162,16 @@ pub struct DragAndDropSelection {
 pub struct SearchSettings {
     /// Whether to show the project search button in the status bar.
     pub button: bool,
+    /// Whether to only match on whole words.
     pub whole_word: bool,
+    /// Whether to match case sensitively.
     pub case_sensitive: bool,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: bool,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: bool,
+    /// Whether to center the cursor on each search match when navigating.
+    pub center_on_match: bool,
 }
 
 impl EditorSettings {
@@ -183,6 +196,7 @@ impl Settings for EditorSettings {
         let toolbar = editor.toolbar.unwrap();
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
+        let sticky_scroll = editor.sticky_scroll.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -233,6 +247,9 @@ impl Settings for EditorSettings {
             horizontal_scroll_margin: editor.horizontal_scroll_margin.unwrap(),
             scroll_sensitivity: editor.scroll_sensitivity.unwrap(),
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
+            sticky_scroll: StickyScroll {
+                enabled: sticky_scroll.enabled.unwrap(),
+            },
             relative_line_numbers: editor.relative_line_numbers.unwrap(),
             seed_search_query_from_cursor: editor.seed_search_query_from_cursor.unwrap(),
             use_smartcase_search: editor.use_smartcase_search.unwrap(),
@@ -249,6 +266,7 @@ impl Settings for EditorSettings {
                 case_sensitive: search.case_sensitive.unwrap(),
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
+                center_on_match: search.center_on_match.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
@@ -266,6 +284,7 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
+            completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
         }
     }
 }

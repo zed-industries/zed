@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::Result;
 use client::{Client, UserStore};
+use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use editor::{Editor, PathKey};
 use futures::StreamExt as _;
 use gpui::{
@@ -41,18 +42,11 @@ pub struct Zeta2ContextView {
 #[derive(Debug)]
 struct RetrievalRun {
     editor: Entity<Editor>,
-    search_queries: Vec<GlobQueries>,
+    search_queries: Vec<SearchToolQuery>,
     started_at: Instant,
     search_results_generated_at: Option<Instant>,
     search_results_executed_at: Option<Instant>,
-    search_results_filtered_at: Option<Instant>,
     finished_at: Option<Instant>,
-}
-
-#[derive(Debug)]
-struct GlobQueries {
-    glob: String,
-    alternations: Vec<String>,
 }
 
 actions!(
@@ -117,17 +111,12 @@ impl Zeta2ContextView {
                     self.handle_search_queries_executed(info, window, cx);
                 }
             }
-            ZetaDebugInfo::SearchResultsFiltered(info) => {
-                if info.project == self.project {
-                    self.handle_search_results_filtered(info, window, cx);
-                }
-            }
             ZetaDebugInfo::ContextRetrievalFinished(info) => {
                 if info.project == self.project {
                     self.handle_context_retrieval_finished(info, window, cx);
                 }
             }
-            ZetaDebugInfo::EditPredicted(_) => {}
+            ZetaDebugInfo::EditPredictionRequested(_) => {}
         }
     }
 
@@ -159,7 +148,6 @@ impl Zeta2ContextView {
             started_at: info.timestamp,
             search_results_generated_at: None,
             search_results_executed_at: None,
-            search_results_filtered_at: None,
             finished_at: None,
         });
 
@@ -217,23 +205,7 @@ impl Zeta2ContextView {
         };
 
         run.search_results_generated_at = Some(info.timestamp);
-        run.search_queries = info
-            .queries
-            .into_iter()
-            .map(|query| {
-                let mut regex_parser = regex_syntax::ast::parse::Parser::new();
-
-                GlobQueries {
-                    glob: query.glob,
-                    alternations: match regex_parser.parse(&query.regex) {
-                        Ok(regex_syntax::ast::Ast::Alternation(ref alt)) => {
-                            alt.asts.iter().map(|ast| ast.to_string()).collect()
-                        }
-                        _ => vec![query.regex],
-                    },
-                }
-            })
-            .collect();
+        run.search_queries = info.search_queries;
         cx.notify();
     }
 
@@ -253,20 +225,6 @@ impl Zeta2ContextView {
         };
 
         run.search_results_executed_at = Some(info.timestamp);
-        cx.notify();
-    }
-
-    fn handle_search_results_filtered(
-        &mut self,
-        info: ZetaContextRetrievalDebugInfo,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(run) = self.runs.back_mut() else {
-            return;
-        };
-
-        run.search_results_filtered_at = Some(info.timestamp);
         cx.notify();
     }
 
@@ -313,18 +271,28 @@ impl Zeta2ContextView {
                         .enumerate()
                         .flat_map(|(ix, query)| {
                             std::iter::once(ListHeader::new(query.glob.clone()).into_any_element())
-                                .chain(query.alternations.iter().enumerate().map(
-                                    move |(alt_ix, alt)| {
-                                        ListItem::new(ix * 100 + alt_ix)
+                                .chain(query.syntax_node.iter().enumerate().map(
+                                    move |(regex_ix, regex)| {
+                                        ListItem::new(ix * 100 + regex_ix)
                                             .start_slot(
                                                 Icon::new(IconName::MagnifyingGlass)
                                                     .color(Color::Muted)
                                                     .size(IconSize::Small),
                                             )
-                                            .child(alt.clone())
+                                            .child(regex.clone())
                                             .into_any_element()
                                     },
                                 ))
+                                .chain(query.content.as_ref().map(move |regex| {
+                                    ListItem::new(ix * 100 + query.syntax_node.len())
+                                        .start_slot(
+                                            Icon::new(IconName::MagnifyingGlass)
+                                                .color(Color::Muted)
+                                                .size(IconSize::Small),
+                                        )
+                                        .child(regex.clone())
+                                        .into_any_element()
+                                }))
                         }),
                 ),
             )
@@ -398,19 +366,10 @@ impl Zeta2ContextView {
                         };
                         div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
 
-                        let Some(t3) = run.search_results_filtered_at else {
-                            return pending_message(div, "Filtering results...");
-                        };
-                        div =
-                            div.child(format!("Filtered results: {:>5} ms", (t3 - t2).as_millis()));
-
-                        let Some(t4) = run.finished_at else {
-                            return pending_message(div, "Building excerpts");
-                        };
-                        div = div
-                            .child(format!("Build excerpts: {:>5} µs", (t4 - t3).as_micros()))
-                            .child(format!("Total: {:>5} ms", (t4 - t0).as_millis()));
-                        div
+                        div.child(format!(
+                            "Total: {:>5} ms",
+                            (run.finished_at.unwrap_or(t0) - t0).as_millis()
+                        ))
                     }),
             )
     }

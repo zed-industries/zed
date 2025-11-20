@@ -697,6 +697,7 @@ impl Render for NewProcessModal {
                     .justify_between()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant);
+                let secondary_action = menu::SecondaryConfirm.boxed_clone();
                 match self.mode {
                     NewProcessMode::Launch => el.child(
                         container
@@ -706,6 +707,7 @@ impl Render for NewProcessModal {
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.save_debug_scenario(window, cx);
                                         }))
+                                        .key_binding(KeyBinding::for_action(&*secondary_action, cx))
                                         .disabled(
                                             self.debugger.is_none()
                                                 || self
@@ -749,7 +751,6 @@ impl Render for NewProcessModal {
                         container
                             .child(div().child({
                                 Button::new("edit-attach-task", "Edit in debug.json")
-                                    .label_size(LabelSize::Small)
                                     .key_binding(KeyBinding::for_action(&*secondary_action, cx))
                                     .on_click(move |_, window, cx| {
                                         window.dispatch_action(secondary_action.boxed_clone(), cx)
@@ -1192,7 +1193,7 @@ impl PickerDelegate for DebugDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
-        "Find a debug task, or debug a command.".into()
+        "Find a debug task, or debug a command".into()
     }
 
     fn update_matches(
@@ -1453,18 +1454,17 @@ impl PickerDelegate for DebugDelegate {
             .child({
                 let action = menu::SecondaryConfirm.boxed_clone();
                 if self.matches.is_empty() {
-                    Button::new("edit-debug-json", "Edit debug.json")
-                        .label_size(LabelSize::Small)
-                        .on_click(cx.listener(|_picker, _, window, cx| {
+                    Button::new("edit-debug-json", "Edit debug.json").on_click(cx.listener(
+                        |_picker, _, window, cx| {
                             window.dispatch_action(
                                 zed_actions::OpenProjectDebugTasks.boxed_clone(),
                                 cx,
                             );
                             cx.emit(DismissEvent);
-                        }))
+                        },
+                    ))
                 } else {
                     Button::new("edit-debug-task", "Edit in debug.json")
-                        .label_size(LabelSize::Small)
                         .key_binding(KeyBinding::for_action(&*action, cx))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(action.boxed_clone(), cx)

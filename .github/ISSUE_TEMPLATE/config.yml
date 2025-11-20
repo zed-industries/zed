@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://json.schemastore.org/github-issue-config.json
+# yaml-language-server: $schema=https://www.schemastore.org/github-issue-config.json
 blank_issues_enabled: false
 contact_links:
   - name: Feature Request

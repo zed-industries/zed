@@ -48,7 +48,6 @@ pub const LEGACY_CHANNEL_COUNT: NonZero<u16> = nz!(2);
 pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
-    AudioSettings::register(cx);
     LIVE_SETTINGS.initialize(cx);
 }
 

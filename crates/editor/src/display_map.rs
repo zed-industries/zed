@@ -17,44 +17,45 @@
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
 
+#[macro_use]
+mod dimensions;
+
 mod block_map;
 mod crease_map;
 mod custom_highlights;
 mod fold_map;
 mod inlay_map;
-pub(crate) mod invisibles;
+mod invisibles;
 mod tab_map;
 mod wrap_map;
 
-use crate::{
-    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
-};
+pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
     BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
     StickyHeaderExcerpt,
 };
-use block_map::{BlockRow, BlockSnapshot};
-use collections::{HashMap, HashSet};
 pub use crease_map::*;
-use fold_map::FoldSnapshot;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
-use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
-use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
-use language::{
-    OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
-};
+
+use collections::{HashMap, HashSet};
+use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
+use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
+    MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
+use sum_tree::{Bias, TreeMap};
+use text::{BufferId, LineIndent};
+use ui::{SharedString, px};
+use unicode_segmentation::UnicodeSegmentation;
 
 use std::{
     any::TypeId,
@@ -65,14 +66,15 @@ use std::{
     ops::{Add, Range, Sub},
     sync::Arc,
 };
-use sum_tree::{Bias, TreeMap};
-use tab_map::TabSnapshot;
-use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
-use unicode_segmentation::UnicodeSegmentation;
-use wrap_map::{WrapMap, WrapSnapshot};
 
-pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
+use crate::{
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
+};
+use block_map::{BlockRow, BlockSnapshot};
+use fold_map::FoldSnapshot;
+use inlay_map::InlaySnapshot;
+use tab_map::TabSnapshot;
+use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -100,7 +102,7 @@ type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHi
 pub struct DisplayMap {
     /// The buffer that we are displaying.
     buffer: Entity<MultiBuffer>,
-    buffer_subscription: BufferSubscription,
+    buffer_subscription: BufferSubscription<MultiBufferOffset>,
     /// Decides where the [`Inlay`]s should be displayed.
     inlay_map: InlayMap,
     /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
@@ -167,11 +169,12 @@ impl DisplayMap {
     }
 
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
+        let tab_size = Self::tab_size(&self.buffer, cx);
+
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot, edits);
-        let tab_size = Self::tab_size(&self.buffer, cx);
         let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot, edits, tab_size);
         let (wrap_snapshot, edits) = self
             .wrap_map
@@ -195,7 +198,7 @@ impl DisplayMap {
     pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
         self.fold(
             other
-                .folds_in_range(0..other.buffer_snapshot().len())
+                .folds_in_range(MultiBufferOffset(0)..other.buffer_snapshot().len())
                 .map(|fold| {
                     Crease::simple(
                         fold.range.to_offset(other.buffer_snapshot()),
@@ -791,7 +794,7 @@ impl DisplaySnapshot {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buffer_snapshot().len() == 0
+        self.buffer_snapshot().len() == MultiBufferOffset(0)
     }
 
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
@@ -917,7 +920,7 @@ impl DisplaySnapshot {
     pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         self.block_snapshot
             .chunks(
-                display_row.0..self.max_point().row().next_row().0,
+                BlockRow(display_row.0)..BlockRow(self.max_point().row().next_row().0),
                 false,
                 self.masked,
                 Highlights::default(),
@@ -929,7 +932,12 @@ impl DisplaySnapshot {
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         (0..=display_row.0).rev().flat_map(move |row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, self.masked, Highlights::default())
+                .chunks(
+                    BlockRow(row)..BlockRow(row + 1),
+                    false,
+                    self.masked,
+                    Highlights::default(),
+                )
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -944,7 +952,7 @@ impl DisplaySnapshot {
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
-            display_rows.start.0..display_rows.end.0,
+            BlockRow(display_rows.start.0)..BlockRow(display_rows.end.0),
             language_aware,
             self.masked,
             Highlights {
@@ -1125,7 +1133,10 @@ impl DisplaySnapshot {
         })
     }
 
-    pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {
+    pub fn buffer_chars_at(
+        &self,
+        mut offset: MultiBufferOffset,
+    ) -> impl Iterator<Item = (char, MultiBufferOffset)> + '_ {
         self.buffer_snapshot().chars_at(offset).map(move |ch| {
             let ret = (ch, offset);
             offset += ch.len_utf8();
@@ -1135,8 +1146,8 @@ impl DisplaySnapshot {
 
     pub fn reverse_buffer_chars_at(
         &self,
-        mut offset: usize,
-    ) -> impl Iterator<Item = (char, usize)> + '_ {
+        mut offset: MultiBufferOffset,
+    ) -> impl Iterator<Item = (char, MultiBufferOffset)> + '_ {
         self.buffer_snapshot()
             .reversed_chars_at(offset)
             .map(move |ch| {
@@ -1180,8 +1191,8 @@ impl DisplaySnapshot {
         rows: Range<DisplayRow>,
     ) -> impl Iterator<Item = (DisplayRow, &Block)> {
         self.block_snapshot
-            .blocks_in_range(rows.start.0..rows.end.0)
-            .map(|(row, block)| (DisplayRow(row), block))
+            .blocks_in_range(BlockRow(rows.start.0)..BlockRow(rows.end.0))
+            .map(|(row, block)| (DisplayRow(row.0), block))
     }
 
     pub fn sticky_header_excerpt(&self, row: f64) -> Option<StickyHeaderExcerpt<'_>> {
@@ -1213,7 +1224,7 @@ impl DisplaySnapshot {
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
         let wrap_row = self
             .block_snapshot
-            .to_wrap_point(BlockPoint::new(display_row.0, 0), Bias::Left)
+            .to_wrap_point(BlockPoint::new(BlockRow(display_row.0), 0), Bias::Left)
             .row();
         self.wrap_snapshot().soft_wrap_indent(wrap_row)
     }
@@ -1244,7 +1255,7 @@ impl DisplaySnapshot {
     }
 
     pub fn longest_row(&self) -> DisplayRow {
-        DisplayRow(self.block_snapshot.longest_row())
+        DisplayRow(self.block_snapshot.longest_row().0)
     }
 
     pub fn longest_row_in_range(&self, range: Range<DisplayRow>) -> DisplayRow {
@@ -1518,7 +1529,7 @@ impl DisplayPoint {
         map.display_point_to_point(self, Bias::Left)
     }
 
-    pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
+    pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> MultiBufferOffset {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0, bias);
         let tab_point = map.wrap_snapshot().to_tab_point(wrap_point);
         let fold_point = map.tab_snapshot().to_fold_point(tab_point, bias).0;
@@ -1528,13 +1539,13 @@ impl DisplayPoint {
     }
 }
 
-impl ToDisplayPoint for usize {
+impl ToDisplayPoint for MultiBufferOffset {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         map.point_to_display_point(self.to_point(map.buffer_snapshot()), Bias::Left)
     }
 }
 
-impl ToDisplayPoint for OffsetUtf16 {
+impl ToDisplayPoint for MultiBufferOffsetUtf16 {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_offset(map.buffer_snapshot()).to_display_point(map)
     }
@@ -1569,9 +1580,8 @@ pub mod tests {
         LanguageMatcher,
     };
     use lsp::LanguageServerId;
-    use project::Project;
+
     use rand::{Rng, prelude::*};
-    use rope::Rope;
     use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -1678,7 +1688,7 @@ pub mod tests {
                             let block_properties = (0..rng.random_range(1..=1))
                                 .map(|_| {
                                     let position = buffer.anchor_after(buffer.clip_offset(
-                                        rng.random_range(0..=buffer.len()),
+                                        rng.random_range(MultiBufferOffset(0)..=buffer.len()),
                                         Bias::Left,
                                     ));
 
@@ -1720,8 +1730,12 @@ pub mod tests {
                     for _ in 0..rng.random_range(1..=3) {
                         buffer.read_with(cx, |buffer, cx| {
                             let buffer = buffer.read(cx);
-                            let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
-                            let start = buffer.clip_offset(rng.random_range(0..=end), Left);
+                            let end = buffer.clip_offset(
+                                rng.random_range(MultiBufferOffset(0)..=buffer.len()),
+                                Right,
+                            );
+                            let start = buffer
+                                .clip_offset(rng.random_range(MultiBufferOffset(0)..=end), Left);
                             ranges.push(start..end);
                         });
                     }
@@ -1947,7 +1961,7 @@ pub mod tests {
                 )
             );
 
-            let ix = snapshot.buffer_snapshot().text().find("seven").unwrap();
+            let ix = MultiBufferOffset(snapshot.buffer_snapshot().text().find("seven").unwrap());
             buffer.update(cx, |buffer, cx| {
                 buffer.edit([(ix..ix, "and ")], None, cx);
             });
@@ -2076,8 +2090,8 @@ pub mod tests {
                 &[],
                 vec![Inlay::edit_prediction(
                     0,
-                    buffer_snapshot.anchor_after(0),
-                    Rope::from_str_small("\n"),
+                    buffer_snapshot.anchor_after(MultiBufferOffset(0)),
+                    "\n",
                 )],
                 cx,
             );
@@ -2087,7 +2101,11 @@ pub mod tests {
         // Regression test: updating the display map does not crash when a
         // block is immediately followed by a multi-line inlay.
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(1..1, "b")], None, cx);
+            buffer.edit(
+                [(MultiBufferOffset(1)..MultiBufferOffset(1), "b")],
+                None,
+                cx,
+            );
         });
         map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\nab"));
     }
@@ -2687,6 +2705,7 @@ pub mod tests {
                 HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
                     .into_iter()
+                    .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
                     .map(|range| {
                         buffer_snapshot.anchor_before(range.start)
                             ..buffer_snapshot.anchor_before(range.end)
@@ -2959,10 +2978,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
-        workspace::init_settings(cx);
-        language::init(cx);
         crate::init(cx);
-        Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, f);

@@ -1,7 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, ReportEditorEvent, SearchWithinRange,
-    SelectionEffects, ToPoint as _,
+    Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
+    ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -21,6 +21,7 @@ use language::{
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
+use multi_buffer::MultiBufferOffset;
 use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -1256,17 +1257,15 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        if self.mode.is_minimap() {
-            return None;
-        }
-        let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
-
+        let buffer_serialization = self.buffer_serialization?;
         let project = self.project.clone()?;
-        if project.read(cx).visible_worktrees(cx).next().is_none() {
+
+        let serialize_dirty_buffers = match buffer_serialization {
             // If we don't have a worktree, we don't serialize, because
             // projects without worktrees aren't deserialized.
-            serialize_dirty_buffers = false;
-        }
+            BufferSerialization::All => project.read(cx).visible_worktrees(cx).next().is_some(),
+            BufferSerialization::NonDirtyBuffers => false,
+        };
 
         if closing && !serialize_dirty_buffers {
             return None;
@@ -1323,10 +1322,11 @@ impl SerializableItem for Editor {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
-        matches!(
-            event,
-            EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
-        )
+        self.should_serialize_buffer()
+            && matches!(
+                event,
+                EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
+            )
     }
 }
 
@@ -1587,13 +1587,17 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         matches: &[Range<Anchor>],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
-        let range = self.range_for_match(&matches[index], collapse);
-        self.change_selections(Default::default(), window, cx, |s| {
+        let range = self.range_for_match(&matches[index]);
+        let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
+            Autoscroll::center()
+        } else {
+            Autoscroll::fit()
+        };
+        self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
             s.select_ranges([range]);
         })
     }
@@ -1732,7 +1736,7 @@ impl SearchableItem for Editor {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {
-                vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
+                vec![buffer.anchor_before(MultiBufferOffset(0))..buffer.anchor_after(buffer.len())]
             } else {
                 search_within_ranges
             };
@@ -1743,7 +1747,10 @@ impl SearchableItem for Editor {
                 {
                     ranges.extend(
                         query
-                            .search(search_buffer, Some(search_range.clone()))
+                            .search(
+                                search_buffer,
+                                Some(search_range.start.0..search_range.end.0),
+                            )
                             .await
                             .into_iter()
                             .map(|match_range| {
@@ -1791,6 +1798,14 @@ impl SearchableItem for Editor {
 
     fn search_bar_visibility_changed(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {
         self.expect_bounds_change = self.last_bounds;
+    }
+
+    fn set_search_is_case_sensitive(
+        &mut self,
+        case_sensitive: Option<bool>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.select_next_is_case_sensitive = case_sensitive;
     }
 }
 

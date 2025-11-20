@@ -66,7 +66,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    TitleBarSettings::register(cx);
     SystemWindowTabs::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {

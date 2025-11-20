@@ -9,10 +9,11 @@ use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects, VimFlavor,
+    SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
-    multibuffer_context_lines, vim_flavor,
+    multibuffer_context_lines,
+    scroll::Autoscroll,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -55,7 +56,9 @@ actions!(
         /// Moves to the next input field.
         NextField,
         /// Toggles the search filters panel.
-        ToggleFilters
+        ToggleFilters,
+        /// Toggles collapse/expand state of all search result excerpts.
+        ToggleAllSearchResults
     ]
 );
 
@@ -117,6 +120,20 @@ pub fn init(cx: &mut App) {
         register_workspace_action_for_present_search(workspace, |workspace, action, window, cx| {
             ProjectSearchView::search_in_new(workspace, action, window, cx)
         });
+
+        register_workspace_action_for_present_search(
+            workspace,
+            |workspace, action: &ToggleAllSearchResults, window, cx| {
+                if let Some(search_view) = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+                {
+                    search_view.update(cx, |search_view, cx| {
+                        search_view.toggle_all_search_results(action, window, cx);
+                    });
+                }
+            },
+        );
 
         register_workspace_action_for_present_search(
             workspace,
@@ -217,6 +234,7 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
+    results_collapsed: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -649,6 +667,44 @@ impl Item for ProjectSearchView {
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.results_editor.breadcrumbs(theme, cx)
     }
+
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.has_matches() {
+            return None;
+        }
+
+        let is_collapsed = self.results_collapsed;
+
+        let (icon, tooltip_label) = if is_collapsed {
+            (IconName::ChevronUpDown, "Expand All Search Results")
+        } else {
+            (IconName::ChevronDownUp, "Collapse All Search Results")
+        };
+
+        let focus_handle = self.query_editor.focus_handle(cx);
+
+        Some(
+            IconButton::new("project-search-collapse-expand", icon)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(
+                        tooltip_label,
+                        &ToggleAllSearchResults,
+                        &focus_handle,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_all_search_results(&ToggleAllSearchResults, window, cx);
+                }))
+                .into_any_element(),
+        )
+    }
 }
 
 impl ProjectSearchView {
@@ -749,6 +805,34 @@ impl ProjectSearchView {
         self.entity.update(cx, |model, _cx| {
             model.match_ranges = match_ranges;
         });
+    }
+
+    fn toggle_all_search_results(
+        &mut self,
+        _: &ToggleAllSearchResults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.results_collapsed = !self.results_collapsed;
+        self.update_results_visibility(cx);
+    }
+
+    fn update_results_visibility(&mut self, cx: &mut Context<Self>) {
+        self.results_editor.update(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let buffer_ids = multibuffer.excerpt_buffer_ids();
+
+            if self.results_collapsed {
+                for buffer_id in buffer_ids {
+                    editor.fold_buffer(buffer_id, cx);
+                }
+            } else {
+                for buffer_id in buffer_ids {
+                    editor.unfold_buffer(buffer_id, cx);
+                }
+            }
+        });
+        cx.notify();
     }
 
     pub fn new(
@@ -909,8 +993,10 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
+            results_collapsed: false,
             _subscriptions: subscriptions,
         };
+
         this.entity_changed(window, cx);
         this
     }
@@ -1344,10 +1430,14 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-                let range_to_select = editor.range_for_match(&range_to_select, collapse);
+                let range_to_select = editor.range_for_match(&range_to_select);
+                let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
+                    Autoscroll::center()
+                } else {
+                    Autoscroll::fit()
+                };
                 editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
             });
@@ -1404,6 +1494,7 @@ impl ProjectSearchView {
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
+
         if match_ranges.is_empty() {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
@@ -1416,10 +1507,9 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
-                    let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
                     let range_to_select = match_ranges
                         .first()
-                        .map(|range| editor.range_for_match(range, collapse));
+                        .map(|range| editor.range_for_match(range));
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
@@ -1961,6 +2051,8 @@ impl Render for ProjectSearchBar {
             })
             .unwrap_or_else(|| "0/0".to_string());
 
+        let query_focus = search.query_editor.focus_handle(cx);
+
         let query_column = input_base_styles(InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
@@ -1990,11 +2082,9 @@ impl Render for ProjectSearchBar {
                     )),
             );
 
-        let query_focus = search.query_editor.focus_handle(cx);
-
         let matches_column = h_flex()
-            .pl_2()
-            .ml_2()
+            .ml_1()
+            .pl_1p5()
             .border_l_1()
             .border_color(theme_colors.border_variant)
             .child(render_action_button(
@@ -2346,7 +2436,15 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
-    use std::{ops::Deref as _, sync::Arc, time::Duration};
+    use std::{
+        ops::Deref as _,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{self, AtomicUsize},
+        },
+        time::Duration,
+    };
 
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
@@ -2425,7 +2523,7 @@ pub mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
             );
 
@@ -2436,9 +2534,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
@@ -2449,9 +2547,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
@@ -2462,9 +2560,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(0));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
@@ -2475,9 +2573,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
@@ -2488,9 +2586,9 @@ pub mod tests {
             .update(cx, |search_view, _, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
             })
@@ -4247,6 +4345,8 @@ pub mod tests {
         )
         .await;
 
+        let requests_count = Arc::new(AtomicUsize::new(0));
+        let closure_requests_count = requests_count.clone();
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let language = rust_lang();
@@ -4258,21 +4358,26 @@ pub mod tests {
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                     ..lsp::ServerCapabilities::default()
                 },
-                initializer: Some(Box::new(|fake_server| {
-                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                        move |_, _| async move {
-                            Ok(Some(vec![lsp::InlayHint {
-                                position: lsp::Position::new(0, 17),
-                                label: lsp::InlayHintLabel::String(": i32".to_owned()),
-                                kind: Some(lsp::InlayHintKind::TYPE),
-                                text_edits: None,
-                                tooltip: None,
-                                padding_left: None,
-                                padding_right: None,
-                                data: None,
-                            }]))
-                        },
-                    );
+                initializer: Some(Box::new(move |fake_server| {
+                    let requests_count = closure_requests_count.clone();
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>({
+                        move |_, _| {
+                            let requests_count = requests_count.clone();
+                            async move {
+                                requests_count.fetch_add(1, atomic::Ordering::Release);
+                                Ok(Some(vec![lsp::InlayHint {
+                                    position: lsp::Position::new(0, 17),
+                                    label: lsp::InlayHintLabel::String(": i32".to_owned()),
+                                    kind: Some(lsp::InlayHintKind::TYPE),
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                }]))
+                            }
+                        }
+                    });
                 })),
                 ..FakeLspAdapter::default()
             },
@@ -4286,7 +4391,7 @@ pub mod tests {
         });
 
         perform_search(search_view, "let ", cx);
-        let _fake_server = fake_servers.next().await.unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         search_view
@@ -4299,11 +4404,127 @@ pub mod tests {
                 );
             })
             .unwrap();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            1,
+            "New hints should have been queried",
+        );
 
         // Can do the 2nd search without any panics
         perform_search(search_view, "let ", cx);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        search_view
+            .update(cx, |search_view, _, cx| {
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nfn main() { let a: i32 = 2; }\n"
+                );
+            })
+            .unwrap();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            2,
+            "We did drop the previous buffer when cleared the old project search results, hence another query was made",
+        );
+
+        let singleton_editor = window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/main.rs")),
+                    workspace::OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
+        singleton_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() { let a: i32 = 2; }\n",
+                "Newly opened editor should have the correct text with hints",
+            );
+        });
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            2,
+            "Opening the same buffer again should reuse the cached hints",
+        );
+
+        window
+            .update(cx, |_, window, cx| {
+                singleton_editor.update(cx, |editor, cx| {
+                    editor.handle_input("test", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        singleton_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "testfn main() { l: i32et a = 2; }\n",
+                "Newly opened editor should have the correct text with hints",
+            );
+        });
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            3,
+            "We have edited the buffer and should send a new request",
+        );
+
+        window
+            .update(cx, |_, window, cx| {
+                singleton_editor.update(cx, |editor, cx| {
+                    editor.undo(&editor::actions::Undo, window, cx);
+                });
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            4,
+            "We have edited the buffer again and should send a new request again",
+        );
+        singleton_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() { let a: i32 = 2; }\n",
+                "Newly opened editor should have the correct text with hints",
+            );
+        });
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::RefreshInlayHints {
+                server_id: fake_server.server.server_id(),
+                request_id: Some(1),
+            });
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            5,
+            "After a simulated server refresh request, we should have sent another request",
+        );
+
+        perform_search(search_view, "let ", cx);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            requests_count.load(atomic::Ordering::Acquire),
+            5,
+            "New project search should reuse the cached hints",
+        );
         search_view
             .update(cx, |search_view, _, cx| {
                 assert_eq!(
@@ -4323,11 +4544,7 @@ pub mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
-            language::init(cx);
-            client::init_settings(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             crate::init(cx);
         });
     }

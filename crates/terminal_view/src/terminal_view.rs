@@ -95,7 +95,6 @@ actions!(
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
     terminal_panel::init(cx);
-    terminal::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
@@ -520,7 +519,12 @@ impl TerminalView {
                 return;
             }
         }
-        self.terminal.update(cx, |term, _| term.scroll_wheel(event));
+        self.terminal.update(cx, |term, cx| {
+            term.scroll_wheel(
+                event,
+                TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+            )
+        });
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -1448,7 +1452,6 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
-        _collapse: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1553,7 +1556,8 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
             .read(cx)
             .active_project_directory(cx)
             .as_deref()
-            .map(Path::to_path_buf),
+            .map(Path::to_path_buf)
+            .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {
@@ -1567,10 +1571,13 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
-    if !worktree.root_entry()?.is_dir() {
-        return None;
+    let worktree_path = worktree.abs_path();
+    if worktree.root_entry()?.is_dir() {
+        Some(worktree_path.to_path_buf())
+    } else {
+        // If worktree is a file, return its parent directory
+        worktree_path.parent().map(|p| p.to_path_buf())
     }
-    Some(worktree.abs_path().to_path_buf())
 }
 
 #[cfg(test)]
@@ -1603,7 +1610,7 @@ mod tests {
         });
     }
 
-    // No active entry, but a worktree, worktree is a file -> home_dir()
+    // No active entry, but a worktree, worktree is a file -> parent directory
     #[gpui::test]
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
@@ -1618,9 +1625,9 @@ mod tests {
             assert!(workspace.worktrees(cx).next().is_some());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some(Path::new("/").to_path_buf()));
             let res = first_project_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some(Path::new("/").to_path_buf()));
         });
     }
 
@@ -1692,10 +1699,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init_settings(cx);
-            language::init(cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;

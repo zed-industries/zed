@@ -13,6 +13,7 @@ name = "zeta"
 path = "src/main.rs"
 
 [dependencies]
+
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -42,7 +43,6 @@ prompt_store.workspace = true
 pulldown-cmark.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
-toml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -50,8 +50,15 @@ shellexpand.workspace = true
 smol.workspace = true
 soa-rs = "0.8.1"
 terminal_view.workspace = true
+toml.workspace = true
 util.workspace = true
 watch.workspace = true
 zeta.workspace = true
-zeta2.workspace = true
+zeta2 = { workspace = true, features = ["eval-support"] }
 zlog.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true

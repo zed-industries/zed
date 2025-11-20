@@ -41,6 +41,9 @@
       name: (identifier) @function.special)
   ])
 
+(macro_invocation
+  "!" @function.special)
+
 (macro_definition
   name: (identifier) @function.special.definition)
 
@@ -82,7 +85,6 @@
 [
   "as"
   "async"
-  "await"
   "const"
   "default"
   "dyn"
@@ -99,6 +101,7 @@
   "ref"
   "static"
   "struct"
+  "for"
   "trait"
   "type"
   "union"
@@ -111,10 +114,10 @@
 ] @keyword
 
 [
+  "await"
   "break"
   "continue"
   "else"
-  "for"
   "if"
   "in"
   "loop"
@@ -123,6 +126,9 @@
   "while"
   "yield"
 ] @keyword.control
+
+(for_expression
+  ("for" @keyword.control))
 
 [
   (string_literal)
@@ -192,7 +198,9 @@
 (unary_expression "!" @operator)
 operator: "/" @operator
 
-(lifetime) @lifetime
+(lifetime
+  "'" @lifetime
+  (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 

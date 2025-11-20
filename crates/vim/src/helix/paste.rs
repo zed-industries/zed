@@ -120,12 +120,12 @@ impl Vim {
 
                 editor.edit(edits, cx);
 
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    let snapshot = s.buffer().clone();
                     s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
                         let offset = anchor.to_offset(&snapshot);
                         if action.before {
-                            offset.saturating_sub(len)..offset
+                            offset.saturating_sub_usize(len)..offset
                         } else {
                             offset..(offset + len)
                         }

@@ -1,7 +1,7 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::{
-    fmt::Display,
+    fmt::{Display, Write as _},
     ops::{Add, Range, Sub},
     path::{Path, PathBuf},
     sync::Arc,
@@ -11,7 +11,14 @@ use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
 
-// TODO: snippet ordering within file / relative to excerpt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanContextRetrievalRequest {
+    pub excerpt: String,
+    pub excerpt_path: Arc<Path>,
+    pub excerpt_line_range: Range<Line>,
+    pub cursor_file_max_row: Line,
+    pub events: Vec<Event>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
@@ -66,8 +73,13 @@ pub enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
     NumLinesUniDiff,
+    OldTextNewText,
     /// Prompt format intended for use via zeta_cli
     OnlySnippets,
+    /// One-sentence instructions used in fine-tuned models
+    Minimal,
+    /// One-sentence instructions + FIM-like template
+    MinimalQwen,
 }
 
 impl PromptFormat {
@@ -93,6 +105,9 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
             PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
             PromptFormat::NumLinesUniDiff => write!(f, "Numbered Lines / Unified Diff"),
+            PromptFormat::OldTextNewText => write!(f, "Old Text / New Text"),
+            PromptFormat::Minimal => write!(f, "Minimal"),
+            PromptFormat::MinimalQwen => write!(f, "Minimal + Qwen FIM"),
         }
     }
 }
@@ -125,19 +140,37 @@ impl Display for Event {
                     write!(
                         f,
                         "// User accepted prediction:\n--- a/{}\n+++ b/{}\n{diff}",
-                        old_path.display(),
-                        new_path.display()
+                        DiffPathFmt(old_path),
+                        DiffPathFmt(new_path)
                     )
                 } else {
                     write!(
                         f,
                         "--- a/{}\n+++ b/{}\n{diff}",
-                        old_path.display(),
-                        new_path.display()
+                        DiffPathFmt(old_path),
+                        DiffPathFmt(new_path)
                     )
                 }
             }
         }
+    }
+}
+
+/// always format the Path as a unix path with `/` as the path sep in Diffs
+pub struct DiffPathFmt<'a>(pub &'a Path);
+
+impl<'a> std::fmt::Display for DiffPathFmt<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut is_first = true;
+        for component in self.0.components() {
+            if !is_first {
+                f.write_char('/')?;
+            } else {
+                is_first = false;
+            }
+            write!(f, "{}", component.as_os_str().display())?;
+        }
+        Ok(())
     }
 }
 

@@ -455,6 +455,7 @@
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "d": "vim::HelixDelete",
+      "alt-d": "editor::Delete", // Delete selection, without yanking
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
 
@@ -474,6 +475,9 @@
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
+
+      "n": "vim::HelixSelectNext",
+      "shift-n": "vim::HelixSelectPrevious",
 
       // Goto mode
       "g e": "vim::EndOfDocument",
