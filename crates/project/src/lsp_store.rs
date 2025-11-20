@@ -609,8 +609,7 @@ impl LocalLspStore {
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
             let mut binary = match (existing_binary, maybe_download_binary) {
-                (Ok(binary), None) => binary,
-                (error @ Err(_), None) => return error,
+                (binary, None) => binary?,
                 (Err(_), Some(downloader)) => downloader.await?,
                 (Ok(existing_binary), Some(downloader)) => {
                     let mut download_timeout = cx
