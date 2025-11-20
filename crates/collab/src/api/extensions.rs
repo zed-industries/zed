@@ -108,8 +108,8 @@ struct GetExtensionUpdatesParams {
     ids: String,
     min_schema_version: i32,
     max_schema_version: i32,
-    min_wasm_api_version: SemanticVersion,
-    max_wasm_api_version: SemanticVersion,
+    min_wasm_api_version: semver::Version,
+    max_wasm_api_version: semver::Version,
 }
 
 async fn get_extension_updates(

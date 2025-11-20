@@ -941,7 +941,7 @@ pub mod tests {
     use crate::{ExcerptRange, scroll::Autoscroll};
     use collections::HashSet;
     use futures::{StreamExt, future};
-    use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};

@@ -405,7 +405,7 @@ mod tests {
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
 
     use crate::acp::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;

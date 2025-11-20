@@ -295,7 +295,7 @@ impl TestServer {
                             server_conn,
                             client_name,
                             Principal::User(user),
-                            ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            ZedVersion(semver::Version::new(1, 0, 0)),
                             Some("test".to_string()),
                             None,
                             None,

@@ -7,10 +7,7 @@ use debugger_ui::debugger_panel::DebugPanel;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
-use gpui::{
-    AppContext as _, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal as _,
-    VisualContext,
-};
+use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal as _, VisualContext};
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,

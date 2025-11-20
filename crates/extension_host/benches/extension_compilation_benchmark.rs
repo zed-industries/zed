@@ -8,7 +8,7 @@ use extension::{
 };
 use extension_host::wasm_host::WasmHost;
 use fs::RealFs;
-use gpui::{SemanticVersion, TestAppContext, TestDispatcher};
+use gpui::{TestAppContext, TestDispatcher};
 use http_client::{FakeHttpClient, Response};
 use node_runtime::NodeRuntime;
 use rand::{SeedableRng, rngs::StdRng};
@@ -124,7 +124,7 @@ fn manifest() -> ExtensionManifest {
         icon_themes: Vec::new(),
         lib: LibManifestEntry {
             kind: Some(ExtensionLibraryKind::Rust),
-            version: Some(SemanticVersion::new(0, 1, 0)),
+            version: Some(semver::Version::new(0, 1, 0)),
         },
         languages: Vec::new(),
         grammars: BTreeMap::default(),

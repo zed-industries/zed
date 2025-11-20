@@ -289,7 +289,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{SemanticVersion, TestAppContext, VisualContext};
+    use gpui::{TestAppContext, VisualContext};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
     use lsp::OneOf;
     use project::FakeFs;

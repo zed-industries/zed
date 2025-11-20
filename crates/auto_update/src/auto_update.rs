@@ -1021,7 +1021,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
 
-            let current_version = SemanticVersion::new(0, 100, 0);
+            let current_version = semver::Version::new(0, 100, 0);
             release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
 
             let clock = Arc::new(FakeSystemClock::new());
@@ -1060,7 +1060,7 @@ mod tests {
 
         auto_updater.read_with(cx, |updater, _| {
             assert_eq!(updater.status(), AutoUpdateStatus::Idle);
-            assert_eq!(updater.current_version(), SemanticVersion::new(0, 100, 0));
+            assert_eq!(updater.current_version(), semver::Version::new(0, 100, 0));
         });
 
         release_available.store(true, atomic::Ordering::SeqCst);
@@ -1079,7 +1079,7 @@ mod tests {
         assert_eq!(
             status,
             AutoUpdateStatus::Downloading {
-                version: VersionCheckType::Semantic(SemanticVersion::new(0, 100, 1))
+                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
             }
         );
 
@@ -1109,7 +1109,7 @@ mod tests {
         assert_eq!(
             status,
             AutoUpdateStatus::Updated {
-                version: VersionCheckType::Semantic(SemanticVersion::new(0, 100, 1))
+                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
             }
         );
         let will_restart = cx.expect_restart();
@@ -1123,9 +1123,9 @@ mod tests {
     fn test_stable_does_not_update_when_fetched_version_is_not_higher() {
         let release_channel = ReleaseChannel::Stable;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
-        let fetched_version = SemanticVersion::new(1, 0, 0);
+        let fetched_version = semver::Version::new(1, 0, 0);
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1142,9 +1142,9 @@ mod tests {
     fn test_stable_does_update_when_fetched_version_is_higher() {
         let release_channel = ReleaseChannel::Stable;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
-        let fetched_version = SemanticVersion::new(1, 0, 1);
+        let fetched_version = semver::Version::new(1, 0, 1);
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1164,11 +1164,11 @@ mod tests {
     fn test_stable_does_not_update_when_fetched_version_is_not_higher_than_cached() {
         let release_channel = ReleaseChannel::Stable;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Semantic(SemanticVersion::new(1, 0, 1)),
+            version: VersionCheckType::Semantic(semver::Version::new(1, 0, 1)),
         };
-        let fetched_version = SemanticVersion::new(1, 0, 1);
+        let fetched_version = semver::Version::new(1, 0, 1);
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1185,11 +1185,11 @@ mod tests {
     fn test_stable_does_update_when_fetched_version_is_higher_than_cached() {
         let release_channel = ReleaseChannel::Stable;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Semantic(SemanticVersion::new(1, 0, 1)),
+            version: VersionCheckType::Semantic(semver::Version::new(1, 0, 1)),
         };
-        let fetched_version = SemanticVersion::new(1, 0, 2);
+        let fetched_version = semver::Version::new(1, 0, 2);
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1209,7 +1209,7 @@ mod tests {
     fn test_nightly_does_not_update_when_fetched_sha_is_same() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
         let fetched_sha = "a".to_string();
 
@@ -1228,7 +1228,7 @@ mod tests {
     fn test_nightly_does_update_when_fetched_sha_is_not_same() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
         let fetched_sha = "b".to_string();
 
@@ -1250,7 +1250,7 @@ mod tests {
     fn test_nightly_does_not_update_when_fetched_sha_is_same_as_cached() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
@@ -1271,7 +1271,7 @@ mod tests {
     fn test_nightly_does_update_when_fetched_sha_is_not_same_as_cached() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
@@ -1295,7 +1295,7 @@ mod tests {
     fn test_nightly_does_update_when_installed_versions_sha_cannot_be_retrieved() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(None);
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
         let fetched_sha = "a".to_string();
 
@@ -1318,7 +1318,7 @@ mod tests {
      {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(None);
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
@@ -1340,7 +1340,7 @@ mod tests {
      {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(None);
-        let installed_version = SemanticVersion::new(1, 0, 0);
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
