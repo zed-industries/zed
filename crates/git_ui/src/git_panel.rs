@@ -5107,11 +5107,6 @@ mod tests {
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
-                GitListEntry::Status(GitStatusEntry {
-                    repo_path: repo_path("crates/util/util.rs"),
-                    status: StatusCode::Modified.worktree(),
-                    staging: StageStatus::Unstaged,
-                },),
             ],
         );
 
@@ -5132,11 +5127,6 @@ mod tests {
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
-                GitListEntry::Status(GitStatusEntry {
-                    repo_path: repo_path("crates/util/util.rs"),
-                    status: StatusCode::Modified.worktree(),
-                    staging: StageStatus::Unstaged,
-                },),
             ],
         );
     }
