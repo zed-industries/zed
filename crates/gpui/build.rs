@@ -79,7 +79,7 @@ mod macos {
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
 
-        let mut builder = bindgen::Builder::default()
+        let builder = bindgen::Builder::default()
             .header("src/platform/mac/dispatch.h")
             .allowlist_var("_dispatch_main_q")
             .allowlist_var("_dispatch_source_type_data_add")
