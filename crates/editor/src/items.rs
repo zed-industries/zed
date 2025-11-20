@@ -700,16 +700,46 @@ impl Item for Editor {
             entry_label_color(params.selected)
         };
 
-        let description = params.detail.and_then(|detail| {
-            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-            let description = path.trim();
+        // Determine the label text and whether to show the description
+        let settings = ItemSettings::get_global(cx);
+        let (label_text, description) = if settings.active_tab_path && params.selected {
+            // For active tabs with active_tab_path enabled, show path from worktree root
+            // (or absolute path for files outside the worktree)
+            let path_to_display = self
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| {
+                    let file = buffer.read(cx).file()?;
+                    let relative_path = file.path();
 
-            if description.is_empty() {
-                return None;
-            }
+                    // If the file has a proper relative path (in the worktree), use it
+                    if relative_path.parent().is_some() {
+                        let path = relative_path.display(file.path_style(cx)).to_string();
+                        if !path.is_empty() {
+                            return Some(path);
+                        }
+                    }
 
-            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
-        });
+                    // Otherwise, use the absolute path (for files outside the worktree)
+                    Some(file.full_path(cx).to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| self.title(cx).to_string());
+            (path_to_display, None)
+        } else {
+            // For inactive tabs or when setting is disabled, use the filename + description
+            let description = params.detail.and_then(|detail| {
+                let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+                let description = path.trim();
+
+                if description.is_empty() {
+                    return None;
+                }
+
+                Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
+            });
+            (self.title(cx).to_string(), description)
+        };
 
         // Whether the file was saved in the past but is now deleted.
         let was_deleted: bool = self
@@ -722,7 +752,7 @@ impl Item for Editor {
         h_flex()
             .gap_2()
             .child(
-                Label::new(self.title(cx).to_string())
+                Label::new(label_text)
                     .color(label_color)
                     .when(params.preview, |this| this.italic())
                     .when(was_deleted, |this| this.strikethrough()),

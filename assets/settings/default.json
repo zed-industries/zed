@@ -1078,7 +1078,12 @@
     //    "errors"
     // 3. Mark files with errors and warnings:
     //    "all"
-    "show_diagnostics": "off"
+    "show_diagnostics": "off",
+    // Whether to show the path for the active tab in each pane.
+    // When enabled, the active tab in each pane will display the
+    // path from the worktree root (or absolute path for files outside
+    // the worktree) instead of just the filename.
+    "active_tab_path": false
   },
   // Settings related to preview tabs.
   "preview_tabs": {

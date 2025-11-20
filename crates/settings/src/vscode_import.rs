@@ -611,6 +611,7 @@ impl VsCodeSettings {
                         ShowCloseButton::Hidden
                     }
                 }),
+            active_tab_path: None,
         })
     }
 

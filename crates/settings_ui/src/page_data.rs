@@ -3120,6 +3120,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Path For Active Tab",
+                    description: "Show the path from the worktree root (or absolute path for files outside the worktree) for the active tab in each pane.",
+                    field: Box::new(SettingField {
+                        json_path: Some("tabs.active_tab_path"),
+                        pick: |settings_content| {
+                            settings_content.tabs.as_ref()?.active_tab_path.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .active_tab_path = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Preview Tabs Enabled",

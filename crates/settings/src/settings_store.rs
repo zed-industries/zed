@@ -1726,6 +1726,25 @@ mod tests {
 
         check_settings_update(
             &mut store,
+            r#""#.unindent(),
+            |settings| {
+                settings.tabs = Some(ItemSettingsContent {
+                    active_tab_path: Some(true),
+                    ..Default::default()
+                })
+            },
+            r#"{
+              "tabs": {
+                "active_tab_path": true
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
             r#"{
             }
             "#
