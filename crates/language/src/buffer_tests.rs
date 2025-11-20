@@ -3455,6 +3455,25 @@ fn test_contiguous_ranges() {
     );
 }
 
+#[gpui::test]
+fn test_insertion_after_deletion(cx: &mut gpui::App) {
+    let buffer = cx.new(|cx| Buffer::local("struct Foo {\n    \n}", cx));
+    buffer.update(cx, |buffer, cx| {
+        let mut anchor = buffer.anchor_after(17);
+        buffer.edit([(12..18, "")], None, cx);
+        let snapshot = buffer.snapshot();
+        assert_eq!(snapshot.text(), "struct Foo {}");
+        if !anchor.is_valid(&snapshot) {
+            anchor = snapshot.anchor_after(snapshot.offset_for_anchor(&anchor));
+        }
+        buffer.edit([(anchor..anchor, "\n")], None, cx);
+        buffer.edit([(anchor..anchor, "field1:")], None, cx);
+        buffer.edit([(anchor..anchor, " i32,")], None, cx);
+        let snapshot = buffer.snapshot();
+        assert_eq!(snapshot.text(), "struct Foo {\nfield1: i32,}");
+    })
+}
+
 #[gpui::test(iterations = 500)]
 fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     // Generate a random multi-line string containing
