@@ -6,14 +6,12 @@ use agent::{HistoryEntry, HistoryEntryId, HistoryStore};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::HashSet;
-use editor::display_map::{Crease, CreaseId, CreaseMetadata, FoldId};
-use editor::{Anchor, Editor, ExcerptId, FoldPlaceholder, ToOffset};
-use gpui::{App, Empty, Entity, WeakEntity};
+use editor::Editor;
+use gpui::{App, Entity, WeakEntity};
 use language::Buffer;
-use multi_buffer::MultiBufferRow;
 use project::ProjectPath;
 use prompt_store::{PromptStore, UserPromptId};
-use ui::{ButtonLike, Disclosure, TintColor, prelude::*};
+use ui::{IconName, SharedString};
 use util::rel_path::RelPath;
 use workspace::Workspace;
 
@@ -27,8 +25,8 @@ pub struct RulesContextEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextPickerEntry {
-    Mode(ContextPickerMode),
-    Action(ContextPickerAction),
+    Mode(ContextType),
+    Action(ContextAction),
 }
 
 impl ContextPickerEntry {
@@ -41,7 +39,7 @@ impl ContextPickerEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextPickerMode {
+pub(crate) enum ContextType {
     File,
     Symbol,
     Fetch,
@@ -50,11 +48,11 @@ pub(crate) enum ContextPickerMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextPickerAction {
+pub(crate) enum ContextAction {
     AddSelections,
 }
 
-impl ContextPickerAction {
+impl ContextAction {
     pub fn keyword(&self) -> &'static str {
         match self {
             Self::AddSelections => "selection",
@@ -74,7 +72,7 @@ impl ContextPickerAction {
     }
 }
 
-impl TryFrom<&str> for ContextPickerMode {
+impl TryFrom<&str> for ContextType {
     type Error = String;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -89,7 +87,7 @@ impl TryFrom<&str> for ContextPickerMode {
     }
 }
 
-impl ContextPickerMode {
+impl ContextType {
     pub fn keyword(&self) -> &'static str {
         match self {
             Self::File => "file",
@@ -136,8 +134,8 @@ pub(crate) fn available_context_picker_entries(
     cx: &mut App,
 ) -> Vec<ContextPickerEntry> {
     let mut entries = vec![
-        ContextPickerEntry::Mode(ContextPickerMode::File),
-        ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+        ContextPickerEntry::Mode(ContextType::File),
+        ContextPickerEntry::Mode(ContextType::Symbol),
     ];
 
     let has_selection = workspace
@@ -150,20 +148,18 @@ pub(crate) fn available_context_picker_entries(
             })
         });
     if has_selection {
-        entries.push(ContextPickerEntry::Action(
-            ContextPickerAction::AddSelections,
-        ));
+        entries.push(ContextPickerEntry::Action(ContextAction::AddSelections));
     }
 
     if thread_store.is_some() {
-        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
+        entries.push(ContextPickerEntry::Mode(ContextType::Thread));
     }
 
     if prompt_store.is_some() {
-        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
+        entries.push(ContextPickerEntry::Mode(ContextType::Rules));
     }
 
-    entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+    entries.push(ContextPickerEntry::Mode(ContextType::Fetch));
 
     entries
 }
@@ -280,108 +276,6 @@ pub(crate) fn selection_ranges(
             })
             .collect::<Vec<_>>()
     })
-}
-
-pub(crate) fn insert_crease_for_mention(
-    excerpt_id: ExcerptId,
-    crease_start: text::Anchor,
-    content_len: usize,
-    crease_label: SharedString,
-    crease_icon_path: SharedString,
-    editor_entity: Entity<Editor>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<CreaseId> {
-    editor_entity.update(cx, |editor, cx| {
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-
-        let start = snapshot.anchor_in_excerpt(excerpt_id, crease_start)?;
-
-        let start = start.bias_right(&snapshot);
-        let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
-
-        let crease = crease_for_mention(
-            crease_label,
-            crease_icon_path,
-            start..end,
-            editor_entity.downgrade(),
-        );
-
-        let ids = editor.insert_creases(vec![crease.clone()], cx);
-        editor.fold_creases(vec![crease], false, window, cx);
-
-        Some(ids[0])
-    })
-}
-
-pub fn crease_for_mention(
-    label: SharedString,
-    icon_path: SharedString,
-    range: Range<Anchor>,
-    editor_entity: WeakEntity<Editor>,
-) -> Crease<Anchor> {
-    let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path.clone(), label.clone(), editor_entity),
-        merge_adjacent: false,
-        ..Default::default()
-    };
-
-    let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
-
-    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
-        .with_metadata(CreaseMetadata { icon_path, label })
-}
-
-fn render_fold_icon_button(
-    icon_path: SharedString,
-    label: SharedString,
-    editor: WeakEntity<Editor>,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
-    Arc::new({
-        move |fold_id, fold_range, cx| {
-            let is_in_text_selection = editor
-                .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
-                .unwrap_or_default();
-
-            ButtonLike::new(fold_id)
-                .style(ButtonStyle::Filled)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(is_in_text_selection)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::from_path(icon_path.clone())
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Label::new(label.clone())
-                                .size(LabelSize::Small)
-                                .buffer_font(cx)
-                                .single_line(),
-                        ),
-                )
-                .into_any_element()
-        }
-    })
-}
-
-fn fold_toggle(
-    name: &'static str,
-) -> impl Fn(
-    MultiBufferRow,
-    bool,
-    Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>,
-    &mut Window,
-    &mut App,
-) -> AnyElement {
-    move |row, is_folded, fold, _window, _cx| {
-        Disclosure::new((name, row.0 as u64), !is_folded)
-            .toggle_state(is_folded)
-            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
-            .into_any_element()
-    }
 }
 
 pub struct MentionLink;

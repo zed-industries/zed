@@ -56,7 +56,6 @@ impl BufferCodegen {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        context_store: Entity<ContextStore>,
         project: WeakEntity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
         telemetry: Arc<Telemetry>,

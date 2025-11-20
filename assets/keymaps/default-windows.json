@@ -246,7 +246,6 @@
       // "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "agent::AddSelectionToThread",
-      "shift-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
@@ -837,8 +836,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist",
-      "shift-alt-e": "agent::RemoveAllContext"
+      "ctrl-]": "agent::CycleNextInlineAssist"
     }
   },
   {

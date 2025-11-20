@@ -726,10 +726,6 @@ impl AgentPanel {
         &self.prompt_store
     }
 
-    pub(crate) fn inline_assist_context_store(&self) -> &Entity<ContextStore> {
-        &self.inline_assist_context_store
-    }
-
     pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
         &self.history_store
     }
@@ -2662,23 +2658,19 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         cx: &mut Context<RulesLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
-            let Some(project) = self
-                .workspace
-                .upgrade()
-                .map(|workspace| workspace.read(cx).project().downgrade())
-            else {
+            let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
-            let prompt_store = None;
-            let thread_store = None;
-            let context_store = cx.new(|_| ContextStore::new(project.clone()));
+            let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+                return;
+            };
+            let project = workspace.read(cx).project().downgrade();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
-                context_store,
                 project,
-                prompt_store,
-                thread_store,
+                panel.read(cx).thread_store().clone(),
+                None,
                 initial_prompt,
                 window,
                 cx,

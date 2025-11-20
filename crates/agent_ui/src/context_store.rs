@@ -28,8 +28,8 @@ pub struct ContextStore {
     project: WeakEntity<Project>,
     next_context_id: ContextId,
     context_set: IndexSet<AgentContextKey>,
-    context_thread_ids: HashSet<acp::SessionId>,
-    context_text_thread_paths: HashSet<Arc<Path>>,
+    thread_ids: HashSet<acp::SessionId>,
+    text_thread_paths: HashSet<Arc<Path>>,
 }
 
 pub enum ContextStoreEvent {
@@ -44,8 +44,8 @@ impl ContextStore {
             project,
             next_context_id: ContextId::zero(),
             context_set: IndexSet::default(),
-            context_thread_ids: HashSet::default(),
-            context_text_thread_paths: HashSet::default(),
+            thread_ids: HashSet::default(),
+            text_thread_paths: HashSet::default(),
         }
     }
 
@@ -55,7 +55,7 @@ impl ContextStore {
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.context_set.clear();
-        self.context_thread_ids.clear();
+        self.thread_ids.clear();
         cx.notify();
     }
 
@@ -385,7 +385,7 @@ impl ContextStore {
             //     }
             // }
             AgentContextHandle::TextThread(text_thread_context) => {
-                self.context_text_thread_paths
+                self.text_thread_paths
                     .extend(text_thread_context.text_thread.read(cx).path().cloned());
             }
             _ => {}
@@ -404,12 +404,11 @@ impl ContextStore {
         {
             match context {
                 AgentContextHandle::Thread(thread_context) => {
-                    self.context_thread_ids
-                        .remove(thread_context.thread.read(cx).id());
+                    self.thread_ids.remove(thread_context.thread.read(cx).id());
                 }
                 AgentContextHandle::TextThread(text_thread_context) => {
                     if let Some(path) = text_thread_context.text_thread.read(cx).path() {
-                        self.context_text_thread_paths.remove(path);
+                        self.text_thread_paths.remove(path);
                     }
                 }
                 _ => {}
@@ -478,11 +477,11 @@ impl ContextStore {
     }
 
     pub fn includes_thread(&self, thread_id: &acp::SessionId) -> bool {
-        self.context_thread_ids.contains(thread_id)
+        self.thread_ids.contains(thread_id)
     }
 
     pub fn includes_text_thread(&self, path: &Arc<Path>) -> bool {
-        self.context_text_thread_paths.contains(path)
+        self.text_thread_paths.contains(path)
     }
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
@@ -521,7 +520,7 @@ impl ContextStore {
     }
 
     pub fn thread_ids(&self) -> &HashSet<acp::SessionId> {
-        &self.context_thread_ids
+        &self.thread_ids
     }
 }
 

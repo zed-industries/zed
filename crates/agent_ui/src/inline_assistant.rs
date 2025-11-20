@@ -7,7 +7,6 @@ use std::sync::Arc;
 use crate::{
     AgentPanel,
     buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent},
-    context_store::ContextStore,
     inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
     terminal_inline_assistant::TerminalInlineAssistant,
 };
@@ -212,10 +211,11 @@ impl InlineAssistant {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 if is_ai_enabled {
-                    let panel = workspace.read(cx).panel::<AgentPanel>(cx);
-                    let thread_store = panel
-                        .as_ref()
-                        .map(|agent_panel| agent_panel.read(cx).thread_store().downgrade());
+                    let panel = workspace
+                        .read(cx)
+                        .panel::<AgentPanel>(cx)
+                        .expect("Missing agent panel");
+                    let thread_store = panel.read(cx).thread_store().clone();
 
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
@@ -277,8 +277,7 @@ impl InlineAssistant {
         let agent_panel = agent_panel.read(cx);
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
-        let thread_store = Some(agent_panel.thread_store().downgrade());
-        let context_store = agent_panel.inline_assist_context_store().clone();
+        let thread_store = agent_panel.thread_store().clone();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -287,10 +286,9 @@ impl InlineAssistant {
                         assistant.assist(
                             &active_editor,
                             cx.entity().downgrade(),
-                            context_store,
                             workspace.project().downgrade(),
-                            prompt_store,
                             thread_store,
+                            prompt_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -303,8 +301,8 @@ impl InlineAssistant {
                             &active_terminal,
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
-                            prompt_store,
                             thread_store,
+                            prompt_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -354,10 +352,9 @@ impl InlineAssistant {
         &mut self,
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
-        context_store: Entity<ContextStore>,
         project: WeakEntity<Project>,
+        thread_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -490,7 +487,6 @@ impl InlineAssistant {
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
-                    context_store.clone(),
                     project.clone(),
                     prompt_store.clone(),
                     self.telemetry.clone(),
@@ -508,10 +504,10 @@ impl InlineAssistant {
                     prompt_buffer.clone(),
                     codegen.clone(),
                     self.fs.clone(),
-                    context_store.clone(),
-                    workspace.clone(),
                     thread_store.clone(),
-                    prompt_store.as_ref().map(|s| s.downgrade()),
+                    prompt_store,
+                    project,
+                    workspace.clone(),
                     window,
                     cx,
                 )
@@ -582,8 +578,8 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
+        thread_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -601,15 +597,13 @@ impl InlineAssistant {
         }
 
         let project = workspace.read(cx).project().downgrade();
-        let context_store = cx.new(|_cx| ContextStore::new(project.clone()));
 
         let codegen = cx.new(|cx| {
             BufferCodegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
-                context_store.clone(),
-                project,
+                project.clone(),
                 prompt_store.clone(),
                 self.telemetry.clone(),
                 self.prompt_builder.clone(),
@@ -626,10 +620,10 @@ impl InlineAssistant {
                 prompt_buffer.clone(),
                 codegen.clone(),
                 self.fs.clone(),
-                context_store,
-                workspace.downgrade(),
                 thread_store,
-                prompt_store.map(|s| s.downgrade()),
+                prompt_store,
+                project,
+                workspace.downgrade(),
                 window,
                 cx,
             )
@@ -1770,7 +1764,7 @@ struct InlineAssistDecorations {
 struct AssistantCodeActionProvider {
     editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
-    thread_store: Option<WeakEntity<HistoryStore>>,
+    thread_store: Entity<HistoryStore>,
 }
 
 const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant2";
@@ -1887,8 +1881,8 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     None,
                     true,
                     workspace,
-                    prompt_store,
                     thread_store,
+                    prompt_store,
                     window,
                     cx,
                 );

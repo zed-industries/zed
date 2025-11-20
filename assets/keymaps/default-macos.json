@@ -284,7 +284,6 @@
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
-      "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
@@ -890,7 +889,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",
-      "cmd-alt-e": "agent::RemoveAllContext",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist"
     }

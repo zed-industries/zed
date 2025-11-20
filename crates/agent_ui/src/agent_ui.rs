@@ -12,6 +12,7 @@ mod context_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
+mod mention_set;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
@@ -66,8 +67,6 @@ actions!(
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
-        /// Removes all added context from the current conversation.
-        RemoveAllContext,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
         /// Opens the conversation history view.

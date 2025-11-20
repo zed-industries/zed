@@ -73,8 +73,8 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
+        thread_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -87,7 +87,6 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let context_store = cx.new(|_cx| ContextStore::new(project));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -97,10 +96,10 @@ impl TerminalInlineAssistant {
                 prompt_buffer.clone(),
                 codegen,
                 self.fs.clone(),
-                context_store.clone(),
-                workspace.clone(),
                 thread_store.clone(),
-                prompt_store.as_ref().map(|s| s.downgrade()),
+                prompt_store.clone(),
+                project.clone(),
+                workspace.clone(),
                 window,
                 cx,
             )
