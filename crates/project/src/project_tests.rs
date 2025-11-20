@@ -20,7 +20,7 @@ use git::{
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, FutureExt, SemanticVersion, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
