@@ -484,12 +484,6 @@ impl<'de> Deserialize<'de> for ModelName {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
-    #[serde(rename = "gemini-1.5-pro")]
-    Gemini15Pro,
-    #[serde(rename = "gemini-1.5-flash-8b")]
-    Gemini15Flash8b,
-    #[serde(rename = "gemini-1.5-flash")]
-    Gemini15Flash,
     #[serde(
         rename = "gemini-2.0-flash-lite",
         alias = "gemini-2.0-flash-lite-preview"
@@ -541,9 +535,6 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Gemini15Pro => "gemini-1.5-pro",
-            Self::Gemini15Flash8b => "gemini-1.5-flash-8b",
-            Self::Gemini15Flash => "gemini-1.5-flash",
             Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
             Self::Gemini20Flash => "gemini-2.0-flash",
             Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview",
@@ -555,9 +546,6 @@ impl Model {
     }
     pub fn request_id(&self) -> &str {
         match self {
-            Self::Gemini15Pro => "gemini-1.5-pro",
-            Self::Gemini15Flash8b => "gemini-1.5-flash-8b",
-            Self::Gemini15Flash => "gemini-1.5-flash",
             Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
             Self::Gemini20Flash => "gemini-2.0-flash",
             Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview-06-17",
@@ -570,9 +558,6 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Gemini15Pro => "Gemini 1.5 Pro",
-            Self::Gemini15Flash8b => "Gemini 1.5 Flash-8b",
-            Self::Gemini15Flash => "Gemini 1.5 Flash",
             Self::Gemini20FlashLite => "Gemini 2.0 Flash-Lite",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
             Self::Gemini25FlashLitePreview => "Gemini 2.5 Flash-Lite Preview",
@@ -587,9 +572,6 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gemini15Pro => 2_097_152,
-            Self::Gemini15Flash8b => 1_048_576,
-            Self::Gemini15Flash => 1_048_576,
             Self::Gemini20FlashLite => 1_048_576,
             Self::Gemini20Flash => 1_048_576,
             Self::Gemini25FlashLitePreview => 1_000_000,
@@ -602,9 +584,6 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Model::Gemini15Pro => Some(8_192),
-            Model::Gemini15Flash8b => Some(8_192),
-            Model::Gemini15Flash => Some(8_192),
             Model::Gemini20FlashLite => Some(8_192),
             Model::Gemini20Flash => Some(8_192),
             Model::Gemini25FlashLitePreview => Some(64_000),
@@ -625,10 +604,7 @@ impl Model {
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Self::Gemini15Pro
-            | Self::Gemini15Flash8b
-            | Self::Gemini15Flash
-            | Self::Gemini20FlashLite
+            Self::Gemini20FlashLite
             | Self::Gemini20Flash => GoogleModelMode::Default,
             Self::Gemini25FlashLitePreview
             | Self::Gemini25Flash
