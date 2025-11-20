@@ -984,14 +984,14 @@ impl Server {
 
                 {
                     let mut pool = self.connection_pool.lock();
-                    pool.add_connection(connection_id, user.id, user.admin, zed_version);
+                    pool.add_connection(connection_id, user.id, user.admin, zed_version.clone());
                     self.peer.send(
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
                 }
 
-                if should_auto_subscribe_to_channels(zed_version) {
+                if should_auto_subscribe_to_channels(&zed_version) {
                     subscribe_user_to_channels(user.id, session).await?;
                 }
 
@@ -1135,7 +1135,7 @@ impl Header for ProtocolVersion {
     }
 }
 
-pub struct AppVersionHeader(SemanticVersion);
+pub struct AppVersionHeader(Version);
 impl Header for AppVersionHeader {
     fn name() -> &'static HeaderName {
         static ZED_APP_VERSION: OnceLock<HeaderName> = OnceLock::new();
@@ -2833,8 +2833,8 @@ async fn remove_contact(
     Ok(())
 }
 
-fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
-    version.0.minor() < 139
+fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
+    version.0.minor < 139
 }
 
 async fn subscribe_to_channels(

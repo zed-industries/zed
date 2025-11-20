@@ -671,7 +671,7 @@ pub struct NewExtensionVersion {
 
 pub struct ExtensionVersionConstraints {
     pub schema_versions: RangeInclusive<i32>,
-    pub wasm_api_versions: RangeInclusive<SemanticVersion>,
+    pub wasm_api_versions: RangeInclusive<semver::Version>,
 }
 
 impl LocalSettingsKind {
