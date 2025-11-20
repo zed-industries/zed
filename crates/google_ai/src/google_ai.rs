@@ -604,8 +604,7 @@ impl Model {
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Self::Gemini20FlashLite
-            | Self::Gemini20Flash => GoogleModelMode::Default,
+            Self::Gemini20FlashLite | Self::Gemini20Flash => GoogleModelMode::Default,
             Self::Gemini25FlashLite
             | Self::Gemini25Flash
             | Self::Gemini25Pro
