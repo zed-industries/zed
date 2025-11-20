@@ -237,7 +237,7 @@ fn write_eval_result(
             out,
             "## Expected edit prediction:\n\n```diff\n{}\n```\n",
             compare_diffs(
-                &example.example.expected_patch,
+                &example.example.expected_patches,
                 &predictions.diff,
                 use_color
             )
@@ -247,7 +247,7 @@ fn write_eval_result(
             "## Actual edit prediction:\n\n```diff\n{}\n```\n",
             compare_diffs(
                 &predictions.diff,
-                &example.example.expected_patch,
+                &example.example.expected_patches,
                 use_color
             )
         )?;
@@ -434,99 +434,101 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
         ..Default::default()
     };
 
-    let actual_context_lines: HashSet<_> = preds
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| format!("{}: {line}", excerpt.path.display()))
-        })
-        .collect();
-
-    let mut false_positive_lines = actual_context_lines.clone();
-
-    for entry in &example.expected_context {
-        let mut best_alternative_score: Option<Scores> = None;
-
-        for alternative in &entry.alternatives {
-            let expected: HashSet<_> = alternative
-                .excerpts
-                .iter()
-                .flat_map(|excerpt| {
-                    excerpt
-                        .text
-                        .lines()
-                        .map(|line| format!("{}: {line}", excerpt.path.display()))
-                })
-                .collect();
-
-            let scores = Scores::new(&expected, &actual_context_lines);
-
-            false_positive_lines.retain(|line| !expected.contains(line));
-
-            if best_alternative_score
-                .as_ref()
-                .is_none_or(|best| scores.recall() > best.recall())
-            {
-                best_alternative_score = Some(scores);
-            }
-        }
-
-        let best_alternative = best_alternative_score.unwrap_or_default();
-        eval_result.context.false_negatives += best_alternative.false_negatives;
-        eval_result.context.true_positives += best_alternative.true_positives;
-    }
-
-    eval_result.context.false_positives = false_positive_lines.len();
-
-    if predict {
-        // todo: alternatives for patches
-        let expected_patch = example
-            .expected_patch
-            .lines()
-            .map(DiffLine::parse)
-            .collect::<Vec<_>>();
-        let expected_patch_lines = expected_patch
-            .iter()
-            .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
-            .map(|line| line.to_string())
-            .collect();
-        let expected_context_lines = expected_patch
-            .iter()
-            .filter_map(|line| {
-                if let DiffLine::Context(str) = line {
-                    Some(String::from(*str))
-                } else {
-                    None
-                }
-            })
-            .collect::<BTreeSet<_>>();
-        let actual_context_lines = preds
+    // Context score
+    {
+        let actual_context_lines: HashSet<_> = preds
             .excerpts
             .iter()
-            .flat_map(|excerpt| excerpt.text.lines().map(ToOwned::to_owned))
-            .collect::<BTreeSet<_>>();
-
-        let matched = expected_context_lines
-            .intersection(&actual_context_lines)
-            .count();
-
-        let actual_patch_lines = preds
-            .diff
-            .lines()
-            .map(DiffLine::parse)
-            .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
-            .map(|line| line.to_string())
+            .flat_map(|excerpt| {
+                excerpt
+                    .text
+                    .lines()
+                    .map(|line| format!("{}: {line}", excerpt.path.display()))
+            })
             .collect();
 
-        eval_result.edit_prediction = Some(Scores::new(&expected_patch_lines, &actual_patch_lines));
-        eval_result.context_lines_in_expected_patch = expected_context_lines.len();
-        eval_result.context_lines_found_in_context = matched;
+        let mut false_positive_context_lines = actual_context_lines.clone();
+
+        for entry in &example.expected_context {
+            let mut best_alternative_score: Option<Scores> = None;
+
+            for alternative in &entry.alternatives {
+                let expected_context_lines: HashSet<_> = alternative
+                    .excerpts
+                    .iter()
+                    .flat_map(|excerpt| {
+                        excerpt
+                            .text
+                            .lines()
+                            .map(|line| format!("{}: {line}", excerpt.path.display()))
+                    })
+                    .collect();
+
+                let scores = Scores::new(&expected_context_lines, &actual_context_lines);
+
+                false_positive_context_lines.retain(|line| !expected_context_lines.contains(line));
+
+                if best_alternative_score
+                    .as_ref()
+                    .is_none_or(|best| scores.recall() > best.recall())
+                {
+                    best_alternative_score = Some(scores);
+                }
+            }
+
+            let best_alternative = best_alternative_score.unwrap_or_default();
+            eval_result.context.false_negatives += best_alternative.false_negatives;
+            eval_result.context.true_positives += best_alternative.true_positives;
+        }
+
+        eval_result.context.false_positives = false_positive_context_lines.len();
+    }
+
+    // Patch score
+    if predict {
+        let mut prediction_scores = Scores::default();
+
+        let actual_patch_lines = diff_lines(&preds.diff);
+        let mut false_positive_patch_lines = actual_patch_lines.clone();
+
+        for entry in &example.expected_patches {
+            let mut best_alternative_score: Option<Scores> = None;
+
+            for alternative in &entry.alternatives {
+                let expected_patch_lines = diff_lines(&alternative.patch);
+                let scores = Scores::new(&expected_patch_lines, &actual_patch_lines);
+
+                false_positive_patch_lines.retain(|line| !expected_patch_lines.contains(line));
+
+                if best_alternative_score
+                    .as_ref()
+                    .is_none_or(|best| scores.recall() > best.recall())
+                {
+                    best_alternative_score = Some(scores);
+                }
+            }
+
+            let best_alternative = best_alternative_score.unwrap_or_default();
+            prediction_scores.false_negatives += best_alternative.false_negatives;
+            prediction_scores.true_positives += best_alternative.true_positives;
+        }
+
+        prediction_scores.false_positives = false_positive_patch_lines.len();
+
+        eval_result.edit_prediction = Some(prediction_scores);
+        // eval_result.context_lines_in_expected_patch = expected_context_lines.len();
+        // eval_result.context_lines_found_in_context = matched;
     }
 
     eval_result
+}
+
+fn diff_lines(diff: &str) -> HashSet<String> {
+    diff.lines()
+        .map(DiffLine::parse)
+        .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
+        .map(|line| line.to_string())
+        .collect()
 }
 
 /// Return annotated `patch_a` so that:
