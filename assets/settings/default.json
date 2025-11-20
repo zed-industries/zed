@@ -2068,11 +2068,11 @@
   "dev": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using linux
+  // Settings overrides to use when using Linux.
   "linux": {},
-  // Settings overrides to use when using macos
+  // Settings overrides to use when using macOS.
   "macos": {},
-  // Settings overrides to use when using windows
+  // Settings overrides to use when using Windows.
   "windows": {
     "languages": {
       "PHP": {
