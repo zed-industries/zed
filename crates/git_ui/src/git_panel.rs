@@ -271,14 +271,14 @@ impl GitStatusEntry {
     }
 }
 
-struct FileHunkInfo {
+struct TruncatedPatch {
     header: String,
     hunks: Vec<String>,
     hunks_to_keep: usize,
 }
 
-impl FileHunkInfo {
-    fn build_file_hunk(patch_str: &str) -> Option<Self> {
+impl TruncatedPatch {
+    fn from_unified_diff(patch_str: &str) -> Option<Self> {
         let lines: Vec<&str> = patch_str.lines().collect();
         if lines.len() < 2 {
             return None;
@@ -304,7 +304,7 @@ impl FileHunkInfo {
             return None;
         }
         let hunks_to_keep = hunks.len();
-        Some(FileHunkInfo {
+        Some(TruncatedPatch {
             header,
             hunks,
             hunks_to_keep,
@@ -319,7 +319,7 @@ impl FileHunkInfo {
         }
         size
     }
-    fn build_final_hunked_patch(&self) -> String {
+    fn to_string(&self) -> String {
         let mut out = self.header.clone();
         for (i, hunk) in self.hunks.iter().enumerate() {
             if i < self.hunks_to_keep {
@@ -1890,20 +1890,21 @@ impl GitPanel {
 
         result
     }
-    fn truncate_iteratively(text: &str, max_bytes: usize) -> String {
-        let mut current_size = text.len();
+    fn truncate_iteratively(patch: &str, max_bytes: usize) -> String {
+        let mut current_size = patch.len();
         if current_size <= max_bytes {
-            return text.to_string();
+            return patch.to_string();
         }
-        let file_patches = Self::split_patch(text);
-        let mut file_infos: Vec<FileHunkInfo> = file_patches
+        let file_patches = Self::split_patch(patch);
+        let mut file_infos: Vec<TruncatedPatch> = file_patches
             .iter()
-            .filter_map(|patch| FileHunkInfo::build_file_hunk(patch))
+            .filter_map(|patch| TruncatedPatch::from_unified_diff(patch))
             .collect();
 
         if file_infos.is_empty() {
-            return text.to_string();
+            return patch.to_string();
         }
+
         current_size = file_infos.iter().map(|f| f.calculate_size()).sum::<usize>();
         while current_size > max_bytes {
             let file_idx = file_infos
@@ -1929,7 +1930,7 @@ impl GitPanel {
 
         file_infos
             .iter()
-            .map(|info| info.build_final_hunked_patch())
+            .map(|info| info.to_string())
             .collect::<Vec<_>>()
             .join("\n")
     }
