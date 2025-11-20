@@ -217,28 +217,12 @@ pub struct SplitLeft {
     pub operation: SplitOperation,
 }
 
-impl SplitLeft {
-    pub fn and_move() -> Self {
-        Self {
-            operation: SplitOperation::Move,
-        }
-    }
-}
-
 /// Splits the pane to the right.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitRight {
     pub operation: SplitOperation,
-}
-
-impl SplitRight {
-    pub fn and_move() -> Self {
-        Self {
-            operation: SplitOperation::Move,
-        }
-    }
 }
 
 /// Splits the pane upward.
@@ -249,28 +233,12 @@ pub struct SplitUp {
     pub operation: SplitOperation,
 }
 
-impl SplitUp {
-    pub fn and_move() -> Self {
-        Self {
-            operation: SplitOperation::Move,
-        }
-    }
-}
-
 /// Splits the pane downward.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplitDown {
     pub operation: SplitOperation,
-}
-
-impl SplitDown {
-    pub fn and_move() -> Self {
-        Self {
-            operation: SplitOperation::Move,
-        }
-    }
 }
 
 /// Splits the pane horizontally.
@@ -288,6 +256,41 @@ pub struct SplitHorizontal {
 pub struct SplitVertical {
     pub operation: SplitOperation,
 }
+
+// TODO not so sure if we need/want those?
+macro_rules! impl_split_operations {
+    ($($split_type:ty),+ $(,)?) => {
+        $(
+            impl $split_type {
+                pub fn and_clone() -> Self {
+                    Self {
+                        operation: SplitOperation::Clone,
+                    }
+                }
+
+                pub fn and_clear() -> Self {
+                    Self {
+                        operation: SplitOperation::Clear,
+                    }
+                }
+
+                pub fn and_move() -> Self {
+                    Self {
+                        operation: SplitOperation::Move,
+                    }
+                }
+            }
+        )+
+    };
+}
+impl_split_operations!(
+    SplitLeft,
+    SplitRight,
+    SplitUp,
+    SplitDown,
+    SplitHorizontal,
+    SplitVertical,
+);
 
 actions!(
     pane,

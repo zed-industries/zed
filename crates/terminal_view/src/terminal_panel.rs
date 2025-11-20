@@ -385,8 +385,6 @@ impl TerminalPanel {
                 ref operation,
             } => {
                 match operation {
-                    // TODO not exactly clear what we expect in terminal panes when splitting with
-                    // Empty? Assuming not cloning for now.
                     SplitOperation::Clone | SplitOperation::Clear => {
                         let clone = match operation {
                             SplitOperation::Clone => true,
