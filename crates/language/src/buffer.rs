@@ -4315,7 +4315,7 @@ impl BufferSnapshot {
             .into_values()
             .flatten()
             .filter(move |bracket_match| {
-                let bracket_range = bracket_match.open_range.start..=bracket_match.close_range.end;
+                let bracket_range = bracket_match.open_range.start..bracket_match.close_range.end;
                 bracket_range.overlaps(&range)
             })
     }
