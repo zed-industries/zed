@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
+use crate::command::new_std_command;
+
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -108,16 +110,12 @@ pub fn get_windows_system_shell() -> String {
     use std::path::PathBuf;
 
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
-        #[cfg(target_pointer_width = "64")]
         let env_var = if find_alternate {
-            "ProgramFiles(x86)"
-        } else {
-            "ProgramFiles"
-        };
-
-        #[cfg(target_pointer_width = "32")]
-        let env_var = if find_alternate {
-            "ProgramW6432"
+            if cfg!(target_pointer_width = "64") {
+                "ProgramFiles(x86)"
+            } else {
+                "ProgramW6432"
+            }
         } else {
             "ProgramFiles"
         };
@@ -165,23 +163,19 @@ pub fn get_windows_system_shell() -> String {
         } else {
             "Microsoft.PowerShell_"
         };
-        msix_app_dir
-            .read_dir()
-            .ok()?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
-                    return None;
-                }
+        msix_app_dir.read_dir().ok()?.find_map(|entry| {
+            let entry = entry.ok()?;
+            if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
+                return None;
+            }
 
-                if !entry.file_name().to_string_lossy().starts_with(prefix) {
-                    return None;
-                }
+            if !entry.file_name().to_string_lossy().starts_with(prefix) {
+                return None;
+            }
 
-                let exe_path = entry.path().join("pwsh.exe");
-                exe_path.exists().then_some(exe_path)
-            })
-            .next()
+            let exe_path = entry.path().join("pwsh.exe");
+            exe_path.exists().then_some(exe_path)
+        })
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
@@ -190,15 +184,37 @@ pub fn get_windows_system_shell() -> String {
         pwsh_exe.exists().then_some(pwsh_exe)
     }
 
+    // check whether the found powershell is executable for us
     static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
-        find_pwsh_in_programfiles(false, false)
-            .or_else(|| find_pwsh_in_programfiles(true, false))
-            .or_else(|| find_pwsh_in_msix(false))
-            .or_else(|| find_pwsh_in_programfiles(false, true))
-            .or_else(|| find_pwsh_in_msix(true))
-            .or_else(|| find_pwsh_in_programfiles(true, true))
-            .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().into_owned())
+        let can_execute_pwsh = |p: &PathBuf| {
+            #[allow(clippy::disallowed_methods)]
+            let status = new_std_command(p).arg("-NoProfile").arg("-Help").status();
+            let success = status.as_ref().is_ok_and(|status| status.success());
+            if !success {
+                log::warn!(
+                    "Powershell found at `{}` is not executable: {status:?}",
+                    p.display()
+                );
+            }
+            success
+        };
+
+        let locations = [
+            || find_pwsh_in_programfiles(false, false),
+            || find_pwsh_in_programfiles(true, false),
+            || find_pwsh_in_msix(false),
+            || find_pwsh_in_programfiles(false, true),
+            || find_pwsh_in_msix(true),
+            || find_pwsh_in_programfiles(true, true),
+            || find_pwsh_in_scoop(),
+            || which::which_global("pwsh.exe").ok(),
+            || which::which_global("powershell.exe").ok(),
+        ];
+        locations
+            .into_iter()
+            .filter_map(|f| f())
+            .find(|p| can_execute_pwsh(&p))
+            .map(|p| p.to_string_lossy().trim().to_owned())
             .inspect(|shell| log::info!("Found powershell in: {}", shell))
             .unwrap_or_else(|| {
                 log::warn!("Powershell not found, falling back to `cmd`");

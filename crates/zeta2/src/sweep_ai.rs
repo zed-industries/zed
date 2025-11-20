@@ -1,6 +1,8 @@
+use std::fmt;
 use std::{path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AutocompleteRequest {
@@ -87,4 +89,50 @@ pub struct AdditionalCompletion {
     pub autocomplete_id: String,
     pub logprobs: Option<serde_json::Value>,
     pub finish_reason: Option<String>,
+}
+
+pub(crate) fn write_event(event: crate::Event, f: &mut impl fmt::Write) -> fmt::Result {
+    match event {
+        crate::Event::BufferChange {
+            old_snapshot,
+            new_snapshot,
+            ..
+        } => {
+            let old_path = old_snapshot
+                .file()
+                .map(|f| f.path().as_ref())
+                .unwrap_or(RelPath::unix("untitled").unwrap());
+            let new_path = new_snapshot
+                .file()
+                .map(|f| f.path().as_ref())
+                .unwrap_or(RelPath::unix("untitled").unwrap());
+            if old_path != new_path {
+                // TODO confirm how to do this for sweep
+                // writeln!(f, "User renamed {:?} to {:?}\n", old_path, new_path)?;
+            }
+
+            let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
+            if !diff.is_empty() {
+                write!(
+                    f,
+                    "File: {}:\n{}\n",
+                    new_path.display(util::paths::PathStyle::Posix),
+                    diff
+                )?
+            }
+
+            fmt::Result::Ok(())
+        }
+    }
+}
+
+pub(crate) fn debug_info(cx: &gpui::App) -> Arc<str> {
+    format!(
+        "Zed v{version} ({sha}) - OS: {os} - Zed v{version}",
+        version = release_channel::AppVersion::global(cx),
+        sha = release_channel::AppCommitSha::try_global(cx)
+            .map_or("unknown".to_string(), |sha| sha.full()),
+        os = client::telemetry::os_name(),
+    )
+    .into()
 }

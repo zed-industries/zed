@@ -4,7 +4,10 @@ use gh_workflow::{
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix, runners::Arch, steps::BASH_SHELL, vars::PathCondition,
+    nix_build::build_nix,
+    runners::Arch,
+    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    vars::PathCondition,
 };
 
 use super::{
@@ -107,7 +110,7 @@ pub(crate) fn run_tests() -> Workflow {
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
-fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -162,9 +165,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .outputs(outputs)
         .add_step(steps::checkout_repo().add_with((
             "fetch-depth",
@@ -180,7 +181,7 @@ fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     NamedJob { name, job }
 }
 
-pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0
@@ -214,9 +215,7 @@ pub(crate) fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .map(|j| j.name.to_string())
                 .collect::<Vec<String>>(),
         )
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries' && always()",
-        ))
+        .cond(repository_owner_guard_expression(true))
         .add_step(named::bash(&script));
 
     named::job(job)

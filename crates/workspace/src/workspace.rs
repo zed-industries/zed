@@ -1845,7 +1845,7 @@ impl Workspace {
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
-    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> + use<> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
 

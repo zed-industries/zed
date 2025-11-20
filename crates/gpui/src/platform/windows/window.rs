@@ -18,6 +18,7 @@ use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
+        Graphics::Dwm::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -773,19 +774,25 @@ impl PlatformWindow for WindowsWindow {
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let hwnd = self.0.hwnd;
 
+        // using Dwm APIs for Mica and MicaAlt backdrops.
+        // others follow the set_window_composition_attribute approach
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
-                // ACCENT_DISABLED
                 set_window_composition_attribute(hwnd, None, 0);
             }
             WindowBackgroundAppearance::Transparent => {
-                // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
                 set_window_composition_attribute(hwnd, None, 2);
             }
             WindowBackgroundAppearance::Blurred => {
-                // Enable acrylic blur
-                // ACCENT_ENABLE_ACRYLICBLURBEHIND
                 set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
+            }
+            WindowBackgroundAppearance::MicaBackdrop => {
+                // DWMSBT_MAINWINDOW => MicaBase
+                dwm_set_window_composition_attribute(hwnd, 2);
+            }
+            WindowBackgroundAppearance::MicaAltBackdrop => {
+                // DWMSBT_TABBEDWINDOW => MicaAlt
+                dwm_set_window_composition_attribute(hwnd, 4);
             }
         }
     }
@@ -1330,9 +1337,34 @@ fn retrieve_window_placement(
     Ok(placement)
 }
 
+fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
+    let mut version = unsafe { std::mem::zeroed() };
+    let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+
+    // DWMWA_SYSTEMBACKDROP_TYPE is available only on version 22621 or later
+    // using SetWindowCompositionAttributeType as a fallback
+    if !status.is_ok() || version.dwBuildNumber < 22621 {
+        return;
+    }
+
+    unsafe {
+        let result = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &backdrop_type as *const _ as *const _,
+            std::mem::size_of_val(&backdrop_type) as u32,
+        );
+
+        if !result.is_ok() {
+            return;
+        }
+    }
+}
+
 fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
     let mut version = unsafe { std::mem::zeroed() };
     let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+
     if !status.is_ok() || version.dwBuildNumber < 17763 {
         return;
     }

@@ -3,7 +3,9 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralCompletionProvider;
 use copilot::{Copilot, Status};
-use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
+use editor::{
+    Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
+};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
@@ -26,7 +28,6 @@ use std::{
     time::Duration,
 };
 use supermaven::{AccountStatus, Supermaven};
-use sweep_ai::SweepFeatureFlag;
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
     IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -37,6 +38,7 @@ use workspace::{
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
+use zeta2::SweepFeatureFlag;
 
 actions!(
     edit_prediction,
@@ -1107,7 +1109,12 @@ async fn open_disabled_globs_setting_in_editor(
             });
 
             if !edits.is_empty() {
-                item.edit(edits, cx);
+                item.edit(
+                    edits
+                        .into_iter()
+                        .map(|(r, s)| (MultiBufferOffset(r.start)..MultiBufferOffset(r.end), s)),
+                    cx,
+                );
             }
 
             let text = item.buffer().read(cx).snapshot(cx).text();
@@ -1122,6 +1129,7 @@ async fn open_disabled_globs_setting_in_editor(
                     .map(|inner_match| inner_match.start()..inner_match.end())
             });
             if let Some(range) = range {
+                let range = MultiBufferOffset(range.start)..MultiBufferOffset(range.end);
                 item.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
                     window,

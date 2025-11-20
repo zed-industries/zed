@@ -2,6 +2,11 @@ use anyhow::{Context as _, Result};
 use language::{Anchor, BufferSnapshot, OffsetRangeExt as _, Point};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
 
+const EDITS_TAG_NAME: &'static str = "edits";
+const OLD_TEXT_TAG_NAME: &'static str = "old_text";
+const NEW_TEXT_TAG_NAME: &'static str = "new_text";
+const XML_TAGS: &[&str] = &[EDITS_TAG_NAME, OLD_TEXT_TAG_NAME, NEW_TEXT_TAG_NAME];
+
 pub async fn parse_xml_edits<'a>(
     input: &'a str,
     get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
@@ -12,38 +17,22 @@ pub async fn parse_xml_edits<'a>(
 }
 
 async fn parse_xml_edits_inner<'a>(
-    mut input: &'a str,
+    input: &'a str,
     get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
 ) -> Result<(&'a BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
-    let edits_tag = parse_tag(&mut input, "edits")?.context("No edits tag")?;
+    let xml_edits = extract_xml_replacements(input)?;
 
-    input = edits_tag.body;
+    let (buffer, context_ranges) = get_buffer(xml_edits.file_path.as_ref())
+        .with_context(|| format!("no buffer for file {}", xml_edits.file_path))?;
 
-    let file_path = edits_tag
-        .attributes
-        .trim_start()
-        .strip_prefix("path")
-        .context("no file attribute on edits tag")?
-        .trim_end()
-        .strip_prefix('=')
-        .context("no value for path attribute")?
-        .trim()
-        .trim_start_matches('"')
-        .trim_end_matches('"');
-
-    let (buffer, context_ranges) = get_buffer(file_path.as_ref())
-        .with_context(|| format!("no buffer for file {file_path}"))?;
-
-    let mut edits = vec![];
-    while let Some(old_text_tag) = parse_tag(&mut input, "old_text")? {
-        let new_text_tag =
-            parse_tag(&mut input, "new_text")?.context("no new_text tag following old_text")?;
-        let match_range = fuzzy_match_in_ranges(old_text_tag.body, buffer, context_ranges)?;
-        let old_text = buffer
+    let mut all_edits = vec![];
+    for (old_text, new_text) in xml_edits.replacements {
+        let match_range = fuzzy_match_in_ranges(old_text, buffer, context_ranges)?;
+        let matched_old_text = buffer
             .text_for_range(match_range.clone())
             .collect::<String>();
-        let edits_within_hunk = language::text_diff(&old_text, &new_text_tag.body);
-        edits.extend(
+        let edits_within_hunk = language::text_diff(&matched_old_text, new_text);
+        all_edits.extend(
             edits_within_hunk
                 .into_iter()
                 .map(move |(inner_range, inner_text)| {
@@ -56,7 +45,7 @@ async fn parse_xml_edits_inner<'a>(
         );
     }
 
-    Ok((buffer, edits))
+    Ok((buffer, all_edits))
 }
 
 fn fuzzy_match_in_ranges(
@@ -110,32 +99,128 @@ fn fuzzy_match_in_ranges(
     );
 }
 
-struct ParsedTag<'a> {
-    attributes: &'a str,
-    body: &'a str,
+#[derive(Debug)]
+struct XmlEdits<'a> {
+    file_path: &'a str,
+    /// Vec of (old_text, new_text) pairs
+    replacements: Vec<(&'a str, &'a str)>,
 }
 
-fn parse_tag<'a>(input: &mut &'a str, tag: &str) -> Result<Option<ParsedTag<'a>>> {
-    let open_tag = format!("<{}", tag);
-    let close_tag = format!("</{}>", tag);
-    let Some(start_ix) = input.find(&open_tag) else {
-        return Ok(None);
-    };
-    let start_ix = start_ix + open_tag.len();
-    let closing_bracket_ix = start_ix
-        + input[start_ix..]
+fn extract_xml_replacements(input: &str) -> Result<XmlEdits<'_>> {
+    let mut cursor = 0;
+
+    let (edits_body_start, edits_attrs) =
+        find_tag_open(input, &mut cursor, EDITS_TAG_NAME)?.context("No edits tag found")?;
+
+    let file_path = edits_attrs
+        .trim_start()
+        .strip_prefix("path")
+        .context("no path attribute on edits tag")?
+        .trim_end()
+        .strip_prefix('=')
+        .context("no value for path attribute")?
+        .trim()
+        .trim_start_matches('"')
+        .trim_end_matches('"');
+
+    cursor = edits_body_start;
+    let mut edits_list = Vec::new();
+
+    while let Some((old_body_start, _)) = find_tag_open(input, &mut cursor, OLD_TEXT_TAG_NAME)? {
+        let old_body_end = find_tag_close(input, &mut cursor)?;
+        let old_text = trim_surrounding_newlines(&input[old_body_start..old_body_end]);
+
+        let (new_body_start, _) = find_tag_open(input, &mut cursor, NEW_TEXT_TAG_NAME)?
+            .context("no new_text tag following old_text")?;
+        let new_body_end = find_tag_close(input, &mut cursor)?;
+        let new_text = trim_surrounding_newlines(&input[new_body_start..new_body_end]);
+
+        edits_list.push((old_text, new_text));
+    }
+
+    Ok(XmlEdits {
+        file_path,
+        replacements: edits_list,
+    })
+}
+
+/// Trims a single leading and trailing newline
+fn trim_surrounding_newlines(input: &str) -> &str {
+    let start = input.strip_prefix('\n').unwrap_or(input);
+    let end = start.strip_suffix('\n').unwrap_or(start);
+    end
+}
+
+fn find_tag_open<'a>(
+    input: &'a str,
+    cursor: &mut usize,
+    expected_tag: &str,
+) -> Result<Option<(usize, &'a str)>> {
+    let mut search_pos = *cursor;
+
+    while search_pos < input.len() {
+        let Some(tag_start) = input[search_pos..].find("<") else {
+            break;
+        };
+        let tag_start = search_pos + tag_start;
+        if !input[tag_start + 1..].starts_with(expected_tag) {
+            search_pos = search_pos + tag_start + 1;
+            continue;
+        };
+
+        let after_tag_name = tag_start + expected_tag.len() + 1;
+        let close_bracket = input[after_tag_name..]
             .find('>')
-            .with_context(|| format!("missing > after {tag}"))?;
-    let attributes = &input[start_ix..closing_bracket_ix].trim();
-    let end_ix = closing_bracket_ix
-        + input[closing_bracket_ix..]
-            .find(&close_tag)
-            .with_context(|| format!("no `{close_tag}` tag"))?;
-    let body = &input[closing_bracket_ix + '>'.len_utf8()..end_ix];
-    let body = body.strip_prefix('\n').unwrap_or(body);
-    let body = body.strip_suffix('\n').unwrap_or(body);
-    *input = &input[end_ix + close_tag.len()..];
-    Ok(Some(ParsedTag { attributes, body }))
+            .with_context(|| format!("missing > after <{}", expected_tag))?;
+        let attrs_end = after_tag_name + close_bracket;
+        let body_start = attrs_end + 1;
+
+        let attributes = input[after_tag_name..attrs_end].trim();
+        *cursor = body_start;
+
+        return Ok(Some((body_start, attributes)));
+    }
+
+    Ok(None)
+}
+
+fn find_tag_close(input: &str, cursor: &mut usize) -> Result<usize> {
+    let mut depth = 1;
+    let mut search_pos = *cursor;
+
+    while search_pos < input.len() && depth > 0 {
+        let Some(bracket_offset) = input[search_pos..].find('<') else {
+            break;
+        };
+        let bracket_pos = search_pos + bracket_offset;
+
+        if input[bracket_pos..].starts_with("</")
+            && let Some(close_end) = input[bracket_pos + 2..].find('>')
+        {
+            let close_start = bracket_pos + 2;
+            let tag_name = input[close_start..close_start + close_end].trim();
+
+            if XML_TAGS.contains(&tag_name) {
+                depth -= 1;
+                if depth == 0 {
+                    *cursor = close_start + close_end + 1;
+                    return Ok(bracket_pos);
+                }
+            }
+            search_pos = close_start + close_end + 1;
+            continue;
+        } else if let Some(close_bracket_offset) = input[bracket_pos..].find('>') {
+            let close_bracket_pos = bracket_pos + close_bracket_offset;
+            let tag_name = &input[bracket_pos + 1..close_bracket_pos].trim();
+            if XML_TAGS.contains(&tag_name) {
+                depth += 1;
+            }
+        }
+
+        search_pos = bracket_pos + 1;
+    }
+
+    anyhow::bail!("no closing tag found")
 }
 
 const REPLACEMENT_COST: u32 = 1;
@@ -357,17 +442,128 @@ mod tests {
     use util::path;
 
     #[test]
-    fn test_parse_tags() {
-        let mut input = indoc! {r#"
-            Prelude
-            <tag attr="foo">
-            tag value
-            </tag>
-            "# };
-        let parsed = parse_tag(&mut input, "tag").unwrap().unwrap();
-        assert_eq!(parsed.attributes, "attr=\"foo\"");
-        assert_eq!(parsed.body, "tag value");
-        assert_eq!(input, "\n");
+    fn test_extract_xml_edits() {
+        let input = indoc! {r#"
+            <edits path="test.rs">
+            <old_text>
+            old content
+            </old_text>
+            <new_text>
+            new content
+            </new_text>
+            </edits>
+        "#};
+
+        let result = extract_xml_replacements(input).unwrap();
+        assert_eq!(result.file_path, "test.rs");
+        assert_eq!(result.replacements.len(), 1);
+        assert_eq!(result.replacements[0].0, "old content");
+        assert_eq!(result.replacements[0].1, "new content");
+    }
+
+    #[test]
+    fn test_extract_xml_edits_with_wrong_closing_tags() {
+        let input = indoc! {r#"
+            <edits path="test.rs">
+            <old_text>
+            old content
+            </new_text>
+            <new_text>
+            new content
+            </old_text>
+            </ edits >
+        "#};
+
+        let result = extract_xml_replacements(input).unwrap();
+        assert_eq!(result.file_path, "test.rs");
+        assert_eq!(result.replacements.len(), 1);
+        assert_eq!(result.replacements[0].0, "old content");
+        assert_eq!(result.replacements[0].1, "new content");
+    }
+
+    #[test]
+    fn test_extract_xml_edits_with_xml_like_content() {
+        let input = indoc! {r#"
+            <edits path="component.tsx">
+            <old_text>
+            <foo><bar></bar></foo>
+            </old_text>
+            <new_text>
+            <foo><bar><baz></baz></bar></foo>
+            </new_text>
+            </edits>
+        "#};
+
+        let result = extract_xml_replacements(input).unwrap();
+        assert_eq!(result.file_path, "component.tsx");
+        assert_eq!(result.replacements.len(), 1);
+        assert_eq!(result.replacements[0].0, "<foo><bar></bar></foo>");
+        assert_eq!(
+            result.replacements[0].1,
+            "<foo><bar><baz></baz></bar></foo>"
+        );
+    }
+
+    #[test]
+    fn test_extract_xml_edits_with_conflicting_content() {
+        let input = indoc! {r#"
+            <edits path="component.tsx">
+            <old_text>
+            <new_text></new_text>
+            </old_text>
+            <new_text>
+            <old_text></old_text>
+            </new_text>
+            </edits>
+        "#};
+
+        let result = extract_xml_replacements(input).unwrap();
+        assert_eq!(result.file_path, "component.tsx");
+        assert_eq!(result.replacements.len(), 1);
+        assert_eq!(result.replacements[0].0, "<new_text></new_text>");
+        assert_eq!(result.replacements[0].1, "<old_text></old_text>");
+    }
+
+    #[test]
+    fn test_extract_xml_edits_multiple_pairs() {
+        let input = indoc! {r#"
+            Some reasoning before edits. Lots of thinking going on here
+
+            <edits path="test.rs">
+            <old_text>
+            first old
+            </old_text>
+            <new_text>
+            first new
+            </new_text>
+            <old_text>
+            second old
+            </edits>
+            <new_text>
+            second new
+            </old_text>
+            </edits>
+        "#};
+
+        let result = extract_xml_replacements(input).unwrap();
+        assert_eq!(result.file_path, "test.rs");
+        assert_eq!(result.replacements.len(), 2);
+        assert_eq!(result.replacements[0].0, "first old");
+        assert_eq!(result.replacements[0].1, "first new");
+        assert_eq!(result.replacements[1].0, "second old");
+        assert_eq!(result.replacements[1].1, "second new");
+    }
+
+    #[test]
+    fn test_extract_xml_edits_unexpected_eof() {
+        let input = indoc! {r#"
+            <edits path="test.rs">
+            <old_text>
+            first old
+            </
+        "#};
+
+        extract_xml_replacements(input).expect_err("Unexpected end of file");
     }
 
     #[gpui::test]

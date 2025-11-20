@@ -1,6 +1,7 @@
 use collections::HashMap;
 use gpui::{AppContext, Context, Window};
 use itertools::Itertools;
+use multi_buffer::MultiBufferOffset;
 use std::{ops::Range, time::Duration};
 use text::{AnchorRangeExt, BufferId, ToPoint};
 use util::ResultExt;
@@ -60,7 +61,9 @@ pub(super) fn refresh_linked_ranges(
         editor
             .update(cx, |editor, cx| {
                 let display_snapshot = editor.display_snapshot(cx);
-                let selections = editor.selections.all::<usize>(&display_snapshot);
+                let selections = editor
+                    .selections
+                    .all::<MultiBufferOffset>(&display_snapshot);
                 let snapshot = display_snapshot.buffer_snapshot();
                 let buffer = editor.buffer.read(cx);
                 for selection in selections {

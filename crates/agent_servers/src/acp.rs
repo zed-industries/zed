@@ -247,37 +247,58 @@ impl AgentConnection for AcpConnection {
         let default_mode = self.default_mode.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        let mcp_servers = if project.read(cx).is_local() {
-            context_server_store
-                .configured_server_ids()
-                .iter()
-                .filter_map(|id| {
-                    let configuration = context_server_store.configuration_for_server(id)?;
-                    let command = configuration.command();
-                    Some(acp::McpServer::Stdio {
-                        name: id.0.to_string(),
-                        command: command.path.clone(),
-                        args: command.args.clone(),
-                        env: if let Some(env) = command.env.as_ref() {
-                            env.iter()
-                                .map(|(name, value)| acp::EnvVariable {
-                                    name: name.clone(),
-                                    value: value.clone(),
-                                    meta: None,
-                                })
-                                .collect()
-                        } else {
-                            vec![]
-                        },
+        let mcp_servers =
+            if project.read(cx).is_local() {
+                context_server_store
+                    .configured_server_ids()
+                    .iter()
+                    .filter_map(|id| {
+                        let configuration = context_server_store.configuration_for_server(id)?;
+                        match &*configuration {
+                        project::context_server_store::ContextServerConfiguration::Custom {
+                            command,
+                            ..
+                        }
+                        | project::context_server_store::ContextServerConfiguration::Extension {
+                            command,
+                            ..
+                        } => Some(acp::McpServer::Stdio {
+                            name: id.0.to_string(),
+                            command: command.path.clone(),
+                            args: command.args.clone(),
+                            env: if let Some(env) = command.env.as_ref() {
+                                env.iter()
+                                    .map(|(name, value)| acp::EnvVariable {
+                                        name: name.clone(),
+                                        value: value.clone(),
+                                        meta: None,
+                                    })
+                                    .collect()
+                            } else {
+                                vec![]
+                            },
+                        }),
+                        project::context_server_store::ContextServerConfiguration::Http {
+                            url,
+                            headers,
+                        } => Some(acp::McpServer::Http {
+                            name: id.0.to_string(),
+                            url: url.to_string(),
+                            headers: headers.iter().map(|(name, value)| acp::HttpHeader {
+                                name: name.clone(),
+                                value: value.clone(),
+                                meta: None,
+                            }).collect(),
+                        }),
+                    }
                     })
-                })
-                .collect()
-        } else {
-            // In SSH projects, the external agent is running on the remote
-            // machine, and currently we only run MCP servers on the local
-            // machine. So don't pass any MCP servers to the agent in that case.
-            Vec::new()
-        };
+                    .collect()
+            } else {
+                // In SSH projects, the external agent is running on the remote
+                // machine, and currently we only run MCP servers on the local
+                // machine. So don't pass any MCP servers to the agent in that case.
+                Vec::new()
+            };
 
         cx.spawn(async move |cx| {
             let response = conn

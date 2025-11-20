@@ -12,7 +12,7 @@ workspace = true
 path = "src/context_server.rs"
 
 [features]
-test-support = []
+test-support = ["gpui/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -20,6 +20,7 @@ async-trait.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http_client = { workspace = true, features = ["test-support"] }
 log.workspace = true
 net.workspace = true
 parking_lot.workspace = true
@@ -32,3 +33,6 @@ smol.workspace = true
 tempfile.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

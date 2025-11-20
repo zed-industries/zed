@@ -2059,6 +2059,18 @@
   "dev": {
     // "theme": "Andromeda"
   },
+  // Settings overrides to use when using linux
+  "linux": {},
+  // Settings overrides to use when using macos
+  "macos": {},
+  // Settings overrides to use when using windows
+  "windows": {
+    "languages": {
+      "PHP": {
+        "language_servers": ["intelephense", "!phpactor", "..."]
+      }
+    }
+  },
   // Whether to show full labels in line indicator or short ones
   //
   // Values:

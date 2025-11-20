@@ -13,7 +13,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, Inlay,
-    MultiBuffer, ToOffset,
+    MultiBuffer, MultiBufferOffset, ToOffset,
     actions::Paste,
     code_context_menus::CodeContextMenu,
     display_map::{Crease, CreaseId, FoldId},
@@ -209,7 +209,7 @@ impl MessageEditor {
         let acp::AvailableCommandInput::Unstructured { mut hint } =
             available_command.input.clone()?;
 
-        let mut hint_pos = parsed_command.source_range.end + 1;
+        let mut hint_pos = MultiBufferOffset(parsed_command.source_range.end) + 1usize;
         if hint_pos > snapshot.len() {
             hint_pos = snapshot.len();
             hint.insert(0, ' ');
@@ -307,9 +307,9 @@ impl MessageEditor {
             return Task::ready(());
         };
         let excerpt_id = start_anchor.excerpt_id;
-        let end_anchor = snapshot
-            .buffer_snapshot()
-            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
+        let end_anchor = snapshot.buffer_snapshot().anchor_before(
+            start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
+        );
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && let Some(extension) = abs_path.extension()
@@ -739,8 +739,8 @@ impl MessageEditor {
                         };
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
-                        if crease_range.start > ix {
-                            let chunk = text[ix..crease_range.start].into();
+                        if crease_range.start.0 > ix {
+                            let chunk = text[ix..crease_range.start.0].into();
                             chunks.push(chunk);
                         }
                         let chunk = match mention {
@@ -808,7 +808,7 @@ impl MessageEditor {
                             }),
                         };
                         chunks.push(chunk);
-                        ix = crease_range.end;
+                        ix = crease_range.end.0;
                     }
 
                     if ix < text.len() {
@@ -862,7 +862,7 @@ impl MessageEditor {
                         let snapshot = editor.display_snapshot(cx);
                         let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                         let offset = cursor.to_offset(&snapshot);
-                        if offset > 0 {
+                        if offset.0 > 0 {
                             snapshot
                                 .buffer_snapshot()
                                 .reversed_chars_at(offset)
@@ -1132,7 +1132,7 @@ impl MessageEditor {
         let cursor_anchor = editor.selections.newest_anchor().head();
         let cursor_offset = cursor_anchor.to_offset(&editor_buffer.snapshot(cx));
         let anchor = buffer.update(cx, |buffer, _cx| {
-            buffer.anchor_before(cursor_offset.min(buffer.len()))
+            buffer.anchor_before(cursor_offset.0.min(buffer.len()))
         });
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -1258,7 +1258,7 @@ impl MessageEditor {
         });
 
         for (range, mention_uri, mention) in mentions {
-            let anchor = snapshot.anchor_before(range.start);
+            let anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
             let Some((crease_id, tx)) = insert_crease_for_mention(
                 anchor.excerpt_id,
                 anchor.text_anchor,
@@ -1713,7 +1713,7 @@ mod tests {
     use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
     use assistant_text_thread::TextThreadStore;
-    use editor::{AnchorRangeExt as _, Editor, EditorMode};
+    use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
@@ -2682,7 +2682,7 @@ mod tests {
         editor.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
-                .folds_in_range(0..snapshot.len())
+                .folds_in_range(MultiBufferOffset(0)..snapshot.len())
                 .map(|fold| fold.range.to_point(&snapshot))
                 .collect()
         })

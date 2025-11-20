@@ -1,4 +1,7 @@
-use editor::{DisplayPoint, RowExt, SelectionEffects, display_map::ToDisplayPoint, movement};
+use editor::{
+    DisplayPoint, MultiBufferOffset, RowExt, SelectionEffects, display_map::ToDisplayPoint,
+    movement,
+};
 use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
@@ -174,7 +177,10 @@ impl Vim {
                     original_indent_columns.push(original_indent_column);
                 }
 
-                let cursor_offset = editor.selections.last::<usize>(&display_map).head();
+                let cursor_offset = editor
+                    .selections
+                    .last::<MultiBufferOffset>(&display_map)
+                    .head();
                 if editor
                     .buffer()
                     .read(cx)

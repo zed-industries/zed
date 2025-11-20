@@ -489,7 +489,7 @@ impl SshRemoteConnection {
         let ssh_shell = socket.shell().await;
         log::info!("Remote shell discovered: {}", ssh_shell);
         let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
-        log::info!("Remote platform discovered: {}", ssh_shell);
+        log::info!("Remote platform discovered: {:?}", ssh_platform);
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,

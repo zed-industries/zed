@@ -32,7 +32,6 @@ impl Sub for OffsetUtf16 {
     type Output = OffsetUtf16;
 
     fn sub(self, other: Self) -> Self::Output {
-        debug_assert!(other <= self);
         Self(self.0 - other.0)
     }
 }

@@ -520,7 +520,8 @@ impl ProjectDiff {
             if was_empty {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     // TODO select the very beginning (possibly inside a deletion)
-                    selections.select_ranges([0..0])
+                    selections
+                        .select_ranges([multi_buffer::Anchor::min()..multi_buffer::Anchor::min()])
                 });
             }
             if is_excerpt_newly_added

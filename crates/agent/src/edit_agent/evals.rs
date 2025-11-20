@@ -1108,6 +1108,7 @@ fn tool_use(
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
         input: serde_json::to_value(input).unwrap(),
         is_input_complete: true,
+        thought_signature: None,
     })
 }
 

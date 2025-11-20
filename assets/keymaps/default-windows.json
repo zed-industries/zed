@@ -41,8 +41,7 @@
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
-      "shift-alt-l": "lsp_tool::ToggleMenu",
-      "ctrl-alt-.": "project_panel::ToggleHideHidden"
+      "shift-alt-l": "lsp_tool::ToggleMenu"
     }
   },
   {

@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::Result;
 use language::{markdown_lang, rust_lang};
+use multi_buffer::MultiBufferOffset;
 use serde_json::json;
 
 use crate::{Editor, ToPoint};
@@ -333,50 +334,38 @@ impl EditorLspTestContext {
     #[track_caller]
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let ranges = self.ranges(marked_text);
-        self.to_lsp_range(ranges[0].clone())
+        self.to_lsp_range(MultiBufferOffset(ranges[0].start)..MultiBufferOffset(ranges[0].end))
     }
 
     #[expect(clippy::wrong_self_convention, reason = "This is test code")]
-    pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
+    pub fn to_lsp_range(&mut self, range: Range<MultiBufferOffset>) -> lsp::Range {
+        use language::ToPointUtf16;
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let start_point = range.start.to_point(&snapshot.buffer_snapshot());
         let end_point = range.end.to_point(&snapshot.buffer_snapshot());
 
         self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
-            let start = point_to_lsp(
-                buffer
-                    .point_to_buffer_offset(start_point, cx)
-                    .unwrap()
-                    .1
-                    .to_point_utf16(&buffer.read(cx)),
-            );
-            let end = point_to_lsp(
-                buffer
-                    .point_to_buffer_offset(end_point, cx)
-                    .unwrap()
-                    .1
-                    .to_point_utf16(&buffer.read(cx)),
-            );
-
+            let (start_buffer, start_offset) =
+                buffer.point_to_buffer_offset(start_point, cx).unwrap();
+            let start = point_to_lsp(start_offset.to_point_utf16(&start_buffer.read(cx)));
+            let (end_buffer, end_offset) = buffer.point_to_buffer_offset(end_point, cx).unwrap();
+            let end = point_to_lsp(end_offset.to_point_utf16(&end_buffer.read(cx)));
             lsp::Range { start, end }
         })
     }
 
     #[expect(clippy::wrong_self_convention, reason = "This is test code")]
-    pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
+    pub fn to_lsp(&mut self, offset: MultiBufferOffset) -> lsp::Position {
+        use language::ToPointUtf16;
+
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot());
 
         self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
-            point_to_lsp(
-                buffer
-                    .point_to_buffer_offset(point, cx)
-                    .unwrap()
-                    .1
-                    .to_point_utf16(&buffer.read(cx)),
-            )
+            let (buffer, offset) = buffer.point_to_buffer_offset(point, cx).unwrap();
+            point_to_lsp(offset.to_point_utf16(&buffer.read(cx)))
         })
     }
 

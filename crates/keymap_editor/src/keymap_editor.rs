@@ -1769,7 +1769,7 @@ impl Render for KeymapEditor {
                                                                 )
                                                                 .action(
                                                                     "Vim Bindings",
-                                                                    vim::OpenDefaultKeymap.boxed_clone(),
+                                                                    zed_actions::vim::OpenDefaultKeymap.boxed_clone(),
                                                                 )
                                                         }))
                                                     })

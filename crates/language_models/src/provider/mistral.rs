@@ -720,6 +720,7 @@ impl MistralEventMapper {
                         is_input_complete: true,
                         input,
                         raw_input: tool_call.arguments,
+                        thought_signature: None,
                     },
                 ))),
                 Err(error) => {

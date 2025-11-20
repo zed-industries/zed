@@ -1005,7 +1005,6 @@ impl Database {
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
                         stash_entries: Vec::new(),
-                        renamed_paths: Default::default(),
                     });
                 }
             }

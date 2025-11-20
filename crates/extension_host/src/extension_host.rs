@@ -1128,6 +1128,7 @@ impl ExtensionStore {
         }
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
+            self.reload_complete_senders.clear();
             return Task::ready(());
         }
 
