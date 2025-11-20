@@ -98,6 +98,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     name: conn.name.to_string(),
                     container_id: conn.container_id.to_string(),
                     upload_binary_over_docker_exec: false,
+                    working_directory: conn.working_directory.to_string(),
                 })
             }
         }

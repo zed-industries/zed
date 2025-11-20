@@ -30,6 +30,7 @@ pub struct DockerExecConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub upload_binary_over_docker_exec: bool,
+    pub working_directory: String,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -318,10 +319,13 @@ impl DockerExecConnection {
 
         let mut command = util::command::new_smol_command("docker");
         command.arg("cp");
+        command.arg("-a");
         command.arg(&src_path_display);
         command.arg(format!(
-            "{}:{}",
-            &self.connection_options.container_id, dest_path_str
+            "{}:{}/{}",
+            &self.connection_options.container_id,
+            self.connection_options.working_directory,
+            dest_path_str
         ));
 
         let output = command.output().await?;
@@ -345,6 +349,9 @@ impl DockerExecConnection {
     async fn run_command(&self, program: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let mut command = util::command::new_smol_command("docker"); // TODO docker needs to be a field
         command.arg("exec");
+
+        command.arg("-w");
+        command.arg(&self.connection_options.working_directory);
 
         command.arg(&self.connection_options.container_id);
 
@@ -442,7 +449,13 @@ impl RemoteConnection for DockerExecConnection {
         //     PathStyle::Posix,
         // ));
 
-        let mut docker_args = vec!["exec", "-i", &self.connection_options.container_id];
+        let mut docker_args = vec![
+            "exec",
+            "-w",
+            &self.connection_options.working_directory,
+            "-i",
+            &self.connection_options.container_id,
+        ];
         // TODO not sure how you do this best in an exec context
         // for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
         //     if let Some(value) = std::env::var(env_var).ok() {
@@ -498,8 +511,12 @@ impl RemoteConnection for DockerExecConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
+        println!("Upload path: {}", dest_path_str);
+        println!("Source path: {}", src_path_display);
+
         let mut command = util::command::new_smol_command("docker");
         command.arg("cp");
+        command.arg("-a"); // Archive mode is required to assign the file ownership to the default docker exec user
         command.arg(src_path_display);
         command.arg(format!(
             "{}:{}",
@@ -508,6 +525,8 @@ impl RemoteConnection for DockerExecConnection {
 
         cx.background_spawn(async move {
             let output = command.output().await?;
+
+            dbg!("output: {}", &output);
 
             // TODO stderr mapping and such
             if output.status.success() {

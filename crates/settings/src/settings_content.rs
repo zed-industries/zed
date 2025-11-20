@@ -902,6 +902,7 @@ pub struct DevContainerConnection {
     pub name: SharedString,
     pub image: SharedString,
     pub container_id: SharedString,
+    pub working_directory: SharedString,
 }
 
 #[skip_serializing_none]

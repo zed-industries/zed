@@ -1,4 +1,5 @@
 use crate::{
+    dev_container::start_dev_container,
     remote_connections::{
         Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
         SshConnectionHeader, SshSettings, connect, determine_paths_with_positions,
@@ -1508,72 +1509,50 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let theme = cx.theme();
-        // self.focus_handle.focus(window);
-        // state.entries[0].focus_handle.focus(window);
-        //
         let callback = Rc::new({
-            |remote_server_projects: &mut Self,
-             secondary_confirm: bool,
-             window: &mut Window,
-             cx: &mut Context<Self>| {
-                match get_dev_container_project(cx) {
-                    RemoteEntry::Project {
-                        open_folder,
-                        projects,
-                        configure,
-                        connection,
-                        index,
-                    } => {
-                        let Some(app_state) = remote_server_projects
-                            .workspace
-                            .read_with(cx, |workspace, _| workspace.app_state().clone())
-                            .log_err()
-                        else {
-                            return;
-                        };
-                        let (_, project) = projects.first().expect("TODO handle");
-                        let project = project.clone();
-                        // let server = connection.into_owned();
-                        cx.emit(DismissEvent);
+            |remote_server_projects: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                let Some(app_state) = remote_server_projects
+                    .workspace
+                    .read_with(cx, |workspace, _| workspace.app_state().clone())
+                    .log_err()
+                else {
+                    return;
+                };
 
-                        // let replace_window = match (create_new_window, secondary_confirm) {
-                        //     (true, false) | (false, true) => None,
-                        //     (true, true) | (false, false) => {
-                        //         window.window_handle().downcast::<Workspace>()
-                        //     }
-                        // };
-                        // For now, we always want to replace the current window
-                        let replace_window = window.window_handle().downcast::<Workspace>();
+                let replace_window = window.window_handle().downcast::<Workspace>();
 
-                        cx.spawn_in(window, async move |_, cx| {
-                            let result = open_remote_project(
-                                connection.into(),
-                                project.paths.into_iter().map(PathBuf::from).collect(),
-                                app_state,
-                                OpenOptions {
-                                    replace_window,
-                                    ..OpenOptions::default()
-                                },
-                                cx,
-                            )
-                            .await;
-                            if let Err(e) = result {
-                                log::error!("Failed to connect: {e:#}");
-                                cx.prompt(
-                                    gpui::PromptLevel::Critical,
-                                    "Failed to connect",
-                                    Some(&e.to_string()),
-                                    &["Ok"],
-                                )
-                                .await
-                                .ok();
-                            }
+                cx.spawn_in(window, async move |entity, cx| {
+                    entity
+                        .update(cx, |_, cx| {
+                            cx.emit(DismissEvent);
                         })
-                        .detach();
+                        .expect("Something"); // TODO
+                    let (connection, starting_dir) =
+                        start_dev_container(cx).await.expect("Hard-coded"); // TODO
+                    let result = open_remote_project(
+                        connection.into(),
+                        vec![starting_dir].into_iter().map(PathBuf::from).collect(),
+                        app_state,
+                        OpenOptions {
+                            replace_window,
+                            ..OpenOptions::default()
+                        },
+                        cx,
+                    )
+                    .await;
+                    if let Err(e) = result {
+                        log::error!("Failed to connect: {e:#}");
+                        cx.prompt(
+                            gpui::PromptLevel::Critical,
+                            "Failed to connect",
+                            Some(&e.to_string()),
+                            &["Ok"],
+                        )
+                        .await
+                        .ok();
                     }
-                    _ => todo!("Shouldn't hit this"),
-                }
+                })
+                .detach();
             }
         });
 
@@ -1594,7 +1573,7 @@ impl RemoteServerProjects {
                                         // println!("Confirm create from devcontainer.json");
                                         // cx.focus_self(window);
                                         // cx.notify();
-                                        callback(this, false, window, cx)
+                                        callback(this, window, cx)
                                     },
                                 ))
                                 .child(
@@ -2553,29 +2532,4 @@ impl Render for RemoteServerProjects {
                     .into_any_element(),
             })
     }
-}
-
-// TODO, parse devcontainer.json from here
-// Output from `devcontainer up --workspace-folder .`: {"outcome":"success","containerId":"ad1397a548f2bda8d691c9ed42c2eeb4e5f4a2f0d698cfc0330574cf884963ac","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}
-// (idempotent)
-pub fn get_dev_container_project(cx: &mut App) -> RemoteEntry {
-    let scroll_handle = ScrollHandle::new();
-    let remote_project = RemoteEntry::Project {
-        open_folder: NavigableEntry::new(&scroll_handle, cx),
-        configure: NavigableEntry::new(&scroll_handle, cx),
-        projects: vec![(
-            NavigableEntry::new(&scroll_handle, cx),
-            RemoteProject {
-                paths: vec!["/workspaces/zed".to_string()],
-            },
-        )],
-        connection: Connection::DevContainer(DevContainerConnection {
-            name: "test".into(),
-            image: "mcr.microsoft.com/devcontainers/rust:latest".into(),
-            container_id: "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a".into(),
-        }),
-        index: ServerIndex::DevContainer(DevContainerIndex(0)),
-    };
-
-    remote_project
 }

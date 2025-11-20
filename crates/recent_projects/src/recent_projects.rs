@@ -1,3 +1,4 @@
+mod dev_container;
 pub mod disconnected_overlay;
 mod remote_connections;
 mod remote_servers;
