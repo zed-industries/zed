@@ -72,7 +72,7 @@ struct ContextStatsArgs {
 
 #[derive(Debug, Args)]
 struct ContextArgs {
-    #[arg(long)]
+    #[arg(long, value_enum, default_value_t = Default::default())]
     provider: ContextProvider,
     #[arg(long)]
     worktree: PathBuf,
@@ -132,7 +132,7 @@ pub struct PredictionOptions {
     use_expected_context: bool,
     #[clap(flatten)]
     zeta2: Zeta2Args,
-    #[clap(long)]
+    #[clap(long, value_enum, default_value_t = Default::default())]
     provider: PredictionProvider,
     #[clap(long, value_enum, default_value_t = CacheMode::default())]
     cache: CacheMode,
@@ -225,8 +225,8 @@ enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
     OnlySnippets,
-    #[default]
     NumberedLines,
+    #[default]
     OldTextNewText,
     Minimal,
     MinimalQwen,
