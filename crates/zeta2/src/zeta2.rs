@@ -764,7 +764,7 @@ impl Zeta {
                 self.request_prediction_with_zed_cloud(project, active_buffer, position, cx)
             }
             ZetaEditPredictionModel::Sweep => {
-                self.request_prediction_with_sweep(project, active_buffer, position, cx)
+                self.request_prediction_with_sweep(project, active_buffer, position, true, cx)
             }
         }
     }
@@ -774,6 +774,7 @@ impl Zeta {
         project: &Entity<Project>,
         active_buffer: &Entity<Buffer>,
         position: language::Anchor,
+        allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
         let snapshot = active_buffer.read(cx).snapshot();
@@ -796,6 +797,7 @@ impl Zeta {
 
         let project_state = self.get_or_init_zeta_project(project, cx);
         let events = project_state.events.clone();
+        let has_events = !events.is_empty();
         let recent_buffers = project_state.recent_paths.iter().cloned();
         let http_client = cx.http_client();
 
@@ -811,13 +813,15 @@ impl Zeta {
             .take(3)
             .collect::<Vec<_>>();
 
-        let result = cx.background_spawn(async move {
-            let text = snapshot.text();
+        let result = cx.background_spawn({
+            let full_path = full_path.clone();
+            async move {
+                let text = snapshot.text();
 
-            let mut recent_changes = String::new();
-            for event in events {
-                sweep_ai::write_event(event, &mut recent_changes).unwrap();
-            }
+                let mut recent_changes = String::new();
+                for event in events {
+                    sweep_ai::write_event(event, &mut recent_changes).unwrap();
+                }
 
                 let mut file_chunks = recent_buffer_snapshots
                     .into_iter()
@@ -962,11 +966,62 @@ impl Zeta {
         });
 
         let buffer = active_buffer.clone();
+        let project = project.clone();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let (id, edits, old_snapshot) = result.await?;
 
-            if edits.is_empty() {
+            if edits.is_empty() && has_events && allow_jump {
+                let buffer_with_error = project.update(cx, |project, cx| {
+                    let (path, _, _) = project
+                        .diagnostic_summaries(false, cx)
+                        .filter(|(_, _, summary)| summary.error_count > 0)
+                        .max_by_key(|(path, _, _)| {
+                            // find buffer with errors that share the most path components
+                            path.path
+                                .components()
+                                .zip(full_path.components())
+                                .take_while(|(a, b)| OsStr::new(a) == b.as_os_str())
+                                .count()
+                        })?;
+
+                    Some(project.open_buffer(path, cx))
+                })?;
+
+                if let Some(buffer_with_diagnostic) = buffer_with_error {
+                    let buffer_with_diagnostic = buffer_with_diagnostic.await?;
+
+                    let diagnostic_position =
+                        buffer_with_diagnostic.update(cx, |buffer, _cx| {
+                            buffer
+                                .snapshot()
+                                .diagnostic_groups(None)
+                                .into_iter()
+                                .find_map(|(_, group)| {
+                                    let diagnostic = &group.entries[group.primary_ix];
+                                    if diagnostic.diagnostic.severity == DiagnosticSeverity::ERROR {
+                                        Some(diagnostic.range.start)
+                                    } else {
+                                        None
+                                    }
+                                })
+                        })?;
+
+                    if let Some(diagnostic_position) = diagnostic_position {
+                        return this
+                            .update(cx, |this, cx| {
+                                this.request_prediction_with_sweep(
+                                    &project,
+                                    &buffer_with_diagnostic,
+                                    diagnostic_position,
+                                    false,
+                                    cx,
+                                )
+                            })?
+                            .await;
+                    }
+                }
+
                 return anyhow::Ok(None);
             }
 
