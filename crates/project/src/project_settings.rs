@@ -447,9 +447,9 @@ impl GitSettings {
 
 impl settings::Settings for GitSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
-        let user_content = content.git.clone().unwrap();
+        let user_content = content.git.unwrap();
         // Note: we allow a subset of "git" settings in the project files.
-        let mut project_content = user_content.project.clone();
+        let mut project_content = user_content.project;
         project_content.merge_from_option(content.project.git.as_ref());
         GitSettings {
             enabled: GitEnabledSettings {

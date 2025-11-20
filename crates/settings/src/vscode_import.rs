@@ -557,7 +557,6 @@ impl VsCodeSettings {
                     enabled: Some(inline_blame),
                     ..Default::default()
                 }),
-                ..Default::default()
             },
             ..Default::default()
         })

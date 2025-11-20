@@ -20952,7 +20952,7 @@ impl Editor {
     }
 
     pub fn git_settings(&self, cx: &App) -> GitSettings {
-        GitSettings::get(self.settings_location(cx), cx).clone()
+        *GitSettings::get(self.settings_location(cx), cx)
     }
 
     pub fn git_blame_inline_enabled(&self) -> bool {
