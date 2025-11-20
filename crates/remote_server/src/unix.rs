@@ -9,7 +9,7 @@ use fs::{Fs, RealFs};
 use futures::channel::{mpsc, oneshot};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
@@ -1002,9 +1002,9 @@ fn cleanup_old_binaries() -> Result<()> {
 }
 
 fn is_new_version(version: &str) -> bool {
-    SemanticVersion::from_str(version)
+    semver::Version::from_str(version)
         .ok()
-        .zip(SemanticVersion::from_str(env!("ZED_PKG_VERSION")).ok())
+        .zip(semver::Version::from_str(env!("ZED_PKG_VERSION")).ok())
         .is_some_and(|(version, current_version)| version >= current_version)
 }
 
