@@ -827,7 +827,6 @@ impl ExtensionsPage {
                             .gap_1()
                             .child({
                                 let repo_url_for_tooltip = repository_url.clone();
-                                let repo_url_for_click = repository_url.clone();
 
                                 IconButton::new(
                                     SharedString::from(format!("repository-{}", extension.id)),
@@ -844,7 +843,7 @@ impl ExtensionsPage {
                                 })
                                 .on_click(cx.listener(
                                     move |_, _, _, cx| {
-                                        cx.open_url(&repo_url_for_click);
+                                        cx.open_url(&repository_url);
                                     },
                                 ))
                             })
