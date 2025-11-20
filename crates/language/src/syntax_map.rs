@@ -1306,6 +1306,7 @@ fn parse_text(
         parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
         parser
+            // TODO JK hotspot
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(start_byte + offset);

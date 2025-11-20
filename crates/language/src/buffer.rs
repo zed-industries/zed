@@ -1574,8 +1574,10 @@ impl Buffer {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
                 self.reparse = None;
             }
+            // TODO JK hotspot
             Err(parse_task) => {
                 // todo(lw): hot foreground spawn
+                log::error!("Oops, we failed in bg, so let's try fg instead");
                 self.reparse = Some(cx.spawn(async move |this, cx| {
                     let new_syntax_map = cx.background_spawn(parse_task).await;
                     this.update(cx, move |this, cx| {
