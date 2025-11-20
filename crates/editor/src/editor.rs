@@ -1196,6 +1196,7 @@ pub struct Editor {
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
+    accent_overrides: Vec<SharedString>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
 }
 
@@ -2338,6 +2339,7 @@ impl Editor {
             lookup_key: None,
             select_next_is_case_sensitive: None,
             applicable_language_settings: HashMap::default(),
+            accent_overrides: Vec::new(),
             fetched_tree_sitter_chunks: HashMap::default(),
         };
 
@@ -2346,6 +2348,7 @@ impl Editor {
         }
 
         editor.applicable_language_settings = editor.fetch_applicable_language_settings(cx);
+        editor.accent_overrides = editor.fetch_accent_overrides(cx);
 
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -21533,6 +21536,17 @@ impl Editor {
         cx.notify();
     }
 
+    fn fetch_accent_overrides(&self, cx: &App) -> Vec<SharedString> {
+        theme::ThemeSettings::get_global(cx)
+            .theme_overrides
+            .get(cx.theme().name.as_ref())
+            .map(|theme_style| &theme_style.accents)
+            .into_iter()
+            .flatten()
+            .flat_map(|accent| accent.0.clone())
+            .collect()
+    }
+
     fn fetch_applicable_language_settings(
         &self,
         cx: &App,
@@ -21558,9 +21572,11 @@ impl Editor {
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_language_settings = self.fetch_applicable_language_settings(cx);
         let language_settings_changed = new_language_settings != self.applicable_language_settings;
-        if language_settings_changed {
-            self.applicable_language_settings = new_language_settings;
-        }
+        self.applicable_language_settings = new_language_settings;
+
+        let new_accent_overrides = self.fetch_accent_overrides(cx);
+        let accent_overrides_changed = new_accent_overrides != self.accent_overrides;
+        self.accent_overrides = new_accent_overrides;
 
         if self.diagnostics_enabled() {
             let new_severity = EditorSettings::get_global(cx)
@@ -21634,7 +21650,7 @@ impl Editor {
                 }
             }
 
-            if language_settings_changed {
+            if language_settings_changed || accent_overrides_changed {
                 self.colorize_brackets(true, cx);
             }
 

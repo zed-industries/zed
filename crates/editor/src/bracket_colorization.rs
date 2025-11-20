@@ -164,8 +164,10 @@ mod tests {
     use project::Project;
     use rope::Point;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AccentContent, SettingsStore};
     use text::{Bias, OffsetRangeExt, ToOffset};
+    use theme::ThemeStyleContent;
+    use ui::SharedString;
     use util::{path, post_inc};
 
     #[gpui::test]
@@ -1147,6 +1149,54 @@ mod foo «1{
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
         );
+
+        cx.update(|cx| {
+            let theme = cx.theme().name.clone();
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.theme_overrides = HashMap::from_iter([(
+                        theme.to_string(),
+                        ThemeStyleContent {
+                            accents: vec![
+                                AccentContent(Some(SharedString::new("#ff0000"))),
+                                AccentContent(Some(SharedString::new("#0000ff"))),
+                            ],
+                            ..ThemeStyleContent::default()
+                        },
+                    )]);
+                });
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        let editor_snapshot = editor
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+        assert_eq!(
+            indoc! {r#"
+
+
+{«1[]1»fn main«1()1» «1{«2{«1()1»}2»}1»
+
+
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«1<Vec«2<«1()1»>2»>1» = None;
+        // a
+        // b
+
+
+    fn process_data_2«2()2» «2{
+        let other_map: Option«1<Vec«2<«1()1»>2»>1» = None;
+    }2»
+}1»
+
+1 hsla(0.00, 100.00%, 78.12%, 1.00)
+2 hsla(240.00, 100.00%, 82.81%, 1.00)
+"#,},
+            &editor_bracket_colors_markup(&editor_snapshot),
+            "After updating theme accents, the editor should update the bracket coloring"
+        );
     }
 
     fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
@@ -1231,5 +1281,3 @@ mod foo «1{
         markup
     }
 }
-
-// todo! test that changing accents repaints the brackets
