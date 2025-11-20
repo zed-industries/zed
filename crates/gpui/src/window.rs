@@ -3902,13 +3902,7 @@ impl Window {
 
             let text_input_requires_timeout = event
                 .downcast_ref::<KeyDownEvent>()
-                .filter(|key_down| {
-                    key_down.keystroke.key_char.is_some()
-                        && key_down
-                            .keystroke
-                            .modifiers
-                            .is_subset_of(&Modifiers::shift())
-                })
+                .filter(|key_down| key_down.keystroke.key_char.is_some())
                 .and_then(|_| self.platform_window.take_input_handler())
                 .map_or(false, |mut input_handler| {
                     let accepts = input_handler.accepts_text_input(self, cx);
