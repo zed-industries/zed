@@ -436,10 +436,10 @@ message Envelope {
         OpenImageByPath open_image_by_path = 391;
         OpenImageResponse open_image_response = 392;
         CreateImageForPeer create_image_for_peer = 393;
-        GitFileHistory git_file_history = 394;
-        GitFileHistoryResponse git_file_history_response = 395;
 
-        ExternalExtensionAgentsUpdated external_extension_agents_updated = 396; // current max
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 396;
+        GitFileHistory git_file_history = 397;
+        GitFileHistoryResponse git_file_history_response = 398; // current max
     }
 
     reserved 87 to 88;
