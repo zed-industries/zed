@@ -663,6 +663,10 @@ impl Zeta {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
+        if self.edit_prediction_model != ZetaEditPredictionModel::ZedCloud {
+            return;
+        }
+
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
