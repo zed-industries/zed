@@ -9,7 +9,7 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -25,20 +25,16 @@ use git::repository::{
 };
 use git::stash::GitStash;
 use git::status::StageStatus;
-use git::{
-    Amend, Signoff, ToggleStaged, parse_git_remote_url, repository::RepoPath, status::FileStatus,
-};
-use git::{BuildCreatePullRequestParams, GitHostingProviderRegistry};
+use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
     TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, ClickEvent, Context, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
-    uniform_list,
+    Action, AsyncApp, AsyncWindowContext, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -61,12 +57,7 @@ use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-    usize,
-};
+use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
@@ -131,12 +122,6 @@ struct GitMenuState {
     has_new_changes: bool,
     sort_by_path: bool,
     has_stash_items: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PrLink {
-    text: String,
-    link: String,
 }
 
 fn git_panel_context_menu(
@@ -326,7 +311,6 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
-    last_pr_links: HashMap<RepositoryId, PrLink>,
     _settings_subscription: Subscription,
 }
 
@@ -428,27 +412,14 @@ impl GitPanel {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
-                        repo_id,
-                        RepositoryEvent::BranchChanged,
-                        true,
-                    ) => {
-                        if this.last_pr_links.remove(&repo_id).is_some() {
-                            cx.notify();
-                        }
-                        this.schedule_update(window, cx);
-                    }
-                    GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::MergeHeadsChanged,
+                        RepositoryEvent::StatusesChanged
+                        | RepositoryEvent::BranchChanged
+                        | RepositoryEvent::MergeHeadsChanged,
                         true,
                     )
-                    | GitStoreEvent::RepositoryAdded => {
-                        this.schedule_update(window, cx);
-                    }
-                    GitStoreEvent::RepositoryRemoved(repo_id) => {
-                        if this.last_pr_links.remove(&repo_id).is_some() {
-                            cx.notify();
-                        }
+                    | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryRemoved(_) => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -501,7 +472,6 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
-                last_pr_links: HashMap::new(),
                 _settings_subscription,
             };
 
@@ -2898,16 +2868,6 @@ impl GitPanel {
         self.tracked_count > 0
     }
 
-    fn pr_link_for_repo(&self, repo_id: RepositoryId) -> Option<&PrLink> {
-        self.last_pr_links.get(&repo_id)
-    }
-
-    fn pr_link_for_active_repo<'a>(&'a self, cx: &'a App) -> Option<&'a PrLink> {
-        let repo = self.active_repository.as_ref()?;
-        let repo_id = repo.read(cx).id;
-        self.pr_link_for_repo(repo_id)
-    }
-
     pub fn has_unstaged_conflicts(&self) -> bool {
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
@@ -2974,36 +2934,8 @@ impl GitPanel {
             return;
         };
 
-        let view_log_output = format!("stdout:\n{}\nstderr:\n{}", &info.stdout, &info.stderr);
-        let SuccessMessage { message, style } = remote_output::format_output(&action, info);
-
-        let mut should_notify = false;
-        if let Some(active_repository) = self.active_repository.as_ref() {
-            let repo_id = active_repository.read(cx).id;
-            match &style {
-                remote_output::SuccessStyle::PushPrLink { text, link } => {
-                    let entry = PrLink {
-                        text: text.clone(),
-                        link: link.clone(),
-                    };
-                    match self.last_pr_links.insert(repo_id, entry) {
-                        Some(existing) if existing.text == *text && existing.link == *link => {}
-                        _ => should_notify = true,
-                    }
-                }
-                _ => {
-                    if self.last_pr_links.remove(&repo_id).is_some() {
-                        should_notify = true;
-                    }
-                }
-            }
-        }
-
-        if should_notify {
-            cx.notify();
-        }
-
         workspace.update(cx, |workspace, cx| {
+            let SuccessMessage { message, style } = remote_output::format_output(&action, info);
             let workspace_weak = cx.weak_entity();
             let operation = action.name();
 
@@ -3023,16 +2955,9 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink { .. } => this
+                    PushPrLink { text, link } => this
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
-                        .action("View Log", move |window, cx| {
-                            let output = view_log_output.clone();
-                            workspace_weak
-                                .update(cx, move |workspace, cx| {
-                                    Self::open_output(operation, workspace, &output, window, cx)
-                                })
-                                .ok();
-                        }),
+                        .action(text, move |_, cx| cx.open_url(&link)),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)
@@ -3222,7 +3147,7 @@ impl GitPanel {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right("commit-split-button-right")
-                    .layer(ElevationIndex::ModalSurface)
+                    .layer(ui::ElevationIndex::ModalSurface)
                     .size(ButtonSize::None)
                     .child(
                         h_flex()
@@ -4381,67 +4306,6 @@ impl GitPanel {
             self.load_last_commit_message_if_empty(cx);
         }
     }
-    pub fn open_create_pull_request(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
-            self.show_error_toast("create pull request", anyhow!("No active repository"), cx);
-            return;
-        };
-
-        if let Some(pr_link) = self.pr_link_for_active_repo(cx) {
-            cx.open_url(pr_link.link.as_str());
-            return;
-        }
-
-        let (branch_name, remote_url) = {
-            let repo_snapshot = active_repository.read(cx);
-            let Some(branch) = repo_snapshot.branch.as_ref() else {
-                self.show_error_toast("create pull request", anyhow!("No active branch"), cx);
-                return;
-            };
-
-            // Prefer origin for MVP per request.
-            let Some(remote_url) = repo_snapshot.remote_origin_url.clone() else {
-                self.show_error_toast(
-                    "create pull request",
-                    anyhow!("No remote URL found (origin missing)"),
-                    cx,
-                );
-                return;
-            };
-
-            (branch.name().to_string(), remote_url)
-        };
-
-        let provider_registry = GitHostingProviderRegistry::default_global(cx);
-        let Some((provider, parsed_remote)) = parse_git_remote_url(provider_registry, &remote_url)
-        else {
-            self.show_error_toast(
-                "create pull request",
-                anyhow!("Could not parse remote URL for a supported hosting provider"),
-                cx,
-            );
-            return;
-        };
-
-        // Keep target_branch = None for MVP per request.
-        let params = BuildCreatePullRequestParams {
-            source_branch: &branch_name,
-            target_branch: None,
-        };
-
-        match provider.build_create_pull_request_url(&parsed_remote, params) {
-            Some(url) => {
-                cx.open_url(url.as_str());
-            }
-            None => {
-                self.show_error_toast(
-                    "create pull request",
-                    anyhow!("Provider did not return a create pull request URL"),
-                    cx,
-                );
-            }
-        }
-    }
 }
 
 impl Render for GitPanel {
@@ -4743,7 +4607,7 @@ impl RenderOnce for PanelRepoFooter {
         const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
         const MAX_SHORT_SHA_LEN: usize = 8;
 
-        let mut branch_name = self
+        let branch_name = self
             .branch
             .as_ref()
             .map(|branch| branch.name().to_owned())
@@ -4786,7 +4650,7 @@ impl RenderOnce for PanelRepoFooter {
         };
 
         let truncated_branch_name = if branch_actual_len <= branch_display_len {
-            std::mem::take(&mut branch_name)
+            branch_name
         } else {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
@@ -4862,7 +4726,7 @@ impl RenderOnce for PanelRepoFooter {
                     })
                     .child(branch_selector),
             )
-            .children(if let Some(git_panel) = self.git_panel.as_ref() {
+            .children(if let Some(git_panel) = self.git_panel {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
             } else {
                 None
