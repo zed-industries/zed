@@ -2099,7 +2099,7 @@ impl GitStore {
 
         let remotes = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.get_remotes(branch_name)
+                repository_handle.get_remotes(branch_name, false)
             })?
             .await??;
 
@@ -4737,12 +4737,27 @@ impl Repository {
     pub fn get_remotes(
         &mut self,
         branch_name: Option<String>,
+        is_push: bool,
     ) -> oneshot::Receiver<Result<Vec<Remote>>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.get_remotes(branch_name).await
+                    let remote = match branch_name {
+                        Some(name) => {
+                            if is_push {
+                                backend.get_push_remote(name.clone()).await?
+                            } else {
+                                backend.get_branch_remote(name).await?
+                            }
+                        }
+                        None => None,
+                    };
+
+                    match remote {
+                        Some(remote) => Ok(vec![remote]),
+                        None => backend.get_all_remotes().await,
+                    }
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let response = client
