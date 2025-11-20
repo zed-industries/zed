@@ -168,7 +168,7 @@ impl Editor {
                     match EditorSettings::get_global(cx).go_to_definition_fallback {
                         GoToDefinitionFallback::None => None,
                         GoToDefinitionFallback::FindAllReferences => {
-                            editor.find_all_references(&FindAllReferences, window, cx)
+                            editor.find_all_references(&FindAllReferences::default(), window, cx)
                         }
                     }
                 })

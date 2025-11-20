@@ -16596,7 +16596,7 @@ impl Editor {
                 GoToDefinitionFallback::None => Ok(Navigated::No),
                 GoToDefinitionFallback::FindAllReferences => {
                     match editor.update_in(cx, |editor, window, cx| {
-                        editor.find_all_references(&FindAllReferences, window, cx)
+                        editor.find_all_references(&FindAllReferences::default(), window, cx)
                     })? {
                         Some(references) => references.await,
                         None => Ok(Navigated::No),
@@ -17144,10 +17144,11 @@ impl Editor {
 
     pub fn find_all_references(
         &mut self,
-        _: &FindAllReferences,
+        action: &FindAllReferences,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
+        let always_open_multibuffer = action.always_open_multibuffer;
         let selection = self.selections.newest_anchor();
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -17203,9 +17204,10 @@ impl Editor {
                         let buffer = location.buffer.read(cx);
                         (location.buffer, location.range.to_point(buffer))
                     })
-                    // remove ranges that intersect current selection
+                    // if special-casing the single-match case, remove ranges
+                    // that intersect current selection
                     .filter(|(location_buffer, location)| {
-                        if &buffer != location_buffer {
+                        if always_open_multibuffer || &buffer != location_buffer {
                             return true;
                         }
 
@@ -17227,11 +17229,7 @@ impl Editor {
                 num_locations += ranges.len();
             }
 
-            if num_locations == 0 {
-                return Ok(Navigated::No);
-            }
-
-            if num_locations == 1 {
+            if num_locations == 1 && !always_open_multibuffer {
                 let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
                 let target_range = target_ranges.first().unwrap().clone();
 
@@ -17266,7 +17264,7 @@ impl Editor {
                             });
                         });
                     }
-                    Navigated::Yes
+                    Navigated::No
                 });
             }
 
@@ -17303,7 +17301,7 @@ impl Editor {
         }))
     }
 
-    /// Opens a multibuffer with the given project locations in it
+    /// Opens a multibuffer with the given project locations in it.
     pub fn open_locations_in_multibuffer(
         workspace: &mut Workspace,
         locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,

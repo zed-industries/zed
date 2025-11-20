@@ -22189,7 +22189,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         });
     let navigated = cx
         .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences, window, cx)
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
         .unwrap()
         .await
@@ -22225,7 +22225,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     );
     let navigated = cx
         .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences, window, cx)
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
         .unwrap()
         .await
@@ -22277,7 +22277,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         });
     let navigated = cx
         .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences, window, cx)
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
         .unwrap()
         .await
@@ -28071,4 +28071,84 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         Z
         3
         "});
+}
+
+#[gpui::test]
+async fn test_find_all_references_single_result_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"
+        fn main() {
+            let ˇfoo = 123;
+            let bar = foo;
+        }
+        "#
+        .unindent(),
+    );
+    let mut handler = cx
+        .lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            dbg!(&params.text_document_position);
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 11)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 14), lsp::Position::new(4, 17)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(
+                &FindAllReferences {
+                    always_open_multibuffer: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+
+    handler
+        .next()
+        .await
+        .expect("Should have called the references handler");
+
+    // todo! is this right?
+    assert_eq!(navigated, Navigated::No, "Should stay in the same editor");
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+        assert_eq!(
+            editors.len(),
+            1,
+            "don't open a new buffer when `always_open_multibuffer: false`"
+        );
+    });
+
+    // the cursor in this buffer should move to the only other reference
+    cx.assert_editor_state(
+        &r#"
+        fn main() {
+            let foo = 123;
+            let bar = ˇfoo;
+        }
+        "#
+        .unindent(),
+    );
 }
