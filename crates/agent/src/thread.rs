@@ -1389,7 +1389,7 @@ impl Thread {
         use LanguageModelCompletionEvent::*;
 
         match event {
-            LanguageModelCompletionEvent::StartMessage { .. } => {
+            StartMessage { .. } => {
                 self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
