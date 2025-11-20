@@ -492,12 +492,12 @@ pub enum Model {
     #[serde(rename = "gemini-2.0-flash")]
     Gemini20Flash,
     #[serde(
-        rename = "gemini-2.5-flash-lite-preview",
+        rename = "gemini-2.5-flash-lite-latest",
         alias = "gemini-2.5-flash-lite-preview-06-17"
     )]
-    Gemini25FlashLitePreview,
+    Gemini25FlashLite,
     #[serde(
-        rename = "gemini-2.5-flash",
+        rename = "gemini-2.5-flash-latest",
         alias = "gemini-2.0-flash-thinking-exp",
         alias = "gemini-2.5-flash-preview-04-17",
         alias = "gemini-2.5-flash-preview-05-20",
@@ -537,8 +537,8 @@ impl Model {
         match self {
             Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
             Self::Gemini20Flash => "gemini-2.0-flash",
-            Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview",
-            Self::Gemini25Flash => "gemini-2.5-flash",
+            Self::Gemini25FlashLite => "gemini-2.5-flash-lite-latest",
+            Self::Gemini25Flash => "gemini-2.5-flash-latest",
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini3ProPreview => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
@@ -548,8 +548,8 @@ impl Model {
         match self {
             Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
             Self::Gemini20Flash => "gemini-2.0-flash",
-            Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview-06-17",
-            Self::Gemini25Flash => "gemini-2.5-flash",
+            Self::Gemini25FlashLite => "gemini-2.5-flash-lite-latest",
+            Self::Gemini25Flash => "gemini-2.5-flash-latest",
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini3ProPreview => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
@@ -560,7 +560,7 @@ impl Model {
         match self {
             Self::Gemini20FlashLite => "Gemini 2.0 Flash-Lite",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
-            Self::Gemini25FlashLitePreview => "Gemini 2.5 Flash-Lite Preview",
+            Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
             Self::Gemini3ProPreview => "Gemini 3 Pro",
@@ -574,7 +574,7 @@ impl Model {
         match self {
             Self::Gemini20FlashLite => 1_048_576,
             Self::Gemini20Flash => 1_048_576,
-            Self::Gemini25FlashLitePreview => 1_000_000,
+            Self::Gemini25FlashLite => 1_048_576,
             Self::Gemini25Flash => 1_048_576,
             Self::Gemini25Pro => 1_048_576,
             Self::Gemini3ProPreview => 1_048_576,
@@ -586,7 +586,7 @@ impl Model {
         match self {
             Model::Gemini20FlashLite => Some(8_192),
             Model::Gemini20Flash => Some(8_192),
-            Model::Gemini25FlashLitePreview => Some(64_000),
+            Model::Gemini25FlashLite => Some(65_536),
             Model::Gemini25Flash => Some(65_536),
             Model::Gemini25Pro => Some(65_536),
             Model::Gemini3ProPreview => Some(65_536),
@@ -606,7 +606,7 @@ impl Model {
         match self {
             Self::Gemini20FlashLite
             | Self::Gemini20Flash => GoogleModelMode::Default,
-            Self::Gemini25FlashLitePreview
+            Self::Gemini25FlashLite
             | Self::Gemini25Flash
             | Self::Gemini25Pro
             | Self::Gemini3ProPreview => {
