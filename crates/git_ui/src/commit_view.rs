@@ -277,13 +277,11 @@ impl CommitView {
         if let Some(remote) = remote {
             let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
             match window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                None => {
-                    Icon::new(IconName::Person)
-                        .color(Color::Muted)
-                        .size(IconSize::Medium)
-                        .into_element()
-                        .into_any()
-                }
+                None => Icon::new(IconName::Person)
+                    .color(Color::Muted)
+                    .size(IconSize::Medium)
+                    .into_element()
+                    .into_any(),
                 Some(None) => Icon::new(IconName::Person)
                     .color(Color::Muted)
                     .size(IconSize::Medium)
