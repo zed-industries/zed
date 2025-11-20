@@ -69,6 +69,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: one_page
     pub scroll_beyond_last_line: Option<ScrollBeyondLastLine>,
+    /// Command used for privileged writes when normal writes fail.
+    /// Example: "sudo", "doas", "pkexec".
+    ///
+    /// Default: "sudo"
+    pub su_cmd: Option<String>,
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
