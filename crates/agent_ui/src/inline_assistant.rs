@@ -16,6 +16,7 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::EditorSnapshot;
 use editor::MultiBufferOffset;
 use editor::RowExt;
 use editor::SelectionEffects;
@@ -351,25 +352,20 @@ impl InlineAssistant {
         }
     }
 
-    pub fn assist(
+    fn codegen_ranges(
         &mut self,
         editor: &Entity<Editor>,
-        workspace: WeakEntity<Workspace>,
-        context_store: Entity<ContextStore>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        initial_prompt: Option<String>,
+        snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let selections = editor.selections.all::<Point>(&snapshot.display_snapshot);
-            let newest_selection = editor
-                .selections
-                .newest::<Point>(&snapshot.display_snapshot);
-            (snapshot, selections, newest_selection)
+    ) -> Option<(Vec<Range<Anchor>>, Selection<Point>)> {
+        let (initial_selections, newest_selection) = editor.update(cx, |editor, _| {
+            (
+                editor.selections.all::<Point>(&snapshot.display_snapshot),
+                editor
+                    .selections
+                    .newest::<Point>(&snapshot.display_snapshot),
+            )
         });
 
         // Check if there is already an inline assistant that contains the
@@ -382,7 +378,7 @@ impl InlineAssistant {
                     && newest_selection.end.row <= range.end.row
                 {
                     self.focus_assist(*assist_id, window, cx);
-                    return;
+                    return None;
                 }
             }
         }
@@ -474,6 +470,29 @@ impl InlineAssistant {
             }
         }
 
+        Some((codegen_ranges, newest_selection))
+    }
+
+    pub fn assist(
+        &mut self,
+        editor: &Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
+        context_store: Entity<ContextStore>,
+        project: WeakEntity<Project>,
+        prompt_store: Option<Entity<PromptStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
+        initial_prompt: Option<String>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+
+        let Some((codegen_ranges, newest_selection)) =
+            self.codegen_ranges(editor, &snapshot, window, cx)
+        else {
+            return;
+        };
+
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new(|cx| {
             MultiBuffer::singleton(
@@ -520,9 +539,9 @@ impl InlineAssistant {
 
             if assist_to_focus.is_none() {
                 let focus_assist = if newest_selection.reversed {
-                    range.start.to_point(snapshot) == newest_selection.start
+                    range.start.to_point(&snapshot) == newest_selection.start
                 } else {
-                    range.end.to_point(snapshot) == newest_selection.end
+                    range.end.to_point(&snapshot) == newest_selection.end
                 };
                 if focus_assist {
                     assist_to_focus = Some(assist_id);
