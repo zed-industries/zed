@@ -5398,17 +5398,8 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)> + '_>
     {
-        self.bracket_matches(range)
-            .map(|matches_iter| matches_iter.map(BracketMatch::bracket_ranges))
-    }
-
-    fn bracket_matches<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<impl Iterator<Item = BracketMatch<MultiBufferOffset>> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
-
         Some(
             excerpt
                 .buffer()
@@ -5427,7 +5418,8 @@ impl MultiBufferSnapshot {
                             newline_only: pair.newline_only,
                             syntax_layer_depth: pair.syntax_layer_depth,
                         })
-                }),
+                })
+                .map(BracketMatch::bracket_ranges),
         )
     }
 

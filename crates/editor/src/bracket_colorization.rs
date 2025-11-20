@@ -1,3 +1,7 @@
+//! Bracket highlights, also known as "rainbow brackets".
+//! Uses tree-sitter queries from brackets.scm to capture bracket pairs,
+//! and theme accents to colorize those.
+
 use std::ops::Range;
 
 use crate::Editor;

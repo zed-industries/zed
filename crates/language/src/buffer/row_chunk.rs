@@ -19,8 +19,8 @@ use crate::BufferRow;
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
 #[derive(Clone)]
 pub struct RowChunks {
-    pub snapshot: text::BufferSnapshot,
-    pub chunks: Arc<[RowChunk]>,
+    pub(crate) snapshot: text::BufferSnapshot,
+    chunks: Arc<[RowChunk]>,
 }
 
 impl std::fmt::Debug for RowChunks {
