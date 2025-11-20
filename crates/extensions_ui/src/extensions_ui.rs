@@ -293,6 +293,7 @@ pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
     list: UniformListScrollHandle,
     is_fetching_extensions: bool,
+    fetch_failed: bool,
     filter: ExtensionFilter,
     remote_extension_entries: Vec<ExtensionMetadata>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
@@ -353,6 +354,7 @@ impl ExtensionsPage {
                 workspace: workspace.weak_handle(),
                 list: scroll_handle,
                 is_fetching_extensions: false,
+                fetch_failed: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
                 filtered_remote_extension_indices: Vec::new(),
@@ -479,6 +481,7 @@ impl ExtensionsPage {
         cx: &mut Context<Self>,
     ) {
         self.is_fetching_extensions = true;
+        self.fetch_failed = false;
         cx.notify();
 
         let extension_store = ExtensionStore::global(cx);
@@ -534,17 +537,31 @@ impl ExtensionsPage {
             };
 
             let fetch_result = remote_extensions.await;
-            this.update(cx, |this, cx| {
+
+            let result = this.update(cx, |this, cx| {
                 cx.notify();
                 this.dev_extension_entries = dev_extensions;
                 this.is_fetching_extensions = false;
-                this.remote_extension_entries = fetch_result?;
-                this.filter_extension_entries(cx);
-                if let Some(callback) = on_complete {
-                    callback(this, cx);
+
+                match fetch_result {
+                    Ok(extensions) => {
+                        this.fetch_failed = false;
+                        this.remote_extension_entries = extensions;
+                        this.filter_extension_entries(cx);
+                        if let Some(callback) = on_complete {
+                            callback(this, cx);
+                        }
+                        Ok(())
+                    }
+                    Err(err) => {
+                        this.fetch_failed = true;
+                        this.filter_extension_entries(cx);
+                        Err(err)
+                    }
                 }
-                anyhow::Ok(())
-            })?
+            });
+
+            result?
         })
         .detach_and_log_err(cx);
     }
@@ -1277,7 +1294,9 @@ impl ExtensionsPage {
         let has_search = self.search_query(cx).is_some();
 
         let message = if self.is_fetching_extensions {
-            "Loading extensions..."
+            "Loading extensions…"
+        } else if self.fetch_failed {
+            "Failed to load extensions. Please check your connection and try again."
         } else {
             match self.filter {
                 ExtensionFilter::All => {
@@ -1304,7 +1323,17 @@ impl ExtensionsPage {
             }
         };
 
-        Label::new(message)
+        h_flex()
+            .py_4()
+            .gap_1p5()
+            .when(self.fetch_failed, |this| {
+                this.child(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+            })
+            .child(Label::new(message))
     }
 
     fn update_settings(
@@ -1673,9 +1702,7 @@ impl Render for ExtensionsPage {
                 }
 
                 if count == 0 {
-                    this.py_4()
-                        .child(self.render_empty_state(cx))
-                        .into_any_element()
+                    this.child(self.render_empty_state(cx)).into_any_element()
                 } else {
                     let scroll_handle = self.list.clone();
                     this.child(
