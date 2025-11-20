@@ -1496,7 +1496,7 @@ impl CollabPanel {
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.filter_editor.update(cx, |editor, cx| {
-            if editor.buffer().read(cx).len(cx) > 0 {
+            if editor.buffer().read(cx).len(cx).0 > 0 {
                 editor.set_text("", window, cx);
                 true
             } else {

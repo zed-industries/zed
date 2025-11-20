@@ -124,7 +124,6 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
-    map<string, string> renamed_paths = 14;
 }
 
 message RemoveRepository {

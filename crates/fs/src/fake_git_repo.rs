@@ -359,7 +359,6 @@ impl GitRepository for FakeGitRepository {
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             anyhow::Ok(GitStatus {
                 entries: entries.into(),
-                renamed_paths: HashMap::default(),
             })
         });
         Task::ready(match result {

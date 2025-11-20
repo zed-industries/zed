@@ -970,6 +970,7 @@ pub fn map_to_language_model_completion_events(
                                         is_input_complete: true,
                                         raw_input: tool_use.input_json,
                                         input,
+                                        thought_signature: None,
                                     },
                                 ))
                             }),

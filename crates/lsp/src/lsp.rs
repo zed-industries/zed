@@ -764,6 +764,10 @@ impl LanguageServer {
                                     // "textEdit".to_string(),
                                 ],
                             }),
+                            deprecated_support: Some(true),
+                            tag_support: Some(TagSupport {
+                                value_set: vec![CompletionItemTag::DEPRECATED],
+                            }),
                             insert_replace_support: Some(true),
                             label_details_support: Some(true),
                             insert_text_mode_support: Some(InsertTextModeSupport {

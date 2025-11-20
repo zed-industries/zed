@@ -537,7 +537,6 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             let engine_ref = engine.weak();
             executor
                 .spawn(async move {
-                    IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
                     // Somewhat arbitrary interval, as it isn't a guaranteed interval.
                     // But this is a rough upper bound for how long the extension execution can block on
                     // `Future::poll`.
@@ -643,6 +642,12 @@ impl WasmHost {
 
             let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
             let extension_task = async move {
+                // note: Setting the thread local here will slowly "poison" all tokio threads
+                // causing us to not record their panics any longer.
+                //
+                // This is fine though, the main zed binary only uses tokio for livekit and wasm extensions.
+                // Livekit seldom (if ever) panics 🤞 so the likelihood of us missing a panic in sentry is very low.
+                IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
                 while let Some(call) = rx.next().await {
                     (call)(&mut extension, &mut store).await;
                 }
@@ -659,8 +664,8 @@ impl WasmHost {
         cx.spawn(async move |cx| {
             let (extension_task, manifest, work_dir, tx, zed_api_version) =
                 cx.background_executor().spawn(load_extension_task).await?;
-            // we need to run run the task in an extension context as wasmtime_wasi may
-            // call into tokio, accessing its runtime handle
+            // we need to run run the task in a tokio context as wasmtime_wasi may
+            // call into tokio, accessing its runtime handle when we trigger the `engine.increment_epoch()` above.
             let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
 
             Ok(WasmExtension {

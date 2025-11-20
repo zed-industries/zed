@@ -33,10 +33,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         SettingField {
                             json_path: Some("project_name"),
                             pick: |settings_content| {
-                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                                settings_content.project.worktree.project_name.as_ref().or(DEFAULT_EMPTY_STRING)
                             },
                             write: |settings_content, value| {
-                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                                settings_content.project.worktree.project_name = value.filter(|name| !name.is_empty());
                             },
                         }
                     ),
@@ -5489,6 +5489,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                         write: |settings_content, value| {
                             settings_content.git.get_or_insert_default().hunk_style = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Path Style",
+                    description: "Should the name or path be displayed first in the git view.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.path_style"),
+                        pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git.get_or_insert_default().path_style = value;
                         },
                     }),
                     metadata: None,

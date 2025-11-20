@@ -399,13 +399,13 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
 
 impl From<Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.to_any_view()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.to_any_view()
     }
 }
 
