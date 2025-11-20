@@ -325,13 +325,10 @@ pub enum MessagePart {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thought_signature: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -344,6 +341,8 @@ pub enum ToolCallContent {
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -356,19 +355,18 @@ pub struct ResponseMessageDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ToolCallChunk {
     pub index: usize,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thought_signature: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+    #[serde(default)]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

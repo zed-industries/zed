@@ -419,9 +419,9 @@ pub fn into_open_router(
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
+                                thought_signature: tool_use.thought_signature.clone(),
                             },
                         },
-                        thought_signature: tool_use.thought_signature.clone(),
                     };
 
                     if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
@@ -601,10 +601,6 @@ impl OpenRouterEventMapper {
                     entry.id = tool_id;
                 }
 
-                if let Some(thought_signature) = tool_call.thought_signature.clone() {
-                    entry.thought_signature = Some(thought_signature);
-                }
-
                 if let Some(function) = tool_call.function.as_ref() {
                     if let Some(name) = function.name.clone() {
                         entry.name = name;
@@ -612,6 +608,10 @@ impl OpenRouterEventMapper {
 
                     if let Some(arguments) = function.arguments.clone() {
                         entry.arguments.push_str(&arguments);
+                    }
+
+                    if let Some(thought_signature) = function.thought_signature.clone() {
+                        entry.thought_signature = Some(thought_signature);
                     }
                 }
             }
