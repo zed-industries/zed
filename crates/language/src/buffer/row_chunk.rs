@@ -73,7 +73,7 @@ impl RowChunks {
         self.chunks
             .iter()
             .filter(move |chunk| -> bool {
-                let chunk_range = chunk.row_range();
+                let chunk_range = chunk.row_range().to_inclusive();
                 row_ranges
                     .iter()
                     .any(|row_range| chunk_range.overlaps(&row_range))

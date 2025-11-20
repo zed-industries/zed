@@ -5,6 +5,7 @@ use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use language::language_settings;
 use multi_buffer::Anchor;
+use text::{OffsetRangeExt, ToPoint};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 struct ColorizedBracketsHighlight;
@@ -25,6 +26,7 @@ impl Editor {
             HashMap::default(),
             |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
+                dbg!(buffer_snapshot.file().map(|f| f.path()));
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
                     buffer_snapshot.file(),
@@ -36,6 +38,10 @@ impl Editor {
                         .fetched_tree_sitter_chunks
                         .entry(excerpt_id)
                         .or_default();
+                    dbg!(
+                        &fetched_chunks,
+                        (buffer_range.start..buffer_range.end).to_point(&buffer_snapshot),
+                    );
 
                     let brackets_by_accent = buffer_snapshot
                         .fetch_bracket_ranges(
@@ -44,7 +50,7 @@ impl Editor {
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
-                            if fetched_chunks.insert(chunk_range) {
+                            if fetched_chunks.insert(dbg!(chunk_range)) {
                                 pairs
                             } else {
                                 Vec::new()
@@ -55,17 +61,33 @@ impl Editor {
                             let buffer_open_range = buffer_snapshot
                                 .anchor_before(pair.open_range.start)
                                 ..buffer_snapshot.anchor_after(pair.open_range.end);
+                            let buffer_close_range = buffer_snapshot
+                                .anchor_before(pair.close_range.start)
+                                ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            eprintln!(
+                                "buffer bracket range {:?}..{:?}",
+                                buffer_open_range.start.to_point(&buffer_snapshot),
+                                buffer_close_range.end.to_point(&buffer_snapshot)
+                            );
                             let multi_buffer_open_range = multi_buffer_snapshot
                                 .anchor_in_excerpt(excerpt_id, buffer_open_range.start)?
                                 ..multi_buffer_snapshot
                                     .anchor_in_excerpt(excerpt_id, buffer_open_range.end)?;
-                            let buffer_close_range = buffer_snapshot
-                                .anchor_before(pair.close_range.start)
-                                ..buffer_snapshot.anchor_after(pair.close_range.end);
                             let multi_buffer_close_range = multi_buffer_snapshot
                                 .anchor_in_excerpt(excerpt_id, buffer_close_range.start)?
                                 ..multi_buffer_snapshot
                                     .anchor_in_excerpt(excerpt_id, buffer_close_range.end)?;
+                            eprintln!(
+                                "multi buffer bracket range {:?}..{:?}",
+                                multi_buffer::ToPoint::to_point(
+                                    &multi_buffer_open_range.start,
+                                    &multi_buffer_snapshot
+                                ),
+                                multi_buffer::ToPoint::to_point(
+                                    &multi_buffer_close_range.end,
+                                    &multi_buffer_snapshot
+                                )
+                            );
                             Some((
                                 color_index % accents_count,
                                 multi_buffer_open_range,
@@ -98,7 +120,7 @@ impl Editor {
             },
         );
 
-        if invalidate {
+        if dbg!(invalidate) {
             self.clear_highlights::<ColorizedBracketsHighlight>(cx);
         }
 
@@ -1071,7 +1093,7 @@ mod foo «1{
     fn process_data_2«2()2» «2{
         let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
     }2»
-}2»
+}1»
 
 1 hsla(29.00, 54.00%, 65.88%, 1.00)
 2 hsla(286.00, 51.00%, 75.25%, 1.00)
