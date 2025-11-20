@@ -128,7 +128,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DisplayPoint, MoveToBeginning, MoveToEnd, MoveUp,
+        DisplayPoint, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
@@ -136,15 +136,20 @@ mod tests {
         },
     };
     use collections::HashSet;
-    use gpui::UpdateGlobal as _;
+    use fs::FakeFs;
+    use gpui::{AppContext as _, UpdateGlobal as _};
     use indoc::indoc;
     use itertools::Itertools;
+    use language::Capability;
     use languages::rust_lang;
+    use multi_buffer::{ExcerptRange, MultiBuffer};
     use pretty_assertions::assert_eq;
+    use project::Project;
     use rope::Point;
+    use serde_json::json;
     use settings::SettingsStore;
     use text::{Bias, OffsetRangeExt, ToOffset};
-    use util::post_inc;
+    use util::{path, post_inc};
 
     #[gpui::test]
     async fn test_basic_bracket_colorization(cx: &mut gpui::TestAppContext) {
@@ -583,71 +588,6 @@ mod foo «1{
         );
     }
 
-    fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
-        let mut result = head.to_string();
-        result.push_str("\n");
-        result.push_str(&"//\n".repeat(comment_lines));
-        result.push_str(tail);
-        result
-    }
-
-    fn bracket_colors_markup(cx: &mut EditorTestContext) -> String {
-        let markup = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let actual_ranges = snapshot.all_text_highlight_ranges::<ColorizedBracketsHighlight>();
-            let editor_text = snapshot.text();
-
-            let mut next_index = 1;
-            let mut color_to_index = HashMap::default();
-            let mut annotations = Vec::new();
-            for (color, range) in &actual_ranges {
-                let color_index = *color_to_index
-                    .entry(*color)
-                    .or_insert_with(|| post_inc(&mut next_index));
-                let start_offset = snapshot.buffer_snapshot().point_to_offset(range.start);
-                let end_offset = snapshot.buffer_snapshot().point_to_offset(range.end);
-                let bracket_text = &editor_text[start_offset.0..end_offset.0];
-                let bracket_char = bracket_text.chars().next().unwrap();
-
-                if matches!(bracket_char, '{' | '[' | '(' | '<') {
-                    annotations.push((start_offset, format!("«{color_index}")));
-                } else {
-                    annotations.push((end_offset, format!("{color_index}»")));
-                }
-            }
-
-            annotations.sort_by(|(pos_a, text_a), (pos_b, text_b)| {
-                pos_a.cmp(pos_b).reverse().then_with(|| {
-                    let a_is_opening = text_a.starts_with('«');
-                    let b_is_opening = text_b.starts_with('«');
-                    match (a_is_opening, b_is_opening) {
-                        (true, false) => cmp::Ordering::Less,
-                        (false, true) => cmp::Ordering::Greater,
-                        _ => cmp::Ordering::Equal,
-                    }
-                })
-            });
-            annotations.dedup();
-
-            let mut text_with_annotations = editor_text;
-            for (pos, text) in annotations {
-                text_with_annotations.insert_str(pos.0, &text);
-            }
-
-            text_with_annotations.push_str("\n");
-            for (index, color) in color_to_index
-                .iter()
-                .map(|(color, index)| (*index, *color))
-                .sorted_by_key(|(index, _)| *index)
-            {
-                text_with_annotations.push_str(&format!("{index} {color}\n"));
-            }
-
-            text_with_annotations
-        });
-        markup
-    }
-
     #[gpui::test]
     async fn test_rainbow_bracket_highlights(cx: &mut gpui::TestAppContext) {
         init_test(cx, |language_settings| {
@@ -1029,4 +969,201 @@ mod foo «1{
             }
         }
     }
+
+    #[gpui::test]
+    async fn test_multi_buffer(cx: &mut gpui::TestAppContext) {
+        let comment_lines = 100;
+
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() {{()}}",
+                "lib.rs": separate_with_comment_lines(
+                    indoc! {r#"
+    mod foo {
+        fn process_data_1() {
+            let map: Option<Vec<()>> = None;
+        }
+    "#},
+                    indoc! {r#"
+        fn process_data_2() {
+            let other_map: Option<Vec<()>> = None;
+        }
+    }
+    "#},
+                    comment_lines,
+                )
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_2 = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+            multi_buffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                cx,
+            );
+
+            let first_excerpt_rows = 5;
+            let second_excerpt_rows = 5;
+            multi_buffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(first_excerpt_rows, 0)),
+                    ExcerptRange::new(
+                        Point::new(comment_lines as u32 + first_excerpt_rows, 0)
+                            ..Point::new(
+                                comment_lines as u32 + first_excerpt_rows + second_excerpt_rows,
+                                0,
+                            ),
+                    ),
+                ],
+                cx,
+            );
+            multi_buffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let editor_snapshot = editor
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+        assert_eq!(
+            indoc! {r#"
+
+
+fn main«1()1» «1{«2{«3()3»}2»}1»
+
+
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+
+
+
+    fn process_data_2«2()2» «2{
+        let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+}2»
+
+1 hsla(29.00, 54.00%, 65.88%, 1.00)
+2 hsla(286.00, 51.00%, 75.25%, 1.00)
+3 hsla(187.00, 47.00%, 59.22%, 1.00)
+4 hsla(355.00, 65.00%, 75.94%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#,},
+            &editor_bracket_colors_markup(&editor_snapshot),
+        );
+    }
+
+    fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
+        let mut result = head.to_string();
+        result.push_str("\n");
+        result.push_str(&"//\n".repeat(comment_lines));
+        result.push_str(tail);
+        result
+    }
+
+    fn bracket_colors_markup(cx: &mut EditorTestContext) -> String {
+        cx.update_editor(|editor, window, cx| {
+            editor_bracket_colors_markup(&editor.snapshot(window, cx))
+        })
+    }
+
+    fn editor_bracket_colors_markup(snapshot: &EditorSnapshot) -> String {
+        fn display_point_to_offset(text: &str, point: DisplayPoint) -> usize {
+            let mut offset = 0;
+            for (row_idx, line) in text.lines().enumerate() {
+                if row_idx < point.row().0 as usize {
+                    offset += line.len() + 1; // +1 for newline
+                } else {
+                    offset += point.column() as usize;
+                    break;
+                }
+            }
+            offset
+        }
+
+        let actual_ranges = snapshot.all_text_highlight_ranges::<ColorizedBracketsHighlight>();
+        let editor_text = snapshot.text();
+
+        let mut next_index = 1;
+        let mut color_to_index = HashMap::default();
+        let mut annotations = Vec::new();
+        for (color, range) in &actual_ranges {
+            let color_index = *color_to_index
+                .entry(*color)
+                .or_insert_with(|| post_inc(&mut next_index));
+            let start = snapshot.point_to_display_point(range.start, Bias::Left);
+            let end = snapshot.point_to_display_point(range.end, Bias::Right);
+            let start_offset = display_point_to_offset(&editor_text, start);
+            let end_offset = display_point_to_offset(&editor_text, end);
+            let bracket_text = &editor_text[start_offset..end_offset];
+            let bracket_char = bracket_text.chars().next().unwrap();
+
+            if matches!(bracket_char, '{' | '[' | '(' | '<') {
+                annotations.push((start_offset, format!("«{color_index}")));
+            } else {
+                annotations.push((end_offset, format!("{color_index}»")));
+            }
+        }
+
+        annotations.sort_by(|(pos_a, text_a), (pos_b, text_b)| {
+            pos_a.cmp(pos_b).reverse().then_with(|| {
+                let a_is_opening = text_a.starts_with('«');
+                let b_is_opening = text_b.starts_with('«');
+                match (a_is_opening, b_is_opening) {
+                    (true, false) => cmp::Ordering::Less,
+                    (false, true) => cmp::Ordering::Greater,
+                    _ => cmp::Ordering::Equal,
+                }
+            })
+        });
+        annotations.dedup();
+
+        let mut markup = editor_text;
+        for (offset, text) in annotations {
+            markup.insert_str(offset, &text);
+        }
+
+        markup.push_str("\n");
+        for (index, color) in color_to_index
+            .iter()
+            .map(|(color, index)| (*index, *color))
+            .sorted_by_key(|(index, _)| *index)
+        {
+            markup.push_str(&format!("{index} {color}\n"));
+        }
+
+        markup
+    }
 }
+
+// todo! test that changing accents repaints the brackets
