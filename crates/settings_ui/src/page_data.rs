@@ -5494,6 +5494,29 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Diff Views"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Navigation Controls",
+                    description: "Show toolbar controls (readonly button and quick action dropdown) in diff views.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.show_keybind_switcher"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .show_keybind_switcher
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .show_keybind_switcher = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {

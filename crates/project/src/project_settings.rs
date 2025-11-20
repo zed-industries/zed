@@ -348,6 +348,8 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// Settings for diff views (commit and stash).
+    pub show_keybind_switcher: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -501,6 +503,7 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            show_keybind_switcher: git.show_keybind_switcher.unwrap_or(true),
         };
         Self {
             context_servers: project

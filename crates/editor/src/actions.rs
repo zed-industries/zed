@@ -327,6 +327,42 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Specifies the target for opening excerpts.
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcerptTarget {
+    /// Opens the historical version of the file.
+    #[default]
+    OpenHistorical,
+    /// Opens the current version of the file.
+    OpenCurrent,
+    /// Opens the modified version of the file (after changes).
+    OpenModified,
+    /// Opens the parent version of the file (before changes).
+    OpenParent,
+}
+
+/// Opens excerpts from the current file.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct OpenExcerpts {
+    /// Specifies whether to open the current or historical version.
+    #[serde(default)]
+    pub target: ExcerptTarget,
+    pub allow_editing: bool,
+}
+
+/// Opens excerpts in a split pane.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct OpenExcerptsSplit {
+    /// Specifies whether to open the current or historical version.
+    #[serde(default)]
+    pub target: ExcerptTarget,
+}
+
 actions!(
     debugger,
     [
@@ -616,10 +652,6 @@ actions!(
         NextSnippetTabstop,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
-        /// Opens excerpts from the current file.
-        OpenExcerpts,
-        /// Opens excerpts in a split pane.
-        OpenExcerptsSplit,
         /// Opens the proposed changes editor.
         OpenProposedChangesEditor,
         /// Opens documentation for the symbol at cursor.

@@ -5810,7 +5810,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open_excerpts(&editor::actions::OpenExcerpts, window, cx);
+            outline_panel.open_excerpts(&editor::actions::OpenExcerpts::default(), window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

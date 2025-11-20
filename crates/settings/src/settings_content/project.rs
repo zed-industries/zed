@@ -311,6 +311,8 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// Settings for diff views (commit and stash).
+    pub show_keybind_switcher: Option<bool>,
 }
 
 #[derive(
