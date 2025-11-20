@@ -1787,7 +1787,7 @@ mod tests {
 
         // Disallowed non-file mentions
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @symbol main", 0, &vec![PromptContextType::File]),
+            MentionCompletion::try_parse("Lorem @symbol main", 0, &[PromptContextType::File]),
             None
         );
 

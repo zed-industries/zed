@@ -1,3 +1,4 @@
+use crate::mention_set::Mention;
 use gpui::{AppContext as _, Entity, Task};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use ui::App;
@@ -47,16 +48,14 @@ pub fn load_context(mention_set: &Entity<MentionSet>, cx: &mut App) -> Task<Opti
             .push_str("The following items were attached by the user.\n");
         for (_, (_, mention)) in mentions {
             match mention {
-                crate::mention_set::Mention::Text { content, .. } => {
+                Mention::Text { content, .. } => {
                     loaded_context.text.push_str(&content);
                 }
-                crate::mention_set::Mention::Image(mention_image) => {
-                    loaded_context.images.push(LanguageModelImage {
-                        source: mention_image.data,
-                        ..LanguageModelImage::empty()
-                    })
-                }
-                crate::mention_set::Mention::Link => todo!(),
+                Mention::Image(mention_image) => loaded_context.images.push(LanguageModelImage {
+                    source: mention_image.data,
+                    ..LanguageModelImage::empty()
+                }),
+                Mention::Link => {}
             }
         }
         Some(loaded_context)
