@@ -466,6 +466,7 @@ message Envelope {
     reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
+    reserved 394 to 395;
 }
 
 message Hello {
