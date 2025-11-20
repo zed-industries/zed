@@ -255,6 +255,12 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // Whether to colorize brackets in the editor.
+  // (also known as "rainbow brackets")
+  //
+  // The colors that are used for different indentation levels are defined in the theme (theme key: `accents`).
+  // They can be customized by using theme overrides.
+  "colorize_brackets": false,
   // When to show the scrollbar in the completion menu.
   // This setting can take four values:
   //

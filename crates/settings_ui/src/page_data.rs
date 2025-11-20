@@ -6991,6 +6991,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Colorize brackets",
+            description: "Whether to colorize brackets in the editor.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).colorize_brackets"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.colorize_brackets.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.colorize_brackets = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
     ]);
 
     if current_language().is_none() {

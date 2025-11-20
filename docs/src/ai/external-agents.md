@@ -196,6 +196,7 @@ You can also add agents through your `settings.json`, by specifying certain fiel
 {
   "agent_servers": {
     "My Custom Agent": {
+      "type": "custom",
       "command": "node",
       "args": ["~/projects/agent/index.js", "--acp"],
       "env": {}
