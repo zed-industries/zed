@@ -493,7 +493,10 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      GIT_AUTHOR_NAME: Protobuf Action
+      GIT_AUTHOR_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
