@@ -813,8 +813,18 @@ impl Zeta {
             .take(3)
             .collect::<Vec<_>>();
 
+        const DIAGNOSTIC_LINES_RANGE: u32 = 20;
+
+        let cursor_point = position.to_point(&snapshot);
+        let diagnostic_search_start = cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
+        let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
+        let diagnostic_search_range =
+            Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
+
         let result = cx.background_spawn({
             let full_path = full_path.clone();
+            let snapshot = snapshot.clone();
+            let diagnostic_search_range = diagnostic_search_range.clone();
             async move {
                 let text = snapshot.text();
 
@@ -826,11 +836,9 @@ impl Zeta {
                 let mut file_chunks = recent_buffer_snapshots
                     .into_iter()
                     .map(|snapshot| {
-                        let end_point = language::Point::new(30, 0).min(snapshot.max_point());
+                        let end_point = Point::new(30, 0).min(snapshot.max_point());
                         sweep_ai::FileChunk {
-                            content: snapshot
-                                .text_for_range(language::Point::zero()..end_point)
-                                .collect(),
+                            content: snapshot.text_for_range(Point::zero()..end_point).collect(),
                             file_path: snapshot
                                 .file()
                                 .map(|f| f.path().as_unix_str())
@@ -850,39 +858,29 @@ impl Zeta {
                     })
                     .collect::<Vec<_>>();
 
-                const CURSOR_DIAGNOSTIC_CONTEXT_LINES: u32 = 20;
-
-                let cursor_point = position.to_point(&snapshot);
-                let cursor_diagnostic_range = language::Point::new(
-                    cursor_point
-                        .row
-                        .saturating_sub(CURSOR_DIAGNOSTIC_CONTEXT_LINES),
-                    0,
-                )
-                    ..language::Point::new(cursor_point.row + CURSOR_DIAGNOSTIC_CONTEXT_LINES, 0);
-
-                let diagnostic_groups = snapshot.diagnostic_groups(None);
+                let diagnostic_entries =
+                    snapshot.diagnostics_in_range(diagnostic_search_range, false);
                 let mut diagnostics_content = String::new();
+                let mut diagnostic_count = 0;
 
-                for (_, group) in &diagnostic_groups {
-                    let entry = &group.entries[group.primary_ix];
-                    let range = entry.range.to_point(&snapshot);
-
-                    if !range.overlaps(&cursor_diagnostic_range) {
-                        continue;
-                    }
+                for entry in diagnostic_entries {
+                    let start_point: Point = entry.range.start;
 
                     let severity = match entry.diagnostic.severity {
                         DiagnosticSeverity::ERROR => "error",
                         DiagnosticSeverity::WARNING => "warning",
+                        DiagnosticSeverity::INFORMATION => "info",
+                        DiagnosticSeverity::HINT => "hint",
                         _ => continue,
                     };
+
+                    diagnostic_count += 1;
 
                     writeln!(
                         &mut diagnostics_content,
                         "{} at line {}: {}",
                         severity,
-                        range.start.row + 1,
+                        start_point.row + 1,
                         entry.diagnostic.message
                     )?;
                 }
@@ -891,7 +889,7 @@ impl Zeta {
                     file_chunks.push(sweep_ai::FileChunk {
                         file_path: format!("Diagnostics for {}", full_path.display()),
                         start_line: 0,
-                        end_line: diagnostic_groups.len(),
+                        end_line: diagnostic_count,
                         content: diagnostics_content,
                         timestamp: None,
                     });
@@ -967,59 +965,80 @@ impl Zeta {
 
         let buffer = active_buffer.clone();
         let project = project.clone();
+        let active_buffer = active_buffer.clone();
 
         cx.spawn(async move |this, cx| {
             let (id, edits, old_snapshot) = result.await?;
 
             if edits.is_empty() && has_events && allow_jump {
-                let buffer_with_error = project.update(cx, |project, cx| {
-                    let (path, _, _) = project
-                        .diagnostic_summaries(false, cx)
-                        .filter(|(_, _, summary)| summary.error_count > 0)
-                        .max_by_key(|(path, _, _)| {
-                            // find buffer with errors that share the most path components
-                            path.path
-                                .components()
-                                .zip(full_path.components())
-                                .take_while(|(a, b)| OsStr::new(a) == b.as_os_str())
-                                .count()
-                        })?;
+                // find the closest diagnostic to the cursor that wasn't close enough to be included in the last request
+                let mut jump_location = snapshot
+                    .diagnostic_groups(None)
+                    .into_iter()
+                    .filter_map(|(_, group)| {
+                        let range = &group.entries[group.primary_ix].range.to_point(&snapshot);
+                        if range.overlaps(&diagnostic_search_range) {
+                            None
+                        } else {
+                            Some(range.start)
+                        }
+                    })
+                    .min_by_key(|probe| probe.row.abs_diff(cursor_point.row))
+                    .map(|position| (active_buffer.clone(), snapshot.anchor_before(position)));
 
-                    Some(project.open_buffer(path, cx))
-                })?;
+                if jump_location.is_none() {
+                    let active_buffer_path = active_buffer.read_with(cx, |buffer, cx| {
+                        let file = buffer.file()?;
 
-                if let Some(buffer_with_diagnostic) = buffer_with_error {
-                    let buffer_with_diagnostic = buffer_with_diagnostic.await?;
+                        Some(ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path().clone(),
+                        })
+                    })?;
 
-                    let diagnostic_position =
-                        buffer_with_diagnostic.update(cx, |buffer, _cx| {
-                            buffer
-                                .snapshot()
-                                .diagnostic_groups(None)
-                                .into_iter()
-                                .find_map(|(_, group)| {
-                                    let diagnostic = &group.entries[group.primary_ix];
-                                    if diagnostic.diagnostic.severity == DiagnosticSeverity::ERROR {
-                                        Some(diagnostic.range.start)
-                                    } else {
-                                        None
-                                    }
-                                })
-                        })?;
+                    let buffer_task = project.update(cx, |project, cx| {
+                        let (path, _, _) = project
+                            .diagnostic_summaries(false, cx)
+                            .filter(|(path, _, _)| Some(path) != active_buffer_path.as_ref())
+                            .max_by_key(|(path, _, _)| {
+                                // find the buffer with errors that shares the most parent directories
+                                path.path
+                                    .components()
+                                    .zip(full_path.components())
+                                    .take_while(|(a, b)| OsStr::new(a) == b.as_os_str())
+                                    .count()
+                            })?;
 
-                    if let Some(diagnostic_position) = diagnostic_position {
-                        return this
-                            .update(cx, |this, cx| {
-                                this.request_prediction_with_sweep(
-                                    &project,
-                                    &buffer_with_diagnostic,
-                                    diagnostic_position,
-                                    false,
-                                    cx,
-                                )
+                        Some(project.open_buffer(path, cx))
+                    })?;
+
+                    if let Some(buffer_task) = buffer_task {
+                        let closest_buffer = buffer_task.await?;
+
+                        jump_location = closest_buffer
+                            .read_with(cx, |buffer, _cx| {
+                                buffer
+                                    .buffer_diagnostics(None)
+                                    .into_iter()
+                                    .min_by_key(|entry| entry.diagnostic.severity)
+                                    .map(|entry| entry.range.start)
                             })?
-                            .await;
+                            .map(|position| (closest_buffer, position));
                     }
+                }
+
+                if let Some((jump_buffer, jump_position)) = jump_location {
+                    return this
+                        .update(cx, |this, cx| {
+                            this.request_prediction_with_sweep(
+                                &project,
+                                &jump_buffer,
+                                jump_position,
+                                false,
+                                cx,
+                            )
+                        })?
+                        .await;
                 }
 
                 return anyhow::Ok(None);
