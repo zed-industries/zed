@@ -222,13 +222,13 @@ impl GitHostingProvider for Gitlab {
 
         let mut url = self
             .base_url()
-            .join(&format!("{}/{}/-/merge_requests/new", remote.owner, remote.repo))
+            .join(&format!(
+                "{}/{}/-/merge_requests/new",
+                remote.owner, remote.repo
+            ))
             .ok()?;
 
-        let mut query = format!(
-            "merge_request%5Bsource_branch%5D={}",
-            encode(source_branch)
-        );
+        let mut query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
 
         if let Some(target_branch) = target_branch {
             query.push('&');
