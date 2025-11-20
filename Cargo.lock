@@ -2932,6 +2932,7 @@ dependencies = [
  "postage",
  "release_channel",
  "rpc",
+ "semver",
  "settings",
  "text",
  "time",
