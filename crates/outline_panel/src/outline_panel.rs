@@ -4733,7 +4733,7 @@ impl OutlinePanel {
         let (icon, icon_tooltip) = if pinned {
             (IconName::Unpin, "Unpin Outline")
         } else {
-            (IconName::Pin, "Pin Acitve Outline")
+            (IconName::Pin, "Pin Active Outline")
         };
 
         h_flex()
