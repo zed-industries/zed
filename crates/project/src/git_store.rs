@@ -6,6 +6,7 @@ pub mod pending_op;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::{GitSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -55,7 +56,7 @@ use rpc::{
     proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
-use settings::WorktreeId;
+use settings::{Settings as _, WorktreeId};
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque},
@@ -2009,10 +2010,8 @@ impl GitStore {
                 repository_handle.commit(
                     message,
                     name.zip(email),
-                    CommitOptions {
-                        amend: options.amend,
-                        signoff: options.signoff,
-                    },
+                    options.amend,
+                    options.signoff,
                     askpass,
                     cx,
                 )
@@ -4266,21 +4265,41 @@ impl Repository {
         &mut self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
-        options: CommitOptions,
+        amend: bool,
+        signoff: bool,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
-
-        self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
+        let project_path =
+            self.repo_path_to_project_path(&RepoPath::from_rel_path(RelPath::empty()), cx);
+        self.send_job(Some("git commit".into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local {
                     backend,
                     environment,
                     ..
                 } => {
+                    let cleanup = cx.update(|cx| {
+                        ProjectSettings::get(
+                            project_path
+                                .as_ref()
+                                .map(|project_path| settings::SettingsLocation {
+                                    worktree_id: project_path.worktree_id,
+                                    path: &project_path.path,
+                                }),
+                            cx,
+                        )
+                        .git
+                        .commit_cleanup
+                    })?;
+                    let options = CommitOptions {
+                        amend,
+                        signoff,
+                        cleanup,
+                    };
                     backend
                         .commit(message, name_and_email, options, askpass, environment)
                         .await
@@ -4299,10 +4318,7 @@ impl Repository {
                             message: String::from(message),
                             name: name.map(String::from),
                             email: email.map(String::from),
-                            options: Some(proto::commit::CommitOptions {
-                                amend: options.amend,
-                                signoff: options.signoff,
-                            }),
+                            options: Some(proto::commit::CommitOptions { amend, signoff }),
                             askpass_id,
                         })
                         .await

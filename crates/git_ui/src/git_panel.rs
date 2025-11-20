@@ -1538,14 +1538,7 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             telemetry::event!("Git Committed", source = "Git Panel");
-            self.commit_changes(
-                CommitOptions {
-                    amend: false,
-                    signoff: self.signoff_enabled,
-                },
-                window,
-                cx,
-            )
+            self.commit_changes(false, self.signoff_enabled, window, cx)
         } else {
             cx.propagate();
         }
@@ -1563,14 +1556,7 @@ impl GitPanel {
                     self.load_last_commit_message_if_empty(cx);
                 } else {
                     telemetry::event!("Git Amended", source = "Git Panel");
-                    self.commit_changes(
-                        CommitOptions {
-                            amend: true,
-                            signoff: self.signoff_enabled,
-                        },
-                        window,
-                        cx,
-                    );
+                    self.commit_changes(true, self.signoff_enabled, window, cx);
                 }
             }
         } else {
@@ -1657,7 +1643,8 @@ impl GitPanel {
 
     pub(crate) fn commit_changes(
         &mut self,
-        options: CommitOptions,
+        amend: bool,
+        signoff: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1696,7 +1683,7 @@ impl GitPanel {
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.update(cx, |repo, cx| {
-                repo.commit(message.into(), None, options, askpass, cx)
+                repo.commit(message.into(), None, amend, signoff, askpass, cx)
             });
             cx.background_spawn(async move { commit_task.await? })
         } else {
@@ -1708,7 +1695,7 @@ impl GitPanel {
                 .map(|status_entry| status_entry.repo_path.clone())
                 .collect::<Vec<_>>();
 
-            if changed_files.is_empty() && !options.amend {
+            if changed_files.is_empty() && !amend {
                 error_spawn("No changes to commit", window, cx);
                 return;
             }
@@ -1718,7 +1705,7 @@ impl GitPanel {
             cx.spawn(async move |_, cx| {
                 stage_task.await?;
                 let commit_task = active_repository.update(cx, |repo, cx| {
-                    repo.commit(message.into(), None, options, askpass, cx)
+                    repo.commit(message.into(), None, amend, signoff, askpass, cx)
                 })?;
                 commit_task.await?
             })
@@ -1740,7 +1727,7 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
-        if options.amend {
+        if amend {
             self.set_amend_pending(false, cx);
         }
     }
@@ -3646,11 +3633,7 @@ impl GitPanel {
                         telemetry::event!("Git Committed", source = "Git Panel");
                         git_panel
                             .update(cx, |git_panel, cx| {
-                                git_panel.commit_changes(
-                                    CommitOptions { amend, signoff },
-                                    window,
-                                    cx,
-                                );
+                                git_panel.commit_changes(amend, signoff, window, cx);
                             })
                             .ok();
                     }

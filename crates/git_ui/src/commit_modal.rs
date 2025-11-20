@@ -1,6 +1,5 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
-use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
 use panel::{panel_button, panel_editor_style};
 use project::DisableAiSettings;
@@ -439,10 +438,8 @@ impl CommitModal {
                             telemetry::event!("Git Committed", source = "Git Modal");
                             this.git_panel.update(cx, |git_panel, cx| {
                                 git_panel.commit_changes(
-                                    CommitOptions {
-                                        amend: is_amend_pending,
-                                        signoff: is_signoff_enabled,
-                                    },
+                                    is_amend_pending,
+                                    is_signoff_enabled,
                                     window,
                                     cx,
                                 )
@@ -498,14 +495,7 @@ impl CommitModal {
         }
         telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.commit_changes(
-                CommitOptions {
-                    amend: false,
-                    signoff: git_panel.signoff_enabled(),
-                },
-                window,
-                cx,
-            )
+            git_panel.commit_changes(false, git_panel.signoff_enabled(), window, cx)
         });
         cx.emit(DismissEvent);
     }
@@ -530,14 +520,7 @@ impl CommitModal {
             telemetry::event!("Git Amended", source = "Git Modal");
             self.git_panel.update(cx, |git_panel, cx| {
                 git_panel.set_amend_pending(false, cx);
-                git_panel.commit_changes(
-                    CommitOptions {
-                        amend: true,
-                        signoff: git_panel.signoff_enabled(),
-                    },
-                    window,
-                    cx,
-                );
+                git_panel.commit_changes(true, git_panel.signoff_enabled(), window, cx);
             });
             cx.emit(DismissEvent);
         }
