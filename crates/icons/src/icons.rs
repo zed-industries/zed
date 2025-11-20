@@ -25,19 +25,26 @@ pub enum IconName {
     AiVZero,
     AiXAi,
     AiZed,
+    #[serde(alias = "Update")]
     ArrowCircle,
+    #[serde(alias = "ArrowDownFromLine")]
     ArrowDown,
     ArrowDown10,
     ArrowDownRight,
     ArrowLeft,
     ArrowRight,
     ArrowRightLeft,
+    #[serde(alias = "ArrowUpAlt")]
+    #[serde(alias = "ArrowUpFromLine")]
     ArrowUp,
+    #[serde(alias = "ExternalLink")]
+    #[serde(alias = "ArrowUpRightAlt")]
     ArrowUpRight,
     Attach,
     AtSign,
     AudioOff,
     AudioOn,
+    #[serde(alias = "Delete")]
     Backspace,
     Bell,
     BellDot,
@@ -45,14 +52,19 @@ pub enum IconName {
     BellRing,
     Binary,
     Blocks,
+    #[serde(alias = "Bolt")]
     BoltOutlined,
+    #[serde(alias = "BoltFilledAlt")]
     BoltFilled,
     Book,
     BookCopy,
+    #[serde(alias = "InlayHint")]
     CaseSensitive,
+    #[serde(alias = "MessageBubbles")]
     Chat,
     Check,
     CheckDouble,
+    #[serde(alias = "ChevronDownSmall")]
     ChevronDown,
     ChevronDownUp,
     ChevronLeft,
@@ -61,6 +73,7 @@ pub enum IconName {
     ChevronUpDown,
     Circle,
     CircleHelp,
+    #[serde(alias = "X")]
     Close,
     CloudDownload,
     Code,
@@ -116,9 +129,11 @@ pub enum IconName {
     FileGeneric,
     FileGit,
     FileLock,
+    #[serde(alias = "DocumentText")]
     FileMarkdown,
     FileRust,
     FileTextFilled,
+    #[serde(alias = "FileText")]
     FileTextOutlined,
     FileToml,
     FileTree,
@@ -126,6 +141,7 @@ pub enum IconName {
     Flame,
     Folder,
     FolderOpen,
+    #[serde(alias = "FileSearch")]
     FolderSearch,
     Font,
     FontSize,
@@ -136,6 +152,7 @@ pub enum IconName {
     GenericMinimize,
     GenericRestore,
     GitBranch,
+    #[serde(alias = "GitBranchSmall")]
     GitBranchAlt,
     Github,
     Hash,
@@ -164,6 +181,7 @@ pub enum IconName {
     Mic,
     MicMute,
     Minimize,
+    #[serde(alias = "ScrollText")]
     Notepad,
     Option,
     PageDown,
@@ -173,13 +191,16 @@ pub enum IconName {
     PencilUnavailable,
     Person,
     Pin,
+    #[serde(alias = "Play")]
     PlayOutlined,
     PlayFilled,
     Plus,
     Power,
     Public,
     PullRequest,
+    #[serde(alias = "SearchSelection")]
     Quote,
+    #[serde(alias = "Context")]
     Reader,
     RefreshTitle,
     Regex,
@@ -190,6 +211,7 @@ pub enum IconName {
     ReplyArrowRight,
     Rerun,
     Return,
+    #[serde(alias = "DebugRestart")]
     RotateCcw,
     RotateCw,
     Scissors,
@@ -211,6 +233,7 @@ pub enum IconName {
     SquarePlus,
     Star,
     StarFilled,
+    #[serde(alias = "StopFilled")]
     Stop,
     Supermaven,
     SupermavenDisabled,
@@ -223,8 +246,11 @@ pub enum IconName {
     TerminalAlt,
     TerminalGhost,
     TextSnippet,
+    #[serde(alias = "NewTextThread")]
     TextThread,
+    #[serde(alias = "NewThread")]
     Thread,
+    #[serde(alias = "NewFromSummary")]
     ThreadFromSummary,
     ThumbsDown,
     ThumbsUp,
@@ -235,6 +261,7 @@ pub enum IconName {
     ToolDeleteFile,
     ToolDiagnostics,
     ToolFolder,
+    #[serde(alias = "Hammer")]
     ToolHammer,
     ToolNotification,
     ToolPencil,
@@ -242,8 +269,11 @@ pub enum IconName {
     ToolRegex,
     ToolSearch,
     ToolTerminal,
+    #[serde(alias = "LightBulb")]
     ToolThink,
+    #[serde(alias = "Globe")]
     ToolWeb,
+    #[serde(alias = "TrashAlt")]
     Trash,
     Triangle,
     TriangleRight,
@@ -257,6 +287,7 @@ pub enum IconName {
     XCircle,
     XCircleFilled,
     ZedAgent,
+    #[serde(alias = "ZedAssistantFilled")]
     ZedAssistant,
     ZedBurnMode,
     ZedBurnModeOn,
