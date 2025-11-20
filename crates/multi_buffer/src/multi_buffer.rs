@@ -39,6 +39,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell},
     cmp,
+    collections::VecDeque,
     fmt::{self, Debug},
     future::Future,
     io,
@@ -2624,8 +2625,8 @@ impl MultiBuffer {
         let mut at_transform_boundary = true;
         let mut end_of_current_insert = None;
 
-        let mut excerpt_edits = excerpt_edits.into_iter().peekable();
-        while let Some(edit) = excerpt_edits.next() {
+        let mut excerpt_edits: VecDeque<_> = excerpt_edits.into_iter().collect();
+        while let Some(edit) = excerpt_edits.pop_front() {
             excerpts.seek_forward(&edit.new.start, Bias::Right);
             if excerpts.item().is_none() && *excerpts.start() == edit.new.start {
                 excerpts.prev();
@@ -2646,7 +2647,6 @@ impl MultiBuffer {
             }
 
             // Compute the start of the edit in output coordinates.
-            // FIXME this is probably wrong when filtering
             let edit_start_overshoot = if let Some(DiffTransform::FilteredInsertedHunk { .. }) =
                 old_diff_transforms.item()
             {
@@ -2669,10 +2669,32 @@ impl MultiBuffer {
                 filter_mode,
             );
 
-            // the last hunk that intersects the edit could extend beyond the end of the edit
+            if let Some(current_inserted_hunk) = end_of_current_insert
+                && current_inserted_hunk.is_filtered
+                && current_inserted_hunk.insertion_end_offset > edit.new.end
+            {
+                let overshoot = current_inserted_hunk.insertion_end_offset - edit.new.end;
+                dbg!(overshoot);
+                // FIXME lol could have overlap
+                excerpt_edits.push_front(Edit {
+                    old: edit.old.end..edit.old.end + overshoot,
+                    new: edit.new.end..edit.new.end + overshoot,
+                })
+            }
+
+            // FIXME
+            // - look at the last hunk that intersects this edit (in new coordinates)
+            // - if we are in "filter additions" mode, and the end of that hunk extends past the end
+            //   of the edit, emit an extra edit whose old range is this_edit.old.end
+            // {
+            //     let overshoot = hunk_end - excerpt_edit.new.end; // how much extra added stuff there is after the end of our edit
+            //     let additional_edit = Edit<ExcerptOffset> {
+            //         old: excerpt_edit.old.end..excerpt_edit.old.end + overshoot,
+            //         new: excerpt_edit.new.end..excerpt_edit.new.end + overshoot,
+            //     }
+            // }
 
             // Compute the end of the edit in output coordinates.
-            // FIXME these two are probably wrong when filtering
             let edit_old_end_overshoot = if let Some(DiffTransform::FilteredInsertedHunk {
                 ..
             }) = old_diff_transforms.item()
@@ -2684,12 +2706,6 @@ impl MultiBuffer {
             let edit_new_end_overshoot = if let Some(current_inserted_hunk) = end_of_current_insert
                 && current_inserted_hunk.is_filtered
             {
-                // FIXME this is still wrong (it should be larger in some cases)
-                // |--deleted---|----(filtered) inserted---| hunk
-                //                                         ^ insertion_end_offset (?)
-                //                                   <-----|-overshoot-> edit
-                
-                
                 let insertion_end_offset = dbg!(current_inserted_hunk.insertion_end_offset);
                 let excerpt_len = dbg!(new_diff_transforms.summary().excerpt_len());
                 
@@ -2701,7 +2717,7 @@ impl MultiBuffer {
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.value;
             let edit_new_end =
                 new_diff_transforms.summary().output.len + edit_new_end_overshoot.value;
-            dbg!(&edit);
+            dbg!(&edit, &change_kind);
             let output_edit = Edit {
                 old: dbg!(edit_old_start..edit_old_end),
                 new: dbg!(edit_new_start..edit_new_end),
@@ -2717,7 +2733,7 @@ impl MultiBuffer {
             // then recreate the content up to the end of this transform, to prepare
             // for reusing additional slices of the old transforms.
             if excerpt_edits
-                .peek()
+                .front()
                 .is_none_or(|next_edit| next_edit.old.start >= old_diff_transforms.end().0)
             {
                 let keep_next_old_transform = (old_diff_transforms.start().0 >= edit.old.end)
@@ -2831,12 +2847,15 @@ impl MultiBuffer {
                 let edit_anchor_range =
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
+                // 1. diff hunks Vec<Range<text::Anchor>> (change when the diff is recalculated) (libgit2)
+                // 2. diff transforms (complicated) (change when any buffer is edited, or when diff is recalculated)
                 for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
                     if hunk.is_created_file() && !all_diff_hunks_expanded {
                         continue;
                     }
 
                     let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
+                    dbg!(&hunk_buffer_range);
                     if hunk_buffer_range.start < excerpt_buffer_start {
                         log::trace!("skipping hunk that starts before excerpt");
                         continue;
@@ -2854,7 +2873,9 @@ impl MultiBuffer {
                         );
                     let hunk_excerpt_end = excerpt_end.min(
                         excerpt_start
-                            + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start),
+                            + ExcerptOffset::new(
+                                dbg!(hunk_buffer_range.end) - excerpt_buffer_start,
+                            ),
                     );
 
                     Self::push_buffer_content_transform(
@@ -2922,7 +2943,7 @@ impl MultiBuffer {
 
                         if !hunk_buffer_range.is_empty() {
                             *end_of_current_insert = Some(CurrentInsertedHunk {
-                                insertion_end_offset: hunk_excerpt_end.min(excerpt_end),
+                                insertion_end_offset: dbg!(hunk_excerpt_end).min(excerpt_end),
                                 hunk_info,
                                 is_filtered: filter_mode
                                     == Some(MultiBufferFilterMode::KeepDeletions),
@@ -3322,6 +3343,19 @@ impl MultiBufferSnapshot {
         self.chunks(0..self.len(), false)
             .map(|chunk| chunk.text)
             .collect()
+    }
+
+    pub fn debug_print_transforms(&self) {
+        for transform in self.diff_transforms.iter() {
+            let (kind, summary) = match transform {
+                DiffTransform::DeletedHunk { summary, .. } => ("   Deleted", summary),
+                DiffTransform::FilteredInsertedHunk { summary, .. } => ("  Filtered", summary),
+                DiffTransform::InsertedHunk { summary, .. } => ("  Inserted", summary),
+                DiffTransform::Unmodified { summary, .. } => ("Unmodified", summary),
+            };
+
+            eprintln!("{kind}(len: {}, lines: {:?})", summary.len, summary.lines);
+        }
     }
 
     pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {

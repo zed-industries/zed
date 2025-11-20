@@ -3482,7 +3482,7 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             "
               one
             - two
-              *t*hree
+              three
             - four
             - five
               six
@@ -3506,9 +3506,6 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             cx,
         );
     });
-    // expected output edits:
-    // 4..8 => 4..8
-    // 8..9 => 8..9
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -3518,7 +3515,6 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             "
               one
             - two
-              Three
             - four
             - five
               six
@@ -3526,6 +3522,32 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
         ),
     );
 }
+
+
+// 1. diff hunks Vec<Range<text::Anchor>> (change when the diff is recalculated) (libgit2)
+// 2. diff transforms (complicated) (change when any buffer is edited, or when diff is recalculated)
+// 
+// "we only need to modify edits to take filtering into account when a line goes from being filtered to not filtered (or vice versa)"
+//   mode: KeepDeletions
+//   ----base text and buffer text----- (one big unmodified)
+//   hello                
+// + world
+// 
+//   input: Edit(1:0..1:1, "W")
+//   output: Edit(1:0..1:1, "W")
+// 
+// ----buffer text----- transforms: (unmodified, filtered inserted)
+//   hello
+// + worlD
+// + lol
+// 
+//   - recalculate diffs (libgit2, async)
+//   input: Edit(1:0..2:0, "")
+//   output: Edit(1:0..2:0, "")
+// 
+//   hello
+// + World (filtered)
+// 
 
 #[track_caller]
 fn assert_excerpts_match(
@@ -3595,6 +3617,9 @@ fn check_edits(
         );
     }
 
+    dbg!(&text);
+    dbg!(&new_text);
+    dbg!(new_snapshot.diff_transforms.iter().collect::<Vec<_>>());
     pretty_assertions::assert_eq!(text, new_text, "invalid edits: {:?}", edits);
 }
 
