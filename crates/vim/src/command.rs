@@ -189,6 +189,7 @@ pub struct VimSet {
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 struct VimSave {
+    pub range: Option<CommandRange>,
     pub save_intent: Option<SaveIntent>,
     pub filename: String,
 }
@@ -324,6 +325,134 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
+        if let Some(range) = &action.range {
+            vim.update_editor(cx, |vim, editor, cx| {
+                let Some(range) = range.buffer_range(vim, editor, window, cx).ok() else {
+                    return;
+                };
+                let Some((line_ending, text, whole_buffer)) = editor.buffer().update(cx, |multi, cx| {
+                    Some(multi.as_singleton()?.update(cx, |buffer, _| {
+                        (
+                            buffer.line_ending(),
+                            buffer.as_rope().slice_rows(range.start.0..range.end.0 + 1),
+                            range.start.0 == 0 && range.end.0 + 1 >= buffer.row_count(),
+                        )
+                    }))
+                }) else {
+                    return;
+                };
+
+                let filename = action.filename.clone();
+                let filename = if filename.is_empty() {
+                    let Some(file) = editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .and_then(|buffer| buffer.read(cx).file())
+                    else {
+                        let _ = window.prompt(
+                            gpui::PromptLevel::Warning,
+                            "No file name",
+                            Some("Partial buffer write requires file name."),
+                            &["Cancel"],
+                            cx,
+                        );
+                        return;
+                    };
+                    file.path().display(file.path_style(cx)).to_string()
+                } else {
+                    filename
+                };
+
+                if action.filename.is_empty() {
+                    if whole_buffer {
+                        if let Some(workspace) = vim.workspace(window) {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .save_active_item(
+                                        action.save_intent.unwrap_or(SaveIntent::Save),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                            });
+                        }
+                        return;
+                    }
+                    if Some(SaveIntent::Overwrite) != action.save_intent {
+                        let _ = window.prompt(
+                            gpui::PromptLevel::Warning,
+                            "Use ! to write partial buffer",
+                            Some("Overwriting the current file with selected buffer content requires '!'."),
+                            &["Cancel"],
+                            cx,
+                        );
+                        return;
+                    }
+                    editor.buffer().update(cx, |multi, cx| {
+                        if let Some(buffer) = multi.as_singleton() {
+                            buffer.update(cx, |buffer, _| buffer.set_conflict());
+                        }
+                    });
+                };
+
+                editor.project().unwrap().update(cx, |project, cx| {
+                    let worktree = project.visible_worktrees(cx).next().unwrap();
+
+                    worktree.update(cx, |worktree, cx| {
+                        let path_style = worktree.path_style();
+                        let Some(path) = RelPath::new(Path::new(&filename), path_style).ok() else {
+                            return;
+                        };
+
+                        let rx = (worktree.entry_for_path(&path).is_some() && Some(SaveIntent::Overwrite) != action.save_intent).then(|| {
+                            window.prompt(
+                                gpui::PromptLevel::Warning,
+                                &format!("{path:?} already exists. Do you want to replace it?"),
+                                Some(
+                                    "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
+                                ),
+                                &["Replace", "Cancel"],
+                                cx
+                            )
+                        });
+                        let filename = filename.clone();
+                        cx.spawn_in(window, async move |this, cx| {
+                            if let Some(rx) = rx
+                                && Ok(0) != rx.await
+                            {
+                                return;
+                            }
+
+                            let _ = this.update_in(cx, |worktree, window, cx| {
+                                let Some(path) = RelPath::new(Path::new(&filename), path_style).ok() else {
+                                    return;
+                                };
+                                worktree
+                                    .write_file(path.into_arc(), text.clone(), line_ending, cx)
+                                    .detach_and_prompt_err("Failed to write lines", window, cx, |_, _, _| None);
+                            });
+                        })
+                        .detach();
+                    });
+                });
+            });
+            return;
+        }
+        if action.filename.is_empty() {
+            if let Some(workspace) = vim.workspace(window) {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .save_active_item(
+                            action.save_intent.unwrap_or(SaveIntent::Save),
+                            window,
+                            cx,
+                        )
+                        .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                });
+            }
+            return;
+        }
         vim.update_editor(cx, |_, editor, cx| {
             let Some(project) = editor.project().cloned() else {
                 return;
@@ -1175,24 +1304,34 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
     vec![
         VimCommand::new(
             ("w", "rite"),
-            workspace::Save {
+            VimSave {
                 save_intent: Some(SaveIntent::Save),
+                filename: "".into(),
+                range: None,
             },
         )
-        .bang(workspace::Save {
+        .bang(VimSave {
             save_intent: Some(SaveIntent::Overwrite),
+            filename: "".into(),
+            range: None,
         })
         .filename(|action, filename| {
             Some(
                 VimSave {
                     save_intent: action
                         .as_any()
-                        .downcast_ref::<workspace::Save>()
+                        .downcast_ref::<VimSave>()
                         .and_then(|action| action.save_intent),
                     filename,
+                    range: None,
                 }
                 .boxed_clone(),
             )
+        })
+        .range(|action, range| {
+            let mut action: VimSave = action.as_any().downcast_ref::<VimSave>().unwrap().clone();
+            action.range.replace(range.clone());
+            Some(Box::new(action))
         }),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile)
@@ -1692,12 +1831,12 @@ pub fn command_interceptor(
                 let mut positions: Vec<_> = positions.iter().map(|&pos| pos + offset).collect();
                 positions.splice(0..0, no_args_positions.clone());
                 let string = format!("{display_string} {string}");
-                let action = match cx
-                    .update(|cx| commands(cx).get(cmd_idx)?.parse(&string[1..], &range, cx))
-                {
-                    Ok(Some(action)) => action,
-                    _ => continue,
-                };
+                let (range, query) = VimCommand::parse_range(&string[1..]);
+                let action =
+                    match cx.update(|cx| commands(cx).get(cmd_idx)?.parse(&query, &range, cx)) {
+                        Ok(Some(action)) => action,
+                        _ => continue,
+                    };
                 results.push(CommandInterceptItem {
                     action,
                     string,
@@ -2302,7 +2441,7 @@ impl ShellExec {
 
 #[cfg(test)]
 mod test {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use crate::{
         VimAddon,
@@ -2314,7 +2453,7 @@ mod test {
     use indoc::indoc;
     use settings::Settings;
     use util::path;
-    use workspace::Workspace;
+    use workspace::{OpenOptions, Workspace};
 
     #[gpui::test]
     async fn test_command_basics(cx: &mut TestAppContext) {
@@ -2616,6 +2755,48 @@ mod test {
 
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/other.rs"), "", cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_command_write_range(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
+        });
+
+        cx.set_state(
+            indoc! {"
+                    The quick
+                    brown« fox
+                    jumpsˇ» over
+                    the lazy dog
+                "},
+            Mode::Visual,
+        );
+
+        cx.simulate_keystrokes(": w space dir/other.rs");
+        cx.simulate_keystrokes("enter");
+
+        let other = path!("/root/dir/other.rs");
+
+        let _ = cx
+            .workspace(|workspace, window, cx| {
+                workspace.open_abs_path(PathBuf::from(other), OpenOptions::default(), window, cx)
+            })
+            .await;
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(
+                workspace,
+                other,
+                indoc! {"
+                        brown fox
+                        jumps over
+                    "},
+                cx,
+            );
         });
     }
 

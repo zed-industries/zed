@@ -108,13 +108,6 @@ actions!(
     ]
 );
 
-///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
-///Scroll multiplier that is set to 3 by default. This will be removed when I
-///Implement scroll bars.
-#[cfg(target_os = "macos")]
-const SCROLL_MULTIPLIER: f32 = 4.;
-#[cfg(not(target_os = "macos"))]
-const SCROLL_MULTIPLIER: f32 = 1.;
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
@@ -1386,7 +1379,15 @@ impl Terminal {
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-            pty_tx.notify(input.into());
+            let input = input.into();
+            if log::log_enabled!(log::Level::Debug) {
+                if let Ok(str) = str::from_utf8(&input) {
+                    log::debug!("Writing to PTY: {:?}", str);
+                } else {
+                    log::debug!("Writing to PTY: {:?}", input);
+                }
+            }
+            pty_tx.notify(input);
         }
     }
 
@@ -1882,10 +1883,11 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, scroll_multiplier: f32) {
         let mouse_mode = self.mouse_mode(e.shift);
+        let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
@@ -1918,8 +1920,11 @@ impl Terminal {
         self.word_from_position(window.mouse_position());
     }
 
-    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
-        let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
+    fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelEvent,
+        scroll_multiplier: f32,
+    ) -> Option<i32> {
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             /* Reset scroll state on started */

@@ -1215,13 +1215,20 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     let settings_json_contents = json!({
         "languages": {
             "Rust": {
-                "language_servers": ["my_fake_lsp"]
+                "language_servers": ["my_fake_lsp", "lsp_on_path"]
             }
         },
         "lsp": {
             "my_fake_lsp": {
                 "binary": {
-                    "path": path!("relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                    // file exists, so this is treated as a relative path
+                    "path": path!(".relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                }
+            },
+            "lsp_on_path": {
+                "binary": {
+                    // file doesn't exist, so it will fall back on PATH env var
+                    "path": path!("lsp_on_path.exe").to_string(),
                 }
             }
         },
@@ -1234,7 +1241,7 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
             ".zed": {
                 "settings.json": settings_json_contents.to_string(),
             },
-            "relative_path": {
+            ".relative_path": {
                 "to": {
                     "my_fake_lsp.exe": "",
                 },
@@ -1250,10 +1257,17 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
-    let mut fake_rust_servers = language_registry.register_fake_lsp(
+    let mut my_fake_lsp = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "my_fake_lsp",
+            ..Default::default()
+        },
+    );
+    let mut lsp_on_path = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "lsp_on_path",
             ..Default::default()
         },
     );
@@ -1268,10 +1282,74 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let lsp_path = fake_rust_servers.next().await.unwrap().binary.path;
+    let lsp_path = my_fake_lsp.next().await.unwrap().binary.path;
     assert_eq!(
         lsp_path.to_string_lossy(),
-        path!("/the-root/relative_path/to/my_fake_lsp_binary.exe"),
+        path!("/the-root/.relative_path/to/my_fake_lsp_binary.exe"),
+    );
+
+    let lsp_path = lsp_on_path.next().await.unwrap().binary.path;
+    assert_eq!(lsp_path.to_string_lossy(), path!("lsp_on_path.exe"));
+}
+
+#[gpui::test]
+async fn test_language_server_tilde_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let settings_json_contents = json!({
+        "languages": {
+            "Rust": {
+                "language_servers": ["tilde_lsp"]
+            }
+        },
+        "lsp": {
+            "tilde_lsp": {
+                "binary": {
+                    "path": "~/.local/bin/rust-analyzer",
+                }
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json_contents.to_string(),
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut tilde_lsp = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "tilde_lsp",
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lsp_path = tilde_lsp.next().await.unwrap().binary.path;
+    let expected_path = paths::home_dir().join(".local/bin/rust-analyzer");
+    assert_eq!(
+        lsp_path, expected_path,
+        "Tilde path should expand to home directory"
     );
 }
 
@@ -8533,7 +8611,7 @@ async fn test_repository_pending_ops_staging(
 
     // Ensure we have no pending ops for any of the untracked files
     repo.read_with(cx, |repo, _cx| {
-        assert!(repo.pending_ops_by_path.is_empty());
+        assert!(repo.pending_ops().next().is_none());
     });
 
     let mut id = 1u16;
@@ -9497,7 +9575,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::StatusesChanged { full_scan: true },
+            RepositoryEvent::StatusesChanged,
             RepositoryEvent::MergeHeadsChanged,
         ],
         "Initial worktree scan should produce a repo update event"
@@ -9665,8 +9743,8 @@ async fn test_odd_events_for_ignored_dirs(
         vec![
             RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
-            RepositoryEvent::StatusesChanged { full_scan: false },
-            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged,
+            RepositoryEvent::StatusesChanged,
         ],
         "Initial worktree scan should produce a repo update event"
     );

@@ -19,7 +19,7 @@ You can configure various [yaml-language-server settings](https://github.com/red
             "singleQuote": true
           },
           "schemas": {
-              "http://json.schemastore.org/composer": ["/*"],
+              "https://getcomposer.org/schema.json": ["/*"],
               "../relative/path/schema.json": ["/config*.yaml"]
           }
         }
@@ -70,7 +70,7 @@ By default yaml-language-server will attempt to determine the correct schema for
 You can override any auto-detected schema via the `schemas` settings key (demonstrated above) or by providing an [inlined schema](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema) reference via a modeline comment at the top of your yaml file:
 
 ```yaml
-# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+# yaml-language-server: $schema=https://www.schemastore.org/github-action.json
 name: Issue Assignment
 on:
   issues:

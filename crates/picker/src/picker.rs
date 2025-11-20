@@ -607,7 +607,7 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                if self.is_modal {
+                if self.is_modal && window.is_window_active() {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
@@ -619,7 +619,9 @@ impl<D: PickerDelegate> Picker<D> {
         let Head::Empty(_) = &self.head else {
             panic!("unexpected call");
         };
-        self.cancel(&menu::Cancel, window, cx);
+        if window.is_window_active() {
+            self.cancel(&menu::Cancel, window, cx);
+        }
     }
 
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut App) {
@@ -709,7 +711,7 @@ impl<D: PickerDelegate> Picker<D> {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
             ElementContainer::UniformList(scroll_handle) => {
-                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Nearest)
             }
         }
     }

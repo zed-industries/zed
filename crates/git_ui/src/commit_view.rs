@@ -1,13 +1,15 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Addon, Editor, EditorEvent, MultiBuffer, hover_popover::hover_markdown_style};
-use futures::Future;
+use editor::{
+    Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context,
-    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, PromptLevel, Render, Styled, Task, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope, TextBuffer,
@@ -166,7 +168,44 @@ impl CommitView {
             .next()
             .map(|worktree| worktree.read(cx).id());
 
-        let repository_clone = repository.clone();
+        let mut metadata_buffer_id = None;
+        if let Some(worktree_id) = first_worktree_id {
+            let title = if let Some(stash) = stash {
+                format!("stash@{{{}}}", stash)
+            } else {
+                format!("commit {}", commit.sha)
+            };
+            let file = Arc::new(CommitMetadataFile {
+                title: RelPath::unix(&title).unwrap().into(),
+                worktree_id,
+            });
+            let buffer = cx.new(|cx| {
+                let buffer = TextBuffer::new_normalized(
+                    ReplicaId::LOCAL,
+                    cx.entity_id().as_non_zero_u64().into(),
+                    LineEnding::default(),
+                    format_commit(&commit, stash.is_some()).into(),
+                );
+                metadata_buffer_id = Some(buffer.remote_id());
+                Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
+            });
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_path(
+                    PathKey::with_sort_prefix(COMMIT_METADATA_SORT_PREFIX, file.title.clone()),
+                    buffer.clone(),
+                    vec![Point::zero()..buffer.read(cx).max_point()],
+                    0,
+                    cx,
+                );
+            });
+            editor.update(cx, |editor, cx| {
+                editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
+                });
+            });
+        }
+
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
@@ -847,11 +886,11 @@ impl Item for CommitView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

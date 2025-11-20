@@ -10,8 +10,8 @@ use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
+use smol::fs::File;
 use smol::{fs, io::AsyncReadExt};
-use smol::{fs::File, process::Command};
 use std::mem;
 use std::{
     env::{
@@ -23,6 +23,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use util::command::new_smol_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -121,7 +122,7 @@ impl Drop for MacOsUnmounter<'_> {
         let mount_path = mem::take(&mut self.mount_path);
         self.background_executor
             .spawn(async move {
-                let unmount_output = Command::new("hdiutil")
+                let unmount_output = new_smol_command("hdiutil")
                     .args(["detach", "-force"])
                     .arg(&mount_path)
                     .output()
@@ -350,8 +351,7 @@ impl AutoUpdater {
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
-            #[cfg(target_os = "windows")]
-            {
+            if cfg!(target_os = "windows") {
                 use util::ResultExt;
 
                 cleanup_windows()
@@ -800,7 +800,7 @@ async fn install_release_linux(
         .await
         .context("failed to create directory into which to extract update")?;
 
-    let output = Command::new("tar")
+    let output = new_smol_command("tar")
         .arg("-xzf")
         .arg(&downloaded_tar_gz)
         .arg("-C")
@@ -835,7 +835,7 @@ async fn install_release_linux(
         to = PathBuf::from(prefix);
     }
 
-    let output = Command::new("rsync")
+    let output = new_smol_command("rsync")
         .args(["-av", "--delete"])
         .arg(&from)
         .arg(&to)
@@ -867,7 +867,7 @@ async fn install_release_macos(
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
 
     mounted_app_path.push("/");
-    let output = Command::new("hdiutil")
+    let output = new_smol_command("hdiutil")
         .args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
@@ -887,7 +887,7 @@ async fn install_release_macos(
         background_executor: cx.background_executor(),
     };
 
-    let output = Command::new("rsync")
+    let output = new_smol_command("rsync")
         .args(["-av", "--delete"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
@@ -903,7 +903,6 @@ async fn install_release_macos(
     Ok(None)
 }
 
-#[cfg(target_os = "windows")]
 async fn cleanup_windows() -> Result<()> {
     let parent = std::env::current_exe()?
         .parent()
@@ -919,7 +918,7 @@ async fn cleanup_windows() -> Result<()> {
 }
 
 async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {
-    let output = Command::new(downloaded_installer)
+    let output = new_smol_command(downloaded_installer)
         .arg("/verysilent")
         .arg("/update=true")
         .arg("!desktopicon")

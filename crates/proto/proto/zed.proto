@@ -410,7 +410,6 @@ message Envelope {
         AgentServerCommand agent_server_command = 374;
 
         ExternalAgentsUpdated external_agents_updated = 375;
-
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
         NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
@@ -439,6 +438,8 @@ message Envelope {
         CreateImageForPeer create_image_for_peer = 393;
         GitFileHistory git_file_history = 394;
         GitFileHistoryResponse git_file_history_response = 395; // current max
+
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 394; // current max
     }
 
     reserved 87 to 88;

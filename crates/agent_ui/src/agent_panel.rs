@@ -1892,6 +1892,9 @@ impl AgentPanel {
             .anchor(Corner::TopRight)
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
+                let selected_agent = self.selected_agent.clone();
+                let is_agent_selected = move |agent_type: AgentType| selected_agent == agent_type;
+
                 let workspace = self.workspace.clone();
                 let is_via_collab = workspace
                     .update(cx, |workspace, cx| {
@@ -1905,7 +1908,6 @@ impl AgentPanel {
                     let active_thread = active_thread.clone();
                     Some(ContextMenu::build(window, cx, |menu, _window, cx| {
                         menu.context(focus_handle.clone())
-                            .header("Zed Agent")
                             .when_some(active_thread, |this, active_thread| {
                                 let thread = active_thread.read(cx);
 
@@ -1929,9 +1931,11 @@ impl AgentPanel {
                                 }
                             })
                             .item(
-                                ContextMenuEntry::new("New Thread")
-                                    .action(NewThread.boxed_clone())
-                                    .icon(IconName::Thread)
+                                ContextMenuEntry::new("Zed Agent")
+                                    .when(is_agent_selected(AgentType::NativeAgent) | is_agent_selected(AgentType::TextThread) , |this| {
+                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    })
+                                    .icon(IconName::ZedAgent)
                                     .icon_color(Color::Muted)
                                     .handler({
                                         let workspace = workspace.clone();
@@ -1955,10 +1959,10 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Text Thread")
+                                ContextMenuEntry::new("Text Thread")
+                                    .action(NewTextThread.boxed_clone())
                                     .icon(IconName::TextThread)
                                     .icon_color(Color::Muted)
-                                    .action(NewTextThread.boxed_clone())
                                     .handler({
                                         let workspace = workspace.clone();
                                         move |window, cx| {
@@ -1983,7 +1987,10 @@ impl AgentPanel {
                             .separator()
                             .header("External Agents")
                             .item(
-                                ContextMenuEntry::new("New Claude Code")
+                                ContextMenuEntry::new("Claude Code")
+                                    .when(is_agent_selected(AgentType::ClaudeCode), |this| {
+                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    })
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -2009,7 +2016,10 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Codex CLI")
+                                ContextMenuEntry::new("Codex CLI")
+                                    .when(is_agent_selected(AgentType::Codex), |this| {
+                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    })
                                     .icon(IconName::AiOpenAi)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -2035,7 +2045,10 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Gemini CLI")
+                                ContextMenuEntry::new("Gemini CLI")
+                                    .when(is_agent_selected(AgentType::Gemini), |this| {
+                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    })
                                     .icon(IconName::AiGemini)
                                     .icon_color(Color::Muted)
                                     .disabled(is_via_collab)
@@ -2061,8 +2074,8 @@ impl AgentPanel {
                                     }),
                             )
                             .map(|mut menu| {
-                                let agent_server_store_read = agent_server_store.read(cx);
-                                let agent_names = agent_server_store_read
+                                let agent_server_store = agent_server_store.read(cx);
+                                let agent_names = agent_server_store
                                     .external_agents()
                                     .filter(|name| {
                                         name.0 != GEMINI_NAME
@@ -2071,21 +2084,38 @@ impl AgentPanel {
                                     })
                                     .cloned()
                                     .collect::<Vec<_>>();
+
                                 let custom_settings = cx
                                     .global::<SettingsStore>()
                                     .get::<AllAgentServersSettings>(None)
                                     .custom
                                     .clone();
+
                                 for agent_name in agent_names {
-                                    let icon_path = agent_server_store_read.agent_icon(&agent_name);
-                                    let mut entry =
-                                        ContextMenuEntry::new(format!("New {}", agent_name));
+                                    let icon_path = agent_server_store.agent_icon(&agent_name);
+
+                                    let mut entry = ContextMenuEntry::new(agent_name.clone());
+
+                                    let command = custom_settings
+                                        .get(&agent_name.0)
+                                        .map(|settings| settings.command.clone())
+                                        .unwrap_or(placeholder_command());
+
                                     if let Some(icon_path) = icon_path {
                                         entry = entry.custom_icon_svg(icon_path);
                                     } else {
                                         entry = entry.icon(IconName::Terminal);
                                     }
                                     entry = entry
+                                        .when(
+                                            is_agent_selected(AgentType::Custom {
+                                                name: agent_name.0.clone(),
+                                                command: command.clone(),
+                                            }),
+                                            |this| {
+                                                this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                            },
+                                        )
                                         .icon_color(Color::Muted)
                                         .disabled(is_via_collab)
                                         .handler({
@@ -2125,6 +2155,7 @@ impl AgentPanel {
                                                 }
                                             }
                                         });
+
                                     menu = menu.item(entry);
                                 }
 
@@ -2157,7 +2188,7 @@ impl AgentPanel {
             .id("selected_agent_icon")
             .when_some(selected_agent_custom_icon, |this, icon_path| {
                 let label = selected_agent_label.clone();
-                this.px(DynamicSpacing::Base02.rems(cx))
+                this.px_1()
                     .child(Icon::from_external_svg(icon_path).color(Color::Muted))
                     .tooltip(move |_window, cx| {
                         Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
@@ -2166,7 +2197,7 @@ impl AgentPanel {
             .when(!has_custom_icon, |this| {
                 this.when_some(self.selected_agent.icon(), |this, icon| {
                     let label = selected_agent_label.clone();
-                    this.px(DynamicSpacing::Base02.rems(cx))
+                    this.px_1()
                         .child(Icon::new(icon).color(Color::Muted))
                         .tooltip(move |_window, cx| {
                             Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)

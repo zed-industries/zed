@@ -201,8 +201,10 @@ impl WindowsWindowInner {
         let new_logical_size = device_size.to_pixels(scale_factor);
         let mut lock = self.state.borrow_mut();
         lock.logical_size = new_logical_size;
-        if should_resize_renderer {
-            lock.renderer.resize(device_size).log_err();
+        if should_resize_renderer && let Err(e) = lock.renderer.resize(device_size) {
+            log::error!("Failed to resize renderer, invalidating devices: {}", e);
+            lock.invalidate_devices
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         if let Some(mut callback) = lock.callbacks.resize.take() {
             drop(lock);
@@ -239,7 +241,7 @@ impl WindowsWindowInner {
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
         } else {
@@ -487,14 +489,12 @@ impl WindowsWindowInner {
         let scale_factor = lock.scale_factor;
         let wheel_scroll_amount = match modifiers.shift {
             true => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_chars
             }
             false => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_lines
             }
@@ -541,8 +541,7 @@ impl WindowsWindowInner {
         };
         let scale_factor = lock.scale_factor;
         let wheel_scroll_chars = self
-            .system_settings
-            .borrow()
+            .system_settings()
             .mouse_wheel_settings
             .wheel_scroll_chars;
         drop(lock);
@@ -677,8 +676,7 @@ impl WindowsWindowInner {
         // used by Chrome. However, it may result in one row of pixels being obscured
         // in our client area. But as Chrome says, "there seems to be no better solution."
         if is_maximized
-            && let Some(ref taskbar_position) =
-                self.system_settings.borrow().auto_hide_taskbar_position
+            && let Some(ref taskbar_position) = self.system_settings().auto_hide_taskbar_position
         {
             // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
             // so the window isn't treated as a "fullscreen app", which would cause
@@ -1072,7 +1070,7 @@ impl WindowsWindowInner {
             lock.border_offset.update(handle).log_err();
             // system settings may emit a window message which wants to take the refcell lock, so drop it
             drop(lock);
-            self.system_settings.borrow_mut().update(display, wparam.0);
+            self.system_settings_mut().update(display, wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };
@@ -1142,12 +1140,19 @@ impl WindowsWindowInner {
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let mut request_frame = self.state.borrow_mut().callbacks.request_frame.take()?;
+
+        // we are instructing gpui to force render a frame, this will
+        // re-populate all the gpu textures for us so we can resume drawing in
+        // case we disabled drawing earlier due to a device loss
+        self.state.borrow_mut().renderer.mark_drawable();
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
         });
+
         self.state.borrow_mut().callbacks.request_frame = Some(request_frame);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+
         Some(0)
     }
 
