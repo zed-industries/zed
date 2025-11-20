@@ -10,7 +10,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
-use project::project_settings::ProjectSettings;
+use project::project_settings::GitSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -541,10 +541,8 @@ impl PickerDelegate for BranchListDelegate {
                                         "based off the current branch".to_string()
                                     }
                                 } else {
-                                    let show_author_name = ProjectSettings::get_global(cx)
-                                        .git
-                                        .branch_picker
-                                        .show_author_name;
+                                    let show_author_name =
+                                        GitSettings::get_global(cx).branch_picker.show_author_name;
 
                                     subject.map_or("no commits found".into(), |subject| {
                                         if show_author_name && author_name.is_some() {

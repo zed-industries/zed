@@ -5317,25 +5317,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         json_path: Some("git.inline_blame.enabled"),
                         pick: |settings_content| {
-                            settings_content
-                                .git
-                                .as_ref()?
-                                .inline_blame
-                                .as_ref()?
-                                .enabled
-                                .as_ref()
+                            git_settings_field(settings_content, |git| {
+                                git.inline_blame.as_ref().and_then(|inline_blame| inline_blame.enabled.as_ref())
+                            })
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .git
                                 .get_or_insert_default()
+                                .project
                                 .inline_blame
                                 .get_or_insert_default()
                                 .enabled = value;
                         },
                     }),
                     metadata: None,
-                    files: USER,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Delay",
@@ -5343,25 +5340,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         json_path: Some("git.inline_blame.delay_ms"),
                         pick: |settings_content| {
-                            settings_content
-                                .git
-                                .as_ref()?
-                                .inline_blame
-                                .as_ref()?
-                                .delay_ms
-                                .as_ref()
+                            git_settings_field(settings_content, |git| {
+                                git.inline_blame.as_ref().and_then(|inline_blame| inline_blame.delay_ms.as_ref())
+                            })
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .git
                                 .get_or_insert_default()
+                                .project
                                 .inline_blame
                                 .get_or_insert_default()
                                 .delay_ms = value;
                         },
                     }),
                     metadata: None,
-                    files: USER,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Padding",
@@ -5369,25 +5363,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         json_path: Some("git.inline_blame.padding"),
                         pick: |settings_content| {
-                            settings_content
-                                .git
-                                .as_ref()?
-                                .inline_blame
-                                .as_ref()?
-                                .padding
-                                .as_ref()
+                            git_settings_field(settings_content, |git| {
+                                git.inline_blame.as_ref().and_then(|inline_blame| inline_blame.padding.as_ref())
+                            })
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .git
                                 .get_or_insert_default()
+                                .project
                                 .inline_blame
                                 .get_or_insert_default()
                                 .padding = value;
                         },
                     }),
                     metadata: None,
-                    files: USER,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Minimum Column",
@@ -5395,25 +5386,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         json_path: Some("git.inline_blame.min_column"),
                         pick: |settings_content| {
-                            settings_content
-                                .git
-                                .as_ref()?
-                                .inline_blame
-                                .as_ref()?
-                                .min_column
-                                .as_ref()
+                            git_settings_field(settings_content, |git| {
+                                git.inline_blame.as_ref().and_then(|inline_blame| inline_blame.min_column.as_ref())
+                            })
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .git
                                 .get_or_insert_default()
+                                .project
                                 .inline_blame
                                 .get_or_insert_default()
                                 .min_column = value;
                         },
                     }),
                     metadata: None,
-                    files: USER,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Commit Summary",
@@ -5421,25 +5409,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         json_path: Some("git.inline_blame.show_commit_summary"),
                         pick: |settings_content| {
-                            settings_content
-                                .git
-                                .as_ref()?
-                                .inline_blame
-                                .as_ref()?
-                                .show_commit_summary
-                                .as_ref()
+                            git_settings_field(settings_content, |git| {
+                                git.inline_blame.as_ref().and_then(|inline_blame| inline_blame.show_commit_summary.as_ref())
+                            })
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .git
                                 .get_or_insert_default()
+                                .project
                                 .inline_blame
                                 .get_or_insert_default()
                                 .show_commit_summary = value;
                         },
                     }),
                     metadata: None,
-                    files: USER,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SectionHeader("Git Blame View"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -7375,6 +7360,20 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
     ]
+}
+
+fn git_settings_field<T>(
+    settings_content: &SettingsContent,
+    get: fn(&settings::ProjectGitSettings) -> Option<&T>,
+) -> Option<&T> {
+    if let Some(value) = settings_content.project.git.as_ref().and_then(get) {
+        return Some(value);
+    }
+    settings_content
+        .git
+        .as_ref()
+        .map(|git| &git.project)
+        .and_then(get)
 }
 
 fn show_scrollbar_or_editor(

@@ -21,7 +21,8 @@ pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
-    SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
+    SettingsLocation, SettingsStore, merge_from::MergeFrom, parse_json_with_comments,
+    watch_config_file,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -60,9 +61,6 @@ pub struct ProjectSettings {
 
     /// Configuration for Diagnostics-related features.
     pub diagnostics: DiagnosticsSettings,
-
-    /// Configuration for Git-related features
-    pub git: GitSettings,
 
     /// Configuration for Node-related features
     pub node: NodeBinarySettings,
@@ -323,7 +321,7 @@ impl GoToDiagnosticSeverityFilter {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, RegisterSetting)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
@@ -415,6 +413,42 @@ impl GitSettings {
     }
 }
 
+impl settings::Settings for GitSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let user_content = content.git.clone().unwrap();
+        // Note: we allow a subset of "git" settings in the project files.
+        let mut project_content = user_content.project.clone();
+        project_content.merge_from_option(content.project.git.as_ref());
+        GitSettings {
+            git_gutter: user_content.git_gutter.unwrap(),
+            gutter_debounce: user_content.gutter_debounce.unwrap_or_default(),
+            inline_blame: {
+                let inline = project_content.inline_blame.unwrap_or_default();
+                InlineBlameSettings {
+                    enabled: inline.enabled.unwrap(),
+                    delay_ms: inline.delay_ms.unwrap(),
+                    padding: inline.padding.unwrap(),
+                    min_column: inline.min_column.unwrap(),
+                    show_commit_summary: inline.show_commit_summary.unwrap(),
+                }
+            },
+            blame: {
+                let blame = user_content.blame.unwrap();
+                BlameSettings {
+                    show_avatar: blame.show_avatar.unwrap(),
+                }
+            },
+            branch_picker: {
+                let branch_picker = user_content.branch_picker.unwrap();
+                BranchPickerSettings {
+                    show_author_name: branch_picker.show_author_name.unwrap(),
+                }
+            },
+            hunk_style: user_content.hunk_style.unwrap(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettings {
@@ -493,36 +527,6 @@ impl Settings for ProjectSettings {
         let diagnostics = content.diagnostics.as_ref().unwrap();
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
         let inline_diagnostics = diagnostics.inline.as_ref().unwrap();
-
-        let git = content.git.as_ref().unwrap();
-        let git_settings = GitSettings {
-            git_gutter: git.git_gutter.unwrap(),
-            gutter_debounce: git.gutter_debounce.unwrap_or_default(),
-            inline_blame: {
-                let inline = git.inline_blame.unwrap();
-                InlineBlameSettings {
-                    enabled: inline.enabled.unwrap(),
-                    delay_ms: inline.delay_ms.unwrap(),
-                    padding: inline.padding.unwrap(),
-                    min_column: inline.min_column.unwrap(),
-                    show_commit_summary: inline.show_commit_summary.unwrap(),
-                }
-            },
-            blame: {
-                let blame = git.blame.unwrap();
-                BlameSettings {
-                    show_avatar: blame.show_avatar.unwrap(),
-                }
-            },
-            branch_picker: {
-                let branch_picker = git.branch_picker.unwrap();
-                BranchPickerSettings {
-                    show_author_name: branch_picker.show_author_name.unwrap(),
-                }
-            },
-            hunk_style: git.hunk_style.unwrap(),
-            path_style: git.path_style.unwrap().into(),
-        };
         Self {
             context_servers: project
                 .context_servers
@@ -565,7 +569,6 @@ impl Settings for ProjectSettings {
                     max_severity: inline_diagnostics.max_severity.map(Into::into),
                 },
             },
-            git: git_settings,
             node: content.node.clone().unwrap().into(),
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
