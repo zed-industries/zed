@@ -25,12 +25,15 @@ use gpui::{
 use language::{Anchor, Buffer, DiagnosticSet, LanguageServerId, Point, ToOffset as _, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use lsp::DiagnosticSeverity;
 use open_ai::FunctionDefinition;
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
 
+use std::ffi::OsStr;
+use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
@@ -39,7 +42,7 @@ use std::time::{Duration, Instant};
 use std::{env, mem};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
-use util::{LogErrorFuture, ResultExt as _, TryFutureExt};
+use util::{LogErrorFuture, RangeExt as _, ResultExt as _, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 pub mod assemble_excerpts;
@@ -816,98 +819,146 @@ impl Zeta {
                 sweep_ai::write_event(event, &mut recent_changes).unwrap();
             }
 
-            let file_chunks = recent_buffer_snapshots
-                .into_iter()
-                .map(|snapshot| {
-                    let end_point = language::Point::new(30, 0).min(snapshot.max_point());
-                    sweep_ai::FileChunk {
-                        content: snapshot
-                            .text_for_range(language::Point::zero()..end_point)
-                            .collect(),
-                        file_path: snapshot
-                            .file()
-                            .map(|f| f.path().as_unix_str())
-                            .unwrap_or("untitled")
-                            .to_string(),
-                        start_line: 0,
-                        end_line: end_point.row as usize,
-                        timestamp: snapshot.file().and_then(|file| {
-                            Some(
-                                file.disk_state()
-                                    .mtime()?
-                                    .to_seconds_and_nanos_for_persistence()?
-                                    .0,
-                            )
-                        }),
+                let mut file_chunks = recent_buffer_snapshots
+                    .into_iter()
+                    .map(|snapshot| {
+                        let end_point = language::Point::new(30, 0).min(snapshot.max_point());
+                        sweep_ai::FileChunk {
+                            content: snapshot
+                                .text_for_range(language::Point::zero()..end_point)
+                                .collect(),
+                            file_path: snapshot
+                                .file()
+                                .map(|f| f.path().as_unix_str())
+                                .unwrap_or("untitled")
+                                .to_string(),
+                            start_line: 0,
+                            end_line: end_point.row as usize,
+                            timestamp: snapshot.file().and_then(|file| {
+                                Some(
+                                    file.disk_state()
+                                        .mtime()?
+                                        .to_seconds_and_nanos_for_persistence()?
+                                        .0,
+                                )
+                            }),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                const CURSOR_DIAGNOSTIC_CONTEXT_LINES: u32 = 20;
+
+                let cursor_point = position.to_point(&snapshot);
+                let cursor_diagnostic_range = language::Point::new(
+                    cursor_point
+                        .row
+                        .saturating_sub(CURSOR_DIAGNOSTIC_CONTEXT_LINES),
+                    0,
+                )
+                    ..language::Point::new(cursor_point.row + CURSOR_DIAGNOSTIC_CONTEXT_LINES, 0);
+
+                let diagnostic_groups = snapshot.diagnostic_groups(None);
+                let mut diagnostics_content = String::new();
+
+                for (_, group) in &diagnostic_groups {
+                    let entry = &group.entries[group.primary_ix];
+                    let range = entry.range.to_point(&snapshot);
+
+                    if !range.overlaps(&cursor_diagnostic_range) {
+                        continue;
                     }
-                })
-                .collect();
 
-            let request_body = sweep_ai::AutocompleteRequest {
-                debug_info,
-                repo_name,
-                file_path: full_path.clone(),
-                file_contents: text.clone(),
-                original_file_contents: text,
-                cursor_position: offset,
-                recent_changes: recent_changes.clone(),
-                changes_above_cursor: true,
-                multiple_suggestions: false,
-                branch: None,
-                file_chunks,
-                retrieval_chunks: vec![],
-                recent_user_actions: vec![],
-                // TODO
-                privacy_mode_enabled: false,
-            };
+                    let severity = match entry.diagnostic.severity {
+                        DiagnosticSeverity::ERROR => "error",
+                        DiagnosticSeverity::WARNING => "warning",
+                        _ => continue,
+                    };
 
-            let mut buf: Vec<u8> = Vec::new();
-            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
-            serde_json::to_writer(writer, &request_body)?;
-            let body: AsyncBody = buf.into();
+                    writeln!(
+                        &mut diagnostics_content,
+                        "{} at line {}: {}",
+                        severity,
+                        range.start.row + 1,
+                        entry.diagnostic.message
+                    )?;
+                }
 
-            const SWEEP_API_URL: &str =
-                "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+                if !diagnostics_content.is_empty() {
+                    file_chunks.push(sweep_ai::FileChunk {
+                        file_path: format!("Diagnostics for {}", full_path.display()),
+                        start_line: 0,
+                        end_line: diagnostic_groups.len(),
+                        content: diagnostics_content,
+                        timestamp: None,
+                    });
+                }
 
-            let request = http_client::Request::builder()
-                .uri(SWEEP_API_URL)
-                .header("Content-Type", "application/json")
-                .header("Authorization", format!("Bearer {}", api_token))
-                .header("Connection", "keep-alive")
-                .header("Content-Encoding", "br")
-                .method(Method::POST)
-                .body(body)?;
+                let request_body = sweep_ai::AutocompleteRequest {
+                    debug_info,
+                    repo_name,
+                    file_path: full_path.clone(),
+                    file_contents: text.clone(),
+                    original_file_contents: text,
+                    cursor_position: offset,
+                    recent_changes: recent_changes.clone(),
+                    changes_above_cursor: true,
+                    multiple_suggestions: false,
+                    branch: None,
+                    file_chunks,
+                    retrieval_chunks: vec![],
+                    recent_user_actions: vec![],
+                    // TODO
+                    privacy_mode_enabled: false,
+                };
 
-            let mut response = http_client.send(request).await?;
+                let mut buf: Vec<u8> = Vec::new();
+                let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
+                serde_json::to_writer(writer, &request_body)?;
+                let body: AsyncBody = buf.into();
 
-            let mut body: Vec<u8> = Vec::new();
-            response.body_mut().read_to_end(&mut body).await?;
+                const SWEEP_API_URL: &str =
+                    "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
-            if !response.status().is_success() {
-                anyhow::bail!(
-                    "Request failed with status: {:?}\nBody: {}",
-                    response.status(),
-                    String::from_utf8_lossy(&body),
-                );
-            };
+                let request = http_client::Request::builder()
+                    .uri(SWEEP_API_URL)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", api_token))
+                    .header("Connection", "keep-alive")
+                    .header("Content-Encoding", "br")
+                    .method(Method::POST)
+                    .body(body)?;
 
-            let response: sweep_ai::AutocompleteResponse = serde_json::from_slice(&body)?;
+                let mut response = http_client.send(request).await?;
 
-            let old_text = snapshot
-                .text_for_range(response.start_index..response.end_index)
-                .collect::<String>();
-            let edits = language::text_diff(&old_text, &response.completion)
-                .into_iter()
-                .map(|(range, text)| {
-                    (
-                        snapshot.anchor_after(response.start_index + range.start)
-                            ..snapshot.anchor_before(response.start_index + range.end),
-                        text,
-                    )
-                })
-                .collect::<Vec<_>>();
+                let mut body: Vec<u8> = Vec::new();
+                response.body_mut().read_to_end(&mut body).await?;
 
-            anyhow::Ok((response.autocomplete_id, edits, snapshot))
+                if !response.status().is_success() {
+                    anyhow::bail!(
+                        "Request failed with status: {:?}\nBody: {}",
+                        response.status(),
+                        String::from_utf8_lossy(&body),
+                    );
+                };
+
+                let response: sweep_ai::AutocompleteResponse = serde_json::from_slice(&body)?;
+
+                let old_text = snapshot
+                    .text_for_range(response.start_index..response.end_index)
+                    .collect::<String>();
+                let edits = language::text_diff(&old_text, &response.completion)
+                    .into_iter()
+                    .map(|(range, text)| {
+                        (
+                            snapshot.anchor_after(response.start_index + range.start)
+                                ..snapshot.anchor_before(response.start_index + range.end),
+                            text,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                anyhow::Ok((response.autocomplete_id, edits, snapshot))
+            }
         });
 
         let buffer = active_buffer.clone();
