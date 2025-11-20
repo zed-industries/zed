@@ -533,7 +533,7 @@ impl CommitView {
         );
 
         let workspace_weak = workspace.weak_handle();
-        let commit_view_entity = commit_view.clone();
+        let commit_view_entity = commit_view;
 
         window
             .spawn(cx, async move |cx| {
