@@ -1,6 +1,14 @@
 use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped};
 use arrayvec::ArrayString;
-use std::{cmp, ops::Range};
+use std::{
+    cmp,
+    ops::Range,
+    simd::{
+        Simd,
+        cmp::{SimdPartialEq, SimdPartialOrd},
+        num::SimdUint,
+    },
+};
 use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
@@ -54,6 +62,28 @@ impl Chunk {
 
     #[inline(always)]
     pub fn push_str(&mut self, text: &str) {
+        if text.len() < 32 {
+            return self.push_str_scalar(text);
+        }
+
+        let bytes = text.as_bytes();
+        for (chunk_ix, chunk) in bytes
+            .chunks(64)
+            .map(Simd::<u8, 64>::load_or_default)
+            .enumerate()
+        {
+            let ix = self.text.len() + chunk_ix * 64;
+            let chars = chunk.cast::<i8>().simd_ge(Simd::splat(-0x40)).to_bitmask() as Bitmap;
+            self.chars |= chars << ix;
+            let chars_utf16 = chunk.simd_ge(Simd::splat(0xF0)).to_bitmask() as Bitmap;
+            self.chars_utf16 |= (chars << ix) | (chars_utf16 << (ix + 1));
+            self.newlines |= (chunk.simd_eq(Simd::splat(b'\n')).to_bitmask() as Bitmap) << ix;
+            self.tabs |= (chunk.simd_eq(Simd::splat(b'\t')).to_bitmask() as Bitmap) << ix;
+        }
+        self.text.push_str(text);
+    }
+
+    pub fn push_str_scalar(&mut self, text: &str) {
         for (char_ix, c) in text.char_indices() {
             let ix = self.text.len() + char_ix;
             self.chars |= 1 << ix;
