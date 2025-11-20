@@ -32,6 +32,7 @@ use crate::context::{AgentContextHandle, AgentContextKey};
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::{ContextStore, ContextStoreEvent};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::inline_assistant::ContextProviders;
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{
     CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext, RemoveAllContext,
@@ -773,10 +774,8 @@ impl PromptEditor<BufferCodegen> {
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
         fs: Arc<dyn Fs>,
-        context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        services: ContextProviders,
         window: &mut Window,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
@@ -945,10 +944,8 @@ impl PromptEditor<TerminalCodegen> {
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<TerminalCodegen>,
         fs: Arc<dyn Fs>,
-        context_store: Entity<ContextStore>,
+        context_providers: ContextProviders,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

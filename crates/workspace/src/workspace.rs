@@ -966,6 +966,7 @@ impl AppState {
 
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
+
             cx.set_global(settings_store);
         }
 

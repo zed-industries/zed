@@ -27,6 +27,7 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::Workspace;
 
+use crate::inline_assistant::ContextProviders;
 use crate::{
     context::{AgentContextHandle, AgentContextKey, RULES_ICON},
     context_store::ContextStore,
@@ -245,17 +246,15 @@ pub struct ContextPickerCompletionProvider {
 impl ContextPickerCompletionProvider {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        context_store: WeakEntity<ContextStore>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        context_stores: ContextProviders,
         editor: WeakEntity<Editor>,
         exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
         Self {
             workspace,
-            context_store,
-            thread_store,
-            prompt_store,
+            context_store: context_stores.context_store.downgrade(),
+            thread_store: context_stores.thread_store,
+            prompt_store: context_stores.prompt_store.as_ref().map(Entity::downgrade),
             editor,
             excluded_buffer: exclude_buffer,
         }
@@ -1292,7 +1291,7 @@ mod tests {
             editor
         });
 
-        let context_store = cx.new(|_| ContextStore::new(project.downgrade()));
+        let context_providers = ContextProviders::empty(project.downgrade(), cx);
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -1307,11 +1306,10 @@ mod tests {
                     .map(Entity::downgrade)
             });
             window.focus(&editor.focus_handle(cx));
+
             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
-                context_store.downgrade(),
-                None,
-                None,
+                context_providers,
                 editor_entity,
                 last_opened_buffer,
             ))));

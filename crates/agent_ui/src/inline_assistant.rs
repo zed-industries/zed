@@ -16,6 +16,7 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::EditorSnapshot;
 use editor::RowExt;
 use editor::SelectionEffects;
 use editor::scroll::ScrollOffset;
@@ -85,6 +86,38 @@ const PROMPT_HISTORY_MAX_LEN: usize = 20;
 enum InlineAssistTarget {
     Editor(Entity<Editor>),
     Terminal(Entity<TerminalView>),
+}
+
+#[derive(Clone)]
+pub(crate) struct ContextProviders {
+    pub(crate) workspace: Option<WeakEntity<Workspace>>,
+    pub(crate) prompt_store: Option<Entity<PromptStore>>,
+    pub(crate) thread_store: Option<WeakEntity<HistoryStore>>,
+    pub(crate) context_store: Entity<ContextStore>,
+}
+
+impl ContextProviders {
+    pub(crate) fn project(&self, cx: &mut App) -> WeakEntity<Project> {
+        self.context_store.read(cx).project()
+    }
+
+    pub(crate) fn from_panel(agent_panel: &AgentPanel) -> Self {
+        Self {
+            workspace: Some(agent_panel.workspace()),
+            prompt_store: agent_panel.prompt_store().as_ref().cloned(),
+            thread_store: Some(agent_panel.thread_store().downgrade()),
+            context_store: agent_panel.inline_assist_context_store().clone(),
+        }
+    }
+
+    pub(crate) fn empty(project: WeakEntity<Project>, cx: &mut App) -> Self {
+        Self {
+            workspace: None,
+            prompt_store: None,
+            thread_store: None,
+            context_store: cx.new(|_| ContextStore::new(project.clone())),
+        }
+    }
 }
 
 pub struct InlineAssistant {
@@ -274,11 +307,8 @@ impl InlineAssistant {
         let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
             return;
         };
-        let agent_panel = agent_panel.read(cx);
 
-        let prompt_store = agent_panel.prompt_store().as_ref().cloned();
-        let thread_store = Some(agent_panel.thread_store().downgrade());
-        let context_store = agent_panel.inline_assist_context_store().clone();
+        let services = ContextProviders::from_panel(agent_panel.read(cx));
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -287,10 +317,6 @@ impl InlineAssistant {
                         assistant.assist(
                             &active_editor,
                             cx.entity().downgrade(),
-                            context_store,
-                            workspace.project().downgrade(),
-                            prompt_store,
-                            thread_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -302,10 +328,8 @@ impl InlineAssistant {
                         assistant.assist(
                             &active_terminal,
                             cx.entity().downgrade(),
-                            workspace.project().downgrade(),
-                            prompt_store,
-                            thread_store,
                             action.prompt.clone(),
+                            services,
                             window,
                             cx,
                         )
@@ -350,25 +374,20 @@ impl InlineAssistant {
         }
     }
 
-    pub fn assist(
+    fn codegen_ranges(
         &mut self,
         editor: &Entity<Editor>,
-        workspace: WeakEntity<Workspace>,
-        context_store: Entity<ContextStore>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        initial_prompt: Option<String>,
+        snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let selections = editor.selections.all::<Point>(&snapshot.display_snapshot);
-            let newest_selection = editor
-                .selections
-                .newest::<Point>(&snapshot.display_snapshot);
-            (snapshot, selections, newest_selection)
+    ) -> Option<(Vec<Range<Anchor>>, Selection<Point>)> {
+        let (initial_selections, newest_selection) = editor.update(cx, |editor, _| {
+            (
+                editor.selections.all::<Point>(&snapshot.display_snapshot),
+                editor
+                    .selections
+                    .newest::<Point>(&snapshot.display_snapshot),
+            )
         });
 
         // Check if there is already an inline assistant that contains the
@@ -381,7 +400,7 @@ impl InlineAssistant {
                     && newest_selection.end.row <= range.end.row
                 {
                     self.focus_assist(*assist_id, window, cx);
-                    return;
+                    return None;
                 }
             }
         }
@@ -473,6 +492,25 @@ impl InlineAssistant {
             }
         }
 
+        Some((codegen_ranges, newest_selection))
+    }
+
+    pub fn assist(
+        &mut self,
+        editor: &Entity<Editor>,
+        initial_prompt: Option<String>,
+        services: ContextProviders,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+
+        let Some((codegen_ranges, newest_selection)) =
+            self.codegen_ranges(editor, &snapshot, window, cx)
+        else {
+            return;
+        };
+
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new(|cx| {
             MultiBuffer::singleton(
@@ -484,52 +522,25 @@ impl InlineAssistant {
         let mut assists = Vec::new();
         let mut assist_to_focus = None;
         for range in codegen_ranges {
-            let assist_id = self.next_assist_id.post_inc();
-            let codegen = cx.new(|cx| {
-                BufferCodegen::new(
-                    editor.read(cx).buffer().clone(),
-                    range.clone(),
-                    None,
-                    context_store.clone(),
-                    project.clone(),
-                    prompt_store.clone(),
-                    self.telemetry.clone(),
-                    self.prompt_builder.clone(),
-                    cx,
-                )
-            });
-
-            let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
-            let prompt_editor = cx.new(|cx| {
-                PromptEditor::new_buffer(
-                    assist_id,
-                    editor_margins,
-                    self.prompt_history.clone(),
-                    prompt_buffer.clone(),
-                    codegen.clone(),
-                    self.fs.clone(),
-                    context_store.clone(),
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_store.as_ref().map(|s| s.downgrade()),
-                    window,
-                    cx,
-                )
-            });
+            let (assist_id, prompt_block_id, end_block_id, prompt_editor) = self.single_assist(
+                range.clone(),
+                editor,
+                prompt_buffer.clone(),
+                services.clone(),
+                window,
+                cx,
+            );
 
             if assist_to_focus.is_none() {
                 let focus_assist = if newest_selection.reversed {
-                    range.start.to_point(snapshot) == newest_selection.start
+                    range.start.to_point(&snapshot) == newest_selection.start
                 } else {
-                    range.end.to_point(snapshot) == newest_selection.end
+                    range.end.to_point(&snapshot) == newest_selection.end
                 };
                 if focus_assist {
                     assist_to_focus = Some(assist_id);
                 }
             }
-
-            let [prompt_block_id, end_block_id] =
-                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
 
             assists.push((
                 assist_id,
@@ -574,11 +585,66 @@ impl InlineAssistant {
         }
     }
 
+    fn single_assist(
+        &mut self,
+        range: Range<Anchor>,
+        editor: &Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
+        prompt_buffer: Entity<MultiBuffer>,
+        services: ContextProviders,
+        project: &WeakEntity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (
+        InlineAssistId,
+        CustomBlockId,
+        CustomBlockId,
+        Entity<PromptEditor<BufferCodegen>>,
+    ) {
+        let assist_id = self.next_assist_id.post_inc();
+        let codegen = cx.new(|cx| {
+            BufferCodegen::new(
+                editor.read(cx).buffer().clone(),
+                range.clone(),
+                None,
+                context_store.clone(),
+                project.clone(),
+                prompt_store.clone(),
+                self.telemetry.clone(),
+                self.prompt_builder.clone(),
+                cx,
+            )
+        });
+
+        let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
+        let prompt_editor = cx.new(|cx| {
+            PromptEditor::new_buffer(
+                assist_id,
+                editor_margins,
+                self.prompt_history.clone(),
+                prompt_buffer.clone(),
+                codegen.clone(),
+                self.fs.clone(),
+                context_store.clone(),
+                workspace.clone(),
+                thread_store.clone(),
+                prompt_store.as_ref().map(|s| s.downgrade()),
+                window,
+                cx,
+            )
+        });
+
+        let [prompt_block_id, end_block_id] =
+            self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
+
+        (assist_id, prompt_block_id, end_block_id, prompt_editor)
+    }
+
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
         mut range: Range<Anchor>,
-        initial_prompt: String,
+        prompt_buffer: Entity<MultiBuffer>,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
@@ -587,9 +653,8 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
+        /// !!!!!!!!
         let assist_group_id = self.next_assist_group_id.post_inc();
-        let prompt_buffer = cx.new(|cx| Buffer::local(&initial_prompt, cx));
-        let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
 
         let assist_id = self.next_assist_id.post_inc();
 
@@ -1879,11 +1944,15 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 .context("invalid range")?;
 
             let prompt_store = prompt_store.await.ok();
+
+            const PROMPT: &'static str = "Fix Diagnostics";
             cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
+                let prompt_buffer = cx.new(|cx| Buffer::local(PROMPT, cx));
+                let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
                 let assist_id = assistant.suggest_assist(
                     &editor,
                     range,
-                    "Fix Diagnostics".into(),
+                    prompt_buffer,
                     None,
                     true,
                     workspace,

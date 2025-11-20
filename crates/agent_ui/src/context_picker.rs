@@ -38,6 +38,7 @@ use util::rel_path::RelPath;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
+use crate::inline_assistant::ContextProviders;
 use crate::{context::RULES_ICON, context_store::ContextStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,12 +173,18 @@ pub(super) struct ContextPicker {
 impl ContextPicker {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
-        context_store: WeakEntity<ContextStore>,
+        context_stores: ContextProviders,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let context_store = context_stores.context_store.downgrade();
+        let thread_store = context_stores.thread_store.clone();
+        let prompt_store = context_stores
+            .prompt_store
+            .as_ref()
+            .map(Entity::downgrade)
+            .clone();
+
         let subscriptions = context_store
             .upgrade()
             .map(|context_store| {

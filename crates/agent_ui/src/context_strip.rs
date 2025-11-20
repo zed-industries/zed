@@ -2,13 +2,13 @@ use crate::{
     AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
     ModelUsageContext, RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
     context_picker::ContextPicker,
+    inline_assistant::ContextProviders,
     ui::{AddedContext, ContextPill},
 };
 use crate::{
     context::AgentContextHandle,
     context_store::{ContextStore, SuggestedContext},
 };
-use agent::HistoryStore;
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
@@ -42,10 +42,8 @@ pub struct ContextStrip {
 
 impl ContextStrip {
     pub fn new(
-        context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        inline_services: ContextProviders,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
         model_usage_context: ModelUsageContext,

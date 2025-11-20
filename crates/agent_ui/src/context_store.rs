@@ -39,6 +39,10 @@ pub enum ContextStoreEvent {
 impl EventEmitter<ContextStoreEvent> for ContextStore {}
 
 impl ContextStore {
+    pub fn project(&self) -> WeakEntity<Project> {
+        self.project.clone()
+    }
+
     pub fn new(project: WeakEntity<Project>) -> Self {
         Self {
             project,

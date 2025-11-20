@@ -1,6 +1,7 @@
 use crate::{
     context::load_context,
     context_store::ContextStore,
+    inline_assistant::ContextProviders,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
     },
@@ -72,10 +73,8 @@ impl TerminalInlineAssistant {
         &mut self,
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
         initial_prompt: Option<String>,
+        context_providers: ContextProviders,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -87,7 +86,7 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let context_store = cx.new(|_cx| ContextStore::new(project));
+
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -97,10 +96,8 @@ impl TerminalInlineAssistant {
                 prompt_buffer.clone(),
                 codegen,
                 self.fs.clone(),
-                context_store.clone(),
+                context_providers,
                 workspace.clone(),
-                thread_store.clone(),
-                prompt_store.as_ref().map(|s| s.downgrade()),
                 window,
                 cx,
             )
@@ -420,8 +417,7 @@ impl TerminalInlineAssist {
         terminal: &Entity<TerminalView>,
         prompt_editor: Entity<PromptEditor<TerminalCodegen>>,
         workspace: WeakEntity<Workspace>,
-        context_store: Entity<ContextStore>,
-        prompt_store: Option<Entity<PromptStore>>,
+        context_providers: ContextProviders,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {

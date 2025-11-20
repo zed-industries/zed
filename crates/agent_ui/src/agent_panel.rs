@@ -19,7 +19,6 @@ use settings::{
 
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
-use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
     NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory,
@@ -39,6 +38,10 @@ use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
 use crate::{ManageProfiles, context_store::ContextStore};
+use crate::{
+    inline_assistant::ContextProviders,
+    ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal},
+};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -455,6 +458,10 @@ pub struct AgentPanel {
 }
 
 impl AgentPanel {
+    pub(crate) fn workspace(&self) -> WeakEntity<Workspace> {
+        self.workspace.clone()
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
@@ -2700,17 +2707,12 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             else {
                 return;
             };
-            let prompt_store = None;
-            let thread_store = None;
-            let context_store = cx.new(|_| ContextStore::new(project.clone()));
+            let context_providers = ContextProviders::empty(project, cx);
             assistant.assist(
                 prompt_editor,
-                self.workspace.clone(),
-                context_store,
-                project,
-                prompt_store,
-                thread_store,
                 initial_prompt,
+                context_providers,
+                self.workspace.clone(),
                 window,
                 cx,
             )
