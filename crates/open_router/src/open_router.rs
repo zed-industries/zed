@@ -325,15 +325,12 @@ pub enum MessagePart {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "thoughtSignature"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }
 
@@ -359,15 +356,12 @@ pub struct ResponseMessageDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCallChunk {
     pub index: usize,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "thoughtSignature"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }
 
