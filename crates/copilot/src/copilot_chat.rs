@@ -337,15 +337,12 @@ impl From<String> for ChatMessageContent {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "thoughtSignature"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }
 
@@ -392,15 +389,12 @@ pub struct ResponseDelta {
     pub tool_calls: Vec<ToolCallChunk>,
 }
 #[derive(Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCallChunk {
     pub index: Option<usize>,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "thoughtSignature"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }
 
