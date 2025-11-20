@@ -588,6 +588,21 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 impl Item for Editor {
     type Event = EditorEvent;
 
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        cx: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if TypeId::of::<Self>() == type_id {
+            Some(self_handle.clone().into())
+        } else if TypeId::of::<MultiBuffer>() == type_id {
+            Some(self_handle.read(cx).buffer.clone().into())
+        } else {
+            None
+        }
+    }
+
     fn navigate(
         &mut self,
         data: Box<dyn std::any::Any>,
