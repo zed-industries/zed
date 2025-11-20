@@ -32,7 +32,7 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::FutureExt;
+use futures::{FutureExt, channel::mpsc};
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
@@ -102,6 +102,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    _inline_assistant_completions: Option<mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>>,
 }
 
 impl Global for InlineAssistant {}
@@ -123,7 +124,16 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
+            _inline_assistant_completions: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_completion_receiver(
+        &mut self,
+        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
+    ) {
+        self._inline_assistant_completions = Some(sender);
     }
 
     pub fn register_workspace(
@@ -287,7 +297,7 @@ impl InlineAssistant {
                             action.prompt.clone(),
                             window,
                             cx,
-                        )
+                        );
                     })
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
@@ -301,8 +311,8 @@ impl InlineAssistant {
                             action.prompt.clone(),
                             window,
                             cx,
-                        )
-                    })
+                        );
+                    });
                 }
             };
 
@@ -598,13 +608,13 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Option<InlineAssistId> {
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
         let Some((codegen_ranges, newest_selection)) =
             self.codegen_ranges(editor, &snapshot, window, cx)
         else {
-            return;
+            return None;
         };
 
         let assist_to_focus = self.batch_assist(
@@ -624,6 +634,8 @@ impl InlineAssistant {
         if let Some(assist_id) = assist_to_focus {
             self.focus_assist(assist_id, window, cx);
         }
+
+        assist_to_focus
     }
 
     pub fn suggest_assist(
@@ -1739,6 +1751,16 @@ impl InlineAssist {
                                 && assist.decorations.is_none()
                                 && let Some(workspace) = assist.workspace.upgrade()
                             {
+                                #[cfg(any(test, feature = "test-support"))]
+                                if let Some(sender) = &mut this._inline_assistant_completions {
+                                    sender
+                                        .unbounded_send(Err(anyhow::anyhow!(
+                                            "Inline assistant error: {}",
+                                            error
+                                        )))
+                                        .ok();
+                                }
+
                                 let error = format!("Inline assistant error: {}", error);
                                 workspace.update(cx, |workspace, cx| {
                                     struct InlineAssistantError;
@@ -1749,6 +1771,11 @@ impl InlineAssist {
 
                                     workspace.show_toast(Toast::new(id, error), cx);
                                 })
+                            } else {
+                                #[cfg(any(test, feature = "test-support"))]
+                                if let Some(sender) = &mut this._inline_assistant_completions {
+                                    sender.unbounded_send(Ok(assist_id)).ok();
+                                }
                             }
 
                             if assist.decorations.is_none() {

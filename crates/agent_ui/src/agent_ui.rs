@@ -7,6 +7,10 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
+mod context_store;
+mod context_strip;
+#[cfg(test)]
+mod evals;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
