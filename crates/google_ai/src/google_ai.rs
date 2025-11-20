@@ -530,7 +530,7 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Self::Gemini20FlashLite
+        Self::Gemini25FlashLite
     }
 
     pub fn id(&self) -> &str {
