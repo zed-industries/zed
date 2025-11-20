@@ -1846,6 +1846,7 @@ async fn test_remote_external_agent_server(
                 &json!({
                     "agent_servers": {
                         "foo": {
+                            "type": "custom",
                             "command": "foo-cli",
                             "args": ["--flag"],
                             "env": {

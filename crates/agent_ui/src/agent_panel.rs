@@ -8,9 +8,7 @@ use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore}
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
-    agent_server_store::{
-        AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
-    },
+    agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -35,9 +33,7 @@ use crate::{
     ExpandMessageEditor,
     acp::{AcpThreadHistory, ThreadHistoryEvent},
 };
-use crate::{
-    ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
-};
+use crate::{ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary};
 use crate::{ManageProfiles, context_store::ContextStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
@@ -61,7 +57,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{
@@ -248,7 +244,6 @@ pub enum AgentType {
     Codex,
     Custom {
         name: SharedString,
-        command: AgentServerCommand,
     },
 }
 
@@ -280,7 +275,7 @@ impl From<ExternalAgent> for AgentType {
             ExternalAgent::Gemini => Self::Gemini,
             ExternalAgent::ClaudeCode => Self::ClaudeCode,
             ExternalAgent::Codex => Self::Codex,
-            ExternalAgent::Custom { name, command } => Self::Custom { name, command },
+            ExternalAgent::Custom { name } => Self::Custom { name },
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
     }
@@ -1459,8 +1454,8 @@ impl AgentPanel {
                 self.serialize(cx);
                 self.external_thread(Some(crate::ExternalAgent::Codex), None, None, window, cx)
             }
-            AgentType::Custom { name, command } => self.external_thread(
-                Some(crate::ExternalAgent::Custom { name, command }),
+            AgentType::Custom { name } => self.external_thread(
+                Some(crate::ExternalAgent::Custom { name }),
                 None,
                 None,
                 window,
@@ -2085,21 +2080,10 @@ impl AgentPanel {
                                     .cloned()
                                     .collect::<Vec<_>>();
 
-                                let custom_settings = cx
-                                    .global::<SettingsStore>()
-                                    .get::<AllAgentServersSettings>(None)
-                                    .custom
-                                    .clone();
-
                                 for agent_name in agent_names {
                                     let icon_path = agent_server_store.agent_icon(&agent_name);
 
                                     let mut entry = ContextMenuEntry::new(agent_name.clone());
-
-                                    let command = custom_settings
-                                        .get(&agent_name.0)
-                                        .map(|settings| settings.command.clone())
-                                        .unwrap_or(placeholder_command());
 
                                     if let Some(icon_path) = icon_path {
                                         entry = entry.custom_icon_svg(icon_path);
@@ -2110,7 +2094,6 @@ impl AgentPanel {
                                         .when(
                                             is_agent_selected(AgentType::Custom {
                                                 name: agent_name.0.clone(),
-                                                command: command.clone(),
                                             }),
                                             |this| {
                                                 this.action(Box::new(NewExternalAgentThread { agent: None }))
@@ -2121,7 +2104,6 @@ impl AgentPanel {
                                         .handler({
                                             let workspace = workspace.clone();
                                             let agent_name = agent_name.clone();
-                                            let custom_settings = custom_settings.clone();
                                             move |window, cx| {
                                                 if let Some(workspace) = workspace.upgrade() {
                                                     workspace.update(cx, |workspace, cx| {
@@ -2134,17 +2116,6 @@ impl AgentPanel {
                                                                         name: agent_name
                                                                             .clone()
                                                                             .into(),
-                                                                        command: custom_settings
-                                                                            .get(&agent_name.0)
-                                                                            .map(|settings| {
-                                                                                settings
-                                                                                    .command
-                                                                                    .clone()
-                                                                            })
-                                                                            .unwrap_or(
-                                                                                placeholder_command(
-                                                                                ),
-                                                                            ),
                                                                     },
                                                                     window,
                                                                     cx,

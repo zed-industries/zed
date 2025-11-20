@@ -29,10 +29,13 @@ use ui::{
     KeyBinding, ListItem, ListItemSpacing, ToggleButtonGroup, ToggleButtonSimple, ToggleState,
     Tooltip, prelude::*,
 };
-use util::{ResultExt, rel_path::RelPath, shell::ShellKind};
+use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
-use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
+use crate::{
+    attach_modal::{AttachModal, ModalIntent},
+    debugger_panel::DebugPanel,
+};
 
 pub(super) struct NewProcessModal {
     workspace: WeakEntity<Workspace>,
@@ -395,8 +398,15 @@ impl NewProcessModal {
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.definition.adapter = adapter.0.clone();
-                        this.focus(window, cx);
+                        match &mut this.delegate.intent {
+                            ModalIntent::AttachToProcess(definition) => {
+                                definition.adapter = adapter.0.clone();
+                                this.focus(window, cx);
+                            },
+                            ModalIntent::ResolveProcessId(_) => {
+                                debug_panic!("Attach picker attempted to update config when in resolve Process ID mode");
+                            }
+                        }
                     })
                 });
             }
@@ -942,7 +952,14 @@ impl AttachMode {
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
-            let modal = AttachModal::new(definition.clone(), workspace, project, false, window, cx);
+            let modal = AttachModal::new(
+                ModalIntent::AttachToProcess(definition.clone()),
+                workspace,
+                project,
+                false,
+                window,
+                cx,
+            );
             window.focus(&modal.focus_handle(cx));
 
             modal
