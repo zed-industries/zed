@@ -511,7 +511,7 @@ pub enum Model {
     )]
     Gemini25Pro,
     #[serde(rename = "gemini-3-pro-preview")]
-    Gemini3ProPreview,
+    Gemini3Pro,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -533,7 +533,7 @@ impl Model {
             Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini3ProPreview => "gemini-3-pro-preview",
+            Self::Gemini3Pro => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -542,7 +542,7 @@ impl Model {
             Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini3ProPreview => "gemini-3-pro-preview",
+            Self::Gemini3Pro => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -552,7 +552,7 @@ impl Model {
             Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini3ProPreview => "Gemini 3 Pro",
+            Self::Gemini3Pro => "Gemini 3 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -564,7 +564,7 @@ impl Model {
             Self::Gemini25FlashLite => 1_048_576,
             Self::Gemini25Flash => 1_048_576,
             Self::Gemini25Pro => 1_048_576,
-            Self::Gemini3ProPreview => 1_048_576,
+            Self::Gemini3Pro => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -574,7 +574,7 @@ impl Model {
             Model::Gemini25FlashLite => Some(65_536),
             Model::Gemini25Flash => Some(65_536),
             Model::Gemini25Pro => Some(65_536),
-            Model::Gemini3ProPreview => Some(65_536),
+            Model::Gemini3Pro => Some(65_536),
             Model::Custom { .. } => None,
         }
     }
@@ -592,7 +592,7 @@ impl Model {
             Self::Gemini25FlashLite
             | Self::Gemini25Flash
             | Self::Gemini25Pro
-            | Self::Gemini3ProPreview => {
+            | Self::Gemini3Pro => {
                 GoogleModelMode::Thinking {
                     // By default these models are set to "auto", so we preserve that behavior
                     // but indicate they are capable of thinking mode
