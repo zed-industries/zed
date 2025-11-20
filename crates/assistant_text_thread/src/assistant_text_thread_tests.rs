@@ -1,6 +1,7 @@
 use crate::{
-    CacheStatus, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus, TextThread,
-    TextThreadEvent, TextThreadId, TextThreadOperation, TextThreadSummary,
+    CacheStatus, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
+    SavedTextThread, TextThread, TextThreadEvent, TextThreadId, TextThreadOperation,
+    TextThreadSummary,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -34,6 +35,7 @@ use std::{
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
 };
+use strum::IntoEnumIterator;
 use text::{ReplicaId, ToOffset, network::Network};
 use ui::{IconName, Window};
 use unindent::Unindent;
@@ -1459,5 +1461,85 @@ impl SlashCommand for FakeSlashCommand {
             run_commands_in_text: false,
         }
         .into_event_stream()))
+    }
+}
+
+#[test]
+fn test_icon_backward_compatibility_in_saved_threads() {
+    #[rustfmt::skip]
+    const ICONS: &[&str] = &[
+        "Ai", "AiAnthropic", "AiBedrock", "AiClaude", "AiDeepSeek", "AiEdit",
+        "AiGemini", "AiGoogle", "AiLmStudio", "AiMistral", "AiOllama", "AiOpenAi",
+        "AiOpenAiCompat", "AiOpenRouter", "AiVZero", "AiXAi", "AiZed", "ArrowCircle",
+        "ArrowDown", "ArrowDown10", "ArrowDownRight", "ArrowLeft", "ArrowRight",
+        "ArrowRightLeft", "ArrowUp", "ArrowUpRight", "Attach", "AtSign", "AudioOff",
+        "AudioOn", "Backspace", "Bell", "BellDot", "BellOff", "BellRing", "Binary",
+        "Blocks", "BoltOutlined", "BoltFilled", "Book", "BookCopy", "CaseSensitive",
+        "Chat", "Check", "CheckDouble", "ChevronDown", "ChevronDownUp", "ChevronLeft",
+        "ChevronRight", "ChevronUp", "ChevronUpDown", "Circle", "CircleHelp", "Close",
+        "CloudDownload", "Code", "Cog", "Command", "Control", "Copilot", "CopilotDisabled",
+        "CopilotError", "CopilotInit", "Copy", "CountdownTimer", "Crosshair", "CursorIBeam",
+        "Dash", "DatabaseZap", "Debug", "DebugBreakpoint", "DebugContinue",
+        "DebugDisabledBreakpoint", "DebugDisabledLogBreakpoint", "DebugDetach",
+        "DebugIgnoreBreakpoints", "DebugLogBreakpoint", "DebugPause", "DebugStepBack",
+        "DebugStepInto", "DebugStepOut", "DebugStepOver", "Diff", "Disconnected",
+        "Download", "EditorAtom", "EditorCursor", "EditorEmacs", "EditorJetBrains",
+        "EditorSublime", "EditorVsCode", "Ellipsis", "EllipsisVertical", "Envelope",
+        "Eraser", "Escape", "Exit", "ExpandDown", "ExpandUp", "ExpandVertical", "Eye",
+        "File", "FileCode", "FileDiff", "FileDoc", "FileGeneric", "FileGit", "FileLock",
+        "FileMarkdown", "FileRust", "FileTextFilled", "FileTextOutlined", "FileToml",
+        "FileTree", "Filter", "Flame", "Folder", "FolderOpen", "FolderSearch", "Font",
+        "FontSize", "FontWeight", "ForwardArrow", "GenericClose", "GenericMaximize",
+        "GenericMinimize", "GenericRestore", "GitBranch", "GitBranchAlt", "Github",
+        "Hash", "HistoryRerun", "Image", "Indicator", "Info", "Json", "Keyboard",
+        "Library", "LineHeight", "Link", "ListCollapse", "ListFilter", "ListTodo",
+        "ListTree", "ListX", "LoadCircle", "LocationEdit", "LockOutlined",
+        "MagnifyingGlass", "Maximize", "Menu", "MenuAlt", "MenuAltTemp", "Mic",
+        "MicMute", "Minimize", "Notepad", "Option", "PageDown", "PageUp", "Paperclip",
+        "Pencil", "PencilUnavailable", "Person", "Pin", "PlayOutlined", "PlayFilled",
+        "Plus", "Power", "Public", "PullRequest", "Quote", "Reader", "RefreshTitle",
+        "Regex", "ReplNeutral", "Replace", "ReplaceAll", "ReplaceNext", "ReplyArrowRight",
+        "Rerun", "Return", "RotateCcw", "RotateCw", "Scissors", "Screen", "SelectAll",
+        "Send", "Server", "Settings", "ShieldCheck", "Shift", "Slash", "Sliders",
+        "Space", "Sparkle", "Split", "SplitAlt", "SquareDot", "SquareMinus",
+        "SquarePlus", "Star", "StarFilled", "Stop", "Supermaven", "SupermavenDisabled",
+        "SupermavenError", "SupermavenInit", "SwatchBook", "SweepAi", "Tab", "Terminal",
+        "TerminalAlt", "TerminalGhost", "TextSnippet", "TextThread", "Thread",
+        "ThreadFromSummary", "ThumbsDown", "ThumbsUp", "TodoComplete", "TodoPending",
+        "TodoProgress", "ToolCopy", "ToolDeleteFile", "ToolDiagnostics", "ToolFolder",
+        "ToolHammer", "ToolNotification", "ToolPencil", "ToolRead", "ToolRegex",
+        "ToolSearch", "ToolTerminal", "ToolThink", "ToolWeb", "Trash", "Triangle",
+        "TriangleRight", "Undo", "Unpin", "UserCheck", "UserGroup", "UserRoundPen",
+        "Warning", "WholeWord", "XCircle", "XCircleFilled", "ZedAgent", "ZedAssistant",
+        "ZedBurnMode", "ZedBurnModeOn", "ZedSrcCustom", "ZedSrcExtension", "ZedPredict",
+        "ZedPredictDisabled", "ZedPredictDown", "ZedPredictError", "ZedPredictUp",
+        "ZedXCopilot", "Linux",
+    ];
+    assert_eq!(ICONS.len(), IconName::iter().count());
+
+    for icon in ICONS {
+        let json_str = serde_json::to_string(&json!({
+            "id": "test-thread",
+            "zed": "zed",
+            "version": SavedTextThread::VERSION,
+            "text": "Test thread",
+            "messages": [],
+            "summary": "test",
+            "slash_command_output_sections": [
+                {
+                    "range": {"start": 0, "end": 1},
+                    "icon": icon,
+                    "label": "test",
+                    "metadata": null
+                }
+            ]
+        }))
+        .unwrap();
+        serde_json::from_str::<SavedTextThread>(&json_str).unwrap_or_else(|_| {
+            panic!(
+                "IconName '{}' failed to deserialize in SavedTextThread",
+                icon
+            )
+        });
     }
 }
