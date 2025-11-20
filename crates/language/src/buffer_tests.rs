@@ -3471,7 +3471,6 @@ fn test_insertion_after_deletion(cx: &mut gpui::App) {
         buffer.edit([(anchor..anchor, " i32,")], None, cx);
         let snapshot = buffer.snapshot();
         assert_eq!(snapshot.text(), "struct Foo {\nfield1: i32,}");
-        assert_eq!(snapshot.text(), "struct Foo { i32,field1:\n}");
     })
 }
 
