@@ -52,7 +52,7 @@ use panel::{
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
-    project_settings::{GitPathStyle, ProjectSettings},
+    project_settings::{GitPathStyle, GitSettings},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -4104,7 +4104,7 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let path_style = self.project.read(cx).path_style(cx);
-        let git_path_style = ProjectSettings::get_global(cx).git.path_style;
+        let git_path_style = GitSettings::get_global(cx).path_style;
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
