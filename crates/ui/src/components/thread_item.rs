@@ -100,7 +100,6 @@ impl RenderOnce for ThreadItem {
             .hover(|s| s.bg(cx.theme().colors().element_hover))
             .child(
                 h_flex()
-                    // .min_w_0()
                     .w_full()
                     .gap_1p5()
                     .child(icon)
