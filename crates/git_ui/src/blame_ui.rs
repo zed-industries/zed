@@ -12,9 +12,7 @@ use gpui::{
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
-use project::{
-    git_store::Repository, project_settings::GitSettings,
-};
+use project::{git_store::Repository, project_settings::GitSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
