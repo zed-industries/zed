@@ -7946,7 +7946,9 @@ pub fn open_paths(
                 }
             })?;
 
-            if open_options.open_new_workspace.is_none()
+            if (open_options.open_new_workspace.is_none()
+                || (open_options.open_new_workspace == Some(false)
+                    && open_options.prefer_focused_window))
                 && (existing.is_none() || open_options.prefer_focused_window)
                 && all_metadatas.iter().all(|file| !file.is_dir)
             {

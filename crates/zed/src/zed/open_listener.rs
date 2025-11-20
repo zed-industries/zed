@@ -522,7 +522,7 @@ async fn open_local_workspace(
         workspace::OpenOptions {
             open_new_workspace,
             replace_window,
-            prefer_focused_window: wait,
+            prefer_focused_window: wait || open_new_workspace == Some(false),
             env: env.cloned(),
             ..Default::default()
         },
@@ -979,5 +979,168 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    async fn test_add_flag_prefers_focused_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file1_path = if cfg!(windows) {
+            "C:\\root\\file1.txt"
+        } else {
+            "/root/file1.txt"
+        };
+        let file2_path = if cfg!(windows) {
+            "C:\\root\\file2.txt"
+        } else {
+            "/root/file2.txt"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file1_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file1_path),
+                &Rope::from("content1"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file2_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file2_path),
+                &Rope::from("content2"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+
+        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
+
+        // Open first workspace
+        let workspace_paths_1 = vec![file1_path.to_string()];
+        let _errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths_1,
+                        vec![],
+                        None,
+                        false,
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert_eq!(cx.windows().len(), 1);
+        let window1 = cx.windows()[0].downcast::<Workspace>().unwrap();
+
+        // Open second workspace in a new window
+        let workspace_paths_2 = vec![file2_path.to_string()];
+        let _errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths_2,
+                        vec![],
+                        Some(true), // Force new window
+                        false,
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert_eq!(cx.windows().len(), 2);
+        let window2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+
+        // Focus window2
+        window2
+            .update(cx, |_, window, _| {
+                window.activate_window();
+            })
+            .unwrap();
+
+        // Now use --add flag (open_new_workspace = Some(false)) to add a new file
+        // It should open in the focused window (window2), not an arbitrary window
+        let new_file_path = if cfg!(windows) {
+            "C:\\root\\new_file.txt"
+        } else {
+            "/root/new_file.txt"
+        };
+        app_state
+            .fs
+            .create_file(Path::new(new_file_path), Default::default())
+            .await
+            .unwrap();
+
+        let workspace_paths_add = vec![new_file_path.to_string()];
+        let _errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths_add,
+                        vec![],
+                        Some(false), // --add flag: open_new_workspace = Some(false)
+                        false,
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        // Should still have 2 windows (file added to existing focused window)
+        assert_eq!(cx.windows().len(), 2);
+
+        // Verify the file was added to window2 (the focused one)
+        window2
+            .update(cx, |workspace, _, cx| {
+                let items = workspace.items(cx).collect::<Vec<_>>();
+                // Should have 2 items now (file2.txt and new_file.txt)
+                assert_eq!(items.len(), 2, "Focused window should have 2 items");
+            })
+            .unwrap();
+
+        // Verify window1 still has only 1 item
+        window1
+            .update(cx, |workspace, _, cx| {
+                let items = workspace.items(cx).collect::<Vec<_>>();
+                assert_eq!(items.len(), 1, "Other window should still have 1 item");
+            })
+            .unwrap();
     }
 }
