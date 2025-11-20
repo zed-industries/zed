@@ -139,7 +139,7 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
-const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_nanos(50);
+const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -606,10 +606,8 @@ impl LocalLspStore {
                 .await
                 .await;
 
-            dbg!("get language server command finish");
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
-            dbg!((existing_binary.is_ok(), maybe_download_binary.is_some()));
             let mut binary = match (existing_binary, maybe_download_binary) {
                 (Ok(binary), None) => binary,
                 (error @ Err(_), None) => return error,
@@ -623,12 +621,10 @@ impl LocalLspStore {
                     futures::select! {
                         _ = download_timeout => {
                             // Return existing binary and kick the existing work to the background.
-                            dbg!("Moving downloading to the background");
                             cx.spawn(async move |_| downloader.await).detach();
                             Ok(existing_binary)
                         },
                         downloaded_binary = downloader => {
-                            dbg!("Downloaded binary within timeout");
                             downloaded_binary
                         }
                     }?
