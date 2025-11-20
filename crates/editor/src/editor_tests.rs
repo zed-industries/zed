@@ -25745,7 +25745,6 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
 
         if [ \"$1\" = \"test\" ]; then
             ˇ
-
     "});
 
     // test correct indent after newline after `else`
@@ -25761,7 +25760,6 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
         if [ \"$1\" = \"test\" ]; then
         else
             ˇ
-
     "});
 
     // test correct indent after newline after `elif`
@@ -25790,14 +25788,12 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         for file in *.txt; do
             ˇ
-
     "});
 
     // test correct indent after newline after case pattern
     cx.set_state(indoc! {"
         case \"$1\" in
             start)ˇ
-
     "});
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
@@ -25807,7 +25803,6 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
         case \"$1\" in
             start)
                 ˇ
-
     "});
 
     // test correct indent after newline after case pattern
@@ -25816,7 +25811,6 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
             start)
                 ;;
             *)ˇ
-
     "});
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
@@ -25828,7 +25822,6 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
                 ;;
             *)
                 ˇ
-
     "});
 
     // test correct indent after newline after function opening brace

@@ -21524,6 +21524,10 @@ impl Editor {
     }
 
     fn fetch_accent_overrides(&self, cx: &App) -> Vec<SharedString> {
+        if !self.mode.is_full() {
+            return Vec::new();
+        }
+
         theme::ThemeSettings::get_global(cx)
             .theme_overrides
             .get(cx.theme().name.as_ref())

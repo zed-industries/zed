@@ -14052,6 +14052,7 @@ dependencies = [
  "smol",
  "sysinfo 0.37.2",
  "task",
+ "theme",
  "thiserror 2.0.17",
  "toml 0.8.23",
  "unindent",
