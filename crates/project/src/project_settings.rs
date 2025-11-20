@@ -481,6 +481,7 @@ impl settings::Settings for GitSettings {
                 }
             },
             hunk_style: user_content.hunk_style.unwrap(),
+            path_style: user_content.path_style.unwrap().into(),
         }
     }
 }
