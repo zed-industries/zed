@@ -1,13 +1,11 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{
-    Addon, Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
-};
+use editor::{Addon, Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element,
+    Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     PromptLevel, Render, Styled, Task, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
     actions, px,
 };
