@@ -1316,7 +1316,9 @@
     //    "hunk_style": "staged_hollow"
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
-    "hunk_style": "staged_hollow"
+    "hunk_style": "staged_hollow",
+    // Whether to show controls (readonly button and quick action dropdown) in the toolbar.
+    "show_keybind_switcher": true
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

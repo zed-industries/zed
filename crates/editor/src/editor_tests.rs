@@ -19561,7 +19561,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             cx,
             |s| s.select_ranges(Some(MultiBufferOffset(1)..MultiBufferOffset(2))),
         );
-        editor.open_excerpts(&OpenExcerpts, window, cx);
+        editor.open_excerpts(&OpenExcerpts::default(), window, cx);
     });
     cx.executor().run_until_parked();
     let first_item_id = workspace
@@ -19617,7 +19617,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             cx,
             |s| s.select_ranges(Some(MultiBufferOffset(39)..MultiBufferOffset(40))),
         );
-        editor.open_excerpts(&OpenExcerpts, window, cx);
+        editor.open_excerpts(&OpenExcerpts::default(), window, cx);
     });
     cx.executor().run_until_parked();
     let second_item_id = workspace
@@ -19677,7 +19677,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             cx,
             |s| s.select_ranges(Some(MultiBufferOffset(70)..MultiBufferOffset(70))),
         );
-        editor.open_excerpts(&OpenExcerpts, window, cx);
+        editor.open_excerpts(&OpenExcerpts::default(), window, cx);
     });
     cx.executor().run_until_parked();
     workspace

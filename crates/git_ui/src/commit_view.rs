@@ -2,8 +2,10 @@ use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{
     Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    actions::{OpenExcerpts, OpenExcerptsSplit},
     multibuffer_context_lines,
 };
+
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
@@ -14,14 +16,18 @@ use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
     Point, ReplicaId, Rope, TextBuffer,
 };
-use multi_buffer::PathKey;
-use project::{Project, WorktreeId, git_store::Repository};
+use multi_buffer::{BufferOffset, PathKey, ToPoint as _};
+use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
+    collections::HashMap,
     fmt::Write as _,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
+use text;
+use text::BufferId;
 use ui::{
     Button, Color, Icon, IconName, Label, LabelCommon as _, SharedString, Tooltip, prelude::*,
 };
@@ -35,7 +41,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-use crate::git_panel::GitPanel;
+use crate::{git_panel::GitPanel, open_historical};
 
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
 
@@ -59,6 +65,7 @@ pub struct CommitView {
     editor: Entity<Editor>,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
+    repository: Entity<Repository>,
 }
 
 struct GitBlob {
@@ -195,12 +202,13 @@ impl CommitView {
             });
         }
 
+        let repo_clone = repository.clone();
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
                 let new_text = file.new_text.unwrap_or_default();
                 let old_text = file.old_text;
-                let worktree_id = repository
+                let worktree_id = repo_clone
                     .update(cx, |repository, cx| {
                         repository
                             .repo_path_to_project_path(&file.path, cx)
@@ -247,7 +255,557 @@ impl CommitView {
             editor,
             multibuffer,
             stash,
+            repository,
         }
+    }
+
+    pub fn open_excerpts(
+        &mut self,
+        action: &OpenExcerpts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!(
+            "OpenExcerpts action triggered with target: {:?}",
+            action.target
+        );
+        match action.target {
+            editor::actions::ExcerptTarget::OpenCurrent => {
+                self.open_current_file_common(false, window, cx)
+            }
+            editor::actions::ExcerptTarget::OpenHistorical => {
+                self.open_historical_file_common(false, false, window, cx)
+            }
+            editor::actions::ExcerptTarget::OpenModified => {
+                self.open_historical_file_common(true, false, window, cx)
+            }
+            editor::actions::ExcerptTarget::OpenParent => {
+                self.open_historical_file_common(false, false, window, cx)
+            }
+        }
+    }
+
+    pub fn open_excerpts_split(
+        &mut self,
+        action: &OpenExcerptsSplit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!(
+            "OpenExcerptsSplit action triggered with target: {:?}",
+            action.target
+        );
+        match action.target {
+            editor::actions::ExcerptTarget::OpenCurrent => {
+                self.open_current_file_common(true, window, cx)
+            }
+            editor::actions::ExcerptTarget::OpenHistorical => {
+                self.open_historical_file_common(false, true, window, cx)
+            }
+            editor::actions::ExcerptTarget::OpenModified => {
+                self.open_historical_file_common(true, true, window, cx)
+            }
+            editor::actions::ExcerptTarget::OpenParent => {
+                self.open_historical_file_common(false, true, window, cx)
+            }
+        }
+    }
+
+    fn open_historical_file_common(
+        &mut self,
+        is_changed: bool,
+        split: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!(
+            "open_historical_file_common: is_changed={}, split={}",
+            is_changed,
+            split
+        );
+
+        let Some(_workspace) = self.editor.read(cx).workspace() else {
+            log::warn!("open_historical_file_common: No workspace found");
+            cx.propagate();
+            return;
+        };
+
+        // Get cursor position
+        let cursor_position = self.editor.update(cx, |editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&display_snapshot)
+                .head()
+        });
+        log::debug!(
+            "open_historical_file_common: Cursor position: {}",
+            cursor_position
+        );
+
+        // Get the buffer snapshot at cursor using range_to_buffer_ranges
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let mut buffer_info: Option<(Entity<Buffer>, BufferId, RepoPath, WorktreeId)> = None;
+
+        // Try to find buffer at cursor position
+        for (buffer_snapshot, _range, _excerpt_id, _anchor) in
+            snapshot.range_to_buffer_ranges_with_deleted_hunks(cursor_position..cursor_position)
+        {
+            if let Some(file) = buffer_snapshot.file() {
+                let buffer_id = buffer_snapshot.remote_id();
+                let repo_path = RepoPath::from_rel_path(file.path());
+                let worktree_id = file.worktree_id(cx);
+
+                if let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) {
+                    log::info!(
+                        "open_historical_file_common: Found buffer at cursor: path={:?}, buffer_id={:?}",
+                        repo_path.as_std_path(),
+                        buffer_id
+                    );
+                    buffer_info = Some((buffer, buffer_id, repo_path, worktree_id));
+                    break;
+                }
+            }
+        }
+
+        // Fallback: try first excerpt if nothing at cursor
+        if buffer_info.is_none() {
+            log::warn!("open_historical_file_common: No buffer at cursor, trying first excerpt");
+            for (_excerpt_id, buffer_snapshot, _range) in snapshot.excerpts() {
+                if let Some(file) = buffer_snapshot.file() {
+                    let buffer_id = buffer_snapshot.remote_id();
+                    let repo_path = RepoPath::from_rel_path(file.path());
+                    let worktree_id = file.worktree_id(cx);
+
+                    if let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) {
+                        log::info!(
+                            "open_historical_file_common: Using first excerpt: path={:?}",
+                            repo_path.as_std_path()
+                        );
+                        buffer_info = Some((buffer, buffer_id, repo_path, worktree_id));
+                        break;
+                    }
+                }
+            }
+        }
+
+        let Some((buffer, buffer_id, repo_path, worktree_id)) = buffer_info else {
+            log::error!("open_historical_file_common: No buffer found in multibuffer");
+            return;
+        };
+
+        let commit_sha = self.commit.sha.to_string();
+        log::info!(
+            "open_historical_file_common: Opening historical file: path={:?}, commit={}, is_changed={}",
+            repo_path.as_std_path(),
+            &commit_sha[..7.min(commit_sha.len())],
+            is_changed
+        );
+
+        // Get language registry from workspace project
+        let language_registry = _workspace.read(cx).project().read(cx).languages().clone();
+        log::debug!("open_historical_file_common: Got language registry");
+
+        // Clone necessary data for async block
+        let workspace_weak = _workspace.downgrade();
+        let project = Some(_workspace.read(cx).project().clone());
+
+        // Spawn the async work
+        if is_changed {
+            // Open the "changed" version (after commit)
+            log::info!("open_historical_file_common: Preparing changed buffer");
+            _window
+                .spawn(cx, async move |mut cx| {
+                    let buffer = open_historical::prepare_changed_buffer_from_commit(
+                        buffer,
+                        repo_path,
+                        worktree_id,
+                        commit_sha,
+                        language_registry,
+                        &mut cx,
+                    )
+                    .await?;
+
+                    log::info!(
+                        "open_historical_file_common: Changed buffer prepared, opening in editor"
+                    );
+
+                    // Open the buffer in an editor
+                    workspace_weak.update_in(cx, |workspace, window, cx| {
+                        let pane = if split {
+                            log::debug!("open_historical_file_common: Splitting pane");
+                            workspace.split_pane(
+                                workspace.active_pane().clone(),
+                                workspace::SplitDirection::Right,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            log::debug!("open_historical_file_common: Using active pane");
+                            workspace.active_pane().clone()
+                        };
+
+                        let editor = cx.new(|cx| {
+                            log::debug!("open_historical_file_common: Creating editor for buffer");
+                            let mut editor = Editor::for_buffer(buffer, project, window, cx);
+                            editor.set_read_only(true);
+                            editor.set_should_serialize(false, cx);
+                            editor
+                        });
+
+                        pane.update(cx, |pane, cx| {
+                            log::info!("open_historical_file_common: Adding editor to pane");
+                            pane.add_item(Box::new(editor), true, true, None, window, cx);
+                        });
+                    })?;
+
+                    log::info!("open_historical_file_common: Successfully opened changed version");
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        } else {
+            // Open the "unchanged" version (before commit)
+            log::info!("open_historical_file_common: Preparing unchanged buffer");
+
+            let Some(buffer_diff) = self.multibuffer.read(cx).diff_for(buffer_id) else {
+                log::error!(
+                    "open_historical_file_common: Could not get buffer_diff for buffer_id: {:?}",
+                    buffer_id
+                );
+                return;
+            };
+            log::debug!("open_historical_file_common: Got buffer_diff");
+
+            _window
+                .spawn(cx, async move |mut cx| {
+                    let buffer = open_historical::prepare_unchanged_buffer_from_commit(
+                        buffer_diff,
+                        repo_path,
+                        worktree_id,
+                        commit_sha,
+                        language_registry,
+                        &mut cx,
+                    )
+                    .await?;
+
+                    log::info!(
+                        "open_historical_file_common: Unchanged buffer prepared, opening in editor"
+                    );
+
+                    // Open the buffer in an editor
+                    workspace_weak.update_in(cx, |workspace, window, cx| {
+                        let pane = if split {
+                            log::debug!("open_historical_file_common: Splitting pane");
+                            workspace.split_pane(
+                                workspace.active_pane().clone(),
+                                workspace::SplitDirection::Right,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            log::debug!("open_historical_file_common: Using active pane");
+                            workspace.active_pane().clone()
+                        };
+
+                        let editor = cx.new(|cx| {
+                            log::debug!("open_historical_file_common: Creating editor for buffer");
+                            let mut editor = Editor::for_buffer(buffer, project, window, cx);
+                            editor.set_read_only(true);
+                            editor.set_should_serialize(false, cx);
+                            editor
+                        });
+
+                        pane.update(cx, |pane, cx| {
+                            log::info!("open_historical_file_common: Adding editor to pane");
+                            pane.add_item(Box::new(editor), true, true, None, window, cx);
+                        });
+                    })?;
+
+                    log::info!(
+                        "open_historical_file_common: Successfully opened unchanged version"
+                    );
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn open_current_file_common(
+        &mut self,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.editor.read(cx).workspace() else {
+            cx.propagate();
+            return;
+        };
+
+        // Build a map of git files to open with their selection ranges
+        let mut files_by_repo_path: HashMap<
+            RepoPath,
+            (Vec<Range<BufferOffset>>, Option<Entity<Buffer>>),
+        > = HashMap::default();
+
+        let selections = self.editor.update(cx, |editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            editor
+                .selections
+                .all::<MultiBufferOffset>(&display_snapshot)
+        });
+
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+
+        // Process all selections to build the map
+        for selection in selections {
+            for (buffer_snapshot, range, _excerpt_id, anchor) in
+                snapshot.range_to_buffer_ranges_with_deleted_hunks(selection.range())
+            {
+                if let Some(file) = buffer_snapshot.file() {
+                    // Check if this is a GitBlob (non-local file)
+                    if file.as_local().is_none() {
+                        let repo_path = RepoPath::from_rel_path(file.path());
+
+                        // Get the proper cursor position in the buffer
+                        let buffer_offset = anchor
+                            .map(|a| {
+                                BufferOffset(text::ToOffset::to_offset(
+                                    &a.text_anchor,
+                                    &buffer_snapshot,
+                                ))
+                            })
+                            .unwrap_or(range.start);
+
+                        // Get the buffer handle for this git blob
+                        let buffer_handle = if let Some(anchor) = anchor {
+                            self.multibuffer.read(cx).buffer_for_anchor(anchor, cx)
+                        } else {
+                            self.multibuffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                        };
+
+                        files_by_repo_path
+                            .entry(repo_path)
+                            .or_insert((Vec::new(), buffer_handle))
+                            .0
+                            .push(buffer_offset..buffer_offset);
+                    }
+                }
+            }
+        }
+
+        // Filter to only openable files (those that exist in the project)
+        let mut openable_files: Vec<(ProjectPath, Vec<Range<BufferOffset>>)> = Vec::new();
+        let mut first_unopenable: Option<(RepoPath, Vec<Range<BufferOffset>>)> = None;
+
+        for (repo_path, (ranges, _)) in files_by_repo_path.iter() {
+            if let Some(project_path) = self
+                .repository
+                .read(cx)
+                .repo_path_to_project_path(repo_path, cx)
+            {
+                openable_files.push((project_path, ranges.clone()));
+            } else if first_unopenable.is_none() {
+                first_unopenable = Some((repo_path.clone(), ranges.clone()));
+            }
+        }
+
+        // If no files can be opened, use fallback with first unopenable file
+        if openable_files.is_empty() {
+            if let Some((repo_path, _ranges)) = first_unopenable {
+                self.open_file_finder_with_hint(&repo_path, workspace, window, cx);
+            } else {
+                // No git files found at all - try to extract context from cursor
+                let cursor_offset = self.editor.update(cx, |editor, cx| {
+                    let display_snapshot = editor.display_snapshot(cx);
+                    editor
+                        .selections
+                        .newest::<MultiBufferOffset>(&display_snapshot)
+                        .head()
+                });
+
+                if let Some((filename, line_number)) =
+                    self.extract_context_from_cursor_position(cursor_offset.0, cx)
+                {
+                    let hint = format!("{}:{}", filename, line_number);
+                    self.open_file_finder_with_filename_hint(&hint, workspace, window, cx);
+                } else {
+                    self.open_file_finder_fallback(workspace, window, cx);
+                }
+            }
+            return;
+        }
+
+        // Open all openable files
+        for (project_path, ranges) in openable_files {
+            self.open_existing_file(project_path, ranges, split, workspace.clone(), window, cx);
+        }
+    }
+
+    fn open_existing_file(
+        &self,
+        project_path: ProjectPath,
+        ranges: Vec<Range<BufferOffset>>,
+        split: bool,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.defer(cx, move |window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let pane = match split {
+                    true => workspace.adjacent_pane(window, cx),
+                    false => workspace.active_pane().clone(),
+                };
+
+                let open_task =
+                    workspace.open_path(project_path, Some(pane.downgrade()), true, window, cx);
+
+                window
+                    .spawn(cx, async move |cx| {
+                        if let Some(active_editor) = open_task
+                            .await
+                            .log_err()
+                            .and_then(|item| item.downcast::<Editor>())
+                        {
+                            active_editor
+                                .update_in(cx, |editor, window, cx| {
+                                    // Convert offsets to points for each range
+                                    let buffer = editor.buffer().read(cx);
+                                    let Some(singleton_buffer) = buffer.as_singleton() else {
+                                        return;
+                                    };
+                                    let buffer_snapshot = singleton_buffer.read(cx).snapshot();
+
+                                    // Convert all offset ranges to point ranges
+                                    let point_ranges: Vec<Range<Point>> = ranges
+                                        .iter()
+                                        .map(|range| {
+                                            let start =
+                                                buffer_snapshot.offset_to_point(range.start.0);
+                                            let end = buffer_snapshot.offset_to_point(range.end.0);
+                                            start..end
+                                        })
+                                        .collect();
+
+                                    // Use the first range for positioning
+                                    if let Some(first_range) = point_ranges.first() {
+                                        editor.go_to_singleton_buffer_range(
+                                            first_range.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .ok();
+                        }
+                    })
+                    .detach();
+            })
+        });
+    }
+
+    fn open_file_finder_with_hint(
+        &self,
+        repo_path: &RepoPath,
+        _workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Extract just the filename for the search query
+        let _filename = repo_path
+            .file_name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(String::new);
+
+        window.defer(cx, move |window, cx| {
+            // Open new file finder - user can type the filename
+            let action = workspace::ToggleFileFinder {
+                separate_history: false,
+                query: None,
+            };
+            window.dispatch_action(action.boxed_clone(), cx);
+        });
+    }
+
+    fn extract_context_from_cursor_position(
+        &self,
+        cursor_offset: usize,
+        cx: &App,
+    ) -> Option<(String, u32)> {
+        // Try to extract filename and line context from the multibuffer structure
+        let multibuffer_snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let cursor_point = multibuffer_snapshot.offset_to_point(MultiBufferOffset(cursor_offset));
+
+        // Look through all excerpts to find which file section we're in
+        for (excerpt_id, buffer_snapshot, excerpt_range) in multibuffer_snapshot.excerpts() {
+            // Convert excerpt range to multibuffer points
+            let start_anchor =
+                multibuffer_snapshot.anchor_in_excerpt(excerpt_id, excerpt_range.context.start);
+            let end_anchor =
+                multibuffer_snapshot.anchor_in_excerpt(excerpt_id, excerpt_range.context.end);
+
+            if let (Some(start_anchor), Some(end_anchor)) = (start_anchor, end_anchor) {
+                let start_point = start_anchor.to_point(&multibuffer_snapshot);
+                let end_point = end_anchor.to_point(&multibuffer_snapshot);
+
+                if start_point <= cursor_point && cursor_point <= end_point {
+                    // We're in this excerpt - try to get file info
+                    if let Some(file) = buffer_snapshot.file() {
+                        // Extract filename from the path
+                        let filename = file
+                            .path()
+                            .file_name()
+                            .map(|name| name.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        // Calculate approximate line number within the file
+                        let excerpt_offset = cursor_point.row.saturating_sub(start_point.row);
+                        let line_number = excerpt_offset + 1; // 1-based line numbers
+
+                        return Some((filename, line_number));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn open_file_finder_with_filename_hint(
+        &self,
+        hint: &str,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hint = hint.to_string();
+
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |_ws, cx| {
+                let action = workspace::ToggleFileFinder {
+                    separate_history: false,
+                    query: Some(hint.clone()),
+                };
+                window.dispatch_action(action.boxed_clone(), cx);
+            });
+        });
+    }
+
+    fn open_file_finder_fallback(
+        &self,
+        _workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.defer(cx, move |window, cx| {
+            let action = workspace::ToggleFileFinder {
+                separate_history: false,
+                query: None,
+            };
+            window.dispatch_action(action.boxed_clone(), cx);
+        });
     }
 }
 
@@ -584,6 +1142,7 @@ impl Item for CommitView {
                 editor,
                 multibuffer,
                 commit: self.commit.clone(),
+                repository: self.repository.clone(),
                 stash: self.stash,
             }
         })))
@@ -593,13 +1152,26 @@ impl Item for CommitView {
 impl Render for CommitView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_stash = self.stash.is_some();
+        let context = if is_stash { "StashDiff" } else { "CommitDiff" };
+
+        // Create action handlers
+        let open_excerpts_handler = cx.listener(|this: &mut Self, action, window, cx| {
+            this.open_excerpts(action, window, cx);
+        });
+
+        let open_excerpts_split_handler = cx.listener(|this: &mut Self, action, window, cx| {
+            this.open_excerpts_split(action, window, cx);
+        });
+
         div()
-            .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
+            .key_context(context)
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
             .justify_center()
             .size_full()
+            .on_action(open_excerpts_handler)
+            .on_action(open_excerpts_split_handler)
             .child(self.editor.clone())
     }
 }
@@ -610,7 +1182,7 @@ pub struct CommitViewToolbar {
 }
 
 impl CommitViewToolbar {
-    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &Workspace, _cx: &mut Context<Self>) -> Self {
         Self {
             commit_view: None,
             workspace: workspace.weak_handle(),
@@ -778,9 +1350,7 @@ impl ToolbarItemView for CommitViewToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        if let Some(entity) = active_pane_item.and_then(|i| i.act_as::<CommitView>(cx))
-            && entity.read(cx).stash.is_some()
-        {
+        if let Some(entity) = active_pane_item.and_then(|i| i.act_as::<CommitView>(cx)) {
             self.commit_view = Some(entity.downgrade());
             return ToolbarItemLocation::PrimaryRight;
         }
@@ -797,49 +1367,64 @@ impl ToolbarItemView for CommitViewToolbar {
 }
 
 impl Render for CommitViewToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(commit_view) = self.commit_view(cx) else {
             return div();
         };
 
         let is_stash = commit_view.read(cx).stash.is_some();
+
+        // Only show toolbar for stashes
         if !is_stash {
             return div();
         }
 
         let focus_handle = commit_view.focus_handle(cx);
 
-        h_group_xl().my_neg_1().py_1().items_center().child(
-            h_group_sm()
-                .child(
-                    Button::new("apply-stash", "Apply")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Apply current stash",
-                            &ApplyCurrentStash,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| this.apply_stash(window, cx))),
-                )
-                .child(
-                    Button::new("pop-stash", "Pop")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Pop current stash",
-                            &PopCurrentStash,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| this.pop_stash(window, cx))),
-                )
-                .child(
-                    Button::new("remove-stash", "Remove")
-                        .icon(IconName::Trash)
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Remove current stash",
-                            &DropCurrentStash,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| this.remove_stash(window, cx))),
-                ),
-        )
+        h_group_xl()
+            .my_neg_1()
+            .py_1()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .child(
+                h_group_sm()
+                    .child(
+                        Button::new("apply-stash", "Apply")
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Apply current stash",
+                                &ApplyCurrentStash,
+                                &focus_handle,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.apply_stash(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("pop-stash", "Pop")
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Pop current stash",
+                                &PopCurrentStash,
+                                &focus_handle,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.pop_stash(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("remove-stash", "Remove")
+                            .icon(IconName::Trash)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Remove current stash",
+                                &DropCurrentStash,
+                                &focus_handle,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.remove_stash(window, cx)),
+                            ),
+                    ),
+            )
+            .child(div())
     }
 }
 

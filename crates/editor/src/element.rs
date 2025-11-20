@@ -4101,7 +4101,7 @@ impl EditorElement {
                                                     .gap_2p5()
                                                     .child(Label::new("Open file"))
                                                     .child(KeyBinding::for_action_in(
-                                                        &OpenExcerpts,
+                                                        &OpenExcerpts::default(),
                                                         &focus_handle,
                                                         cx,
                                                     )),
