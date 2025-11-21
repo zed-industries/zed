@@ -58,7 +58,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
-use util::post_inc;
+use util::{RangeExt, post_inc};
 
 pub use self::path_key::PathKey;
 
@@ -2669,30 +2669,46 @@ impl MultiBuffer {
                 filter_mode,
             );
 
+            // in new coordinates:
+            // |-------------------|  hunk
+            //   <--->  <--->  <->
+
+            // For a last edit intersecting a given diff hunk, insert an additional edit covering the
+            // remainder of the hunk excerpt range when we're in KeepDeletions mode, to reflect that
+            // the whole added range of the hunk is filtered out.
             if let Some(current_inserted_hunk) = end_of_current_insert
                 && current_inserted_hunk.is_filtered
                 && current_inserted_hunk.insertion_end_offset > edit.new.end
+                && excerpt_edits.front().is_none_or(|next_edit| {
+                    next_edit.new.start >= current_inserted_hunk.insertion_end_offset
+                })
             {
                 let overshoot = current_inserted_hunk.insertion_end_offset - edit.new.end;
-                dbg!(overshoot);
-                // FIXME lol could have overlap
-                excerpt_edits.push_front(Edit {
+                let additional_edit = Edit {
                     old: edit.old.end..edit.old.end + overshoot,
-                    new: edit.new.end..edit.new.end + overshoot,
-                })
-            }
+                    new: edit.new.end..current_inserted_hunk.insertion_end_offset,
+                };
 
-            // FIXME
-            // - look at the last hunk that intersects this edit (in new coordinates)
-            // - if we are in "filter additions" mode, and the end of that hunk extends past the end
-            //   of the edit, emit an extra edit whose old range is this_edit.old.end
-            // {
-            //     let overshoot = hunk_end - excerpt_edit.new.end; // how much extra added stuff there is after the end of our edit
-            //     let additional_edit = Edit<ExcerptOffset> {
-            //         old: excerpt_edit.old.end..excerpt_edit.old.end + overshoot,
-            //         new: excerpt_edit.new.end..excerpt_edit.new.end + overshoot,
-            //     }
-            // }
+                // FIXME
+                // let mut last_overlapping_edit = None;
+                // while let Some(next_edit) = excerpt_edits.front()
+                //     && next_edit.new.overlaps(&additional_edit.new)
+                // {
+                //     last_overlapping_edit = Some(next_edit.clone());
+                //     excerpt_edits.pop_front();
+                // }
+                // if let Some(last_overlapping_edit) = last_overlapping_edit {
+                //     additional_edit.old.end = last_overlapping_edit.old.end;
+                //     if additional_edit.new.end > last_overlapping_edit.new.end {
+                //         let overshoot = additional_edit.new.end - last_overlapping_edit.new.end;
+                //         additional_edit.old.end += overshoot;
+                //     } else {
+                //         additional_edit.new.end = last_overlapping_edit.new.end;
+                //     }
+                // }
+
+                excerpt_edits.push_front(additional_edit);
+            }
 
             // Compute the end of the edit in output coordinates.
             let edit_old_end_overshoot = if let Some(DiffTransform::FilteredInsertedHunk {
@@ -2708,7 +2724,7 @@ impl MultiBuffer {
             {
                 let insertion_end_offset = dbg!(current_inserted_hunk.insertion_end_offset);
                 let excerpt_len = dbg!(new_diff_transforms.summary().excerpt_len());
-                
+
                 let base = insertion_end_offset.max(excerpt_len);
                 ExcerptOffset::new(edit.new.end.value.saturating_sub(base.value))
             } else {
