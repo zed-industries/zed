@@ -412,6 +412,37 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
+
+    /// What algorithm to use for word/character diff highlighting
+    ///
+    // Myers todo!
+    // Patience todo!
+    // Lcs todo!
+    pub word_diff_algorithm: Option<WordDiffAlgorithm>,
+    /// Whether to calculate word diff based on characters or words
+    /// //todo!
+    pub word_diff_mode: Option<WordDiffMode>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WordDiffAlgorithm {
+    #[default]
+    Myers,
+    Patience,
+    Lcs,
+}
+
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WordDiffMode {
+    #[default]
+    Word,
+    Character,
 }
 
 /// Controls how whitespace should be displayedin the editor.

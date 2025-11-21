@@ -13,7 +13,8 @@ use itertools::{Either, Itertools};
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordDiffAlgorithm, WordDiffMode,
+    WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
@@ -153,6 +154,15 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// What algorithm to use for word/character diff highlighting
+    ///
+    // Myers todo!
+    // Patience todo!
+    // Lcs todo!
+    pub word_diff_algorithm: WordDiffAlgorithm,
+    /// Whether to calculate word diff based on characters or words
+    /// //todo!
+    pub word_diff_mode: WordDiffMode,
 }
 
 #[derive(Debug, Clone)]
@@ -592,6 +602,8 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
+                word_diff_algorithm: settings.word_diff_algorithm.unwrap(),
+                word_diff_mode: settings.word_diff_mode.unwrap(),
             }
         }
 
