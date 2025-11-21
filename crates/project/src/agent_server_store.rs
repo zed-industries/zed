@@ -199,36 +199,22 @@ mod ext_agent_tests {
 
     #[test]
     fn env_agent_server_config_parses() {
-        let old_bin = env::var("ZED_AGENT_SERVER_BIN").ok();
-        let old_args = env::var("ZED_AGENT_SERVER_ARGS").ok();
-        let old_name = env::var("ZED_AGENT_SERVER_NAME").ok();
+        let mut map = HashMap::new();
+        map.insert(
+            "ZED_AGENT_SERVER_BIN".to_string(),
+            "~/bin/my-agent".to_string(),
+        );
+        map.insert("ZED_AGENT_SERVER_ARGS".to_string(), "--foo bar".to_string());
+        map.insert(
+            "ZED_AGENT_SERVER_NAME".to_string(),
+            "local-env-agent".to_string(),
+        );
 
-        unsafe {
-            env::set_var("ZED_AGENT_SERVER_BIN", "~/bin/my-agent");
-            env::set_var("ZED_AGENT_SERVER_ARGS", "--foo bar");
-            env::set_var("ZED_AGENT_SERVER_NAME", "local-env-agent");
-        }
-
-        let cfg = env_agent_server_config().expect("env agent server present");
+        let cfg = env_agent_server_config_inner(|k| map.get(k).cloned())
+            .expect("env agent server present");
         assert_eq!(cfg.0.to_string(), "local-env-agent");
         assert!(cfg.1.path.ends_with("my-agent"));
         assert_eq!(cfg.1.args, vec!["--foo", "bar"]);
-
-        // Restore environment
-        unsafe {
-            match old_bin {
-                Some(v) => env::set_var("ZED_AGENT_SERVER_BIN", v),
-                None => env::remove_var("ZED_AGENT_SERVER_BIN"),
-            }
-            match old_args {
-                Some(v) => env::set_var("ZED_AGENT_SERVER_ARGS", v),
-                None => env::remove_var("ZED_AGENT_SERVER_ARGS"),
-            }
-            match old_name {
-                Some(v) => env::set_var("ZED_AGENT_SERVER_NAME", v),
-                None => env::remove_var("ZED_AGENT_SERVER_NAME"),
-            }
-        }
     }
 
     #[test]
@@ -1561,14 +1547,19 @@ fn asset_name(version: &str) -> Option<String> {
 }
 
 fn env_agent_server_config() -> Option<(ExternalAgentServerName, AgentServerCommand)> {
-    let path = env::var("ZED_AGENT_SERVER_BIN").ok()?;
+    env_agent_server_config_inner(|key| env::var(key).ok())
+}
+
+fn env_agent_server_config_inner(
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<(ExternalAgentServerName, AgentServerCommand)> {
+    let path = lookup("ZED_AGENT_SERVER_BIN")?;
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let args = env::var("ZED_AGENT_SERVER_ARGS")
-        .ok()
+    let args = lookup("ZED_AGENT_SERVER_ARGS")
         .and_then(|raw| {
             let raw = raw.trim();
             if raw.is_empty() {
@@ -1585,8 +1576,7 @@ fn env_agent_server_config() -> Option<(ExternalAgentServerName, AgentServerComm
         })
         .unwrap_or_default();
 
-    let name =
-        env::var("ZED_AGENT_SERVER_NAME").unwrap_or_else(|_| "local-agent-server".to_string());
+    let name = lookup("ZED_AGENT_SERVER_NAME").unwrap_or_else(|| "local-agent-server".to_string());
 
     let cmd = AgentServerCommand {
         path: PathBuf::from(shellexpand::tilde(trimmed).as_ref()),
