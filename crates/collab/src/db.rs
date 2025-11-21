@@ -742,6 +742,7 @@ fn db_status_to_proto(
         status: Some(proto::GitFileStatus {
             variant: Some(variant),
         }),
+        old_path: None,
     })
 }
 

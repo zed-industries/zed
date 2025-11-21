@@ -2878,7 +2878,7 @@ impl GitPanel {
                                 repo_path: ops.repo_path.clone(),
                                 status: status.status,
                                 staging: StageStatus::Staged,
-                                old_path: status.old_path.clone(),
+                                old_path: status.old_path,
                             })
                     } else {
                         None
