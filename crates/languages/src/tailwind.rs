@@ -1,14 +1,12 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
 use gpui::AsyncApp;
 use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
-use smol::fs;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
