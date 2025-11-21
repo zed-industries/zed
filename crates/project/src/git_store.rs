@@ -2691,6 +2691,16 @@ impl GitStore {
                         continue;
                     }
                     path_was_used[ix] = true;
+
+                    // Collapse nested paths so we only request a status refresh at the
+                    // shallowest level needed (important when scanning large trees).
+                    if entry
+                        .last()
+                        .is_some_and(|last_path: &RepoPath| repo_path.starts_with(last_path))
+                    {
+                        continue;
+                    }
+
                     entry.push(repo_path);
                 }
             }
