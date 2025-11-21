@@ -5,6 +5,7 @@ use crate::test::spectrum_duration;
 
 use super::human_perceivable_energy;
 
+use rodio::SampleRate;
 use rodio::buffer::SamplesBuffer;
 use rodio::nz;
 use spectrum_analyzer::FrequencyLimit;
@@ -37,6 +38,18 @@ impl VoiceSegment {
     fn until(&self, other: &Self) -> Duration {
         debug_assert!(self.end < other.start);
         other.start - self.end
+    }
+
+    pub(crate) fn len_samples(&self, sample_rate: SampleRate) -> usize {
+        (self.length().as_secs_f64() * sample_rate.get() as f64) as usize
+    }
+
+    pub(crate) fn start_samples(&self, sample_rate: SampleRate) -> usize {
+        (self.start.as_secs_f64() * sample_rate.get() as f64) as usize
+    }
+
+    pub(crate) fn end_samples(&self, sample_rate: SampleRate) -> usize {
+        (self.end.as_secs_f64() * sample_rate.get() as f64) as usize
     }
 }
 
@@ -101,11 +114,11 @@ impl BasicVoiceDetector {
     }
 
     fn beep_where_voice_detected(&self, source: &impl Source) -> SamplesBuffer {
-        let sine = sine(source.channels(), source.sample_rate());
+        let sine = sine(nz!(1), source.sample_rate());
 
         let mut with_voice = [VoiceSegment::ZERO]
             .iter()
-            .chain(self.segments_with_voice.iter())
+            .chain(dbg!(&self.segments_with_voice).iter())
             .peekable();
         let mut samples = Vec::new();
 
@@ -125,6 +138,7 @@ impl BasicVoiceDetector {
                 break;
             };
             let until_next = current_voice_segment.until(next_voice_segment);
+            dbg!(until_next);
             samples.extend(sine.clone().amplify(0.0).take_duration(until_next));
         }
 

@@ -15,7 +15,7 @@ use rand::rngs::SmallRng;
 use rodio::{ChannelCount, Decoder, SampleRate, mixer, nz, wav_to_file};
 use rodio::{Source, buffer::SamplesBuffer};
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
-use spectrum_analyzer::windows::hann_window;
+use spectrum_analyzer::windows::{self, hann_window};
 use spectrum_analyzer::{FrequencyLimit, FrequencySpectrum, samples_fft_to_spectrum};
 
 use crate::audio_settings::LIVE_SETTINGS;
@@ -50,7 +50,11 @@ fn test_input_pipeline(cx: &mut gpui::TestAppContext) {
         "input_pipeline_output.wav",
     )
     .unwrap();
-    rodio::wav_to_file(expected_output.clone(), "input_pipeline_expect.wav").unwrap();
+    rodio::wav_to_file(
+        BasicVoiceDetector::add_voice_activity_as_channel(expected_output.clone()),
+        "input_pipeline_expect.wav",
+    )
+    .unwrap();
     assert_similar_voice_spectra(expected_output, input_pipeline);
 }
 
@@ -164,52 +168,59 @@ fn assert_similar_voice_spectra(
         "Test samples should be at least 25% voice and those parts should be recognized as such"
     );
 
+    let sample_rate = expected.sample_rate();
     let expected_samples: Vec<_> = expected.clone().collect();
     let pipeline_samples: Vec<_> = pipeline.clone().collect();
 
-    const CHUNK_DURATION: u64 = 50;
+    const WINDOW_SIZE: usize = 2048;
+    const WINDOW_OVERLAP: usize = 0;
+
+    // beautiful functional code :3
     let (passing, len) = voice_detector
         .segments_with_voice
         .into_iter()
-        // beautiful functional code :3
+        .filter(|to_judge| to_judge.start_samples(sample_rate) > WINDOW_OVERLAP)
+        .filter(|to_judge| {
+            to_judge.end_samples(sample_rate) < expected_samples.len() - WINDOW_OVERLAP
+        })
         .flat_map(|to_judge| {
-            let segment = to_judge.end - to_judge.start;
-            let segments_per_chunk = segment.as_millis() as u64 / CHUNK_DURATION;
-            (0..segments_per_chunk)
-                .map(|idx| Duration::from_millis(idx * CHUNK_DURATION))
-                .map(|offset| to_judge.start + offset)
+            let chunks = (to_judge.len_samples(sample_rate) + WINDOW_OVERLAP) / WINDOW_SIZE;
+            (0..chunks)
+                .map(|i| {
+                    let window_start =
+                        &to_judge.start_samples(sample_rate) + i * WINDOW_SIZE + WINDOW_OVERLAP;
+                    let window_center = window_start + WINDOW_SIZE / 2;
+                    let window_center = window_center as f64 / sample_rate.get() as f64;
+                    let window_center = Duration::from_secs_f64(window_center);
+                    (window_start, window_center)
+                })
                 .collect::<Vec<_>>()
         })
-        .map(|chunk_start| {
-            let start =
-                chunk_start.as_millis() as usize * expected.sample_rate().get() as usize / 1000;
-            // This will slightly over-sample into the next chunk but it's Fine(tm)
-            let length = 50 * expected.sample_rate().get() as usize / 1000;
-            let end = start + length.next_power_of_two();
+        .map(|(window_start, window_center)| {
+            let window = window_start..window_start + WINDOW_SIZE;
             (
-                chunk_start,
-                (&expected_samples[start..end], &pipeline_samples[start..end]),
+                &expected_samples[window.clone()],
+                &pipeline_samples[dbg!(window)],
+                dbg!(window_center),
             )
         })
-        .map(|(chunk_start, (input, output))| {
+        .map(|(input, output, window_center)| {
             (
-                chunk_start,
-                (
-                    samples_fft_to_spectrum(
-                        &hann_window(input),
-                        expected.sample_rate().get(),
-                        FrequencyLimit::Min(4.0),
-                        Some(&divide_by_N_sqrt),
-                    )
-                    .unwrap(),
-                    samples_fft_to_spectrum(
-                        &hann_window(output),
-                        pipeline.sample_rate().get(),
-                        FrequencyLimit::Min(4.0),
-                        Some(&divide_by_N_sqrt),
-                    )
-                    .unwrap(),
-                ),
+                samples_fft_to_spectrum(
+                    &windows::hamming_window(input),
+                    sample_rate.get(),
+                    FrequencyLimit::Min(4.0),
+                    Some(&divide_by_N_sqrt),
+                )
+                .unwrap(),
+                samples_fft_to_spectrum(
+                    &windows::hamming_window(output),
+                    sample_rate.get(),
+                    FrequencyLimit::Min(4.0),
+                    Some(&divide_by_N_sqrt),
+                )
+                .unwrap(),
+                window_center,
             )
         })
         .filter_map(assert_same_voice_signal)
@@ -235,7 +246,7 @@ fn spectrum_duration(source: &impl Source, minimum_duration: Duration) -> Durati
 }
 
 fn assert_same_voice_signal(
-    (chunk_start, (expected, pipeline)): (Duration, (FrequencySpectrum, FrequencySpectrum)),
+    (expected, pipeline, window_center): (FrequencySpectrum, FrequencySpectrum, Duration),
 ) -> Option<bool> {
     // The timbre of a voice (the difference in how voices sound) is determined
     // by all kinds of resonances in the throat/mouth. These happen roughly at
@@ -260,7 +271,7 @@ fn assert_same_voice_signal(
 
     assert!(
         less_than_10percent_diff((voice_freq_expected, voice_freq_pipeline)),
-        "expected: {voice_freq_expected}, pipeline: {voice_freq_pipeline}, at: {chunk_start:?}\n\n{}",
+        "expected: {voice_freq_expected}, pipeline: {voice_freq_pipeline}, at: {window_center:?}\n\n{}",
         plot_spectra(&[(&expected, "expected"), (&pipeline, "pipeline")])
     );
 
