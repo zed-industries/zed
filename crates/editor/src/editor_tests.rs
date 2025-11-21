@@ -17299,7 +17299,7 @@ async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
 
     // Trigger semantic tokens.
     editor.update_in(&mut cx, |editor, _, cx| {
-        editor.edit([(0..1, "b")], cx);
+        editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
     });
     let res = join_all([toml_full_1_request.next(), toml_full_2_request.next()]).await;
     assert!(res[0].is_some(), "server 1 did not get a request");
@@ -17561,7 +17561,7 @@ async fn lsp_semantic_tokens_multibuffer_part(cx: &mut TestAppContext) {
 
     // Only edit the first part of the buffer, which is the TOML bit.
     editor.update_in(&mut cx, |editor, _, cx| {
-        editor.edit([(0..1, "b")], cx);
+        editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
     });
     toml_full_request.next().await.unwrap();
     let task = editor.update_in(&mut cx, |e, _, _| {
@@ -17749,8 +17749,8 @@ async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
     // Without debouncing, this grabs semantic tokens 4 times (twice for the
     // toml editor, and twice for the multibuffer).
     editor.update_in(&mut cx, |editor, _, cx| {
-        editor.edit([(0..1, "b")], cx);
-        editor.edit([(12..13, "c")], cx);
+        editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
+        editor.edit([(MultiBufferOffset(12)..MultiBufferOffset(13), "c")], cx);
     });
     toml_full_request.next().await.unwrap();
     let task = editor.update_in(&mut cx, |e, _, _| {

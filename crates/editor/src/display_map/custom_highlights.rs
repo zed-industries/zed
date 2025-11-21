@@ -1,7 +1,9 @@
 use collections::{BTreeMap, HashMap};
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{
+    BufferOffset, MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _,
+};
 use std::{
     cmp,
     iter::{self, Peekable},
@@ -118,12 +120,14 @@ fn create_highlight_endpoints(
                 continue;
             };
 
+            let buffer_range = excerpt.map_range_to_buffer(range.clone());
             let buffer_range = excerpt
                 .buffer()
-                .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
+                .range_to_version(buffer_range.start.0..buffer_range.end.0, &tokens.version);
             for token in tokens.tokens_in_range(buffer_range) {
                 let token_range =
                     range_from_version(excerpt.buffer(), token.range.clone(), &tokens.version);
+                let token_range = BufferOffset(token_range.start)..BufferOffset(token_range.end);
                 if !excerpt.contains_partial_buffer_range(token_range.clone()) {
                     continue;
                 }

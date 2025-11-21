@@ -3638,7 +3638,7 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = MultiBufferExcerpt<'_>> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = self.cursor::<usize>();
+        let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&range.start);
         std::iter::from_fn(move || {
             let region = cursor.region()?;
@@ -3650,7 +3650,7 @@ impl MultiBufferSnapshot {
                 excerpt: region.excerpt,
                 offset: region.range.start,
                 buffer_offset: region.excerpt.buffer_start_offset(),
-                excerpt_offset: cursor.excerpts.start().clone(),
+                excerpt_offset: *cursor.excerpts.start(),
             };
             cursor.next_excerpt();
             Some(excerpt)
@@ -6846,7 +6846,7 @@ impl<'a> MultiBufferExcerpt<'a> {
     }
 
     /// Returns true if any part of the given range is in the buffer's excerpt
-    pub fn contains_partial_buffer_range(&self, range: Range<usize>) -> bool {
+    pub fn contains_partial_buffer_range(&self, range: Range<BufferOffset>) -> bool {
         range.start <= self.excerpt.buffer_end_offset()
             && range.end >= self.excerpt.buffer_start_offset()
     }
