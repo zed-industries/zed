@@ -1,6 +1,6 @@
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
+use editor::{Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -268,7 +268,7 @@ impl SyntaxTreeView {
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor
                 .selections
-                .last::<usize>(&editor.display_snapshot(cx))
+                .last::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .range();
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
@@ -322,8 +322,8 @@ impl SyntaxTreeView {
         // Within the active layer, find the syntax node under the cursor,
         // and scroll to it.
         let mut cursor = layer.node().walk();
-        while cursor.goto_first_child_for_byte(range.start).is_some() {
-            if !range.is_empty() && cursor.node().end_byte() == range.start {
+        while cursor.goto_first_child_for_byte(range.start.0).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start.0 {
                 cursor.goto_next_sibling();
             }
         }
@@ -331,7 +331,7 @@ impl SyntaxTreeView {
         // Ascend to the smallest ancestor that contains the range.
         loop {
             let node_range = cursor.node().byte_range();
-            if node_range.start <= range.start && node_range.end >= range.end {
+            if node_range.start <= range.start.0 && node_range.end >= range.end.0 {
                 break;
             }
             if !cursor.goto_parent() {

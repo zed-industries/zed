@@ -265,7 +265,7 @@ pub fn main() {
     }
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
         .thread_name(|ix| format!("RayonWorker{}", ix))
         .build_global()
@@ -549,11 +549,7 @@ pub fn main() {
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
-        reliability::init(
-            client.http_client(),
-            system_id.as_ref().map(|id| id.to_string()),
-            cx,
-        );
+        reliability::init(client.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),

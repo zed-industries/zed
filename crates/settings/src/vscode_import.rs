@@ -554,6 +554,7 @@ impl VsCodeSettings {
             prettier: None,
             remove_trailing_whitespace_on_save: self.read_bool("editor.trimAutoWhitespace"),
             show_completion_documentation: None,
+            colorize_brackets: self.read_bool("editor.bracketPairColorization.enabled"),
             show_completions_on_input: self.read_bool("editor.suggestOnTriggerCharacters"),
             show_edit_predictions: self.read_bool("editor.inlineSuggest.enabled"),
             show_whitespaces: self.read_enum("editor.renderWhitespace", |s| {
@@ -974,7 +975,7 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: crate::Maybe::Unset,
+            project_name: None,
             prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")

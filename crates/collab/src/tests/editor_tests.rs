@@ -4,7 +4,8 @@ use crate::{
 };
 use call::ActiveCall;
 use editor::{
-    DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, RowInfo, SelectionEffects,
+    DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
+    SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
         ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
@@ -381,7 +382,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Type a completion trigger character as the guest.
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([13..13])
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
         });
         editor.handle_input(".", window, cx);
     });
@@ -503,7 +504,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // resolved
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([46..46])
+            s.select_ranges([MultiBufferOffset(46)..MultiBufferOffset(46)])
         });
         editor.handle_input("; a", window, cx);
         editor.handle_input(".", window, cx);
@@ -601,7 +602,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Add another completion trigger to test the second language server
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([68..68])
+            s.select_ranges([MultiBufferOffset(68)..MultiBufferOffset(68)])
         });
         editor.handle_input("; b", window, cx);
         editor.handle_input(".", window, cx);
@@ -950,7 +951,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     // Move cursor to a location that can be renamed.
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([7..7])
+            s.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(7)])
         });
         editor.rename(&Rename, window, cx).unwrap()
     });
@@ -977,17 +978,17 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         let buffer = editor.buffer().read(cx).snapshot(cx);
         assert_eq!(
             rename.range.start.to_offset(&buffer)..rename.range.end.to_offset(&buffer),
-            6..9
+            MultiBufferOffset(6)..MultiBufferOffset(9)
         );
         rename.editor.update(cx, |rename_editor, cx| {
-            let rename_selection = rename_editor.selections.newest::<usize>(&rename_editor.display_snapshot(cx));
+            let rename_selection = rename_editor.selections.newest::<MultiBufferOffset>(&rename_editor.display_snapshot(cx));
             assert_eq!(
                 rename_selection.range(),
-                0..3,
+                MultiBufferOffset(0)..MultiBufferOffset(3),
                 "Rename that was triggered from zero selection caret, should propose the whole word."
             );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                rename_buffer.edit([(0..3, "THREE")], None, cx);
+                rename_buffer.edit([(MultiBufferOffset(0)..MultiBufferOffset(3), "THREE")], None, cx);
             });
         });
     });
@@ -998,7 +999,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     });
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([7..8])
+            s.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(8)])
         });
         editor.rename(&Rename, window, cx).unwrap()
     });
@@ -1025,16 +1026,16 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let lsp_rename_start = rename.range.start.to_offset(&buffer);
         let lsp_rename_end = rename.range.end.to_offset(&buffer);
-        assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
+        assert_eq!(lsp_rename_start..lsp_rename_end, MultiBufferOffset(6)..MultiBufferOffset(9));
         rename.editor.update(cx, |rename_editor, cx| {
-            let rename_selection = rename_editor.selections.newest::<usize>(&rename_editor.display_snapshot(cx));
+            let rename_selection = rename_editor.selections.newest::<MultiBufferOffset>(&rename_editor.display_snapshot(cx));
             assert_eq!(
                 rename_selection.range(),
-                1..2,
+                MultiBufferOffset(1)..MultiBufferOffset(2),
                 "Rename that was triggered from a selection, should have the same selection range in the rename proposal"
             );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], None, cx);
+                rename_buffer.edit([(MultiBufferOffset(0)..MultiBufferOffset(lsp_rename_end - lsp_rename_start), "THREE")], None, cx);
             });
         });
     });
@@ -1237,7 +1238,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     // Move cursor to a location, this should trigger the code lens call.
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([7..7])
+            s.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(7)])
         });
     });
     let () = request_started_rx.next().await.unwrap();
@@ -1259,7 +1260,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([1..1])
+            s.select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)])
         });
     });
     let () = request_started_rx.next().await.unwrap();
@@ -1281,7 +1282,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([2..2])
+            s.select_ranges([MultiBufferOffset(2)..MultiBufferOffset(2)])
         });
     });
     let () = request_started_rx.next().await.unwrap();
@@ -1719,7 +1720,7 @@ async fn test_on_input_format_from_host_to_guest(
     cx_a.focus(&editor_a);
     editor_a.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([13..13])
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
         });
         editor.handle_input(">", window, cx);
     });
@@ -1828,7 +1829,7 @@ async fn test_on_input_format_from_guest_to_host(
     cx_b.focus(&editor_b);
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([13..13])
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
         });
         editor.handle_input(":", window, cx);
     });
@@ -2056,7 +2057,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([13..13].clone())
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)].clone())
         });
         editor.handle_input(":", window, cx);
     });
@@ -2080,7 +2081,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_a.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([13..13])
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
         });
         editor.handle_input("a change to increment both buffers' versions", window, cx);
     });
@@ -2520,7 +2521,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     editor_a.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([13..13].clone())
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)].clone())
         });
         editor.handle_input(":", window, cx);
     });
@@ -2957,7 +2958,7 @@ async fn test_lsp_pull_diagnostics(
     editor_a_main.update(cx_a, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         assert_eq!(
             all_diagnostics.len(),
@@ -3086,7 +3087,7 @@ async fn test_lsp_pull_diagnostics(
     editor_a_main.update(cx_a, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         assert_eq!(
             all_diagnostics.len(),
@@ -3133,7 +3134,7 @@ async fn test_lsp_pull_diagnostics(
     editor_b_main.update(cx_b, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         assert_eq!(
             all_diagnostics.len(),
@@ -3180,7 +3181,7 @@ async fn test_lsp_pull_diagnostics(
     editor_b_lib.update(cx_b, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         let expected_messages = [
             expected_pull_diagnostic_lib_message,
@@ -3247,7 +3248,7 @@ async fn test_lsp_pull_diagnostics(
         editor_b_lib.update(cx_b, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let all_diagnostics = snapshot
-                .diagnostics_in_range(0..snapshot.len())
+                .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
                 .collect::<Vec<_>>();
             let expected_messages = [
                 expected_workspace_pull_diagnostics_lib_message,
@@ -3382,7 +3383,7 @@ async fn test_lsp_pull_diagnostics(
     editor_b_lib.update(cx_b, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         let expected_messages = [
             expected_workspace_pull_diagnostics_lib_message,
@@ -3400,7 +3401,7 @@ async fn test_lsp_pull_diagnostics(
     editor_b_main.update(cx_b, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         assert_eq!(all_diagnostics.len(), 2);
 
@@ -3419,7 +3420,7 @@ async fn test_lsp_pull_diagnostics(
     editor_a_main.update(cx_a, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let all_diagnostics = snapshot
-            .diagnostics_in_range(0..snapshot.len())
+            .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
             .collect::<Vec<_>>();
         assert_eq!(all_diagnostics.len(), 2);
         let expected_messages = [

@@ -139,6 +139,16 @@ pub enum ContextServerSettings {
         /// are supported.
         settings: serde_json::Value,
     },
+    Http {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The URL of the remote context server.
+        url: String,
+        /// Optional authentication configuration for the remote server.
+        #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+        headers: HashMap<String, String>,
+    },
 }
 
 impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
@@ -150,6 +160,15 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
             settings::ContextServerSettingsContent::Extension { enabled, settings } => {
                 ContextServerSettings::Extension { enabled, settings }
             }
+            settings::ContextServerSettingsContent::Http {
+                enabled,
+                url,
+                headers,
+            } => ContextServerSettings::Http {
+                enabled,
+                url,
+                headers,
+            },
         }
     }
 }
@@ -162,6 +181,15 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
             ContextServerSettings::Extension { enabled, settings } => {
                 settings::ContextServerSettingsContent::Extension { enabled, settings }
             }
+            ContextServerSettings::Http {
+                enabled,
+                url,
+                headers,
+            } => settings::ContextServerSettingsContent::Http {
+                enabled,
+                url,
+                headers,
+            },
         }
     }
 }
@@ -178,6 +206,7 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled, .. } => *enabled,
             ContextServerSettings::Extension { enabled, .. } => *enabled,
+            ContextServerSettings::Http { enabled, .. } => *enabled,
         }
     }
 
@@ -185,6 +214,7 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Http { enabled: e, .. } => *e = enabled,
         }
     }
 }
@@ -322,6 +352,26 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// How file paths are displayed in the git gutter.
+    ///
+    /// Default: file_name_first
+    pub path_style: GitPathStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum GitPathStyle {
+    #[default]
+    FileNameFirst,
+    FilePathFirst,
+}
+
+impl From<settings::GitPathStyle> for GitPathStyle {
+    fn from(style: settings::GitPathStyle) -> Self {
+        match style {
+            settings::GitPathStyle::FileNameFirst => GitPathStyle::FileNameFirst,
+            settings::GitPathStyle::FilePathFirst => GitPathStyle::FilePathFirst,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -475,6 +525,7 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            path_style: git.path_style.unwrap().into(),
         };
         Self {
             context_servers: project

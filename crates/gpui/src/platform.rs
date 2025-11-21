@@ -1389,6 +1389,10 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
+    /// The Mica backdrop material, supported on Windows 11.
+    MicaBackdrop,
+    /// The Mica Alt backdrop material, supported on Windows 11.
+    MicaAltBackdrop,
 }
 
 /// The options that can be configured for a file dialog prompt
