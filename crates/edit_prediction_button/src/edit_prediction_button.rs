@@ -21,7 +21,9 @@ use language::{
 use project::DisableAiSettings;
 use regex::Regex;
 use settings::{
-    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
+    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
+    update_settings_file,
 };
 use std::{
     sync::{Arc, LazyLock},
@@ -38,7 +40,7 @@ use workspace::{
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
-use zeta2::SweepFeatureFlag;
+use zeta2::{SweepFeatureFlag, Zeta2FeatureFlag};
 
 actions!(
     edit_prediction,
@@ -300,10 +302,7 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(
-                EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-            )
-            | EditPredictionProvider::Zed) => {
+            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let is_sweep = matches!(
@@ -430,9 +429,7 @@ impl Render for EditPredictionButton {
                 div().child(popover_menu.into_any_element())
             }
 
-            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => {
-                div().hidden()
-            }
+            EditPredictionProvider::None => div().hidden(),
         }
     }
 }
@@ -494,6 +491,12 @@ impl EditPredictionButton {
         if cx.has_flag::<SweepFeatureFlag>() {
             providers.push(EditPredictionProvider::Experimental(
                 EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+            ));
+        }
+
+        if cx.has_flag::<Zeta2FeatureFlag>() {
+            providers.push(EditPredictionProvider::Experimental(
+                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
             ));
         }
 
@@ -571,6 +574,11 @@ impl EditPredictionButton {
 
                         menu.item(entry)
                     }
+                    EditPredictionProvider::Experimental(
+                        EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
+                    ) => menu.entry("Zeta2", None, move |_, cx| {
+                        set_completion_provider(fs.clone(), cx, provider);
+                    }),
                     EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => {
                         continue;
                     }
