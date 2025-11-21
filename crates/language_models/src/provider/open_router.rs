@@ -990,8 +990,7 @@ mod tests {
 
         // Verify we got the expected events
         let mut has_tool_use = false;
-        let mut has_reasoning_details = false;
-        let mut reasoning_details_value = None;
+        let mut reasoning_details_events = Vec::new();
         let mut thought_signature_value = None;
 
         for event_result in collected_events {
@@ -1012,8 +1011,8 @@ mod tests {
         // Assertions
         assert!(has_tool_use, "Should have emitted ToolUse event");
         assert!(
-            has_reasoning_details,
-            "Should have emitted ReasoningDetails event"
+            !reasoning_details_events.is_empty(),
+            "Should have emitted ReasoningDetails events"
         );
 
         // We should have received multiple reasoning_details events (text, encrypted, empty)
