@@ -1,6 +1,6 @@
 use gpui::{App, Global, Task, UpdateGlobal};
 use log::{info, warn};
-use speech::{Speech, ToggleSpeechAssistant, TranscriptionStream};
+use speech::{Speech, ToggleSpeechAssistant, TranscriptionReceiverMutex};
 use zed_actions::assistant::InlineAssist;
 
 pub fn init(cx: &mut App) {
@@ -39,7 +39,7 @@ impl SpeechInlineAssistantBridge {
             return;
         }
 
-        let stream = Speech::update_global(cx, |speech, _| speech.subscribe_transcriptions());
+        let stream = Speech::update_global(cx, |speech, _| speech.transcription_receiver());
         self.task = Some(Self::spawn_task(stream, cx));
         self.enabled = true;
         info!("Speech assistant bridge enabled");
@@ -57,11 +57,11 @@ impl SpeechInlineAssistantBridge {
         info!("Speech assistant bridge disabled");
     }
 
-    fn spawn_task(mut stream: TranscriptionStream, cx: &mut App) -> Task<()> {
+    fn spawn_task(stream: TranscriptionReceiverMutex, cx: &mut App) -> Task<()> {
         cx.spawn(async move |cx| {
             loop {
-                let Some(transcription) = stream.recv().await else {
-                    break;
+                let Ok(transcription) = stream.lock().recv().await else {
+                    continue;
                 };
                 let trimmed = transcription.trim();
                 if trimmed.is_empty() {

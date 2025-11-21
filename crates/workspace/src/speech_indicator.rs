@@ -2,19 +2,19 @@ use crate::StatusItemView;
 use gpui::{
     Action, Context, IntoElement, MouseButton, Render, Subscription, Window, div, prelude::*, svg,
 };
-use speech::{Speech, SpeechState, ToggleListening};
+use speech::{Speech, TranscriberThreadState, ToggleDictationChannel};
 use theme::ActiveTheme;
 
 pub struct SpeechIndicator {
     subscription: Option<Subscription>,
-    state: SpeechState,
+    state: TranscriberThreadState,
 }
 
 impl SpeechIndicator {
     pub fn new() -> Self {
         Self {
             subscription: None,
-            state: SpeechState::Idle,
+            state: TranscriberThreadState::Idle,
         }
     }
 }
@@ -32,7 +32,7 @@ impl Render for SpeechIndicator {
         }
 
         let color = match self.state {
-            SpeechState::Listening => cx.theme().colors().text_accent,
+            TranscriberThreadState::Listening => cx.theme().colors().text_accent,
             _ => cx.theme().colors().text,
         };
 
@@ -41,7 +41,7 @@ impl Render for SpeechIndicator {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, window, cx| {
-                    window.dispatch_action(ToggleListening.boxed_clone(), cx);
+                    window.dispatch_action(ToggleDictationChannel.boxed_clone(), cx);
                 }),
             )
     }

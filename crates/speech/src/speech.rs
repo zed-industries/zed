@@ -1,11 +1,10 @@
-use anyhow::Result;
 use async_channel::{Receiver, Sender};
-use cpal::{SampleFormat, StreamConfig};
 use gpui::{actions, App, Global, UpdateGlobal};
 use log::{error, info, warn};
 use parking_lot::Mutex;
 use std::sync::Arc;
-use whisper_rs::{DtwModelPreset, WhisperContextParameters};
+
+mod whisper_thread;
 
 const WHISPER_MODEL_NAME: &str = "ggml-base.en.bin";
 const TARGET_SAMPLE_RATE: usize = 16_000;
@@ -15,11 +14,14 @@ actions!(
     speech,
     [
         /// Toggles the speech recognizer on and off.
-        ToggleListening,
+        ToggleDictationChannel,
         /// Toggles piping speech transcriptions to the AI assistant.
         ToggleSpeechAssistant
     ]
 );
+
+pub type TranscriptionReceiver = Receiver<String>;
+pub type TranscriptionReceiverMutex = Arc<Mutex<TranscriptionReceiver>>;
 
 #[derive(Clone, Debug)]
 pub enum SpeechNotification {
@@ -27,7 +29,7 @@ pub enum SpeechNotification {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SpeechState {
+pub enum TranscriberThreadState {
     Disabled,
     Idle,
     Listening,
@@ -63,18 +65,18 @@ impl NotificationStream {
 }
 
 pub struct Speech {
-    state: Arc<Mutex<SpeechState>>,
+    state: Arc<Mutex<TranscriberThreadState>>,
     task: Option<std::thread::JoinHandle<()>>,
     transcription_sender: Sender<String>,
     notification_sender: Sender<SpeechNotification>,
-    transcription_subscribers: Arc<Mutex<Vec<Sender<String>>>>,
+    transcription_receiver: Arc<Mutex<Receiver<String>>>,
     notification_subscribers: Arc<Mutex<Vec<Sender<SpeechNotification>>>>,
 }
 
 impl Global for Speech {}
 
 impl Speech {
-    pub fn state(&self) -> SpeechState {
+    pub fn state(&self) -> TranscriberThreadState {
         *self.state.lock()
     }
 
@@ -82,19 +84,9 @@ impl Speech {
         info!("Initializing speech global");
         let (transcription_sender, transcription_receiver) = async_channel::unbounded();
         let (notification_sender, notification_receiver) = async_channel::unbounded();
-        let transcription_subscribers = Arc::new(Mutex::new(Vec::new()));
+        let receiver: Receiver<String> = transcription_receiver.clone();
+        let transcription_receiver = Arc::new(Mutex::new(receiver));
         let notification_subscribers = Arc::new(Mutex::new(Vec::new()));
-
-        {
-            let receiver: Receiver<String> = transcription_receiver.clone();
-            let subscribers = transcription_subscribers.clone();
-            cx.spawn(async move |_| {
-                while let Ok(transcription) = receiver.recv().await {
-                    Self::broadcast(&subscribers, transcription);
-                }
-            })
-            .detach();
-        }
 
         {
             let notifications: Receiver<SpeechNotification> = notification_receiver.clone();
@@ -102,9 +94,9 @@ impl Speech {
             cx.spawn(async move |_| {
                 while let Ok(notification) = notifications.recv().await {
                     Self::broadcast(&subscribers, notification.clone());
+                    #[allow(irrefutable_let_patterns)] // More notifications to come
                     if let SpeechNotification::ModelNotFound(path) = notification {
-                        warn!("Speech model not found at: {}", path);
-                        println!("Speech model not found at: {}", path);
+                        warn!("Speech model not found at: {path}");
                     }
                 }
             })
@@ -112,19 +104,17 @@ impl Speech {
         }
 
         Self {
-            state: Arc::new(Mutex::new(SpeechState::Idle)),
+            state: Arc::new(Mutex::new(TranscriberThreadState::Idle)),
             task: None,
             transcription_sender,
             notification_sender,
-            transcription_subscribers,
+            transcription_receiver,
             notification_subscribers,
         }
     }
 
-    pub fn subscribe_transcriptions(&self) -> TranscriptionStream {
-        let (sender, receiver) = async_channel::unbounded();
-        self.transcription_subscribers.lock().push(sender);
-        TranscriptionStream::new(receiver)
+    pub fn transcription_receiver(&self) -> TranscriptionReceiverMutex {
+        self.transcription_receiver.clone()
     }
 
     pub fn subscribe_notifications(&self) -> NotificationStream {
@@ -140,17 +130,17 @@ impl Speech {
 
     fn toggle_listening(&mut self) {
         let mut state = self.state.lock();
-        if *state == SpeechState::Listening {
-            *state = SpeechState::Idle;
+        if *state == TranscriberThreadState::Listening {
+            *state = TranscriberThreadState::Idle;
             info!("Speech listening stopped");
         } else {
-            *state = SpeechState::Listening;
+            *state = TranscriberThreadState::Listening;
             info!("Speech listening started");
         }
     }
 
     fn run_transcription_loop(
-        state: Arc<Mutex<SpeechState>>,
+        state: Arc<Mutex<TranscriberThreadState>>,
         transcription_sender: Sender<String>,
         notification_sender: Sender<SpeechNotification>,
         _cx: &mut App,
@@ -158,262 +148,13 @@ impl Speech {
         info!("Launching transcription loop");
         std::thread::spawn(move || {
             if let Err(err) =
-                Self::transcription_loop_body(state, transcription_sender, notification_sender)
+                whisper_thread::transcription_loop_body(state, transcription_sender, notification_sender)
             {
                 error!("error in transcription loop: {}", err);
             }
         })
     }
 
-    fn transcription_loop_body(
-        state: Arc<Mutex<SpeechState>>,
-        transcription_sender: Sender<String>,
-        notification_sender: Sender<SpeechNotification>,
-    ) -> Result<()> {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
-
-        let model_path = paths::languages_dir().join(WHISPER_MODEL_NAME);
-        if !model_path.exists() {
-            warn!("Whisper model missing at {:?}", model_path);
-            notification_sender.send_blocking(SpeechNotification::ModelNotFound(
-                model_path.to_string_lossy().into(),
-            ))?;
-            return Err(anyhow::anyhow!(
-                "whisper model not found at {:?}",
-                model_path
-            ));
-        }
-
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| anyhow::anyhow!("no input device available"))?;
-        let device_name = device.name().unwrap_or_else(|_| "Unknown input".into());
-        info!("Using audio input device: {}", device_name);
-        let config = device.default_input_config()?;
-        let input_sample_rate = config.sample_rate().0 as usize;
-        let input_channels = config.channels() as usize;
-        info!(
-            "Input sample rate: {} Hz, channels: {} (target {} Hz)",
-            input_sample_rate, input_channels, TARGET_SAMPLE_RATE
-        );
-        let needs_downmix = input_channels >= 2;
-        let needs_resample = input_sample_rate != TARGET_SAMPLE_RATE;
-        let downmix_strategy = if input_channels == 1 {
-            "mono"
-        } else if input_channels == 2 {
-            "stereo"
-        } else {
-            "multi-channel"
-        };
-        let resample_ratio = TARGET_SAMPLE_RATE as f32 / input_sample_rate as f32;
-        info!(
-            "speech downmix: {}, resample: {} (ratio {:.3})",
-            downmix_strategy, needs_resample, resample_ratio
-        );
-
-        let min_buffer_samples = TARGET_SAMPLE_RATE / 2; // ~0.5s of audio
-        let silence_trigger_samples = TARGET_SAMPLE_RATE / 4; // ~0.25s of silence
-        let max_buffer_samples = TARGET_SAMPLE_RATE * 3; // hard cap ~3s
-
-        let model_path_string = model_path.to_string_lossy().to_string();
-        let mut context_params = WhisperContextParameters::default();
-        context_params.dtw_parameters.mode = whisper_rs::DtwMode::ModelPreset {
-            model_preset: DtwModelPreset::BaseEn,
-        };
-        let whisper_context =
-            WhisperContext::new_with_params(&model_path_string, context_params)
-                .map_err(|e| anyhow::anyhow!("failed to load whisper model: {}", e))?;
-        let mut whisper_state = whisper_context.create_state()?;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let stream_config: StreamConfig = config.clone().into();
-        let stream = match config.sample_format() {
-            SampleFormat::F32 => {
-                let tx = tx.clone();
-                device.build_input_stream(
-                    &stream_config,
-                    move |data: &[f32], _| {
-                        if tx.send(data.to_vec()).is_err() {
-                            warn!("speech audio receiver dropped (f32)");
-                        }
-                    },
-                    |err| error!("error in audio stream: {}", err),
-                    None,
-                )?
-            }
-            SampleFormat::I16 => {
-                let tx = tx.clone();
-                device.build_input_stream(
-                    &stream_config,
-                    move |data: &[i16], _| {
-                        let converted: Vec<f32> = data
-                            .iter()
-                            .map(|sample| *sample as f32 / i16::MAX as f32)
-                            .collect();
-                        if tx.send(converted).is_err() {
-                            warn!("speech audio receiver dropped (i16)");
-                        }
-                    },
-                    |err| error!("error in audio stream: {}", err),
-                    None,
-                )?
-            }
-            SampleFormat::U16 => {
-                let tx = tx.clone();
-                device.build_input_stream(
-                    &stream_config,
-                    move |data: &[u16], _| {
-                        let midpoint = u16::MAX as f32 / 2.0;
-                        let converted: Vec<f32> = data
-                            .iter()
-                            .map(|sample| (*sample as f32 - midpoint) / midpoint)
-                            .collect();
-                        if tx.send(converted).is_err() {
-                            warn!("speech audio receiver dropped (u16)");
-                        }
-                    },
-                    |err| error!("error in audio stream: {}", err),
-                    None,
-                )?
-            }
-            SampleFormat::F64 => {
-                let tx = tx.clone();
-                device.build_input_stream(
-                    &stream_config,
-                    move |data: &[f64], _| {
-                        if tx
-                            .send(data.iter().map(|sample| *sample as f32).collect())
-                            .is_err()
-                        {
-                            warn!("speech audio receiver dropped (f64)");
-                        }
-                    },
-                    |err| error!("error in audio stream: {}", err),
-                    None,
-                )?
-            }
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "unsupported sample format: {:?}",
-                    config.sample_format()
-                ));
-            }
-        };
-
-        stream.play()?;
-
-        let mut audio_buffer = Vec::new();
-        let mut accumulated_silence = 0usize;
-        let mut voiced_samples = 0usize;
-        let mut hp_prev_input = 0.0f32;
-        let mut hp_prev_output = 0.0f32;
-
-        loop {
-            if *state.lock() == SpeechState::Listening {
-                if let Ok(chunk) = rx.try_recv() {
-                    let mono_chunk = if !needs_downmix || input_channels == 1 {
-                        chunk.clone()
-                    } else if input_channels == 2 {
-                        match whisper_rs::convert_stereo_to_mono_audio(&chunk) {
-                            Ok(mono) => mono,
-                            Err(err) => {
-                                warn!("stereo downmix failed: {:?}", err);
-                                downmix_multi_channel(&chunk, input_channels)
-                            }
-                        }
-                    } else {
-                        downmix_multi_channel(&chunk, input_channels)
-                    };
-                    let mut processed_chunk = if needs_resample {
-                        resample_to_target(&mono_chunk, resample_ratio)
-                    } else {
-                        mono_chunk
-                    };
-
-                    if !processed_chunk.is_empty() {
-                        apply_high_pass_filter(
-                            &mut processed_chunk,
-                            &mut hp_prev_input,
-                            &mut hp_prev_output,
-                            HIGH_PASS_CUTOFF_HZ,
-                        );
-                    }
-                    let average_magnitude = if processed_chunk.is_empty() {
-                        0.0
-                    } else {
-                        processed_chunk
-                            .iter()
-                            .map(|sample| sample.abs())
-                            .sum::<f32>()
-                            / processed_chunk.len() as f32
-                    };
-                    if average_magnitude > 0.005 {
-                        accumulated_silence = 0;
-                        voiced_samples = voiced_samples.saturating_add(processed_chunk.len());
-                    } else {
-                        accumulated_silence =
-                            accumulated_silence.saturating_add(processed_chunk.len());
-                    }
-
-                    audio_buffer.extend_from_slice(&processed_chunk);
-
-                    let heard_enough = audio_buffer.len() >= min_buffer_samples
-                        && accumulated_silence >= silence_trigger_samples;
-                    let forced_flush = audio_buffer.len() >= max_buffer_samples;
-
-                    if heard_enough || forced_flush {
-                        let has_voice = voiced_samples >= TARGET_SAMPLE_RATE / 5; // ~200ms voiced
-                        if !has_voice {
-                            audio_buffer.clear();
-                            accumulated_silence = 0;
-                            voiced_samples = 0;
-                            continue;
-                        } else {
-                            let mut params =
-                                FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
-                            params.set_n_threads(8);
-                            params.set_language(Some("en"));
-
-                            whisper_state
-                                .full(params, &audio_buffer)
-                                .map_err(|e| anyhow::anyhow!("failed to run model: {}", e))?;
-
-                            let num_segments = whisper_state.full_n_segments();
-                            info!("Transcription produced {} segments", num_segments);
-                            for i in 0..num_segments {
-                                if let Some(segment) = whisper_state.get_segment(i) {
-                                    let text = segment
-                                        .to_str()
-                                        .map_err(|e| {
-                                            anyhow::anyhow!("failed to get segment text: {}", e)
-                                        })?
-                                        .to_owned();
-                                    transcription_sender.send_blocking(text)?;
-                                }
-                            }
-                        }
-
-                        audio_buffer.clear();
-                        accumulated_silence = 0;
-                        voiced_samples = 0;
-                    }
-                } else {
-                    std::thread::sleep(std::time::Duration::from_millis(25));
-                }
-            } else {
-                // If not listening, clear the buffer and sleep for a bit
-                audio_buffer.clear();
-                accumulated_silence = 0;
-                voiced_samples = 0;
-                hp_prev_input = 0.0;
-                hp_prev_output = 0.0;
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        }
-    }
 }
 
 fn downmix_multi_channel(data: &[f32], channels: usize) -> Vec<f32> {
@@ -476,7 +217,7 @@ pub fn init(cx: &mut App) {
     ));
     cx.set_global(speech);
 
-    cx.on_action(|_: &ToggleListening, cx| {
+    cx.on_action(|_: &ToggleDictationChannel, cx| {
         Speech::update_global(cx, |speech, _| {
             speech.toggle_listening();
         });
