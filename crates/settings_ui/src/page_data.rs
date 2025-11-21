@@ -2525,7 +2525,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content
                                     .file_finder
                                     .get_or_insert_default()
-                                    .include_ignored = value.into();
+                                    .include_ignored = value;
                             },
                         }
                     ),
