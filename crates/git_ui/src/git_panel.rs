@@ -807,6 +807,7 @@ impl GitPanel {
                     .notify_async_err(&mut cx)
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
+                    // active_editor.update(cx, |editor, _cx| editor.load_diff())?;
                     if let Some(diff_task) =
                         // this needs to become load the diff
                         // this just waits for the load_diff_task to be completed

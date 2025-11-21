@@ -21,7 +21,7 @@ use git::{
     status::FileStatus,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
+    Action, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
@@ -277,10 +277,12 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, window, cx| match event {
                 BranchDiffEvent::FileListChanged => {
-                    this._task = window.spawn(cx, {
-                        let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, cx).await
-                    })
+                    if this.number_of_paths(cx) < 100 {
+                        this._task = window.spawn(cx, {
+                            let this = cx.weak_entity();
+                            async |cx| Self::refresh(this, cx).await
+                        })
+                    }
                 }
             },
         );
@@ -295,12 +297,13 @@ impl ProjectDiff {
             if is_sort_by_path != was_sort_by_path
                 || is_collapse_untracked_diff != was_collapse_untracked_diff
             {
-                this._task = {
-                    window.spawn(cx, {
-                        let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, cx).await
-                    })
-                }
+                todo!();
+                // this._task = {
+                //     window.spawn(cx, {
+                //         let this = cx.weak_entity();
+                //         async |cx| Self::refresh(this, cx).await
+                //     })
+                // }
             }
             was_sort_by_path = is_sort_by_path;
             was_collapse_untracked_diff = is_collapse_untracked_diff;
@@ -602,6 +605,13 @@ impl ProjectDiff {
         })?;
 
         Ok(())
+    }
+
+    pub fn number_of_paths(&self, cx: &App) -> usize {
+        let Some(ref repo) = self.branch_diff.read(cx).repo else {
+            return 0;
+        };
+        repo.read(cx).cached_status().count()
     }
 
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
