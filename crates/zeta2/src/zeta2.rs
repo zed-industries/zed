@@ -10,6 +10,7 @@ use cloud_llm_client::{
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::HashMap;
+use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
@@ -30,24 +31,29 @@ use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use lsp::DiagnosticSeverity;
 use open_ai::FunctionDefinition;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
 use std::collections::{VecDeque, hash_map};
 
-use std::fmt::Write;
-use std::ops::Range;
-use std::path::Path;
-use std::str::FromStr as _;
-use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
-use std::{env, mem};
+use std::{
+    env,
+    fmt::Write,
+    mem,
+    ops::Range,
+    path::Path,
+    rc::Rc,
+    str::FromStr as _,
+    sync::{Arc, LazyLock},
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
 use util::{LogErrorFuture, RangeExt as _, ResultExt as _, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 pub mod assemble_excerpts;
+mod license_detection;
 mod prediction;
 mod provider;
 pub mod retrieval_search;
@@ -57,6 +63,7 @@ mod xml_edits;
 mod zeta1;
 
 use crate::assemble_excerpts::assemble_excerpts;
+use crate::license_detection::LicenseDetectionWatcher;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::zeta1::request_prediction_with_zeta1;
@@ -65,6 +72,7 @@ pub use provider::ZetaEditPredictionProvider;
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 6;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
+const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 pub struct SweepFeatureFlag;
 
@@ -160,6 +168,7 @@ pub struct Zeta {
     edit_prediction_model: ZetaEditPredictionModel,
     sweep_api_token: Option<String>,
     sweep_ai_debug_info: Arc<str>,
+    data_collection_choice: DataCollectionChoice,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -254,6 +263,7 @@ struct ZetaProject {
     refresh_context_task: Option<LogErrorFuture<Task<Result<()>>>>,
     refresh_context_debounce_task: Option<Task<Option<()>>>,
     refresh_context_timestamp: Option<Instant>,
+    license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     _subscription: gpui::Subscription,
 }
 
@@ -411,6 +421,7 @@ impl Zeta {
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+        let data_collection_choice = Self::load_data_collection_choice();
 
         Self {
             projects: HashMap::default(),
@@ -438,6 +449,7 @@ impl Zeta {
             sweep_api_token: std::env::var("SWEEP_AI_TOKEN")
                 .context("No SWEEP_AI_TOKEN environment variable set")
                 .log_err(),
+            data_collection_choice,
             sweep_ai_debug_info: sweep_ai::debug_info(cx),
         }
     }
@@ -553,6 +565,7 @@ impl Zeta {
                 refresh_context_task: None,
                 refresh_context_debounce_task: None,
                 refresh_context_timestamp: None,
+                license_detection_watchers: HashMap::default(),
                 _subscription: cx.subscribe(&project, Self::handle_project_event),
             })
     }
@@ -595,6 +608,28 @@ impl Zeta {
         cx: &mut Context<Self>,
     ) -> &'a mut RegisteredBuffer {
         let buffer_id = buffer.entity_id();
+
+        if let Some(file) = buffer.read(cx).file() {
+            let worktree_id = file.worktree_id(cx);
+            if let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) {
+                zeta_project
+                    .license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| {
+                        let project_entity_id = project.entity_id();
+                        cx.observe_release(&worktree, move |this, _worktree, _cx| {
+                            let Some(zeta_project) = this.projects.get_mut(&project_entity_id)
+                            else {
+                                return;
+                            };
+                            zeta_project.license_detection_watchers.remove(&worktree_id);
+                        })
+                        .detach();
+                        Rc::new(LicenseDetectionWatcher::new(&worktree, cx))
+                    });
+            }
+        }
+
         match zeta_project.registered_buffers.entry(buffer_id) {
             hash_map::Entry::Occupied(entry) => entry.into_mut(),
             hash_map::Entry::Vacant(entry) => {
@@ -2275,11 +2310,30 @@ impl Zeta {
         }
     }
 
-    fn can_collect_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled() && self.is_file_open_source(file, cx)
+    fn is_file_open_source(
+        &self,
+        project: &Entity<Project>,
+        file: &Arc<dyn File>,
+        cx: &App,
+    ) -> bool {
+        if !file.is_local() || file.is_private() {
+            return false;
+        }
+        let Some(zeta_project) = self.projects.get(&project.entity_id()) else {
+            return false;
+        };
+        zeta_project
+            .license_detection_watchers
+            .get(&file.worktree_id(cx))
+            .as_ref()
+            .is_some_and(|watcher| watcher.is_project_open_source())
     }
 
-    fn can_collect_events(&self, events: &[Event], cx: &App) -> bool {
+    fn can_collect_file(&self, project: &Entity<Project>, file: &Arc<dyn File>, cx: &App) -> bool {
+        self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
+    }
+
+    fn can_collect_events(&self, project: &Entity<Project>, events: &[Event], cx: &App) -> bool {
         if !self.data_collection_choice.is_enabled() {
             return false;
         }
@@ -2300,10 +2354,11 @@ impl Zeta {
                         {
                             continue;
                         }
-                        if !self.can_collect_file(old_file, cx) {
+                        if !self.can_collect_file(project, old_file, cx) {
                             return false;
                         }
-                        if !Arc::ptr_eq(old_file, new_file) && !self.can_collect_file(new_file, cx)
+                        if !Arc::ptr_eq(old_file, new_file)
+                            && !self.can_collect_file(project, new_file, cx)
                         {
                             return false;
                         }
@@ -2315,6 +2370,23 @@ impl Zeta {
             }
         }
         true
+    }
+
+    fn load_data_collection_choice() -> DataCollectionChoice {
+        let choice = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .flatten();
+
+        match choice.as_deref() {
+            Some("true") => DataCollectionChoice::Enabled,
+            Some("false") => DataCollectionChoice::Disabled,
+            Some(_) => {
+                log::error!("unknown value in '{ZED_PREDICT_DATA_COLLECTION_CHOICE}'");
+                DataCollectionChoice::NotAnswered
+            }
+            None => DataCollectionChoice::NotAnswered,
+        }
     }
 }
 
@@ -2507,6 +2579,76 @@ impl std::fmt::Display for EvalCacheEntryKind {
 pub trait EvalCache: Send + Sync {
     fn read(&self, key: EvalCacheKey) -> Option<String>;
     fn write(&self, key: EvalCacheKey, input: &str, value: &str);
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DataCollectionChoice {
+    NotAnswered,
+    Enabled,
+    Disabled,
+}
+
+impl DataCollectionChoice {
+    pub fn is_enabled(self) -> bool {
+        match self {
+            Self::Enabled => true,
+            Self::NotAnswered | Self::Disabled => false,
+        }
+    }
+
+    pub fn is_answered(self) -> bool {
+        match self {
+            Self::Enabled | Self::Disabled => true,
+            Self::NotAnswered => false,
+        }
+    }
+
+    #[must_use]
+    pub fn toggle(&self) -> DataCollectionChoice {
+        match self {
+            Self::Enabled => Self::Disabled,
+            Self::Disabled => Self::Enabled,
+            Self::NotAnswered => Self::Enabled,
+        }
+    }
+}
+
+impl From<bool> for DataCollectionChoice {
+    fn from(value: bool) -> Self {
+        match value {
+            true => DataCollectionChoice::Enabled,
+            false => DataCollectionChoice::Disabled,
+        }
+    }
+}
+
+struct ZedPredictUpsell;
+
+impl Dismissable for ZedPredictUpsell {
+    const KEY: &'static str = "dismissed-edit-predict-upsell";
+
+    fn dismissed() -> bool {
+        // To make this backwards compatible with older versions of Zed, we
+        // check if the user has seen the previous Edit Prediction Onboarding
+        // before, by checking the data collection choice which was written to
+        // the database once the user clicked on "Accept and Enable"
+        if KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .is_some_and(|s| s.is_some())
+        {
+            return true;
+        }
+
+        KEY_VALUE_STORE
+            .read_kvp(Self::KEY)
+            .log_err()
+            .is_some_and(|s| s.is_some())
+    }
+}
+
+pub fn should_show_upsell_modal() -> bool {
+    !ZedPredictUpsell::dismissed()
 }
 
 #[cfg(test)]

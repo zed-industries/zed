@@ -1,39 +1,40 @@
 mod input_excerpt;
 
+use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
+use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::LlmApiToken;
 use crate::ZedUpdateRequiredError;
 use crate::Zeta;
 use crate::prediction::EditPrediction;
 use crate::{EditPredictionId, Event};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use client::{Client, EditPredictionUsage};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsResponse,
     ZED_VERSION_HEADER_NAME,
 };
 use cloud_llm_client::{PredictEditsBody, PredictEditsGitInfo};
+use futures::AsyncReadExt as _;
 use gpui::http_client::Method;
-use gpui::{App, AsyncApp, Context, Entity, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task};
 use gpui::{SemanticVersion, SharedString, http_client};
 use input_excerpt::excerpt_for_cursor_position;
-use language::{Anchor, Buffer, BufferSnapshot, ToPoint as _, text_diff};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToPoint as _, text_diff};
 use project::Project;
 use project::ProjectPath;
 use release_channel::AppVersion;
-use uuid::Uuid;
+use util::rel_path::RelPath;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
-const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
@@ -61,13 +62,12 @@ pub(crate) fn request_prediction_with_zeta1(
     let app_version = AppVersion::global(cx);
 
     let zeta_project = zeta.get_or_init_zeta_project(project, cx);
-    let this = cx.entity();
     let mut events = Vec::with_capacity(zeta_project.events.len());
     events.extend(zeta_project.events.iter().cloned());
     let events = Arc::new(events);
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
-        let can_collect_file = zeta.can_collect_file(file, cx);
+        let can_collect_file = zeta.can_collect_file(project, file, cx);
         let git_info = if can_collect_file {
             git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
         } else {
@@ -84,10 +84,9 @@ pub(crate) fn request_prediction_with_zeta1(
         .unwrap_or_else(|| Arc::from(Path::new("untitled")));
     let full_path_str = full_path.to_string_lossy().into_owned();
     let cursor_point = position.to_point(&snapshot);
-    let cursor_offset = cursor_point.to_offset(&snapshot);
     let prompt_for_events = {
         let events = events.clone();
-        move || prompt_for_events_impl(&events, MAX_EVENT_TOKENS, cx)
+        move || prompt_for_events_impl(&events, MAX_EVENT_TOKENS)
     };
     let gather_task = gather_context(
         full_path_str,
@@ -97,6 +96,7 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
+    let project = project.clone();
     cx.spawn(async move |this, cx| {
         let GatherContextOutput {
             mut body,
@@ -108,7 +108,9 @@ pub(crate) fn request_prediction_with_zeta1(
         let included_events = &events[events.len() - included_events_count..events.len()];
         body.can_collect_data = can_collect_file
             && this
-                .read_with(cx, |this, cx| this.can_collect_events(included_events, cx))
+                .read_with(cx, |this, cx| {
+                    this.can_collect_events(&project, included_events, cx)
+                })
                 .unwrap_or(false);
         if body.can_collect_data {
             body.git_info = git_info;
@@ -119,10 +121,6 @@ pub(crate) fn request_prediction_with_zeta1(
             body.input_events,
             body.input_excerpt
         );
-
-        let input_outline = body.outline.clone().unwrap_or_default();
-        let input_events = body.input_events.clone();
-        let input_excerpt = body.input_excerpt.clone();
 
         let response = perform_predict_edits(PerformPredictEditsParams {
             client,
@@ -138,7 +136,8 @@ pub(crate) fn request_prediction_with_zeta1(
                     cx.update(|cx| {
                         this.update(cx, |zeta, _cx| {
                             zeta.update_required = true;
-                        });
+                        })
+                        .ok();
 
                         let error_message: SharedString = err.to_string().into();
                         show_app_notification(
@@ -171,20 +170,8 @@ pub(crate) fn request_prediction_with_zeta1(
             .ok();
         }
 
-        let edit_prediction = process_completion_response(
-            response,
-            buffer,
-            &snapshot,
-            editable_range,
-            cursor_offset,
-            full_path,
-            input_outline,
-            input_events,
-            input_excerpt,
-            buffer_snapshotted_at,
-            cx,
-        )
-        .await;
+        let edit_prediction =
+            process_completion_response(response, buffer, &snapshot, editable_range, cx).await;
 
         let finished_at = Instant::now();
 
@@ -287,12 +274,6 @@ fn process_completion_response(
     buffer: Entity<Buffer>,
     snapshot: &BufferSnapshot,
     editable_range: Range<usize>,
-    cursor_offset: usize,
-    path: Arc<Path>,
-    input_outline: String,
-    input_events: String,
-    input_excerpt: String,
-    buffer_snapshotted_at: Instant,
     cx: &AsyncApp,
 ) -> Task<Result<Option<EditPrediction>>> {
     let snapshot = snapshot.clone();
@@ -324,12 +305,10 @@ fn process_completion_response(
             return anyhow::Ok(None);
         };
 
-        let request_id = Uuid::from_str(&request_id).context("failed to parse request id")?;
-
         let edit_preview = edit_preview.await;
 
         Ok(Some(EditPrediction {
-            id: EditPredictionId(request_id),
+            id: EditPredictionId(request_id.into()),
             edits,
             edit_preview,
             snapshot,
@@ -512,17 +491,10 @@ pub fn gather_context(
     })
 }
 
-fn prompt_for_events_impl(
-    events: &[Event],
-    mut remaining_tokens: usize,
-    cx: &App,
-) -> (String, usize) {
+fn prompt_for_events_impl(events: &[Event], mut remaining_tokens: usize) -> (String, usize) {
     let mut result = String::new();
     for (ix, event) in events.iter().rev().enumerate() {
-        let Some(event) = event.to_request_event(cx) else {
-            continue;
-        };
-        let event_string = event.to_string();
+        let event_string = format_event(&event);
         let event_tokens = guess_token_count(event_string.len());
         if event_tokens > remaining_tokens {
             return (result, ix);
@@ -535,6 +507,42 @@ fn prompt_for_events_impl(
         remaining_tokens -= event_tokens;
     }
     return (result, events.len());
+}
+
+pub fn format_event(event: &Event) -> String {
+    match event {
+        Event::BufferChange {
+            old_snapshot,
+            new_snapshot,
+            ..
+        } => {
+            let mut prompt = String::new();
+
+            let old_path = old_snapshot
+                .file()
+                .map(|f| f.path().as_ref())
+                .unwrap_or(RelPath::unix("untitled").unwrap());
+            let new_path = new_snapshot
+                .file()
+                .map(|f| f.path().as_ref())
+                .unwrap_or(RelPath::unix("untitled").unwrap());
+            if old_path != new_path {
+                writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
+            }
+
+            let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
+            if !diff.is_empty() {
+                write!(
+                    prompt,
+                    "User edited {:?}:\n```diff\n{}\n```",
+                    new_path, diff
+                )
+                .unwrap();
+            }
+
+            prompt
+        }
+    }
 }
 
 /// Typical number of string bytes per token for the purposes of limiting model input. This is
