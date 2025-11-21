@@ -77,55 +77,48 @@ pub fn transcription_loop_body(
     let (tx, rx) = std::sync::mpsc::channel();
 
     let stream_config: StreamConfig = config.clone().into();
+    let tx = tx.clone();
+
     let stream = match config.sample_format() {
-        SampleFormat::F32 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _| {
-                    if tx.send(data.to_vec()).is_err() {
-                        warn!("transcription audio receiver dropped (f32)");
-                    }
-                },
-                |err| error!("error in audio stream: {}", err),
-                None,
-            )?
-        }
-        SampleFormat::I16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _| {
-                    let converted: Vec<f32> = data
-                        .iter()
-                        .map(|sample| *sample as f32 / i16::MAX as f32)
-                        .collect();
-                    if tx.send(converted).is_err() {
-                        warn!("transcription audio receiver dropped (i16)");
-                    }
-                },
-                |err| error!("error in audio stream: {}", err),
-                None,
-            )?
-        }
-        SampleFormat::U16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _| {
-                    let midpoint = u16::MAX as f32 / 2.0;
-                    let converted: Vec<f32> = data
-                        .iter()
-                        .map(|sample| (*sample as f32 - midpoint) / midpoint)
-                        .collect();
-                    if tx.send(converted).is_err() {
-                        warn!("transcription audio receiver dropped (u16)");
-                    }
-                },
-                |err| error!("error in audio stream: {}", err),
-                None,
-            )?
-        }
+        SampleFormat::F32 => device.build_input_stream(
+            &stream_config,
+            move |data: &[f32], _| {
+                if tx.send(data.to_vec()).is_err() {
+                    warn!("transcription audio receiver dropped (f32)");
+                }
+            },
+            |err| error!("error in audio stream: {}", err),
+            None,
+        )?,
+        SampleFormat::I16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[i16], _| {
+                let converted: Vec<f32> = data
+                    .iter()
+                    .map(|sample| *sample as f32 / i16::MAX as f32)
+                    .collect();
+                if tx.send(converted).is_err() {
+                    warn!("transcription audio receiver dropped (i16)");
+                }
+            },
+            |err| error!("error in audio stream: {}", err),
+            None,
+        )?,
+        SampleFormat::U16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[u16], _| {
+                let midpoint = u16::MAX as f32 / 2.0;
+                let converted: Vec<f32> = data
+                    .iter()
+                    .map(|sample| (*sample as f32 - midpoint) / midpoint)
+                    .collect();
+                if tx.send(converted).is_err() {
+                    warn!("transcription audio receiver dropped (u16)");
+                }
+            },
+            |err| error!("error in audio stream: {}", err),
+            None,
+        )?,
         SampleFormat::F64 => {
             let tx = tx.clone();
             device.build_input_stream(

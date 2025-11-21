@@ -1,6 +1,6 @@
-use gpui::{App, Global, Task, UpdateGlobal};
-use log::{info, warn};
-use transcription::{Transcription, ToggleSpeechAssistant, TranscriptionReceiverMutex};
+use gpui::{App, Global, Subscription, UpdateGlobal};
+use log::{info};
+use transcription::{Transcription, ToggleSpeechAssistant};
 use zed_actions::assistant::InlineAssist;
 
 pub fn init(cx: &mut App) {
@@ -15,14 +15,14 @@ pub fn init(cx: &mut App) {
 
 struct TranscriptionInlineAssistantBridge {
     enabled: bool,
-    task: Option<Task<()>>,
+    subscription: Option<Subscription>,
 }
 
 impl TranscriptionInlineAssistantBridge {
     fn new() -> Self {
         Self {
             enabled: false,
-            task: None,
+            subscription: None,
         }
     }
 
@@ -39,8 +39,20 @@ impl TranscriptionInlineAssistantBridge {
             return;
         }
 
-        let stream = Transcription::update_global(cx, |speech, _| speech.transcription_receiver());
-        self.task = Some(Self::spawn_task(stream, cx));
+        let subscription = Transcription::update_global(cx, |speech, _| speech.subscribe(|text, cx| {
+            cx.spawn(async move |cx| {
+                let action = InlineAssist {
+                    prompt: Some(text),
+                    auto_start: true,
+                };
+                cx.update(|cx| {
+                    cx.dispatch_action(&action);
+                }).ok();
+            }).detach();
+
+            true
+        }));
+        self.subscription = Some(subscription);
         self.enabled = true;
         info!("Speech assistant bridge enabled");
     }
@@ -51,38 +63,8 @@ impl TranscriptionInlineAssistantBridge {
         }
 
         self.enabled = false;
-        if let Some(task) = self.task.take() {
-            drop(task);
-        }
+        let _ = self.subscription.take();
         info!("Speech assistant bridge disabled");
-    }
-
-    fn spawn_task(stream: TranscriptionReceiverMutex, cx: &mut App) -> Task<()> {
-        cx.spawn(async move |cx| {
-            loop {
-                let Ok(transcription) = stream.lock().recv().await else {
-                    info!("Transcription channel closed, stopping speech assistant bridge task.");
-                    break;
-                };
-
-                if transcription.is_empty() {
-                    continue;
-                }
-
-                let update = cx.update(|cx| {
-                    let action = InlineAssist {
-                        prompt: Some(transcription.clone()),
-                        auto_start: true,
-                    };
-                    cx.dispatch_action(&action);
-                });
-
-                if let Err(err) = update {
-                    warn!("Failed to dispatch inline assist for speech transcription: {err}");
-                    break;
-                }
-            }
-        })
     }
 }
 

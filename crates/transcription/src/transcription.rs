@@ -1,7 +1,8 @@
 use async_channel::{Receiver, Sender};
-use gpui::{actions, App, Global, UpdateGlobal};
+use gpui::{actions, App, Global, Subscription, UpdateGlobal};
 use log::{error, info, warn};
 use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod thread_loop;
@@ -15,9 +16,6 @@ actions!(
         ToggleSpeechAssistant
     ]
 );
-
-pub type TranscriptionReceiver = Receiver<String>;
-pub type TranscriptionReceiverMutex = Arc<Mutex<TranscriptionReceiver>>;
 
 #[derive(Clone, Debug)]
 pub enum TranscriptionNotification {
@@ -51,8 +49,10 @@ pub struct Transcription {
     task: Option<std::thread::JoinHandle<()>>,
     transcription_sender: Sender<String>,
     notification_sender: Sender<TranscriptionNotification>,
-    transcription_receiver: Arc<Mutex<Receiver<String>>>,
     notification_subscribers: Arc<Mutex<Vec<Sender<TranscriptionNotification>>>>,
+    transcription_subscribers:
+        Arc<Mutex<BTreeMap<usize, Box<dyn FnMut(String, &mut App) -> bool + Send>>>>,
+    next_subscriber_id: usize,
 }
 
 impl Global for Transcription {}
@@ -64,12 +64,14 @@ impl Transcription {
 
     fn new(cx: &mut App) -> Self {
         info!("Initializing speech global");
-        let (transcription_sender, transcription_receiver) = async_channel::unbounded();
+        let (transcription_sender, transcription_receiver) = async_channel::unbounded::<String>();
         let (notification_sender, notification_receiver) = async_channel::unbounded();
-        let receiver: Receiver<String> = transcription_receiver.clone();
-        let transcription_receiver = Arc::new(Mutex::new(receiver));
         let notification_subscribers = Arc::new(Mutex::new(Vec::new()));
-        let state =  Arc::new(Mutex::new(TranscriptionThreadState::Idle));
+        let state = Arc::new(Mutex::new(TranscriptionThreadState::Idle));
+        let transcription_subscribers = Arc::new(Mutex::new(BTreeMap::<
+            usize,
+            Box<dyn FnMut(String, &mut App) -> bool + Send>,
+        >::new()));
 
         {
             let notifications: Receiver<TranscriptionNotification> = notification_receiver.clone();
@@ -86,18 +88,55 @@ impl Transcription {
             .detach();
         }
 
+        {
+            let task_subscribers = transcription_subscribers.clone();
+            let transcription_receiver = transcription_receiver.clone();
+            cx.spawn(async move |cx| {
+                while let Ok(text) = transcription_receiver.recv().await {
+                    if task_subscribers.lock().is_empty() {
+                        continue;
+                    }
+
+                    let text = text.clone();
+                    cx.update(|cx| {
+                        let mut subscribers = task_subscribers.lock();
+                        for (_, callback) in subscribers.iter_mut() {
+                            if callback(text.clone(), cx) {
+                                break;
+                            }
+                        }
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        }
+
         Self {
             state,
             task: None,
             transcription_sender,
             notification_sender,
-            transcription_receiver,
             notification_subscribers,
+            transcription_subscribers,
+            next_subscriber_id: 0,
         }
     }
 
-    pub fn transcription_receiver(&self) -> TranscriptionReceiverMutex {
-        self.transcription_receiver.clone()
+    pub fn subscribe(
+        &mut self,
+        callback: impl FnMut(String, &mut App) -> bool + Send + 'static,
+    ) -> Subscription {
+        let id = self.next_subscriber_id;
+        self.next_subscriber_id += 1;
+        self.transcription_subscribers
+            .lock()
+            .insert(id, Box::new(callback));
+
+        let subscribers = self.transcription_subscribers.clone();
+        Subscription::new(move || {
+            subscribers.lock().remove(&id);
+        })
     }
 
     pub fn subscribe_notifications(&self) -> TranscriptionNotificationStream {
@@ -116,7 +155,9 @@ impl Transcription {
         if let Some(thread_handle) = self.task.take() {
             *state = TranscriptionThreadState::Disabled;
             drop(state);
-            thread_handle.join().unwrap_or_else(|_| warn!("Failed to join speech thread"));
+            thread_handle
+                .join()
+                .unwrap_or_else(|_| warn!("Failed to join speech thread"));
             info!("Speech listening stopped");
         } else {
             *state = TranscriptionThreadState::Listening;
