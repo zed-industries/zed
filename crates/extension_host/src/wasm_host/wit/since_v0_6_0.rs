@@ -990,6 +990,9 @@ impl ExtensionImports for WasmState {
                                 command: None,
                                 settings: Some(settings),
                             })?),
+                            project::project_settings::ContextServerSettings::Http { .. } => {
+                                bail!("remote context server settings not supported in 0.6.0")
+                            }
                         }
                     }
                     _ => {
@@ -1051,7 +1054,7 @@ impl ExtensionImports for WasmState {
             anyhow::ensure!(
                 response.status().is_success(),
                 "download failed with status {}",
-                response.status().to_string()
+                response.status()
             );
             let body = BufReader::new(response.body_mut());
 

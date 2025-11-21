@@ -126,6 +126,12 @@ pub fn init(app_version: SemanticVersion, cx: &mut App) {
     cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
 }
 
+/// Initializes the release channel for tests that rely on fake release channel.
+pub fn init_test(app_version: SemanticVersion, release_channel: ReleaseChannel, cx: &mut App) {
+    cx.set_global(GlobalAppVersion(app_version));
+    cx.set_global(GlobalReleaseChannel(release_channel))
+}
+
 impl ReleaseChannel {
     /// Returns the global [`ReleaseChannel`].
     pub fn global(cx: &App) -> Self {

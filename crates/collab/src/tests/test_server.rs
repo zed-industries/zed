@@ -174,7 +174,6 @@ impl TestServer {
             cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
-            client::init_settings(cx);
         });
 
         let clock = Arc::new(FakeSystemClock::new());
@@ -345,7 +344,6 @@ impl TestServer {
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
             client::init(&client, cx);
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
             call::init(client.clone(), user_store.clone(), cx);
@@ -358,8 +356,7 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_context::init(client.clone(), cx);
-            agent_settings::init(cx);
+            assistant_text_thread::init(client.clone(), cx);
         });
 
         client

@@ -64,7 +64,7 @@ With that done, choose one of the two authentication methods:
 #### Authentication via Named Profile (Recommended)
 
 1. Ensure you have the AWS CLI installed and configured with a named profile
-2. Open your `settings.json` (`zed: open settings`) and include the `bedrock` key under `language_models` with the following settings:
+2. Open your `settings.json` (`zed: open settings file`) and include the `bedrock` key under `language_models` with the following settings:
    ```json [settings]
    {
      "language_models": {
@@ -587,7 +587,7 @@ These routing controls let you fine‑tune cost, capability, and reliability tra
 
 ### Vercel v0 {#vercel-v0}
 
-[Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+[Vercel v0](https://v0.app/docs/api/model) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
 The v0 models are [OpenAI-compatible models](/#openai-api-compatible), but Vercel is listed as first-class provider in the panel's settings view.

@@ -4,8 +4,7 @@ use collections::HashMap;
 use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::FontFamilyName;
 
@@ -32,7 +31,7 @@ pub struct ProjectTerminalSettingsContent {
     pub detect_venv: Option<VenvSettings>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
     #[serde(flatten)]
@@ -41,6 +40,7 @@ pub struct TerminalSettingsContent {
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font size.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub font_size: Option<f32>,
     /// Sets the terminal's font family.
     ///
@@ -61,6 +61,7 @@ pub struct TerminalSettingsContent {
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub font_weight: Option<f32>,
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
@@ -99,10 +100,12 @@ pub struct TerminalSettingsContent {
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// Default height when the terminal is docked to the bottom.
     ///
     /// Default: 320
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
     /// The maximum number of lines to keep in the scrollback history.
     /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
@@ -112,6 +115,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: 10_000
     pub max_scroll_history_lines: Option<usize>,
+    /// The multiplier for scrolling with the mouse wheel.
+    ///
+    /// Default: 1.0
+    pub scroll_multiplier: Option<f32>,
     /// Toolbar related settings
     pub toolbar: Option<TerminalToolbarContent>,
     /// Scrollbar-related settings
@@ -130,11 +137,24 @@ pub struct TerminalSettingsContent {
     /// - 90: Preferred for body text
     ///
     /// Default: 45
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
 }
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -153,7 +173,18 @@ pub enum Shell {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
     /// Use the current file's project directory.  Will Fallback to the
@@ -169,7 +200,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
@@ -190,7 +221,7 @@ pub enum TerminalLineHeight {
     /// particularly if they use box characters
     Standard,
     /// Use a custom line height.
-    Custom(f32),
+    Custom(#[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] f32),
 }
 
 impl TerminalLineHeight {
@@ -307,7 +338,7 @@ pub enum AlternateScroll {
 }
 
 // Toolbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
@@ -318,6 +349,22 @@ pub struct TerminalToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CondaManager {
+    /// Automatically detect the conda manager
+    #[default]
+    Auto,
+    /// Use conda
+    Conda,
+    /// Use mamba
+    Mamba,
+    /// Use micromamba
+    Micromamba,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -332,13 +379,18 @@ pub enum VenvSettings {
         activate_script: Option<ActivateScript>,
         venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
+        /// Preferred Conda manager to use when activating Conda environments.
+        ///
+        /// Default: auto
+        conda_manager: Option<CondaManager>,
     },
 }
-#[skip_serializing_none]
+#[with_fallible_options]
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
     pub venv_name: &'a str,
     pub directories: &'a [PathBuf],
+    pub conda_manager: CondaManager,
 }
 
 impl VenvSettings {
@@ -349,10 +401,12 @@ impl VenvSettings {
                 activate_script,
                 venv_name,
                 directories,
+                conda_manager,
             } => Some(VenvSettingsContent {
                 activate_script: activate_script.unwrap_or(ActivateScript::Default),
                 venv_name: venv_name.as_deref().unwrap_or(""),
                 directories: directories.as_deref().unwrap_or(&[]),
+                conda_manager: conda_manager.unwrap_or(CondaManager::Auto),
             }),
         }
     }

@@ -2,13 +2,12 @@ use collections::{HashMap, IndexMap};
 use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 use crate::DockPosition;
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
@@ -26,10 +25,12 @@ pub struct AgentSettingsContent {
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
@@ -68,10 +69,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub play_sound_when_agent_done: Option<bool>,
-    /// Whether to stream edits from the agent as they are received.
-    ///
-    /// Default: false
-    pub stream_edits: Option<bool>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: true
@@ -168,7 +165,7 @@ impl AgentSettingsContent {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
@@ -178,9 +175,11 @@ pub struct AgentProfileContent {
     pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+    /// The default language model selected when using this profile.
+    pub default_model: Option<LanguageModelSelection>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
@@ -215,7 +214,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
@@ -231,11 +230,12 @@ pub enum CompletionMode {
     Burn,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
     pub model: Option<SharedString>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
 }
 
@@ -289,7 +289,7 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
@@ -301,7 +301,7 @@ pub struct AllAgentServersSettings {
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     /// Absolute path to a binary to be used when launching this agent.
@@ -331,20 +331,49 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
-}
-
-#[skip_serializing_none]
-#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct CustomAgentServerSettings {
-    #[serde(rename = "command")]
-    pub path: PathBuf,
-    #[serde(default)]
-    pub args: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
-    /// The default mode to use for this agent.
+    /// The default model to use for this agent.
     ///
-    /// Note: Not only all agents support modes.
+    /// This should be the model ID as reported by the agent.
     ///
     /// Default: None
-    pub default_mode: Option<String>,
+    pub default_model: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomAgentServerSettings {
+    Custom {
+        #[serde(rename = "command")]
+        path: PathBuf,
+        #[serde(default)]
+        args: Vec<String>,
+        env: Option<HashMap<String, String>>,
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
+    Extension {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
 }

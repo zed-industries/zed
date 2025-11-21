@@ -15,4 +15,3 @@ path = "src/feature_flags.rs"
 futures.workspace = true
 gpui.workspace = true
 smol.workspace = true
-workspace-hack.workspace = true

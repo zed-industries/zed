@@ -6,7 +6,7 @@ use std::{
 
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
-use editor::{RowHighlightOptions, SelectionEffects};
+use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -245,7 +245,10 @@ impl PickerDelegate for OutlineViewDelegate {
 
             let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor.selections.newest::<usize>(cx).head();
+                let cursor_offset = editor
+                    .selections
+                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                    .head();
                 (buffer, cursor_offset)
             });
             selected_index = self
@@ -256,8 +259,8 @@ impl PickerDelegate for OutlineViewDelegate {
                 .map(|(ix, item)| {
                     let range = item.range.to_offset(&buffer);
                     let distance_to_closest_endpoint = cmp::min(
-                        (range.start as isize - cursor_offset as isize).abs(),
-                        (range.end as isize - cursor_offset as isize).abs(),
+                        (range.start.0 as isize - cursor_offset.0 as isize).abs(),
+                        (range.end.0 as isize - cursor_offset.0 as isize).abs(),
                     );
                     let depth = if range.contains(&cursor_offset) {
                         Some(item.depth)
@@ -572,11 +575,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         })
     }
@@ -673,7 +673,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(cx)
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()

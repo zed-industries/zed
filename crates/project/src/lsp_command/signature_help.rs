@@ -2,8 +2,10 @@ use std::{ops::Range, sync::Arc};
 
 use gpui::{App, AppContext, Entity, FontWeight, HighlightStyle, SharedString};
 use language::LanguageRegistry;
+use lsp::LanguageServerId;
 use markdown::Markdown;
 use rpc::proto::{self, documentation};
+use util::maybe;
 
 #[derive(Debug)]
 pub struct SignatureHelp {
@@ -31,6 +33,7 @@ impl SignatureHelp {
     pub fn new(
         help: lsp::SignatureHelp,
         language_registry: Option<Arc<LanguageRegistry>>,
+        lang_server_id: Option<LanguageServerId>,
         cx: &mut App,
     ) -> Option<Self> {
         if help.signatures.is_empty() {
@@ -39,6 +42,7 @@ impl SignatureHelp {
         let active_signature = help.active_signature.unwrap_or(0) as usize;
         let mut signatures = Vec::<SignatureHelpData>::with_capacity(help.signatures.capacity());
         for signature in &help.signatures {
+            let label = SharedString::from(signature.label.clone());
             let active_parameter = signature
                 .active_parameter
                 .unwrap_or_else(|| help.active_parameter.unwrap_or(0))
@@ -49,38 +53,52 @@ impl SignatureHelp {
             if let Some(parameters) = &signature.parameters {
                 for (index, parameter) in parameters.iter().enumerate() {
                     let label_range = match &parameter.label {
-                        lsp::ParameterLabel::LabelOffsets(parameter_label_offsets) => {
-                            let range = *parameter_label_offsets.get(0)? as usize
-                                ..*parameter_label_offsets.get(1)? as usize;
-                            if index == active_parameter {
-                                highlights.push((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        font_weight: Some(FontWeight::EXTRA_BOLD),
-                                        ..HighlightStyle::default()
-                                    },
-                                ));
-                            }
-                            Some(range)
+                        &lsp::ParameterLabel::LabelOffsets([offset1, offset2]) => {
+                            maybe!({
+                                let offset1 = offset1 as usize;
+                                let offset2 = offset2 as usize;
+                                if offset1 < offset2 {
+                                    let mut indices = label.char_indices().scan(
+                                        0,
+                                        |utf16_offset_acc, (offset, c)| {
+                                            let utf16_offset = *utf16_offset_acc;
+                                            *utf16_offset_acc += c.len_utf16();
+                                            Some((utf16_offset, offset))
+                                        },
+                                    );
+                                    let (_, offset1) = indices
+                                        .find(|(utf16_offset, _)| *utf16_offset == offset1)?;
+                                    let (_, offset2) = indices
+                                        .find(|(utf16_offset, _)| *utf16_offset == offset2)?;
+                                    Some(offset1..offset2)
+                                } else {
+                                    log::warn!(
+                                        "language server {lang_server_id:?} produced invalid parameter label range: {offset1:?}..{offset2:?}",
+                                    );
+                                    None
+                                }
+                            })
                         }
                         lsp::ParameterLabel::Simple(parameter_label) => {
                             if let Some(start) = signature.label.find(parameter_label) {
-                                let range = start..start + parameter_label.len();
-                                if index == active_parameter {
-                                    highlights.push((
-                                        range.clone(),
-                                        HighlightStyle {
-                                            font_weight: Some(FontWeight::EXTRA_BOLD),
-                                            ..HighlightStyle::default()
-                                        },
-                                    ));
-                                }
-                                Some(range)
+                                Some(start..start + parameter_label.len())
                             } else {
                                 None
                             }
                         }
                     };
+
+                    if let Some(label_range) = &label_range
+                        && index == active_parameter
+                    {
+                        highlights.push((
+                            label_range.clone(),
+                            HighlightStyle {
+                                font_weight: Some(FontWeight::EXTRA_BOLD),
+                                ..HighlightStyle::default()
+                            },
+                        ));
+                    }
 
                     let documentation = parameter
                         .documentation
@@ -94,7 +112,6 @@ impl SignatureHelp {
                 }
             }
 
-            let label = SharedString::from(signature.label.clone());
             let documentation = signature
                 .documentation
                 .as_ref()
@@ -290,7 +307,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -336,7 +353,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(1),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -396,7 +413,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -449,7 +466,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(0),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -502,7 +519,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(1),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -555,7 +572,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: None,
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -623,7 +640,7 @@ mod tests {
             active_signature: Some(2),
             active_parameter: Some(1),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -645,7 +662,7 @@ mod tests {
             active_signature: None,
             active_parameter: None,
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_none());
     }
 
@@ -670,7 +687,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -708,7 +725,8 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_signature_help = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
+        let maybe_signature_help =
+            cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
         assert!(maybe_signature_help.is_some());
 
         let signature_help = maybe_signature_help.unwrap();
@@ -735,5 +753,41 @@ mod tests {
 
         // Check that the active parameter is correct
         assert_eq!(signature.active_parameter, Some(0));
+    }
+
+    #[gpui::test]
+    fn test_create_signature_help_implements_utf16_spec(cx: &mut TestAppContext) {
+        let signature_help = lsp::SignatureHelp {
+            signatures: vec![lsp::SignatureInformation {
+                label: "fn test(🦀: u8, 🦀: &str)".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::LabelOffsets([8, 10]),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::LabelOffsets([16, 18]),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(0),
+        };
+        let signature_help = cx.update(|cx| SignatureHelp::new(signature_help, None, None, cx));
+        assert!(signature_help.is_some());
+
+        let markdown = signature_help.unwrap();
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
+        assert_eq!(
+            markdown,
+            (
+                SharedString::new("fn test(🦀: u8, 🦀: &str)"),
+                vec![(8..12, current_parameter())]
+            )
+        );
     }
 }

@@ -1,6 +1,6 @@
 use crate::acp::AcpThreadView;
 use crate::{AgentPanel, RemoveSelectedThread};
-use agent2::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
@@ -23,11 +23,8 @@ pub struct AcpThreadHistory {
     hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     search_query: SharedString,
-
     visible_items: Vec<ListItemType>,
-
     local_timezone: UtcOffset,
-
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -62,7 +59,7 @@ impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub(crate) fn new(
-        history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent::HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -327,8 +324,8 @@ impl AcpThreadHistory {
             HistoryEntry::AcpThread(thread) => self
                 .history_store
                 .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(context.path.clone(), cx)
+            HistoryEntry::TextThread(text_thread) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(text_thread.path.clone(), cx)
             }),
         };
         task.detach_and_log_err(cx);
@@ -426,8 +423,8 @@ impl AcpThreadHistory {
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
@@ -453,31 +450,30 @@ impl Render for AcpThreadHistory {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
-            .when(!self.history_store.read(cx).is_empty(cx), |parent| {
-                parent.child(
-                    h_flex()
-                        .h(px(41.)) // Match the toolbar perfectly
-                        .w_full()
-                        .py_1()
-                        .px_2()
-                        .gap_2()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .color(Color::Muted)
-                                .size(IconSize::Small),
-                        )
-                        .child(self.search_editor.clone()),
-                )
-            })
+            .child(
+                h_flex()
+                    .h(px(41.)) // Match the toolbar perfectly
+                    .w_full()
+                    .py_1()
+                    .px_2()
+                    .gap_2()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(self.search_editor.clone()),
+            )
             .child({
                 let view = v_flex()
                     .id("list-container")
@@ -486,19 +482,15 @@ impl Render for AcpThreadHistory {
                     .flex_grow();
 
                 if self.history_store.read(cx).is_empty(cx) {
-                    view.justify_center()
-                        .child(
-                            h_flex().w_full().justify_center().child(
-                                Label::new("You don't have any past threads yet.")
-                                    .size(LabelSize::Small),
-                            ),
-                        )
-                } else if self.search_produced_no_matches() {
-                    view.justify_center().child(
-                        h_flex().w_full().justify_center().child(
-                            Label::new("No threads match your search.").size(LabelSize::Small),
-                        ),
+                    view.justify_center().items_center().child(
+                        Label::new("You don't have any past threads yet.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
+                } else if self.search_produced_no_matches() {
+                    view.justify_center()
+                        .items_center()
+                        .child(Label::new("No threads match your search.").size(LabelSize::Small))
                 } else {
                     view.child(
                         uniform_list(
@@ -598,8 +590,8 @@ impl RenderOnce for AcpHistoryEntryElement {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                         })
                         .on_click({
                             let thread_view = self.thread_view.clone();
@@ -638,12 +630,12 @@ impl RenderOnce for AcpHistoryEntryElement {
                                     });
                                 }
                             }
-                            HistoryEntry::TextThread(context) => {
+                            HistoryEntry::TextThread(text_thread) => {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
-                                            .open_saved_prompt_editor(
-                                                context.path.clone(),
+                                            .open_saved_text_thread(
+                                                text_thread.path.clone(),
                                                 window,
                                                 cx,
                                             )
@@ -675,7 +667,7 @@ impl EntryTimeFormat {
                 timezone,
                 time_format::TimestampFormat::EnhancedAbsolute,
             ),
-            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp.to_offset(timezone)),
         }
     }
 }

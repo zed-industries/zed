@@ -12,7 +12,7 @@
   "timezone": "America/New_York",
   "schedule": ["after 3pm on Wednesday"],
   "prFooter": "Release Notes:\n\n- N/A",
-  "ignorePaths": ["**/node_modules/**", "tooling/workspace-hack/**"],
+  "ignorePaths": ["**/node_modules/**"],
   "packageRules": [
     {
       "description": "Group wasmtime crates together.",

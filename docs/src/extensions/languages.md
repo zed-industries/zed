@@ -154,6 +154,14 @@ This query identifies opening and closing brackets, braces, and quotation marks.
 | @open   | Captures opening brackets, braces, and quotes |
 | @close  | Captures closing brackets, braces, and quotes |
 
+Zed uses these to highlight matching brackets: painting each bracket pair with a different color ("rainbow brackets") and highlighting the brackets if the cursor is inside the bracket pair.
+
+To opt out of rainbow brackets colorization, add the following to the corresponding `brackets.scm` entry:
+
+```scheme
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+```
+
 ### Code outline/structure
 
 The `outline.scm` file defines the structure for the code outline.
@@ -324,7 +332,7 @@ This query marks number and string values in key-value pairs and arrays for reda
 
 The `runnables.scm` file defines rules for detecting runnable code.
 
-Here's an example from an `runnables.scm` file for JSON:
+Here's an example from a `runnables.scm` file for JSON:
 
 ```scheme
 (

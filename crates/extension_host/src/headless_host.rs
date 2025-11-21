@@ -279,7 +279,8 @@ impl HeadlessExtensionStore {
             }
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
-                .await?;
+                .await
+                .context("Failed to rename {tmp_path:?} to {path:?}")?;
 
             Self::load_extension(this, extension, cx).await
         })

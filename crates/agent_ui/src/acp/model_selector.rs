@@ -1,27 +1,33 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::{AgentModelInfo, AgentModelList, AgentModelSelector};
+use agent_servers::AgentServer;
 use anyhow::Result;
 use collections::IndexMap;
+use fs::Fs;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
-use gpui::{Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, WeakEntity};
+use gpui::{AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, WeakEntity};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{
-    AnyElement, App, Context, DocumentationAside, DocumentationEdge, DocumentationSide,
-    IntoElement, ListItem, ListItemSpacing, SharedString, Window, prelude::*, rems,
+    DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, ListItem,
+    ListItemSpacing, prelude::*,
 };
 use util::ResultExt;
+
+use crate::ui::HoldForDefault;
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
 pub fn acp_model_selector(
     selector: Rc<dyn AgentModelSelector>,
+    agent_server: Rc<dyn AgentServer>,
+    fs: Arc<dyn Fs>,
     window: &mut Window,
     cx: &mut Context<AcpModelSelector>,
 ) -> AcpModelSelector {
-    let delegate = AcpModelPickerDelegate::new(selector, window, cx);
+    let delegate = AcpModelPickerDelegate::new(selector, agent_server, fs, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems(20.))
@@ -35,10 +41,12 @@ enum AcpModelPickerEntry {
 
 pub struct AcpModelPickerDelegate {
     selector: Rc<dyn AgentModelSelector>,
+    agent_server: Rc<dyn AgentServer>,
+    fs: Arc<dyn Fs>,
     filtered_entries: Vec<AcpModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
-    selected_description: Option<(usize, SharedString)>,
+    selected_description: Option<(usize, SharedString, bool)>,
     selected_model: Option<AgentModelInfo>,
     _refresh_models_task: Task<()>,
 }
@@ -46,6 +54,8 @@ pub struct AcpModelPickerDelegate {
 impl AcpModelPickerDelegate {
     fn new(
         selector: Rc<dyn AgentModelSelector>,
+        agent_server: Rc<dyn AgentServer>,
+        fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<AcpModelSelector>,
     ) -> Self {
@@ -86,6 +96,8 @@ impl AcpModelPickerDelegate {
 
         Self {
             selector,
+            agent_server,
+            fs,
             filtered_entries: Vec::new(),
             models: None,
             selected_model: None,
@@ -181,6 +193,21 @@ impl PickerDelegate for AcpModelPickerDelegate {
         if let Some(AcpModelPickerEntry::Model(model_info)) =
             self.filtered_entries.get(self.selected_index)
         {
+            if window.modifiers().secondary() {
+                let default_model = self.agent_server.default_model(cx);
+                let is_default = default_model.as_ref() == Some(&model_info.id);
+
+                self.agent_server.set_default_model(
+                    if is_default {
+                        None
+                    } else {
+                        Some(model_info.id.clone())
+                    },
+                    self.fs.clone(),
+                    cx,
+                );
+            }
+
             self.selector
                 .select_model(model_info.id.clone(), cx)
                 .detach_and_log_err(cx);
@@ -225,6 +252,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
             ),
             AcpModelPickerEntry::Model(model_info) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
+                let default_model = self.agent_server.default_model(cx);
+                let is_default = default_model.as_ref() == Some(&model_info.id);
 
                 let model_icon_color = if is_selected {
                     Color::Accent
@@ -239,8 +268,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                             this
                                 .on_hover(cx.listener(move |menu, hovered, _, cx| {
                                     if *hovered {
-                                        menu.delegate.selected_description = Some((ix, description.clone()));
-                                    } else if matches!(menu.delegate.selected_description, Some((id, _)) if id == ix) {
+                                        menu.delegate.selected_description = Some((ix, description.clone(), is_default));
+                                    } else if matches!(menu.delegate.selected_description, Some((id, _, _)) if id == ix) {
                                         menu.delegate.selected_description = None;
                                     }
                                     cx.notify();
@@ -251,17 +280,17 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .inset(true)
                                 .spacing(ListItemSpacing::Sparse)
                                 .toggle_state(selected)
-                                .start_slot::<Icon>(model_info.icon.map(|icon| {
-                                    Icon::new(icon)
-                                        .color(model_icon_color)
-                                        .size(IconSize::Small)
-                                }))
                                 .child(
                                     h_flex()
                                         .w_full()
-                                        .pl_0p5()
                                         .gap_1p5()
-                                        .w(px(240.))
+                                        .when_some(model_info.icon, |this, icon| {
+                                            this.child(
+                                                Icon::new(icon)
+                                                    .color(model_icon_color)
+                                                    .size(IconSize::Small)
+                                            )
+                                        })
                                         .child(Label::new(model_info.name.clone()).truncate()),
                                 )
                                 .end_slot(div().pr_3().when(is_selected, |this| {
@@ -278,49 +307,29 @@ impl PickerDelegate for AcpModelPickerDelegate {
         }
     }
 
-    fn render_footer(
-        &self,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<gpui::AnyElement> {
-        Some(
-            h_flex()
-                .w_full()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .p_1()
-                .gap_4()
-                .justify_between()
-                .child(
-                    Button::new("configure", "Configure")
-                        .icon(IconName::Settings)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                zed_actions::agent::OpenSettings.boxed_clone(),
-                                cx,
-                            );
-                        }),
-                )
-                .into_any(),
-        )
-    }
-
     fn documentation_aside(
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<ui::DocumentationAside> {
-        self.selected_description.as_ref().map(|(_, description)| {
-            let description = description.clone();
-            DocumentationAside::new(
-                DocumentationSide::Left,
-                DocumentationEdge::Bottom,
-                Rc::new(move |_| Label::new(description.clone()).into_any_element()),
-            )
-        })
+        self.selected_description
+            .as_ref()
+            .map(|(_, description, is_default)| {
+                let description = description.clone();
+                let is_default = *is_default;
+
+                DocumentationAside::new(
+                    DocumentationSide::Left,
+                    DocumentationEdge::Top,
+                    Rc::new(move |_| {
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new(description.clone()))
+                            .child(HoldForDefault::new(is_default))
+                            .into_any_element()
+                    }),
+                )
+            })
     }
 }
 

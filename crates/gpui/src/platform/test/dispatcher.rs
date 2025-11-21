@@ -1,8 +1,7 @@
-use crate::{PlatformDispatcher, TaskLabel};
-use async_task::Runnable;
+use crate::{PlatformDispatcher, RunnableVariant, TaskLabel};
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
-use parking::{Parker, Unparker};
+use parking::Unparker;
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
@@ -22,16 +21,14 @@ struct TestDispatcherId(usize);
 pub struct TestDispatcher {
     id: TestDispatcherId,
     state: Arc<Mutex<TestDispatcherState>>,
-    parker: Arc<Mutex<Parker>>,
-    unparker: Unparker,
 }
 
 struct TestDispatcherState {
     random: StdRng,
-    foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
-    background: Vec<Runnable>,
-    deprioritized_background: Vec<Runnable>,
-    delayed: Vec<(Duration, Runnable)>,
+    foreground: HashMap<TestDispatcherId, VecDeque<RunnableVariant>>,
+    background: Vec<RunnableVariant>,
+    deprioritized_background: Vec<RunnableVariant>,
+    delayed: Vec<(Duration, RunnableVariant)>,
     start_time: Instant,
     time: Duration,
     is_main_thread: bool,
@@ -41,11 +38,11 @@ struct TestDispatcherState {
     waiting_backtrace: Option<Backtrace>,
     deprioritized_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
+    unparkers: Vec<Unparker>,
 }
 
 impl TestDispatcher {
     pub fn new(random: StdRng) -> Self {
-        let (parker, unparker) = parking::pair();
         let state = TestDispatcherState {
             random,
             foreground: HashMap::default(),
@@ -61,13 +58,12 @@ impl TestDispatcher {
             waiting_backtrace: None,
             deprioritized_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
+            unparkers: Default::default(),
         };
 
         TestDispatcher {
             id: TestDispatcherId(0),
             state: Arc::new(Mutex::new(state)),
-            parker: Arc::new(Mutex::new(parker)),
-            unparker,
         }
     }
 
@@ -178,7 +174,13 @@ impl TestDispatcher {
         let was_main_thread = state.is_main_thread;
         state.is_main_thread = main_thread;
         drop(state);
-        runnable.run();
+
+        // todo(localcc): add timings to tests
+        match runnable {
+            RunnableVariant::Meta(runnable) => runnable.run(),
+            RunnableVariant::Compat(runnable) => runnable.run(),
+        };
+
         self.state.lock().is_main_thread = was_main_thread;
 
         true
@@ -243,6 +245,15 @@ impl TestDispatcher {
         let block_on_ticks = lock.block_on_ticks.clone();
         lock.random.random_range(block_on_ticks)
     }
+
+    pub fn unpark_all(&self) {
+        self.state.lock().unparkers.retain(|parker| parker.unpark());
+    }
+
+    pub fn push_unparker(&self, unparker: Unparker) {
+        let mut state = self.state.lock();
+        state.unparkers.push(unparker);
+    }
 }
 
 impl Clone for TestDispatcher {
@@ -251,13 +262,19 @@ impl Clone for TestDispatcher {
         Self {
             id: TestDispatcherId(id),
             state: self.state.clone(),
-            parker: self.parker.clone(),
-            unparker: self.unparker.clone(),
         }
     }
 }
 
 impl PlatformDispatcher for TestDispatcher {
+    fn get_all_timings(&self) -> Vec<crate::ThreadTaskTimings> {
+        Vec::new()
+    }
+
+    fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
+        Vec::new()
+    }
+
     fn is_main_thread(&self) -> bool {
         self.state.lock().is_main_thread
     }
@@ -267,7 +284,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.start_time + state.time
     }
 
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>) {
         {
             let mut state = self.state.lock();
             if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
@@ -276,34 +293,26 @@ impl PlatformDispatcher for TestDispatcher {
                 state.background.push(runnable);
             }
         }
-        self.unparker.unpark();
+        self.unpark_all();
     }
 
-    fn dispatch_on_main_thread(&self, runnable: Runnable) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
         self.state
             .lock()
             .foreground
             .entry(self.id)
             .or_default()
             .push_back(runnable);
-        self.unparker.unpark();
+        self.unpark_all();
     }
 
-    fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
+    fn dispatch_after(&self, duration: std::time::Duration, runnable: RunnableVariant) {
         let mut state = self.state.lock();
         let next_time = state.time + duration;
         let ix = match state.delayed.binary_search_by_key(&next_time, |e| e.0) {
             Ok(ix) | Err(ix) => ix,
         };
         state.delayed.insert(ix, (next_time, runnable));
-    }
-    fn park(&self, _: Option<std::time::Duration>) -> bool {
-        self.parker.lock().park();
-        true
-    }
-
-    fn unparker(&self) -> Unparker {
-        self.unparker.clone()
     }
 
     fn as_test(&self) -> Option<&TestDispatcher> {

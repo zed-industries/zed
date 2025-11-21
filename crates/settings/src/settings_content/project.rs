@@ -3,15 +3,15 @@ use std::{path::PathBuf, sync::Arc};
 use collections::{BTreeMap, HashMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, ExtendingVec, ProjectTerminalSettingsContent, SlashCommandSettings,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
+    SlashCommandSettings,
 };
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
@@ -31,7 +31,6 @@ pub struct ProjectSettingsContent {
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
 
-    #[serde(default)]
     pub terminal: Option<ProjectTerminalSettingsContent>,
 
     /// Configuration for Debugger-related features
@@ -52,14 +51,20 @@ pub struct ProjectSettingsContent {
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or empty, the root directory name
+    /// The displayed name of this project. If not set or null, the root directory name
     /// will be displayed.
     ///
-    /// Default: ""
+    /// Default: null
     pub project_name: Option<String>,
+
+    /// Whether to prevent this project from being shared in public channels.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub prevent_sharing_in_public_channels: bool,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
@@ -88,14 +93,28 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
+
+    /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
+    /// Default: ["**/.*"]
+    pub hidden_files: Option<Vec<String>>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
+    /// Options passed to the language server at startup.
+    ///
+    /// Ref: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize
+    ///
+    /// Consult the documentation for the specific language server to see which settings are supported.
     pub initialization_options: Option<serde_json::Value>,
+    /// Language server settings.
+    ///
+    /// Ref: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_configuration
+    ///
+    /// Consult the documentation for the specific language server to see which settings are supported.
     pub settings: Option<serde_json::Value>,
     /// If the server supports sending tasks over LSP extensions,
     /// this setting can be used to enable or disable them in Zed.
@@ -117,7 +136,7 @@ impl Default for LspSettings {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
@@ -128,7 +147,7 @@ pub struct BinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
@@ -138,7 +157,7 @@ pub struct FetchSettings {
 }
 
 /// Common language server settings.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GlobalLspSettingsContent {
     /// Whether to show the LSP servers button in the status bar.
@@ -147,16 +166,16 @@ pub struct GlobalLspSettingsContent {
     pub button: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct DapSettingsContent {
     pub binary: Option<String>,
-    #[serde(default)]
     pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom,
 )]
@@ -171,7 +190,7 @@ pub struct SessionSettingsContent {
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
-#[serde(tag = "source", rename_all = "snake_case")]
+#[serde(untagged, rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
     Custom {
         /// Whether the context server is enabled.
@@ -180,6 +199,16 @@ pub enum ContextServerSettingsContent {
 
         #[serde(flatten)]
         command: ContextServerCommand,
+    },
+    Http {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The URL of the remote context server.
+        url: String,
+        /// Optional headers to send.
+        #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+        headers: HashMap<String, String>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -192,24 +221,29 @@ pub enum ContextServerSettingsContent {
         settings: serde_json::Value,
     },
 }
+
 impl ContextServerSettingsContent {
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettingsContent::Custom {
                 enabled: custom_enabled,
-                command: _,
+                ..
             } => {
                 *custom_enabled = enabled;
             }
             ContextServerSettingsContent::Extension {
                 enabled: ext_enabled,
-                settings: _,
+                ..
             } => *ext_enabled = enabled,
+            ContextServerSettingsContent::Http {
+                enabled: remote_enabled,
+                ..
+            } => *remote_enabled = enabled,
         }
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
@@ -245,7 +279,7 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
@@ -271,6 +305,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// How file paths are displayed in the git gutter.
+    ///
+    /// Default: file_name_first
+    pub path_style: Option<GitPathStyle>,
 }
 
 #[derive(
@@ -295,7 +333,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
@@ -308,7 +346,7 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    pub delay_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -324,7 +362,7 @@ pub struct InlineBlameSettings {
     pub show_commit_summary: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BlameSettings {
@@ -334,7 +372,7 @@ pub struct BlameSettings {
     pub show_avatar: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
@@ -366,7 +404,30 @@ pub enum GitHunkStyleSetting {
     UnstagedHollow,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPathStyle {
+    /// Show file name first, then path
+    #[default]
+    FileNameFirst,
+    /// Show full path first
+    FilePathFirst,
+}
+
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DiagnosticsSettingsContent {
     /// Whether to show the project diagnostics button in the status bar.
@@ -382,7 +443,7 @@ pub struct DiagnosticsSettingsContent {
     pub inline: Option<InlineDiagnosticsSettingsContent>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
@@ -395,10 +456,10 @@ pub struct LspPullDiagnosticsSettingsContent {
     /// 0 turns the debounce off.
     ///
     /// Default: 50
-    pub debounce_ms: Option<u64>,
+    pub debounce_ms: Option<DelayMs>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Eq,
 )]
@@ -411,7 +472,7 @@ pub struct InlineDiagnosticsSettingsContent {
     /// last editor event.
     ///
     /// Default: 150
-    pub update_debounce_ms: Option<u64>,
+    pub update_debounce_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
     ///
@@ -427,7 +488,7 @@ pub struct InlineDiagnosticsSettingsContent {
     pub max_severity: Option<DiagnosticSeverityContent>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct NodeBinarySettings {
     /// The path to the Node binary.
@@ -475,7 +536,7 @@ pub enum DiagnosticSeverityContent {
 }
 
 /// A custom Git hosting provider.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitHostingProviderConfig {
     /// The type of the provider.

@@ -1,8 +1,8 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or empty, the root directory name
+  /// The displayed name of this project. If not set or null, the root directory name
   /// will be displayed.
-  "project_name": "",
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -265,6 +265,25 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // Whether to colorize brackets in the editor.
+  // (also known as "rainbow brackets")
+  //
+  // The colors that are used for different indentation levels are defined in the theme (theme key: `accents`).
+  // They can be customized by using theme overrides.
+  "colorize_brackets": false,
+  // When to show the scrollbar in the completion menu.
+  // This setting can take four values:
+  //
+  // 1. Show the scrollbar if there's important information or
+  //    follow the system's configured behavior
+  //   "auto"
+  // 2. Match the system's configured behavior:
+  //    "system"
+  // 3. Always show the scrollbar:
+  //    "always"
+  // 4. Never show the scrollbar:
+  //    "never" (default)
+  "completion_menu_scrollbar": "never",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -321,11 +340,11 @@
   "use_on_type_format": true,
   // Whether to automatically add matching closing characters when typing
   // opening parenthesis, bracket, brace, single or double quote characters.
-  // For example, when you type (, Zed will add a closing ) at the correct position.
+  // For example, when you type '(', Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Whether to automatically surround selected text when typing opening parenthesis,
   // bracket, brace, single or double quote characters.
-  // For example, when you select text and type (, Zed will surround the text with ().
+  // For example, when you select text and type '(', Zed will surround the text with ().
   "use_auto_surround": true,
   // Whether indentation should be adjusted based on the context whilst typing.
   "auto_indent": true,
@@ -602,17 +621,27 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  "relative_line_numbers": false,
+  "sticky_scroll": {
+    // Whether to stick scopes to the top of the editor.
+    "enabled": false
+  },
+  "relative_line_numbers": "disabled",
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
   "search": {
     // Whether to show the project search button in the status bar.
     "button": true,
+    // Whether to only match on whole words.
     "whole_word": false,
+    // Whether to match case sensitively.
     "case_sensitive": false,
+    // Whether to include gitignored files in search results.
     "include_ignored": false,
-    "regex": false
+    // Whether to interpret the search query as a regular expression.
+    "regex": false,
+    // Whether to center the cursor on each search match when navigating.
+    "center_on_match": false
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -729,12 +758,31 @@
       //    "never"
       "show": "always"
     },
+    // Sort order for entries in the project panel.
+    // This setting can take three values:
+    //
+    // 1. Show directories first, then files:
+    //    "directories_first"
+    // 2. Mix directories and files together:
+    //    "mixed"
+    // 3. Show files first, then directories:
+    //    "files_first"
+    "sort_mode": "directories_first",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
-    "hide_hidden": false
+    "hide_hidden": false,
+    // Settings for automatically opening files.
+    "auto_open": {
+      // Whether to automatically open newly created files in the editor.
+      "on_create": true,
+      // Whether to automatically open files after pasting or duplicating them.
+      "on_paste": true,
+      // Whether to automatically open files dropped from external sources.
+      "on_drop": true
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -892,8 +940,6 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
-    // When enabled, the agent will stream edits.
-    "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
@@ -916,6 +962,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "terminal": true,
           "thinking": true,
@@ -927,7 +974,6 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
-          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
@@ -1101,10 +1147,10 @@
     // Only the file Zed had indexed will be used, not necessary all the gitignored files.
     //
     // Can accept 3 values:
-    //   * `true`: Use all gitignored files
-    //   * `false`: Use only the files Zed had indexed
-    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
-    "include_ignored": null
+    //   * "all": Use all gitignored files
+    //   * "indexed": Use only the files Zed had indexed
+    //   * "smart": Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": "smart"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1242,6 +1288,9 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Globs to match files that will be considered "hidden". These files can be hidden from the
+  // project panel by toggling the "hide_hidden" setting.
+  "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -1283,7 +1332,10 @@
     //    "hunk_style": "staged_hollow"
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
-    "hunk_style": "staged_hollow"
+    "hunk_style": "staged_hollow",
+    // Should the name or path be displayed first in the git view.
+    // "path_style": "file_name_first" or "file_path_first"
+    "path_style": "file_name_first"
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1339,7 +1391,7 @@
       "model": null,
       "max_tokens": null
     },
-    // Whether edit predictions are enabled when editing text threads.
+    // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true
   },
@@ -1360,7 +1412,9 @@
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
-    "cursor_position_button": true
+    "cursor_position_button": true,
+    // Whether to show active line endings button in the status bar.
+    "line_endings_button": false
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1477,7 +1531,11 @@
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
         // Can also be `csh`, `fish`, `nushell` and `power_shell`
-        "activate_script": "default"
+        "activate_script": "default",
+        // Preferred Conda manager to use when activating Conda environments.
+        // Values: "auto", "conda", "mamba", "micromamba"
+        // Default: "auto"
+        "conda_manager": "auto"
       }
     },
     "toolbar": {
@@ -1521,6 +1579,8 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     "max_scroll_history_lines": 10000,
+    // The multiplier for scrolling speed in the terminal.
+    "scroll_multiplier": 1.0,
     // The minimum APCA perceptual contrast between foreground and background colors.
     // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     // especially for dark mode. Values range from 0 to 106.
@@ -1537,6 +1597,7 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
+  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1566,6 +1627,7 @@
   //
   "file_types": {
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"]
   },
   // Settings for which version of Node.js and NPM to use when installing
@@ -1706,7 +1768,10 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, "language_server"],
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
       "debuggers": ["Delve"]
     },
     "GraphQL": {
@@ -1721,6 +1786,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "HTML+ERB": {
+      "language_servers": ["herb", "!ruby-lsp", "..."]
     },
     "Java": {
       "prettier": {
@@ -1744,8 +1812,11 @@
         "allowed": true
       }
     },
+    "JS+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
+    },
     "Kotlin": {
-      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+      "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
     },
     "LaTeX": {
       "formatter": "language_server",
@@ -1758,6 +1829,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
       "prettier": {
@@ -1773,15 +1845,20 @@
       }
     },
     "Plain Text": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width"
     },
     "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
       "formatter": {
         "language_server": {
           "name": "ruff"
         }
       },
-      "debuggers": ["Debugpy"]
+      "debuggers": ["Debugpy"],
+      "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."]
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
@@ -1823,10 +1900,11 @@
     },
     "SystemVerilog": {
       "format_on_save": "off",
+      "language_servers": ["!slang", "..."],
       "use_on_type_format": false
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "..."],
+      "language_servers": ["vue-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -1841,6 +1919,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "YAML+ERB": {
+      "language_servers": ["!ruby-lsp", "..."]
     },
     "Zig": {
       "language_servers": ["zls", "..."]
@@ -1930,6 +2011,11 @@
   // DAP Specific settings.
   "dap": {
     // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
   },
   // Common language server settings.
   "global_lsp_settings": {
@@ -1991,6 +2077,18 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Linux.
+  "linux": {},
+  // Settings overrides to use when using macOS.
+  "macos": {},
+  // Settings overrides to use when using Windows.
+  "windows": {
+    "languages": {
+      "PHP": {
+        "language_servers": ["intelephense", "!phpactor", "..."]
+      }
+    }
   },
   // Whether to show full labels in line indicator or short ones
   //

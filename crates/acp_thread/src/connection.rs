@@ -20,6 +20,8 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
+    fn telemetry_id(&self) -> &'static str;
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -106,9 +108,6 @@ pub trait AgentSessionSetTitle {
 }
 
 pub trait AgentTelemetry {
-    /// The name of the agent used for telemetry.
-    fn agent_name(&self) -> String;
-
     /// A representation of the current thread state that can be serialized for
     /// storage with telemetry events.
     fn thread_data(
@@ -318,6 +317,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn telemetry_id(&self) -> &'static str {
+            "stub"
+        }
+
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &[]
         }

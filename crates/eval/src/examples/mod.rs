@@ -144,9 +144,8 @@ impl Example for DeclarativeExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(&self.prompt);
         let max_turns = self.metadata.max_turns.unwrap_or(1000);
-        let _ = cx.run_turns(max_turns).await;
+        let _ = cx.prompt_with_max_turns(&self.prompt, max_turns).await;
         Ok(())
     }
 

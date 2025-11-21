@@ -15,4 +15,3 @@ path = "src/telemetry_events.rs"
 semantic_version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-workspace-hack.workspace = true

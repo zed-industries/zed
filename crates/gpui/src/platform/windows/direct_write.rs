@@ -211,8 +211,8 @@ impl DirectWriteTextSystem {
         })))
     }
 
-    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) {
-        self.0.write().handle_gpu_lost(directx_devices);
+    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
+        self.0.write().handle_gpu_lost(directx_devices)
     }
 }
 
@@ -231,7 +231,9 @@ impl PlatformTextSystem for DirectWriteTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let font_id = lock.select_font(font);
+            let font_id = lock
+                .select_font(font)
+                .with_context(|| format!("Failed to select font: {:?}", font))?;
             lock.font_selections.insert(font.clone(), font_id);
             Ok(font_id)
         }
@@ -457,7 +459,7 @@ impl DirectWriteState {
         }
     }
 
-    fn select_font(&mut self, target_font: &Font) -> FontId {
+    fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
             if target_font.family == ".SystemUIFont" {
                 let family = self.system_ui_font_name.clone();
@@ -468,7 +470,6 @@ impl DirectWriteState {
                     &target_font.features,
                     target_font.fallbacks.as_ref(),
                 )
-                .unwrap()
             } else {
                 let family = self.system_ui_font_name.clone();
                 self.find_font_id(
@@ -478,7 +479,7 @@ impl DirectWriteState {
                     &target_font.features,
                     target_font.fallbacks.as_ref(),
                 )
-                .unwrap_or_else(|| {
+                .or_else(|| {
                     #[cfg(any(test, feature = "test-support"))]
                     {
                         panic!("ERROR: {} font not found!", target_font.family);
@@ -494,7 +495,6 @@ impl DirectWriteState {
                             target_font.fallbacks.as_ref(),
                             true,
                         )
-                        .unwrap()
                     }
                 })
             }
@@ -606,21 +606,21 @@ impl DirectWriteState {
             };
 
             let mut first_run = true;
-            let mut max_ascent = 0.0_f32;
-            let mut max_descent = 0.0_f32;
+            let mut ascent = Pixels::default();
+            let mut descent = Pixels::default();
+            let mut break_ligatures = false;
             for run in font_runs {
-                let font_info = &self.fonts[run.font_id.0];
-                let mut metrics = std::mem::zeroed();
-                font_info.font_face.GetMetrics(&mut metrics);
-                let font_scale = font_size.0 / metrics.Base.designUnitsPerEm as f32;
-                max_ascent = max_ascent.max(metrics.Base.ascent as f32 * font_scale);
-                max_descent = max_descent.max(-(metrics.Base.descent as f32 * font_scale));
-
                 if first_run {
                     first_run = false;
+                    let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
+                    let mut line_count = 0u32;
+                    text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
+                    ascent = px(metrics[0].baseline);
+                    descent = px(metrics[0].height - metrics[0].baseline);
+                    break_ligatures = !break_ligatures;
                     continue;
                 }
-
+                let font_info = &self.fonts[run.font_id.0];
                 let current_text = &text[utf8_offset..(utf8_offset + run.len)];
                 utf8_offset += run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
@@ -638,10 +638,17 @@ impl DirectWriteState {
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
-                text_layout.SetFontSize(font_size.0, text_range)?;
+                let font_size = if break_ligatures {
+                    font_size.0.next_up()
+                } else {
+                    font_size.0
+                };
+                text_layout.SetFontSize(font_size, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
+
+                break_ligatures = !break_ligatures;
             }
 
             let mut runs = Vec::new();
@@ -662,8 +669,8 @@ impl DirectWriteState {
             Ok(LineLayout {
                 font_size,
                 width,
-                ascent: max_ascent.into(),
-                descent: max_descent.into(),
+                ascent,
+                descent,
                 runs,
                 len: text.len(),
             })
@@ -1217,18 +1224,11 @@ impl DirectWriteState {
         result
     }
 
-    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) {
-        try_to_recover_from_device_lost(
-            || GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite"),
-            |gpu_state| self.components.gpu_state = gpu_state,
-            || {
-                log::error!(
-                    "Failed to recreate GPU state for DirectWrite after multiple attempts."
-                );
-                // Do something here?
-                // At this point, the device loss is considered unrecoverable.
-            },
-        );
+    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
+        try_to_recover_from_device_lost(|| {
+            GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
+        })
+        .map(|gpu_state| self.components.gpu_state = gpu_state)
     }
 }
 
@@ -1481,8 +1481,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             .get(&font_identifier)
         {
             *id
+        } else if let Some(id) = context.text_system.select_font(&font_struct) {
+            id
         } else {
-            context.text_system.select_font(&font_struct)
+            return Err(Error::new(DWRITE_E_NOFONT, "Failed to select font"));
         };
 
         let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };

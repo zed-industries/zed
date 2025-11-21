@@ -19,7 +19,7 @@ use cocoa::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -53,14 +53,16 @@ use std::{
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
-    process::Command,
     ptr,
     rc::Rc,
     slice, str,
     sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
-use util::ResultExt;
+use util::{
+    ResultExt,
+    command::{new_smol_command, new_std_command},
+};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -187,7 +189,7 @@ impl Default for MacPlatform {
 
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let dispatcher = Arc::new(MacDispatcher);
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::MacTextSystem::new());
@@ -315,6 +317,7 @@ impl MacPlatform {
                     name,
                     action,
                     os_action,
+                    checked,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -407,6 +410,10 @@ impl MacPlatform {
                                 ns_string(""),
                             )
                             .autorelease();
+                    }
+
+                    if *checked {
+                        item.setState_(NSVisualEffectState::Active);
                     }
 
                     let tag = actions.len() as NSInteger;
@@ -547,7 +554,7 @@ impl Platform for MacPlatform {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/bin/bash")
+        let restart_process = new_std_command("/bin/bash")
             .arg("-c")
             .arg(script)
             .arg(app_pid)
@@ -646,9 +653,12 @@ impl Platform for MacPlatform {
 
     fn open_url(&self, url: &str) {
         unsafe {
-            let url = NSURL::alloc(nil)
-                .initWithString_(ns_string(url))
-                .autorelease();
+            let ns_url = NSURL::alloc(nil).initWithString_(ns_string(url));
+            if ns_url.is_null() {
+                log::error!("Failed to create NSURL from string: {}", url);
+                return;
+            }
+            let url = ns_url.autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
@@ -859,7 +869,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = smol::process::Command::new("open")
+                if let Some(mut child) = new_smol_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -1038,6 +1048,7 @@ impl Platform for MacPlatform {
                         ClipboardEntry::Image(image) => {
                             self.write_image_to_clipboard(image);
                         }
+                        ClipboardEntry::ExternalPaths(_) => {}
                     },
                     None => {
                         // Writing an empty list of entries just clears the clipboard.
@@ -1607,6 +1618,7 @@ impl From<ImageFormat> for UTType {
             ImageFormat::Gif => Self::gif(),
             ImageFormat::Bmp => Self::bmp(),
             ImageFormat::Svg => Self::svg(),
+            ImageFormat::Ico => Self::ico(),
         }
     }
 }
@@ -1643,6 +1655,11 @@ impl UTType {
     pub fn svg() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
         Self(unsafe { ns_string("public.svg-image") })
+    }
+
+    pub fn ico() -> Self {
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/ico
+        Self(unsafe { ns_string("com.microsoft.ico") })
     }
 
     pub fn tiff() -> Self {

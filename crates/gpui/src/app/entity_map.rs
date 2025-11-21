@@ -244,11 +244,13 @@ impl AnyEntity {
     }
 
     /// Returns the id associated with this entity.
+    #[inline]
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
     /// Returns the [TypeId] associated with this entity.
+    #[inline]
     pub fn entity_type(&self) -> TypeId {
         self.entity_type
     }
@@ -332,18 +334,21 @@ impl Drop for AnyEntity {
 }
 
 impl<T> From<Entity<T>> for AnyEntity {
+    #[inline]
     fn from(entity: Entity<T>) -> Self {
         entity.any_entity
     }
 }
 
 impl Hash for AnyEntity {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entity_id.hash(state);
     }
 }
 
 impl PartialEq for AnyEntity {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.entity_id == other.entity_id
     }
@@ -352,12 +357,14 @@ impl PartialEq for AnyEntity {
 impl Eq for AnyEntity {}
 
 impl Ord for AnyEntity {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.entity_id.cmp(&other.entity_id)
     }
 }
 
 impl PartialOrd for AnyEntity {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -378,14 +385,13 @@ pub struct Entity<T> {
     #[deref]
     #[deref_mut]
     pub(crate) any_entity: AnyEntity,
-    pub(crate) entity_type: PhantomData<T>,
+    pub(crate) entity_type: PhantomData<fn(T) -> T>,
 }
 
-unsafe impl<T> Send for Entity<T> {}
-unsafe impl<T> Sync for Entity<T> {}
 impl<T> Sealed for Entity<T> {}
 
 impl<T: 'static> Entity<T> {
+    #[inline]
     fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self
     where
         T: 'static,
@@ -397,11 +403,13 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Get the entity ID associated with this entity
+    #[inline]
     pub fn entity_id(&self) -> EntityId {
         self.any_entity.entity_id
     }
 
     /// Downgrade this entity pointer to a non-retaining weak pointer
+    #[inline]
     pub fn downgrade(&self) -> WeakEntity<T> {
         WeakEntity {
             any_entity: self.any_entity.downgrade(),
@@ -410,16 +418,19 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Convert this into a dynamically typed entity.
+    #[inline]
     pub fn into_any(self) -> AnyEntity {
         self.any_entity
     }
 
     /// Grab a reference to this entity from the context.
+    #[inline]
     pub fn read<'a>(&self, cx: &'a App) -> &'a T {
         cx.entities.read(self)
     }
 
     /// Read the entity referenced by this handle with the given function.
+    #[inline]
     pub fn read_with<R, C: AppContext>(
         &self,
         cx: &C,
@@ -429,6 +440,7 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Updates the entity referenced by this handle with the given function.
+    #[inline]
     pub fn update<R, C: AppContext>(
         &self,
         cx: &mut C,
@@ -438,6 +450,7 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Updates the entity referenced by this handle with the given function.
+    #[inline]
     pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
         cx.as_mut(self)
     }
@@ -453,6 +466,7 @@ impl<T: 'static> Entity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
+    #[inline]
     pub fn update_in<R, C: VisualContext>(
         &self,
         cx: &mut C,
@@ -463,6 +477,7 @@ impl<T: 'static> Entity<T> {
 }
 
 impl<T> Clone for Entity<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
             any_entity: self.any_entity.clone(),
@@ -481,12 +496,14 @@ impl<T> std::fmt::Debug for Entity<T> {
 }
 
 impl<T> Hash for Entity<T> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.any_entity.hash(state);
     }
 }
 
 impl<T> PartialEq for Entity<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.any_entity == other.any_entity
     }
@@ -495,18 +512,21 @@ impl<T> PartialEq for Entity<T> {
 impl<T> Eq for Entity<T> {}
 
 impl<T> PartialEq<WeakEntity<T>> for Entity<T> {
+    #[inline]
     fn eq(&self, other: &WeakEntity<T>) -> bool {
         self.any_entity.entity_id() == other.entity_id()
     }
 }
 
 impl<T: 'static> Ord for Entity<T> {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.entity_id().cmp(&other.entity_id())
     }
 }
 
 impl<T: 'static> PartialOrd for Entity<T> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -522,6 +542,7 @@ pub struct AnyWeakEntity {
 
 impl AnyWeakEntity {
     /// Get the entity ID associated with this weak reference.
+    #[inline]
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
@@ -620,18 +641,21 @@ impl std::fmt::Debug for AnyWeakEntity {
 }
 
 impl<T> From<WeakEntity<T>> for AnyWeakEntity {
+    #[inline]
     fn from(entity: WeakEntity<T>) -> Self {
         entity.any_entity
     }
 }
 
 impl Hash for AnyWeakEntity {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entity_id.hash(state);
     }
 }
 
 impl PartialEq for AnyWeakEntity {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.entity_id == other.entity_id
     }
@@ -640,12 +664,14 @@ impl PartialEq for AnyWeakEntity {
 impl Eq for AnyWeakEntity {}
 
 impl Ord for AnyWeakEntity {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.entity_id.cmp(&other.entity_id)
     }
 }
 
 impl PartialOrd for AnyWeakEntity {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -657,7 +683,7 @@ pub struct WeakEntity<T> {
     #[deref]
     #[deref_mut]
     any_entity: AnyWeakEntity,
-    entity_type: PhantomData<T>,
+    entity_type: PhantomData<fn(T) -> T>,
 }
 
 impl<T> std::fmt::Debug for WeakEntity<T> {
@@ -668,9 +694,6 @@ impl<T> std::fmt::Debug for WeakEntity<T> {
             .finish()
     }
 }
-
-unsafe impl<T> Send for WeakEntity<T> {}
-unsafe impl<T> Sync for WeakEntity<T> {}
 
 impl<T> Clone for WeakEntity<T> {
     fn clone(&self) -> Self {
@@ -745,6 +768,7 @@ impl<T: 'static> WeakEntity<T> {
     }
 
     /// Create a new weak entity that can never be upgraded.
+    #[inline]
     pub fn new_invalid() -> Self {
         Self {
             any_entity: AnyWeakEntity::new_invalid(),
@@ -754,12 +778,14 @@ impl<T: 'static> WeakEntity<T> {
 }
 
 impl<T> Hash for WeakEntity<T> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.any_entity.hash(state);
     }
 }
 
 impl<T> PartialEq for WeakEntity<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.any_entity == other.any_entity
     }
@@ -768,18 +794,21 @@ impl<T> PartialEq for WeakEntity<T> {
 impl<T> Eq for WeakEntity<T> {}
 
 impl<T> PartialEq<Entity<T>> for WeakEntity<T> {
+    #[inline]
     fn eq(&self, other: &Entity<T>) -> bool {
         self.entity_id() == other.any_entity.entity_id()
     }
 }
 
 impl<T: 'static> Ord for WeakEntity<T> {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.entity_id().cmp(&other.entity_id())
     }
 }
 
 impl<T: 'static> PartialOrd for WeakEntity<T> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }

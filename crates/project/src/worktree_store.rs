@@ -5,13 +5,10 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{HashMap, HashSet};
 use fs::{Fs, copy_recursive};
-use futures::{
-    FutureExt, SinkExt,
-    future::{BoxFuture, Shared},
-};
+use futures::{FutureExt, SinkExt, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
@@ -136,6 +133,15 @@ impl WorktreeStore {
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
         self.worktrees()
             .filter(|worktree| worktree.read(cx).is_visible())
+    }
+
+    /// Iterates through all user-visible worktrees (directories and files that appear in the project panel) and other, invisible single files that could appear e.g. due to drag and drop.
+    pub fn visible_worktrees_and_single_files<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
+        self.worktrees()
+            .filter(|worktree| worktree.read(cx).is_visible() || worktree.read(cx).is_single_file())
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
@@ -542,7 +548,7 @@ impl WorktreeStore {
             let worktree = cx.update(|cx| {
                 Worktree::remote(
                     REMOTE_SERVER_PROJECT_ID,
-                    0,
+                    ReplicaId::REMOTE_SERVER,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,
                         root_name,
@@ -990,148 +996,14 @@ impl WorktreeStore {
         matching_paths_rx
     }
 
-    fn scan_ignored_dir<'a>(
-        fs: &'a Arc<dyn Fs>,
-        snapshot: &'a worktree::Snapshot,
-        path: &'a RelPath,
-        query: &'a SearchQuery,
-        filter_tx: &'a Sender<MatchingEntry>,
-        output_tx: &'a Sender<oneshot::Receiver<ProjectPath>>,
-    ) -> BoxFuture<'a, Result<()>> {
-        async move {
-            let abs_path = snapshot.absolutize(path);
-            let Some(mut files) = fs
-                .read_dir(&abs_path)
-                .await
-                .with_context(|| format!("listing ignored path {abs_path:?}"))
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            let mut results = Vec::new();
-
-            while let Some(Ok(file)) = files.next().await {
-                let Some(metadata) = fs
-                    .metadata(&file)
-                    .await
-                    .with_context(|| format!("fetching fs metadata for {abs_path:?}"))
-                    .log_err()
-                    .flatten()
-                else {
-                    continue;
-                };
-                if metadata.is_symlink || metadata.is_fifo {
-                    continue;
-                }
-                let relative_path = file.strip_prefix(snapshot.abs_path())?;
-                let relative_path = RelPath::new(&relative_path, snapshot.path_style())
-                    .context("getting relative path")?;
-                results.push((relative_path.into_arc(), !metadata.is_dir))
-            }
-            results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
-            for (path, is_file) in results {
-                if is_file {
-                    if query.filters_path() {
-                        let matched_path = if query.match_full_paths() {
-                            let mut full_path = snapshot.root_name().as_std_path().to_owned();
-                            full_path.push(path.as_std_path());
-                            query.match_path(&full_path)
-                        } else {
-                            query.match_path(&path.as_std_path())
-                        };
-                        if !matched_path {
-                            continue;
-                        }
-                    }
-                    let (tx, rx) = oneshot::channel();
-                    output_tx.send(rx).await?;
-                    filter_tx
-                        .send(MatchingEntry {
-                            respond: tx,
-                            worktree_root: snapshot.abs_path().clone(),
-                            path: ProjectPath {
-                                worktree_id: snapshot.id(),
-                                path: path.into_arc(),
-                            },
-                        })
-                        .await?;
-                } else {
-                    Self::scan_ignored_dir(fs, snapshot, &path, query, filter_tx, output_tx)
-                        .await?;
-                }
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-
     async fn find_candidate_paths(
-        fs: Arc<dyn Fs>,
-        snapshots: Vec<(worktree::Snapshot, WorktreeSettings)>,
-        open_entries: HashSet<ProjectEntryId>,
-        query: SearchQuery,
-        filter_tx: Sender<MatchingEntry>,
-        output_tx: Sender<oneshot::Receiver<ProjectPath>>,
+        _: Arc<dyn Fs>,
+        _: Vec<(worktree::Snapshot, WorktreeSettings)>,
+        _: HashSet<ProjectEntryId>,
+        _: SearchQuery,
+        _: Sender<MatchingEntry>,
+        _: Sender<oneshot::Receiver<ProjectPath>>,
     ) -> Result<()> {
-        for (snapshot, settings) in snapshots {
-            for entry in snapshot.entries(query.include_ignored(), 0) {
-                if entry.is_dir() && entry.is_ignored {
-                    if !settings.is_path_excluded(&entry.path) {
-                        Self::scan_ignored_dir(
-                            &fs,
-                            &snapshot,
-                            &entry.path,
-                            &query,
-                            &filter_tx,
-                            &output_tx,
-                        )
-                        .await?;
-                    }
-                    continue;
-                }
-
-                if entry.is_fifo || !entry.is_file() {
-                    continue;
-                }
-
-                if query.filters_path() {
-                    let matched_path = if query.match_full_paths() {
-                        let mut full_path = snapshot.root_name().as_std_path().to_owned();
-                        full_path.push(entry.path.as_std_path());
-                        query.match_path(&full_path)
-                    } else {
-                        query.match_path(entry.path.as_std_path())
-                    };
-                    if !matched_path {
-                        continue;
-                    }
-                }
-
-                let (mut tx, rx) = oneshot::channel();
-
-                if open_entries.contains(&entry.id) {
-                    tx.send(ProjectPath {
-                        worktree_id: snapshot.id(),
-                        path: entry.path.clone(),
-                    })
-                    .await?;
-                } else {
-                    filter_tx
-                        .send(MatchingEntry {
-                            respond: tx,
-                            worktree_root: snapshot.abs_path().clone(),
-                            path: ProjectPath {
-                                worktree_id: snapshot.id(),
-                                path: entry.path.clone(),
-                            },
-                        })
-                        .await?;
-                }
-
-                output_tx.send(rx).await?;
-            }
-        }
         Ok(())
     }
 
@@ -1194,6 +1066,16 @@ impl WorktreeStore {
             RelPath::from_proto(&envelope.payload.new_path)?,
         );
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let Some(entry) = this.entry_for_id(entry_id, cx) else {
+                bail!("no such entry");
+            };
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
+
             let new_worktree = this
                 .worktree_for_id(new_worktree_id, cx)
                 .context("no such worktree")?;
@@ -1217,6 +1099,15 @@ impl WorktreeStore {
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let Some(entry) = this.entry_for_id(entry_id, cx) else {
+                bail!("no entry")
+            };
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
             this.worktree_for_entry(entry_id, cx)
                 .context("worktree not found")
         })??;
@@ -1237,6 +1128,18 @@ impl WorktreeStore {
             let worktree = this
                 .worktree_for_entry(entry_id, cx)
                 .context("no such worktree")?;
+
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let entry = worktree
+                .read(cx)
+                .entry_for_id(entry_id)
+                .ok_or_else(|| anyhow!("missing entry"))?;
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
+
             let scan_id = worktree.read(cx).scan_id();
             anyhow::Ok((
                 scan_id,

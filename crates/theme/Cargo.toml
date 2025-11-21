@@ -36,7 +36,6 @@ strum.workspace = true
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

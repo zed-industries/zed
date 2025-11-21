@@ -23,8 +23,7 @@ use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::collections::BTreeSet;
 use std::env;
 use std::sync::Arc;
@@ -32,7 +31,7 @@ pub use util::serde::default_true;
 
 use crate::{ActiveSettingsProfileName, merge_from};
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
     #[serde(flatten)]
@@ -169,7 +168,7 @@ impl SettingsContent {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
@@ -234,7 +233,6 @@ impl UserSettingsContent {
     Eq,
     Default,
     strum::VariantArray,
-    strum::VariantNames,
 )]
 pub enum BaseKeymapContent {
     #[default]
@@ -248,7 +246,20 @@ pub enum BaseKeymapContent {
     None,
 }
 
-#[skip_serializing_none]
+impl strum::VariantNames for BaseKeymapContent {
+    const VARIANTS: &'static [&'static str] = &[
+        "VSCode",
+        "JetBrains",
+        "Sublime Text",
+        "Atom",
+        "TextMate",
+        "Emacs",
+        "Cursor",
+        "None",
+    ];
+}
+
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
     /// Whether to show the branch icon beside branch switcher in the title bar.
@@ -282,7 +293,7 @@ pub struct TitleBarSettingsContent {
 }
 
 /// Configuration of audio in Zed.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
@@ -326,7 +337,7 @@ pub struct AudioSettingsContent {
 }
 
 /// Control what info is collected by Zed.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
@@ -348,7 +359,7 @@ impl Default for TelemetrySettingsContent {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone, MergeFrom)]
 pub struct DebuggerSettingsContent {
     /// Determines the stepping granularity.
@@ -429,7 +440,7 @@ pub enum DockPosition {
 }
 
 /// Settings for slash commands.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
@@ -437,7 +448,7 @@ pub struct SlashCommandSettings {
 }
 
 /// Settings for the `/cargo-workspace` slash command.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct CargoWorkspaceCommandSettings {
     /// Whether `/cargo-workspace` is enabled.
@@ -445,7 +456,7 @@ pub struct CargoWorkspaceCommandSettings {
 }
 
 /// Configuration of voice calls in Zed.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
@@ -459,7 +470,7 @@ pub struct CallSettingsContent {
     pub share_on_join: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct GitPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -473,6 +484,7 @@ pub struct GitPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 360
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// How entry statuses are displayed.
     ///
@@ -502,7 +514,18 @@ pub struct GitPanelSettingsContent {
 }
 
 #[derive(
-    Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum StatusStyle {
@@ -511,13 +534,15 @@ pub enum StatusStyle {
     LabelColor,
 }
 
-#[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[with_fallible_options]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct NotificationPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -531,10 +556,11 @@ pub struct NotificationPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 300
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -548,10 +574,11 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
@@ -561,7 +588,7 @@ pub struct MessageEditorSettings {
     pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
@@ -583,14 +610,33 @@ pub struct FileFinderSettingsContent {
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///
-    /// Can accept 3 values:
-    /// * `Some(true)`: Use all gitignored files
-    /// * `Some(false)`: Use only the files Zed had indexed
-    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
-    ///
-    /// Default: None
-    /// todo() -> Change this type to an enum
-    pub include_ignored: Option<bool>,
+    /// Default: Smart
+    pub include_ignored: Option<IncludeIgnoredContent>,
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum IncludeIgnoredContent {
+    /// Use all gitignored files
+    All,
+    /// Use only the files Zed had indexed
+    Indexed,
+    /// Be smart and search for ignored when called from a gitignored worktree
+    #[default]
+    Smart,
 }
 
 #[derive(
@@ -617,7 +663,7 @@ pub enum FileFinderWidthContent {
     Full,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema, MergeFrom)]
 pub struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
@@ -650,7 +696,7 @@ pub enum UseSystemClipboard {
 }
 
 /// The settings for cursor shape.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
@@ -672,7 +718,7 @@ pub struct CursorShapeSettings {
 }
 
 /// Settings specific to journaling
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct JournalSettingsContent {
     /// The path of the directory where journal entries are stored.
@@ -693,7 +739,7 @@ pub enum HourFormat {
     Hour24,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
@@ -703,6 +749,7 @@ pub struct OutlinePanelSettingsContent {
     /// Customize default width (in pixels) taken by outline panel
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
@@ -723,6 +770,7 @@ pub struct OutlinePanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.
@@ -786,7 +834,7 @@ pub enum ShowIndentGuides {
     Never,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
@@ -804,7 +852,7 @@ pub enum LineIndicatorFormat {
 }
 
 /// The settings for the image viewer.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
 pub struct ImageViewerSettingsContent {
     /// The unit to use for displaying image file sizes.
@@ -813,8 +861,20 @@ pub struct ImageViewerSettingsContent {
     pub unit: Option<ImageFileSizeUnit>,
 }
 
-#[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+#[with_fallible_options]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnit {
     /// Displays file size in binary units (e.g., KiB, MiB).
@@ -824,7 +884,7 @@ pub enum ImageFileSizeUnit {
     Decimal,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
@@ -832,7 +892,7 @@ pub struct RemoteSettingsContent {
     pub read_ssh_config: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct SshConnection {
     pub host: SharedString,
@@ -861,7 +921,7 @@ pub struct WslConnection {
     pub projects: BTreeSet<SshProject>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
 )]
@@ -869,19 +929,17 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema, MergeFrom)]
 pub struct SshPortForwardOption {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub local_host: Option<String>,
     pub local_port: u16,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_host: Option<String>,
     pub remote_port: u16,
 }
 
 /// Settings for configuring REPL display and behavior.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ReplSettingsContent {
     /// Maximum number of lines to keep in REPL's scrollback buffer.
@@ -946,5 +1004,35 @@ impl From<SaturatingBool> for bool {
 impl merge_from::MergeFrom for SaturatingBool {
     fn merge_from(&mut self, other: &Self) {
         self.0 |= other.0
+    }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    JsonSchema,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct DelayMs(pub u64);
+
+impl From<u64> for DelayMs {
+    fn from(n: u64) -> Self {
+        Self(n)
+    }
+}
+
+impl std::fmt::Display for DelayMs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}ms", self.0)
     }
 }

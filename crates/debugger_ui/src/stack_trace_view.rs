@@ -7,7 +7,7 @@ use editor::{
     RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
-    AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
+    App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, WeakEntity, Window,
 };
 use language::{BufferSnapshot, Capability, Point, Selection, SelectionGoal, TreeSitterOptions};
@@ -55,7 +55,10 @@ impl StackTraceView {
         cx.subscribe_in(&editor, window, |this, editor, event, window, cx| {
             if let EditorEvent::SelectionsChanged { local: true } = event {
                 let excerpt_id = editor.update(cx, |editor, cx| {
-                    let position: Point = editor.selections.newest(cx).head();
+                    let position: Point = editor
+                        .selections
+                        .newest(&editor.display_snapshot(cx))
+                        .head();
 
                     editor
                         .snapshot(window, cx)
@@ -415,11 +418,11 @@ impl Item for StackTraceView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

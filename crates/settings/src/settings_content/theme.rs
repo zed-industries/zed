@@ -4,84 +4,72 @@ use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::{fmt::Display, sync::Arc};
 
-use serde_with::skip_serializing_none;
+use crate::serialize_f32_with_two_decimal_places;
 
 /// Settings for rendering text in UI and text buffers.
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
-    #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub ui_font_size: Option<f32>,
     /// The name of a font to use for rendering in the UI.
-    #[serde(default)]
     pub ui_font_family: Option<FontFamilyName>,
     /// The font fallbacks to use for rendering in the UI.
-    #[serde(default)]
     #[schemars(default = "default_font_fallbacks")]
     #[schemars(extend("uniqueItems" = true))]
     pub ui_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The OpenType features to enable for text in the UI.
-    #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub ui_font_features: Option<FontFeatures>,
     /// The weight of the UI font in CSS units from 100 to 900.
-    #[serde(default)]
     #[schemars(default = "default_buffer_font_weight")]
     pub ui_font_weight: Option<FontWeight>,
     /// The name of a font to use for rendering in text buffers.
-    #[serde(default)]
     pub buffer_font_family: Option<FontFamilyName>,
     /// The font fallbacks to use for rendering in text buffers.
-    #[serde(default)]
     #[schemars(extend("uniqueItems" = true))]
     pub buffer_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The default font size for rendering in text buffers.
-    #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub buffer_font_size: Option<f32>,
     /// The weight of the editor font in CSS units from 100 to 900.
-    #[serde(default)]
     #[schemars(default = "default_buffer_font_weight")]
     pub buffer_font_weight: Option<FontWeight>,
     /// The buffer's line height.
-    #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
-    #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
-    #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub agent_ui_font_size: Option<f32>,
     /// The font size for user messages in the agent panel.
-    #[serde(default)]
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub agent_buffer_font_size: Option<f32>,
     /// The name of the Zed theme to use.
-    #[serde(default)]
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
-    #[serde(default)]
     pub icon_theme: Option<IconThemeSelection>,
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
     // Controls the density of the UI.
-    #[serde(rename = "unstable.ui_density", default)]
+    #[serde(rename = "unstable.ui_density")]
     pub ui_density: Option<UiDensity>,
 
     /// How much to fade out unused code.
-    #[serde(default)]
     #[schemars(range(min = 0.0, max = 0.9))]
     pub unnecessary_code_fade: Option<CodeFade>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
-    #[serde(rename = "experimental.theme_overrides", default)]
+    #[serde(rename = "experimental.theme_overrides")]
     pub experimental_theme_overrides: Option<ThemeStyleContent>,
 
     /// Overrides per theme
@@ -104,11 +92,17 @@ pub struct ThemeSettingsContent {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct CodeFade(pub f32);
+pub struct CodeFade(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32);
 
 impl Display for CodeFade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for CodeFade {
+    fn from(x: f32) -> Self {
+        Self(x)
     }
 }
 
@@ -125,7 +119,18 @@ fn default_buffer_font_weight() -> Option<FontWeight> {
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
@@ -134,7 +139,7 @@ pub enum ThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The theme to use for light mode.
         light: ThemeName,
         /// The theme to use for dark mode.
@@ -143,7 +148,18 @@ pub enum ThemeSelection {
 }
 
 /// Represents the selection of an icon theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
@@ -152,7 +168,7 @@ pub enum IconThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The icon theme to use for light mode.
         light: IconThemeName,
         /// The icon theme to use for dark mode.
@@ -160,17 +176,27 @@ pub enum IconThemeSelection {
     },
 }
 
-// TODO: Rename ThemeMode -> ThemeAppearanceMode
 /// The mode use to select a theme.
 ///
 /// `Light` and `Dark` will select their respective themes.
 ///
 /// `System` will select the theme based on the system's appearance.
 #[derive(
-    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum ThemeMode {
+pub enum ThemeAppearanceMode {
     /// Use the specified `light` theme.
     Light,
 
@@ -226,7 +252,7 @@ impl UiDensity {
 }
 
 /// Font family name.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct FontFamilyName(pub Arc<str>);
@@ -262,7 +288,19 @@ impl From<FontFamilyName> for String {
 }
 
 /// The buffer's line height.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -289,11 +327,11 @@ where
 }
 
 /// The content of a serialized theme.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
-    #[serde(default, rename = "background.appearance")]
+    #[serde(rename = "background.appearance")]
     pub window_background_appearance: Option<WindowBackgroundContent>,
 
     #[serde(default)]
@@ -314,7 +352,7 @@ pub struct ThemeStyleContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct AccentContent(pub Option<String>);
+pub struct AccentContent(pub Option<SharedString>);
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct PlayerColorContent {
@@ -324,18 +362,18 @@ pub struct PlayerColorContent {
 }
 
 /// Theme name.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct ThemeName(pub Arc<str>);
 
 /// Icon Theme Name
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct IconThemeName(pub Arc<str>);
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct ThemeColorsContent {
@@ -838,21 +876,58 @@ pub struct ThemeColorsContent {
     /// Deprecated in favor of `version_control_conflict_marker_theirs`.
     #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
+
+    /// Background color for Vim Normal mode indicator.
+    #[serde(rename = "vim.normal.background")]
+    pub vim_normal_background: Option<String>,
+    /// Background color for Vim Insert mode indicator.
+    #[serde(rename = "vim.insert.background")]
+    pub vim_insert_background: Option<String>,
+    /// Background color for Vim Replace mode indicator.
+    #[serde(rename = "vim.replace.background")]
+    pub vim_replace_background: Option<String>,
+    /// Background color for Vim Visual mode indicator.
+    #[serde(rename = "vim.visual.background")]
+    pub vim_visual_background: Option<String>,
+    /// Background color for Vim Visual Line mode indicator.
+    #[serde(rename = "vim.visual_line.background")]
+    pub vim_visual_line_background: Option<String>,
+    /// Background color for Vim Visual Block mode indicator.
+    #[serde(rename = "vim.visual_block.background")]
+    pub vim_visual_block_background: Option<String>,
+    /// Background color for Vim Helix Normal mode indicator.
+    #[serde(rename = "vim.helix_normal.background")]
+    pub vim_helix_normal_background: Option<String>,
+    /// Background color for Vim Helix Select mode indicator.
+    #[serde(rename = "vim.helix_select.background")]
+    pub vim_helix_select_background: Option<String>,
+
+    /// Text color for Vim mode indicator label.
+    #[serde(rename = "vim.mode.text")]
+    pub vim_mode_text: Option<String>,
 }
 
-#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct HighlightStyleContent {
     pub color: Option<String>,
 
-    #[serde(deserialize_with = "treat_error_as_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "treat_error_as_none"
+    )]
     pub background_color: Option<String>,
 
-    #[serde(deserialize_with = "treat_error_as_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "treat_error_as_none"
+    )]
     pub font_style: Option<FontStyleContent>,
 
-    #[serde(deserialize_with = "treat_error_as_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "treat_error_as_none"
+    )]
     pub font_weight: Option<FontWeightContent>,
 }
 
@@ -874,7 +949,7 @@ where
     Ok(T::deserialize(value).ok())
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct StatusColorsContent {

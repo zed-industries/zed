@@ -95,7 +95,6 @@ actions!(
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
     terminal_panel::init(cx);
-    terminal::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
@@ -520,7 +519,12 @@ impl TerminalView {
                 return;
             }
         }
-        self.terminal.update(cx, |term, _| term.scroll_wheel(event));
+        self.terminal.update(cx, |term, cx| {
+            term.scroll_wheel(
+                event,
+                TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+            )
+        });
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -840,9 +844,7 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
-                })
+                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1143,7 +1145,8 @@ impl Item for TerminalView {
         let pid = terminal.pid_getter()?.fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
-            cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
+            cx.new(|_| TerminalTooltip::new(title.clone(), pid.as_u32()))
+                .into()
         })))
     }
 
@@ -1215,33 +1218,40 @@ impl Item for TerminalView {
         workspace::item::ItemBufferKind::Singleton
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        let terminal = self
-            .project
-            .update(cx, |project, cx| {
-                let cwd = project
-                    .active_project_directory(cx)
-                    .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, cwd)
+    ) -> Task<Option<Entity<Self>>> {
+        let Ok(terminal) = self.project.update(cx, |project, cx| {
+            let cwd = project
+                .active_project_directory(cx)
+                .map(|it| it.to_path_buf());
+            project.clone_terminal(self.terminal(), cx, cwd)
+        }) else {
+            return Task::ready(None);
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = terminal.await.log_err()?;
+            this.update_in(cx, |this, window, cx| {
+                cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        this.workspace.clone(),
+                        workspace_id,
+                        this.project.clone(),
+                        window,
+                        cx,
+                    )
+                })
             })
-            .ok()?
-            .log_err()?;
-
-        Some(cx.new(|cx| {
-            TerminalView::new(
-                terminal,
-                self.workspace.clone(),
-                workspace_id,
-                self.project.clone(),
-                window,
-                cx,
-            )
-        }))
+            .ok()
+        })
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {
@@ -1546,7 +1556,8 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
             .read(cx)
             .active_project_directory(cx)
             .as_deref()
-            .map(Path::to_path_buf),
+            .map(Path::to_path_buf)
+            .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {
@@ -1560,10 +1571,13 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
-    if !worktree.root_entry()?.is_dir() {
-        return None;
+    let worktree_path = worktree.abs_path();
+    if worktree.root_entry()?.is_dir() {
+        Some(worktree_path.to_path_buf())
+    } else {
+        // If worktree is a file, return its parent directory
+        worktree_path.parent().map(|p| p.to_path_buf())
     }
-    Some(worktree.abs_path().to_path_buf())
 }
 
 #[cfg(test)]
@@ -1596,7 +1610,7 @@ mod tests {
         });
     }
 
-    // No active entry, but a worktree, worktree is a file -> home_dir()
+    // No active entry, but a worktree, worktree is a file -> parent directory
     #[gpui::test]
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
@@ -1611,9 +1625,9 @@ mod tests {
             assert!(workspace.worktrees(cx).next().is_some());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some(Path::new("/").to_path_buf()));
             let res = first_project_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some(Path::new("/").to_path_buf()));
         });
     }
 
@@ -1685,10 +1699,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init_settings(cx);
-            language::init(cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
