@@ -2863,8 +2863,6 @@ impl MultiBuffer {
                 let edit_anchor_range =
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
-                // 1. diff hunks Vec<Range<text::Anchor>> (change when the diff is recalculated) (libgit2)
-                // 2. diff transforms (complicated) (change when any buffer is edited, or when diff is recalculated)
                 for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
                     if hunk.is_created_file() && !all_diff_hunks_expanded {
                         continue;
