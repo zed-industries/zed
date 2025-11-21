@@ -253,7 +253,12 @@ pub fn transcription_loop_body(
                         let text = segment
                             .to_str()
                             .map_err(|e| anyhow::anyhow!("failed to get segment text: {}", e))?
+                            .trim()
                             .to_owned();
+
+                        if text.is_empty() {
+                            continue;
+                        }
                         transcription_sender.send_blocking(text)?;
                     }
                 }

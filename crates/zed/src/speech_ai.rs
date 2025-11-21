@@ -63,18 +63,16 @@ impl SpeechInlineAssistantBridge {
                 let Ok(transcription) = stream.lock().recv().await else {
                     continue;
                 };
-                let trimmed = transcription.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let prompt = trimmed.to_owned();
-                if let Err(err) = cx.update(|cx| {
+
+                let update = cx.update(|cx| {
                     let action = InlineAssist {
-                        prompt: Some(prompt.clone()),
+                        prompt: Some(transcription.clone()),
                         auto_start: true,
                     };
                     cx.dispatch_action(&action);
-                }) {
+                });
+
+                if let Err(err) = update {
                     warn!("Failed to dispatch inline assist for speech transcription: {err}");
                     break;
                 }
