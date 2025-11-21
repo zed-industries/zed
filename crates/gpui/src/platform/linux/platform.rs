@@ -1,7 +1,6 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::Command,
     rc::Rc,
     sync::Arc,
 };
@@ -18,6 +17,7 @@ use anyhow::{Context as _, anyhow};
 use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
+use util::command::{new_smol_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -215,7 +215,7 @@ impl<P: LinuxClient + 'static> Platform for P {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/usr/bin/env")
+        let restart_process = new_std_command("/usr/bin/env")
             .arg("bash")
             .arg("-c")
             .arg(script)
@@ -422,7 +422,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = smol::process::Command::new("xdg-open")
+                let _ = new_smol_command("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")

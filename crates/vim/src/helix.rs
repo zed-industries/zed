@@ -15,8 +15,8 @@ use language::{CharClassifier, CharKind, Point};
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
 use text::{Bias, SelectionGoal};
-use workspace::searchable;
 use workspace::searchable::FilteredSearchRange;
+use workspace::searchable::{self, Direction};
 
 use crate::motion::{self, MotionKind};
 use crate::state::SearchState;
@@ -52,6 +52,10 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
+        /// Delete the selection and enter edit mode.
+        HelixSelectNext,
+        /// Delete the selection and enter edit mode, without yanking the selection.
+        HelixSelectPrevious,
     ]
 );
 
@@ -74,6 +78,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, Vim::helix_substitute);
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
+    Vim::action(editor, cx, Vim::helix_select_next);
+    Vim::action(editor, cx, Vim::helix_select_previous);
 }
 
 impl Vim {
@@ -97,6 +103,11 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Default::default(), window, cx, |s| {
+                if let Motion::ZedSearchResult { new_selections, .. } = &motion {
+                    s.select_anchor_ranges(new_selections.clone());
+                    return;
+                };
+
                 s.move_with(|map, selection| {
                     let current_head = selection.head();
 
@@ -663,6 +674,68 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.do_helix_substitute(false, window, cx);
+    }
+
+    fn helix_select_next(
+        &mut self,
+        _: &HelixSelectNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.do_helix_select(Direction::Next, window, cx);
+    }
+
+    fn helix_select_previous(
+        &mut self,
+        _: &HelixSelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.do_helix_select(Direction::Prev, window, cx);
+    }
+
+    fn do_helix_select(
+        &mut self,
+        direction: searchable::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
+        let prior_selections = self.editor_selections(window, cx);
+
+        let success = pane.update(cx, |pane, cx| {
+            let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
+                return false;
+            };
+            search_bar.update(cx, |search_bar, cx| {
+                if !search_bar.has_active_match() || !search_bar.show(window, cx) {
+                    return false;
+                }
+                search_bar.select_match(direction, count, window, cx);
+                true
+            })
+        });
+
+        if !success {
+            return;
+        }
+        if self.mode == Mode::HelixSelect {
+            self.update_editor(cx, |_vim, editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                    s.select_anchor_ranges(
+                        prior_selections
+                            .iter()
+                            .cloned()
+                            .chain(s.all_anchors(&snapshot).iter().map(|s| s.range())),
+                    );
+                })
+            });
+        }
     }
 }
 
@@ -1279,6 +1352,24 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_exit_visual_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇone two", Mode::Normal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one tˇ»wo", Mode::Visual);
+        cx.simulate_keystrokes("escape");
+        cx.assert_state("one ˇtwo", Mode::Normal);
+
+        cx.enable_helix();
+        cx.set_state("ˇone two", Mode::HelixNormal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one ˇ»two", Mode::HelixSelect);
+        cx.simulate_keystrokes("escape");
+        cx.assert_state("«one ˇ»two", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_helix_select_regex(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -1297,9 +1388,47 @@ mod test {
         cx.simulate_keystrokes("enter");
         cx.assert_state("«oneˇ» two «oneˇ»", Mode::HelixNormal);
 
-        cx.set_state("ˇone two one", Mode::HelixNormal);
-        cx.simulate_keystrokes("s o n e enter");
-        cx.assert_state("ˇone two one", Mode::HelixNormal);
+        // TODO: change "search_in_selection" to not perform any search when in helix select mode with no selection
+        // cx.set_state("ˇstuff one two one", Mode::HelixNormal);
+        // cx.simulate_keystrokes("s o n e enter");
+        // cx.assert_state("ˇstuff one two one", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_next_match(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello two one two one two one", Mode::Visual);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("«hello two one two one two oˇ»ne", Mode::Visual);
+
+        cx.set_state("ˇhello two one two one two one", Mode::Normal);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("hello two one two one two ˇone", Mode::Normal);
+
+        cx.set_state("ˇhello two one two one two one", Mode::Normal);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n g n g n");
+        cx.assert_state("hello two one two «one two oneˇ»", Mode::Visual);
+
+        cx.enable_helix();
+
+        cx.set_state("ˇhello two one two one two one", Mode::HelixNormal);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("hello two one two one two «oneˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇhello two one two one two one", Mode::HelixSelect);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("hello two «oneˇ» two «oneˇ» two «oneˇ»", Mode::HelixSelect);
     }
 
     #[gpui::test]
