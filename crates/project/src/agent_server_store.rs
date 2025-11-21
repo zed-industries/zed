@@ -203,9 +203,11 @@ mod ext_agent_tests {
         let old_args = env::var("ZED_AGENT_SERVER_ARGS").ok();
         let old_name = env::var("ZED_AGENT_SERVER_NAME").ok();
 
-        env::set_var("ZED_AGENT_SERVER_BIN", "~/bin/my-agent");
-        env::set_var("ZED_AGENT_SERVER_ARGS", "--foo bar");
-        env::set_var("ZED_AGENT_SERVER_NAME", "local-env-agent");
+        unsafe {
+            env::set_var("ZED_AGENT_SERVER_BIN", "~/bin/my-agent");
+            env::set_var("ZED_AGENT_SERVER_ARGS", "--foo bar");
+            env::set_var("ZED_AGENT_SERVER_NAME", "local-env-agent");
+        }
 
         let cfg = env_agent_server_config().expect("env agent server present");
         assert_eq!(cfg.0.to_string(), "local-env-agent");
@@ -213,17 +215,19 @@ mod ext_agent_tests {
         assert_eq!(cfg.1.args, vec!["--foo", "bar"]);
 
         // Restore environment
-        match old_bin {
-            Some(v) => env::set_var("ZED_AGENT_SERVER_BIN", v),
-            None => env::remove_var("ZED_AGENT_SERVER_BIN"),
-        }
-        match old_args {
-            Some(v) => env::set_var("ZED_AGENT_SERVER_ARGS", v),
-            None => env::remove_var("ZED_AGENT_SERVER_ARGS"),
-        }
-        match old_name {
-            Some(v) => env::set_var("ZED_AGENT_SERVER_NAME", v),
-            None => env::remove_var("ZED_AGENT_SERVER_NAME"),
+        unsafe {
+            match old_bin {
+                Some(v) => env::set_var("ZED_AGENT_SERVER_BIN", v),
+                None => env::remove_var("ZED_AGENT_SERVER_BIN"),
+            }
+            match old_args {
+                Some(v) => env::set_var("ZED_AGENT_SERVER_ARGS", v),
+                None => env::remove_var("ZED_AGENT_SERVER_ARGS"),
+            }
+            match old_name {
+                Some(v) => env::set_var("ZED_AGENT_SERVER_NAME", v),
+                None => env::remove_var("ZED_AGENT_SERVER_NAME"),
+            }
         }
     }
 
