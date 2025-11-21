@@ -134,20 +134,23 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         Ok(existing_path) => PathWithPosition::from_path(existing_path),
         Err(_) => {
             let path_with_pos = PathWithPosition::parse_str(argument_str);
-            let path_argument = path_with_pos.path;
-
             let curdir = env::current_dir().context("retrieving current directory")?;
-            let absolute_path = if path_argument.is_absolute() {
-                path_argument
-            } else {
-                curdir.join(path_argument)
-            };
+            path_with_pos.map_path(|path| -> Result<PathBuf, std::io::Error> {
+                match fs::canonicalize(&path) {
+                    Ok(canonicalized_path) => Ok(canonicalized_path),
+                    Err(_) => {
+                        let path_argument = path.to_path_buf();
 
-            PathWithPosition {
-                path: absolute_path,
-                row: path_with_pos.row,
-                column: path_with_pos.column,
-            }
+                        let absolute_path = if path_argument.is_absolute() {
+                            path_argument
+                        } else {
+                            curdir.join(path_argument)
+                        };
+
+                        Ok(absolute_path)
+                    }
+                }
+            })?
         }
     };
     Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
