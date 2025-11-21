@@ -83,16 +83,24 @@ impl ShellBuilder {
         if let Some(task_command) = task_command {
             dbg!(&task_command);
             let task_command = self.kind.prepend_command_prefix(&task_command);
-            let task_command = self
-                .kind
-                .try_quote_prefix_aware(&task_command)
-                .expect("TODO");
+            let task_command = if !task_args.is_empty() {
+                self.kind
+                    .try_quote_prefix_aware(&task_command)
+                    .expect("TODO")
+            } else {
+                task_command
+            };
             let mut combined_command =
                 task_args
                     .iter()
                     .fold(task_command.into_owned(), |mut command, arg| {
                         command.push(' ');
-                        command.push_str(&self.kind.to_shell_variable(arg));
+                        command.push_str(
+                            &self
+                                .kind
+                                .try_quote(&self.kind.to_shell_variable(arg))
+                                .expect("TODO"),
+                        );
                         command
                     });
             println!("combined_command: {combined_command}");
