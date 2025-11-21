@@ -30,7 +30,8 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{Shell, ShellKind},
+    shell_builder::ShellBuilder,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -1362,21 +1363,8 @@ fn build_command(
         )?;
     }
 
-    if let Some(input_program) = input_program {
-        write!(
-            exec,
-            "{}",
-            ssh_shell_kind
-                .try_quote_prefix_aware(&input_program)
-                .context("shell quoting")?
-        )?;
-        for arg in input_args {
-            let arg = ssh_shell_kind.try_quote(&arg).context("shell quoting")?;
-            write!(exec, " {}", &arg)?;
-        }
-    } else {
-        write!(exec, "{ssh_shell} -l")?;
-    };
+    let (command, args) =
+        ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false).build(exec, &[]);
 
     let mut args = Vec::new();
     args.extend(ssh_args);

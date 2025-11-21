@@ -5,9 +5,12 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
-use settings::{SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::{path::Path, rc::Rc, sync::Arc};
+use task::Shell;
+use terminal::terminal_settings::TerminalSettings;
 use ui::IconName;
+use util::get_default_system_shell;
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
@@ -119,7 +122,6 @@ impl crate::AgentServer for CustomAgentServer {
         let default_model = self.default_model(cx);
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
-
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {

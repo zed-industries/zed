@@ -105,7 +105,7 @@ impl ContextServer {
         )>,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let client = self.new_client(cx)?;
+        let client = self.new_client( cx)?;
         for (method, handler) in notification_handlers {
             client.on_notification(method, handler);
         }
