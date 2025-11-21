@@ -648,6 +648,7 @@ impl OpenRouterEventMapper {
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
+                // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
@@ -672,10 +673,12 @@ impl OpenRouterEventMapper {
                     }
                 }));
 
+                // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
             Some(stop_reason) => {
                 log::error!("Unexpected OpenRouter stop_reason: {stop_reason:?}",);
+                // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
