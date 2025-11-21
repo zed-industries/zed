@@ -105,7 +105,7 @@ pub fn derive_register_setting(input: TokenStream) -> TokenStream {
 }
 
 // Adds serde attributes to each field with type Option<T>:
-// #serde(skip_serializing_if = "Option::is_none", deserialize_with = "settings::deserialize_fallible")
+// #serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "settings::deserialize_fallible")
 #[proc_macro_attribute]
 pub fn with_fallible_options(_args: TokenStream, input: TokenStream) -> TokenStream {
     fn apply_on_fields(fields: &mut Fields) {
