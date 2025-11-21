@@ -51,7 +51,7 @@ pub fn setup_zeta(
 
     zeta.update(cx, |zeta, _cx| {
         let model = match provider {
-            PredictionProvider::Zeta2 => zeta2::ZetaEditPredictionModel::ZedCloud,
+            PredictionProvider::Zeta2 => zeta2::ZetaEditPredictionModel::Zeta2,
             PredictionProvider::Sweep => zeta2::ZetaEditPredictionModel::Sweep,
         };
         zeta.set_edit_prediction_model(model);

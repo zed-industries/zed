@@ -256,7 +256,7 @@ fn assign_edit_prediction_provider(
                         {
                             zeta.update(cx, |zeta, cx| {
                                 zeta.set_edit_prediction_model(
-                                    zeta2::ZetaEditPredictionModel::ZedCloud,
+                                    zeta2::ZetaEditPredictionModel::Zeta2,
                                 );
                                 zeta.register_buffer(buffer, project, cx);
                             });

@@ -23,7 +23,9 @@ use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task,
     WeakEntity, http_client, prelude::*,
 };
-use language::{Anchor, Buffer, DiagnosticSet, LanguageServerId, Point, ToOffset as _, ToPoint};
+use language::{
+    Anchor, Buffer, DiagnosticSet, File, LanguageServerId, Point, ToOffset as _, ToPoint,
+};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use lsp::DiagnosticSeverity;
@@ -52,15 +54,16 @@ pub mod retrieval_search;
 mod sweep_ai;
 pub mod udiff;
 mod xml_edits;
+mod zeta1;
 
 use crate::assemble_excerpts::assemble_excerpts;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
+use crate::zeta1::request_prediction_with_zeta1;
 pub use provider::ZetaEditPredictionProvider;
 
 /// Maximum number of events to track.
-const EVENT_COUNT_MAX_SWEEP: usize = 6;
-const EVENT_COUNT_MAX_ZETA: usize = 16;
+const EVENT_COUNT_MAX: usize = 6;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 
 pub struct SweepFeatureFlag;
@@ -159,9 +162,11 @@ pub struct Zeta {
     sweep_ai_debug_info: Arc<str>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub enum ZetaEditPredictionModel {
-    ZedCloud,
+    #[default]
+    Zeta1,
+    Zeta2,
     Sweep,
 }
 
@@ -429,7 +434,7 @@ impl Zeta {
             debug_tx: None,
             #[cfg(feature = "eval-support")]
             eval_cache: None,
-            edit_prediction_model: ZetaEditPredictionModel::ZedCloud,
+            edit_prediction_model: ZetaEditPredictionModel::Zeta2,
             sweep_api_token: std::env::var("SWEEP_AI_TOKEN")
                 .context("No SWEEP_AI_TOKEN environment variable set")
                 .log_err(),
@@ -501,7 +506,7 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if self.edit_prediction_model == ZetaEditPredictionModel::ZedCloud {
+        if self.edit_prediction_model == ZetaEditPredictionModel::Zeta2 {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -627,11 +632,6 @@ impl Zeta {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
-        let event_count_max = match self.edit_prediction_model {
-            ZetaEditPredictionModel::ZedCloud => EVENT_COUNT_MAX_ZETA,
-            ZetaEditPredictionModel::Sweep => EVENT_COUNT_MAX_SWEEP,
-        };
-
         let sweep_ai_project = self.get_or_init_zeta_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(sweep_ai_project, buffer, project, cx);
 
@@ -674,7 +674,7 @@ impl Zeta {
             }
         }
 
-        if events.len() >= event_count_max {
+        if events.len() >= EVENT_COUNT_MAX {
             events.pop_front();
         }
 
@@ -718,7 +718,7 @@ impl Zeta {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        if self.edit_prediction_model != ZetaEditPredictionModel::ZedCloud {
+        if self.edit_prediction_model != ZetaEditPredictionModel::Zeta2 {
             return;
         }
 
@@ -965,8 +965,11 @@ impl Zeta {
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
         match self.edit_prediction_model {
-            ZetaEditPredictionModel::ZedCloud => {
-                self.request_prediction_with_zed_cloud(project, active_buffer, position, cx)
+            ZetaEditPredictionModel::Zeta1 => {
+                request_prediction_with_zeta1(self, project, active_buffer, position, cx)
+            }
+            ZetaEditPredictionModel::Zeta2 => {
+                self.request_prediction_with_zeta2(project, active_buffer, position, cx)
             }
             ZetaEditPredictionModel::Sweep => {
                 self.request_prediction_with_sweep(project, active_buffer, position, true, cx)
@@ -1309,7 +1312,7 @@ impl Zeta {
         anyhow::Ok(jump_location)
     }
 
-    fn request_prediction_with_zed_cloud(
+    fn request_prediction_with_zeta2(
         &mut self,
         project: &Entity<Project>,
         active_buffer: &Entity<Buffer>,
@@ -2270,6 +2273,48 @@ impl Zeta {
         } else {
             Task::ready(Ok(()))
         }
+    }
+
+    fn can_collect_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        self.data_collection_choice.is_enabled() && self.is_file_open_source(file, cx)
+    }
+
+    fn can_collect_events(&self, events: &[Event], cx: &App) -> bool {
+        if !self.data_collection_choice.is_enabled() {
+            return false;
+        }
+        let mut last_checked_file = None;
+        for event in events {
+            match event {
+                Event::BufferChange {
+                    old_snapshot,
+                    new_snapshot,
+                    ..
+                } => {
+                    if let Some(old_file) = old_snapshot.file()
+                        && let Some(new_file) = new_snapshot.file()
+                    {
+                        if let Some(last_checked_file) = last_checked_file
+                            && Arc::ptr_eq(last_checked_file, old_file)
+                            && Arc::ptr_eq(last_checked_file, new_file)
+                        {
+                            continue;
+                        }
+                        if !self.can_collect_file(old_file, cx) {
+                            return false;
+                        }
+                        if !Arc::ptr_eq(old_file, new_file) && !self.can_collect_file(new_file, cx)
+                        {
+                            return false;
+                        }
+                        last_checked_file = Some(new_file);
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 }
 
