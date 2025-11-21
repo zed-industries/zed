@@ -149,7 +149,10 @@ impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 #[cfg(test)]
 mod ext_agent_tests {
     use super::*;
-    use std::{collections::HashSet, fmt::Write as _};
+    use std::{
+        collections::HashSet,
+        fmt::Write as _,
+    };
 
     // Helper to build a store in Collab mode so we can mutate internal maps without
     // needing to spin up a full project environment.
@@ -199,7 +202,7 @@ mod ext_agent_tests {
 
     #[test]
     fn env_agent_server_config_parses() {
-        let mut map = HashMap::new();
+        let mut map: HashMap<String, String> = HashMap::with_hasher(Default::default());
         map.insert(
             "ZED_AGENT_SERVER_BIN".to_string(),
             "~/bin/my-agent".to_string(),
