@@ -33,7 +33,7 @@ use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
-use speech;
+use transcription;
 use std::{
     env,
     io::{self, IsTerminal},
@@ -601,7 +601,7 @@ pub fn main() {
         diagnostics::init(cx);
 
         audio::init(cx);
-        speech::init(cx);
+        transcription::init(cx);
         speech_ai::init(cx);
         workspace::init(app_state.clone(), cx);
         ui_prompt::init(cx);

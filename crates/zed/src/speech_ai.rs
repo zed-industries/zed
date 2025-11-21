@@ -1,24 +1,24 @@
 use gpui::{App, Global, Task, UpdateGlobal};
 use log::{info, warn};
-use speech::{Speech, ToggleSpeechAssistant, TranscriptionReceiverMutex};
+use transcription::{Transcription, ToggleSpeechAssistant, TranscriptionReceiverMutex};
 use zed_actions::assistant::InlineAssist;
 
 pub fn init(cx: &mut App) {
-    cx.set_global(SpeechInlineAssistantBridge::new());
+    cx.set_global(TranscriptionInlineAssistantBridge::new());
 
     cx.on_action(|_: &ToggleSpeechAssistant, cx| {
-        SpeechInlineAssistantBridge::update_global(cx, |bridge, cx| {
+        TranscriptionInlineAssistantBridge::update_global(cx, |bridge, cx| {
             bridge.toggle(cx);
         });
     });
 }
 
-struct SpeechInlineAssistantBridge {
+struct TranscriptionInlineAssistantBridge {
     enabled: bool,
     task: Option<Task<()>>,
 }
 
-impl SpeechInlineAssistantBridge {
+impl TranscriptionInlineAssistantBridge {
     fn new() -> Self {
         Self {
             enabled: false,
@@ -39,7 +39,7 @@ impl SpeechInlineAssistantBridge {
             return;
         }
 
-        let stream = Speech::update_global(cx, |speech, _| speech.transcription_receiver());
+        let stream = Transcription::update_global(cx, |speech, _| speech.transcription_receiver());
         self.task = Some(Self::spawn_task(stream, cx));
         self.enabled = true;
         info!("Speech assistant bridge enabled");
@@ -61,8 +61,13 @@ impl SpeechInlineAssistantBridge {
         cx.spawn(async move |cx| {
             loop {
                 let Ok(transcription) = stream.lock().recv().await else {
-                    continue;
+                    info!("Transcription channel closed, stopping speech assistant bridge task.");
+                    break;
                 };
+
+                if transcription.is_empty() {
+                    continue;
+                }
 
                 let update = cx.update(|cx| {
                     let action = InlineAssist {
@@ -81,4 +86,4 @@ impl SpeechInlineAssistantBridge {
     }
 }
 
-impl Global for SpeechInlineAssistantBridge {}
+impl Global for TranscriptionInlineAssistantBridge {}

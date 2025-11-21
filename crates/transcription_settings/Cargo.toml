@@ -1,12 +1,12 @@
 [package]
-name = "speech_settings"
+name = "transcription_settings"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lib]
-path = "src/speech_settings.rs"
+path = "src/transcription_settings.rs"
 
 [lints]
 workspace = true

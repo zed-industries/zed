@@ -15461,8 +15461,8 @@ dependencies = [
  "settings_json",
  "settings_macros",
  "smallvec",
- "speech_settings",
  "strum 0.27.2",
+ "transcription_settings",
  "unindent",
  "util",
  "zlog",
@@ -15542,11 +15542,11 @@ dependencies = [
  "serde",
  "session",
  "settings",
- "speech_settings",
  "strum 0.27.2",
  "telemetry",
  "theme",
  "title_bar",
+ "transcription_settings",
  "ui",
  "ui_input",
  "util",
@@ -15914,29 +15914,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e17e880bafaeb362a7b751ec46bdc5b61445a188f80e0606e68167cd540fa3"
 dependencies = [
  "smallvec",
-]
-
-[[package]]
-name = "speech"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel 2.5.0",
- "cpal 0.15.3",
- "gpui",
- "log",
- "parking_lot",
- "paths",
- "speech_settings",
- "whisper-rs",
-]
-
-[[package]]
-name = "speech_settings"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
 ]
 
 [[package]]
@@ -18047,6 +18024,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "transcription"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel 2.5.0",
+ "cpal 0.15.3",
+ "gpui",
+ "log",
+ "parking_lot",
+ "paths",
+ "transcription_settings",
+ "whisper-rs",
+]
+
+[[package]]
+name = "transcription_settings"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
 ]
 
 [[package]]
@@ -20902,13 +20902,13 @@ dependencies = [
  "session",
  "settings",
  "smallvec",
- "speech",
  "sqlez",
  "strum 0.27.2",
  "task",
  "telemetry",
  "tempfile",
  "theme",
+ "transcription",
  "ui",
  "util",
  "uuid",
@@ -21409,8 +21409,6 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
- "speech",
- "speech_settings",
  "supermaven",
  "svg_preview",
  "sysinfo 0.37.2",
@@ -21426,6 +21424,8 @@ dependencies = [
  "time",
  "title_bar",
  "toolchain_selector",
+ "transcription",
+ "transcription_settings",
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",

@@ -1,10 +1,10 @@
 [package]
-name = "speech"
+name = "transcription"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/speech.rs"
+path = "src/transcription.rs"
 
 [lints]
 workspace = true
@@ -17,5 +17,5 @@ gpui.workspace = true
 log.workspace = true
 parking_lot = "0.12.1"
 paths.workspace = true
-speech_settings.workspace = true
+transcription_settings.workspace = true
 whisper-rs = { version = "0.15.1", features = ["tracing_backend", "vulkan"] }

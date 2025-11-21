@@ -2,19 +2,19 @@ use crate::StatusItemView;
 use gpui::{
     Action, Context, IntoElement, MouseButton, Render, Subscription, Window, div, prelude::*, svg,
 };
-use speech::{Speech, TranscriberThreadState, ToggleDictationChannel};
+use transcription::{Transcription, TranscriptionThreadState, ToggleDictationChannel};
 use theme::ActiveTheme;
 
 pub struct SpeechIndicator {
     subscription: Option<Subscription>,
-    state: TranscriberThreadState,
+    state: TranscriptionThreadState,
 }
 
 impl SpeechIndicator {
     pub fn new() -> Self {
         Self {
             subscription: None,
-            state: TranscriberThreadState::Idle,
+            state: TranscriptionThreadState::Idle,
         }
     }
 }
@@ -22,8 +22,8 @@ impl SpeechIndicator {
 impl Render for SpeechIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.subscription.is_none() {
-            self.subscription = Some(cx.observe_global::<Speech>(|this, cx| {
-                let speech_state = cx.global::<Speech>().state();
+            self.subscription = Some(cx.observe_global::<Transcription>(|this, cx| {
+                let speech_state = cx.global::<Transcription>().state();
                 if this.state != speech_state {
                     this.state = speech_state;
                     cx.notify();
@@ -32,7 +32,7 @@ impl Render for SpeechIndicator {
         }
 
         let color = match self.state {
-            TranscriberThreadState::Listening => cx.theme().colors().text_accent,
+            TranscriptionThreadState::Listening => cx.theme().colors().text_accent,
             _ => cx.theme().colors().text,
         };
 

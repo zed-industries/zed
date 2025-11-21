@@ -4,10 +4,10 @@ use log::{error, info, warn};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-mod whisper_thread;
+mod thread_loop;
 
 actions!(
-    speech,
+    transcription,
     [
         /// Toggles the speech recognizer on and off.
         ToggleDictationChannel,
@@ -20,45 +20,45 @@ pub type TranscriptionReceiver = Receiver<String>;
 pub type TranscriptionReceiverMutex = Arc<Mutex<TranscriptionReceiver>>;
 
 #[derive(Clone, Debug)]
-pub enum SpeechNotification {
+pub enum TranscriptionNotification {
     ModelNotFound(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TranscriberThreadState {
+pub enum TranscriptionThreadState {
     Disabled,
     Idle,
     Listening,
     Transcribing,
 }
 
-pub struct NotificationStream {
-    receiver: Receiver<SpeechNotification>,
+pub struct TranscriptionNotificationStream {
+    receiver: Receiver<TranscriptionNotification>,
 }
 
-impl NotificationStream {
-    fn new(receiver: Receiver<SpeechNotification>) -> Self {
+impl TranscriptionNotificationStream {
+    fn new(receiver: Receiver<TranscriptionNotification>) -> Self {
         Self { receiver }
     }
 
-    pub async fn recv(&mut self) -> Option<SpeechNotification> {
+    pub async fn recv(&mut self) -> Option<TranscriptionNotification> {
         self.receiver.recv().await.ok()
     }
 }
 
-pub struct Speech {
-    state: Arc<Mutex<TranscriberThreadState>>,
+pub struct Transcription {
+    state: Arc<Mutex<TranscriptionThreadState>>,
     task: Option<std::thread::JoinHandle<()>>,
     transcription_sender: Sender<String>,
-    notification_sender: Sender<SpeechNotification>,
+    notification_sender: Sender<TranscriptionNotification>,
     transcription_receiver: Arc<Mutex<Receiver<String>>>,
-    notification_subscribers: Arc<Mutex<Vec<Sender<SpeechNotification>>>>,
+    notification_subscribers: Arc<Mutex<Vec<Sender<TranscriptionNotification>>>>,
 }
 
-impl Global for Speech {}
+impl Global for Transcription {}
 
-impl Speech {
-    pub fn state(&self) -> TranscriberThreadState {
+impl Transcription {
+    pub fn state(&self) -> TranscriptionThreadState {
         *self.state.lock()
     }
 
@@ -69,15 +69,16 @@ impl Speech {
         let receiver: Receiver<String> = transcription_receiver.clone();
         let transcription_receiver = Arc::new(Mutex::new(receiver));
         let notification_subscribers = Arc::new(Mutex::new(Vec::new()));
+        let state =  Arc::new(Mutex::new(TranscriptionThreadState::Idle));
 
         {
-            let notifications: Receiver<SpeechNotification> = notification_receiver.clone();
+            let notifications: Receiver<TranscriptionNotification> = notification_receiver.clone();
             let subscribers = notification_subscribers.clone();
             cx.spawn(async move |_| {
                 while let Ok(notification) = notifications.recv().await {
                     Self::broadcast(&subscribers, notification.clone());
                     #[allow(irrefutable_let_patterns)] // More notifications to come
-                    if let SpeechNotification::ModelNotFound(path) = notification {
+                    if let TranscriptionNotification::ModelNotFound(path) = notification {
                         warn!("Speech model not found at: {path}");
                     }
                 }
@@ -86,7 +87,7 @@ impl Speech {
         }
 
         Self {
-            state: Arc::new(Mutex::new(TranscriberThreadState::Idle)),
+            state,
             task: None,
             transcription_sender,
             notification_sender,
@@ -99,10 +100,10 @@ impl Speech {
         self.transcription_receiver.clone()
     }
 
-    pub fn subscribe_notifications(&self) -> NotificationStream {
+    pub fn subscribe_notifications(&self) -> TranscriptionNotificationStream {
         let (sender, receiver) = async_channel::unbounded();
         self.notification_subscribers.lock().push(sender);
-        NotificationStream::new(receiver)
+        TranscriptionNotificationStream::new(receiver)
     }
 
     fn broadcast<T: Clone>(subscribers: &Arc<Mutex<Vec<Sender<T>>>>, value: T) {
@@ -113,17 +114,17 @@ impl Speech {
     fn toggle_listening(&mut self, cx: &mut App) {
         let mut state = self.state.lock();
         if let Some(thread_handle) = self.task.take() {
-            *state = TranscriberThreadState::Disabled;
+            *state = TranscriptionThreadState::Disabled;
             drop(state);
             thread_handle.join().unwrap_or_else(|_| warn!("Failed to join speech thread"));
             info!("Speech listening stopped");
         } else {
-            *state = TranscriberThreadState::Listening;
+            *state = TranscriptionThreadState::Listening;
             drop(state);
 
             let transcription_sender = self.transcription_sender.clone();
             let notification_sender = self.notification_sender.clone();
-            self.task = Some(Speech::run_transcription_loop(
+            self.task = Some(Transcription::run_transcription_loop(
                 self.state.clone(),
                 transcription_sender,
                 notification_sender,
@@ -134,14 +135,14 @@ impl Speech {
     }
 
     fn run_transcription_loop(
-        state: Arc<Mutex<TranscriberThreadState>>,
+        state: Arc<Mutex<TranscriptionThreadState>>,
         transcription_sender: Sender<String>,
-        notification_sender: Sender<SpeechNotification>,
+        notification_sender: Sender<TranscriptionNotification>,
         _cx: &mut App,
     ) -> std::thread::JoinHandle<()> {
         info!("Launching transcription loop");
         std::thread::spawn(move || {
-            if let Err(err) = whisper_thread::transcription_loop_body(
+            if let Err(err) = thread_loop::transcription_loop_body(
                 state,
                 transcription_sender,
                 notification_sender,
@@ -153,11 +154,11 @@ impl Speech {
 }
 
 pub fn init(cx: &mut App) {
-    let speech = Speech::new(cx);
+    let speech = Transcription::new(cx);
     cx.set_global(speech);
 
     cx.on_action(|_: &ToggleDictationChannel, cx| {
-        Speech::update_global(cx, |speech, cx| {
+        Transcription::update_global(cx, |speech, cx| {
             speech.toggle_listening(cx);
         });
     });

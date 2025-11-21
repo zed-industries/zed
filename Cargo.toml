@@ -156,8 +156,6 @@ members = [
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
-    "crates/speech",
-    "crates/speech_settings",
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/story",
@@ -183,6 +181,8 @@ members = [
     "crates/theme_selector",
     "crates/time_format",
     "crates/title_bar",
+    "crates/transcription",
+    "crates/transcription_settings",
     "crates/toolchain_selector",
     "crates/ui",
     "crates/ui_input",
@@ -390,8 +390,6 @@ settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
-speech = { path = "crates/speech" }
-speech_settings = { path = "crates/speech_settings" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
@@ -416,6 +414,8 @@ theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
+transcription = { path = "crates/transcription" }
+transcription_settings = { path = "crates/transcription_settings" }
 toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }

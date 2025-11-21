@@ -1,6 +1,6 @@
 use crate::merge_from::MergeFrom;
 
-pub use speech_settings_types::SpeechSettings;
+pub use transcription_settings::SpeechSettings;
 
 impl MergeFrom for SpeechSettings {
     fn merge_from(&mut self, other: &Self) {

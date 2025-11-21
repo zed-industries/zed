@@ -11,12 +11,12 @@ const WHISPER_MODEL_NAME: &str = "ggml-base.en.bin";
 const TARGET_SAMPLE_RATE: usize = 16_000;
 const HIGH_PASS_CUTOFF_HZ: f32 = 80.0;
 
-use crate::{SpeechNotification, TranscriberThreadState};
+use crate::{TranscriptionNotification, TranscriptionThreadState};
 
 pub fn transcription_loop_body(
-    state: Arc<Mutex<TranscriberThreadState>>,
+    state: Arc<Mutex<TranscriptionThreadState>>,
     transcription_sender: Sender<String>,
-    notification_sender: Sender<SpeechNotification>,
+    notification_sender: Sender<TranscriptionNotification>,
 ) -> Result<()> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
@@ -24,7 +24,7 @@ pub fn transcription_loop_body(
     let model_path = paths::languages_dir().join(WHISPER_MODEL_NAME);
     if !model_path.exists() {
         warn!("Whisper model missing at {:?}", model_path);
-        notification_sender.send_blocking(SpeechNotification::ModelNotFound(
+        notification_sender.send_blocking(TranscriptionNotification::ModelNotFound(
             model_path.to_string_lossy().into(),
         ))?;
         return Err(anyhow::anyhow!(
@@ -57,7 +57,7 @@ pub fn transcription_loop_body(
     };
     let resample_ratio = TARGET_SAMPLE_RATE as f32 / input_sample_rate as f32;
     info!(
-        "speech downmix: {}, resample: {} (ratio {:.3})",
+        "transcription downmix: {}, resample: {} (ratio {:.3})",
         downmix_strategy, needs_resample, resample_ratio
     );
 
@@ -84,7 +84,7 @@ pub fn transcription_loop_body(
                 &stream_config,
                 move |data: &[f32], _| {
                     if tx.send(data.to_vec()).is_err() {
-                        warn!("speech audio receiver dropped (f32)");
+                        warn!("transcription audio receiver dropped (f32)");
                     }
                 },
                 |err| error!("error in audio stream: {}", err),
@@ -101,7 +101,7 @@ pub fn transcription_loop_body(
                         .map(|sample| *sample as f32 / i16::MAX as f32)
                         .collect();
                     if tx.send(converted).is_err() {
-                        warn!("speech audio receiver dropped (i16)");
+                        warn!("transcription audio receiver dropped (i16)");
                     }
                 },
                 |err| error!("error in audio stream: {}", err),
@@ -119,7 +119,7 @@ pub fn transcription_loop_body(
                         .map(|sample| (*sample as f32 - midpoint) / midpoint)
                         .collect();
                     if tx.send(converted).is_err() {
-                        warn!("speech audio receiver dropped (u16)");
+                        warn!("transcription audio receiver dropped (u16)");
                     }
                 },
                 |err| error!("error in audio stream: {}", err),
@@ -135,7 +135,7 @@ pub fn transcription_loop_body(
                         .send(data.iter().map(|sample| *sample as f32).collect())
                         .is_err()
                     {
-                        warn!("speech audio receiver dropped (f64)");
+                        warn!("transcription audio receiver dropped (f64)");
                     }
                 },
                 |err| error!("error in audio stream: {}", err),
@@ -161,11 +161,11 @@ pub fn transcription_loop_body(
     loop {
         let state = (*state.lock()).clone();
 
-        if state == TranscriberThreadState::Disabled {
+        if state == TranscriptionThreadState::Disabled {
             return Ok(());
         }
 
-        if state != TranscriberThreadState::Listening {
+        if state != TranscriptionThreadState::Listening {
             // If not listening, clear the buffer and sleep for a bit
             audio_buffer.clear();
             accumulated_silence = 0;
