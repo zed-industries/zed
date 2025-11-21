@@ -393,6 +393,7 @@ pub fn into_open_router(
 ) -> open_router::Request {
     let mut messages = Vec::new();
     for message in request.messages {
+        let reasoning_details = message.reasoning_details.clone();
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
@@ -424,14 +425,21 @@ pub fn into_open_router(
                         },
                     };
 
-                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(open_router::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning,
+                        ..
+                    }) = messages.last_mut()
                     {
                         tool_calls.push(tool_call);
+                        if existing_reasoning.is_none() && reasoning_details.is_some() {
+                            *existing_reasoning = reasoning_details.clone();
+                        }
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -530,6 +538,7 @@ fn add_message_content_part(
                 Role::Assistant => open_router::RequestMessage::Assistant {
                     content: Some(open_router::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
+                    reasoning_details: None,
                 },
                 Role::System => open_router::RequestMessage::System {
                     content: open_router::MessageContent::from(vec![new_part]),
@@ -541,12 +550,14 @@ fn add_message_content_part(
 
 pub struct OpenRouterEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    reasoning_details: Option<serde_json::Value>,
 }
 
 impl OpenRouterEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            reasoning_details: None,
         }
     }
 
@@ -578,6 +589,26 @@ impl OpenRouterEventMapper {
         };
 
         let mut events = Vec::new();
+
+        if let Some(details) = choice.delta.reasoning_details.clone() {
+            // Emit reasoning_details immediately if non-empty
+            if let serde_json::Value::Array(ref arr) = details {
+                if !arr.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                        details.clone(),
+                    )));
+                    // Store it so we know we already emitted it
+                    self.reasoning_details = Some(details);
+                }
+            } else {
+                // Non-array reasoning_details, emit immediately
+                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                    details.clone(),
+                )));
+                self.reasoning_details = Some(details);
+            }
+        }
+
         if let Some(reasoning) = choice.delta.reasoning.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Thinking {
                 text: reasoning,
@@ -610,8 +641,8 @@ impl OpenRouterEventMapper {
                         entry.arguments.push_str(&arguments);
                     }
 
-                    if let Some(thought_signature) = function.thought_signature.clone() {
-                        entry.thought_signature = Some(thought_signature);
+                    if let Some(signature) = function.thought_signature.clone() {
+                        entry.thought_signature = Some(signature);
                     }
                 }
             }
