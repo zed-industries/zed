@@ -127,8 +127,6 @@ pub enum ResponseInputItem {
         arguments: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        thought_signature: Option<String>,
     },
     FunctionCallOutput {
         call_id: String,
@@ -253,8 +251,6 @@ pub enum ResponseOutputItem {
         arguments: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        thought_signature: Option<String>,
     },
     Reasoning {
         id: String,
