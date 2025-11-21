@@ -139,6 +139,7 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -599,14 +600,36 @@ impl LocalLspStore {
         };
 
         cx.spawn(async move |cx| {
-            let binary_result = adapter
+            let (existing_binary, maybe_download_binary) = adapter
                 .clone()
                 .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
+                .await
                 .await;
 
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
-            let mut binary = binary_result?;
+            let mut binary = match (existing_binary, maybe_download_binary) {
+                (binary, None) => binary?,
+                (Err(_), Some(downloader)) => downloader.await?,
+                (Ok(existing_binary), Some(downloader)) => {
+                    let mut download_timeout = cx
+                        .background_executor()
+                        .timer(SERVER_DOWNLOAD_TIMEOUT)
+                        .fuse();
+                    let mut downloader = downloader.fuse();
+                    futures::select! {
+                        _ = download_timeout => {
+                            // Return existing binary and kick the existing work to the background.
+                            cx.spawn(async move |_| downloader.await).detach();
+                            Ok(existing_binary)
+                        },
+                        downloaded_or_existing_binary = downloader => {
+                            // If download fails, this results in the existing binary.
+                            downloaded_or_existing_binary
+                        }
+                    }?
+                }
+            };
             let mut shell_env = delegate.shell_env().await;
 
             shell_env.extend(binary.env.unwrap_or_default());
