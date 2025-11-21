@@ -93,7 +93,7 @@ struct DirectXRenderPipelines {
     mono_sprites: PipelineState<MonochromeSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
 
-    custom: Vec<(PipelineState<ShaderPrimitive>, usize, usize)>,
+    custom: Vec<(PipelineState<ShaderInstance>, usize, usize)>,
     custom_ids: HashMap<String, CustomShaderId>,
 }
 
@@ -646,52 +646,58 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_custom_shaders(&mut self, shaders: &[ShaderPrimitive]) -> Result<()> {
+    fn draw_custom_shaders(&mut self, shaders: &[ShaderInstance]) -> Result<()> {
         if shaders.is_empty() {
             return Ok(());
         }
 
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let (pipeline, user_data_size, user_data_align) = self
+        let (pipeline, instance_data_size, instance_data_align) = self
             .pipelines
             .custom
             .get_mut(shaders[0].shader_id.0 as usize)
             .unwrap();
-        assert!(
-            shaders
-                .iter()
-                .all(|shader| shader.user_data.len() == *user_data_size)
-        );
 
-        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(*user_data_align);
-        let user_data_offset = size_of::<CustomShaderInstance>().next_multiple_of(*user_data_align);
-        let instance_size = (user_data_offset + *user_data_size).next_multiple_of(instance_align);
-        let mut instances = vec![0u8; instance_size * shaders.len()];
-        for (idx, shader) in shaders.iter().enumerate() {
-            let instance = CustomShaderInstance {
-                bounds: shader.bounds,
-                content_mask: shader.content_mask.clone(),
-            };
-            let instance_bytes = unsafe {
-                std::slice::from_raw_parts(
-                    (&instance as *const CustomShaderInstance) as *const u8,
-                    size_of::<CustomShaderInstance>(),
-                )
-            };
+        let (_, instance_size) =
+            ShaderInstance::size_info(*instance_data_size, *instance_data_align);
 
-            let offset = idx * instance_size;
-            instances[offset..offset + instance_bytes.len()].copy_from_slice(instance_bytes);
-            instances[offset + user_data_offset..offset + user_data_offset + *user_data_size]
-                .copy_from_slice(&shader.user_data);
+        if pipeline.buffer_size < shaders.len() {
+            let new_buffer_size = shaders.len().next_power_of_two();
+            log::info!(
+                "Updating {} buffer size from {} to {}",
+                pipeline.label,
+                pipeline.buffer_size,
+                new_buffer_size
+            );
+            let buffer = create_buffer(&devices.device, instance_size, new_buffer_size)?;
+            let view = create_buffer_view(&devices.device, &buffer)?;
+            pipeline.buffer = buffer;
+            pipeline.view = view;
+            pipeline.buffer_size = new_buffer_size;
         }
 
-        pipeline.update_buffer_raw(
-            &devices.device,
-            &devices.device_context,
-            &instances,
-            shaders.len(),
-        )?;
+        unsafe {
+            let mut dst = std::mem::zeroed();
+            devices
+                .device_context
+                .Map(
+                    &pipeline.buffer,
+                    0,
+                    D3D11_MAP_WRITE_DISCARD,
+                    0,
+                    Some(&mut dst),
+                )
+                .unwrap();
+            ShaderInstance::pack_instances(
+                dst.pData as _,
+                shaders,
+                *instance_data_size,
+                *instance_data_align,
+            );
+            devices.device_context.Unmap(&pipeline.buffer, 0);
+        }
+
         pipeline.draw(
             &devices.device_context,
             slice::from_ref(&resources.viewport),
@@ -759,14 +765,14 @@ impl DirectXRenderer {
     pub(crate) fn register_shader(
         &mut self,
         source: &str,
-        user_data_size: usize,
-        user_data_align: usize,
+        instance_data_size: usize,
+        instance_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
         self.pipelines.register_custom_shader(
             &self.devices.as_ref().unwrap().device,
             source,
-            user_data_size,
-            user_data_align,
+            instance_data_size,
+            instance_data_align,
         )
     }
 }
@@ -909,17 +915,14 @@ impl DirectXRenderPipelines {
         &mut self,
         device: &ID3D11Device,
         source: &str,
-        user_data_size: usize,
-        user_data_align: usize,
+        instance_data_size: usize,
+        instance_data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
         if let Some(id) = self.custom_ids.get(source).copied() {
             return Ok(id);
         }
 
-        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(user_data_align);
-        let instance_size = (size_of::<CustomShaderInstance>().next_multiple_of(user_data_align)
-            + user_data_size)
-            .next_multiple_of(instance_align);
+        let (_, instance_size) = ShaderInstance::size_info(instance_data_size, instance_data_align);
 
         let id = CustomShaderId(self.custom.len() as u32);
         self.custom.push((
@@ -931,8 +934,8 @@ impl DirectXRenderPipelines {
                 create_blend_state(device).unwrap(),
             )
             .unwrap(),
-            user_data_size,
-            user_data_align,
+            instance_data_size,
+            instance_data_align,
         ));
         self.custom_ids.insert(source.to_string(), id);
         Ok(id)
@@ -1113,30 +1116,6 @@ impl<T> PipelineState<T> {
                 new_buffer_size
             );
             let buffer = create_buffer(device, std::mem::size_of::<T>(), new_buffer_size)?;
-            let view = create_buffer_view(device, &buffer)?;
-            self.buffer = buffer;
-            self.view = view;
-            self.buffer_size = new_buffer_size;
-        }
-        update_buffer(device_context, &self.buffer, data)
-    }
-
-    fn update_buffer_raw(
-        &mut self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-        data: &[u8],
-        num_elements: usize,
-    ) -> Result<()> {
-        if self.buffer_size < num_elements {
-            let new_buffer_size = num_elements.next_power_of_two();
-            log::info!(
-                "Updating {} buffer size from {} to {}",
-                self.label,
-                self.buffer_size,
-                new_buffer_size
-            );
-            let buffer = create_buffer(device, data.len() / num_elements, new_buffer_size)?;
             let view = create_buffer_view(device, &buffer)?;
             self.buffer = buffer;
             self.view = view;
@@ -1594,12 +1573,13 @@ pub(crate) mod shader_resources {
 
     use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
     #[cfg(debug_assertions)]
+    use windows::{Win32::Graphics::Direct3D::Fxc::D3DCompileFromFile, core::HSTRING};
     use windows::{
         Win32::Graphics::Direct3D::{
-            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
+            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
             ID3DBlob,
         },
-        core::{HSTRING, PCSTR},
+        core::PCSTR,
     };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -1622,9 +1602,7 @@ pub(crate) mod shader_resources {
 
     pub(crate) struct RawShaderBytes<'t> {
         inner: &'t [u8],
-
-        #[cfg(debug_assertions)]
-        _blob: ID3DBlob,
+        _blob: Option<ID3DBlob>,
     }
 
     impl<'t> RawShaderBytes<'t> {
@@ -1642,7 +1620,10 @@ pub(crate) mod shader_resources {
                         blob.GetBufferSize(),
                     )
                 };
-                Ok(Self { inner, _blob: blob })
+                Ok(Self {
+                    inner,
+                    _blob: Some(blob),
+                })
             }
         }
 
@@ -1698,7 +1679,7 @@ pub(crate) mod shader_resources {
                 );
                 Ok(Self {
                     inner,
-                    _blob: compile_blob.unwrap(),
+                    _blob: compile_blob,
                 })
             }
         }
@@ -1743,7 +1724,10 @@ pub(crate) mod shader_resources {
                     ShaderTarget::Fragment => EMOJI_RASTERIZATION_FRAGMENT_BYTES,
                 },
             };
-            Self { inner: bytes }
+            Self {
+                inner: bytes,
+                _blob: None,
+            }
         }
     }
 

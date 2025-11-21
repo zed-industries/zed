@@ -3,6 +3,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, CustomShaderId, Edges,
@@ -31,7 +32,7 @@ pub(crate) struct Scene {
     pub(crate) underlines: Vec<Underline>,
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
-    pub(crate) shaders: Vec<ShaderPrimitive>,
+    pub(crate) shaders: Vec<ShaderInstance>,
     pub(crate) surfaces: Vec<PaintSurface>,
 }
 
@@ -214,7 +215,7 @@ pub(crate) enum Primitive {
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
-    Shader(ShaderPrimitive),
+    Shader(ShaderInstance),
     Surface(PaintSurface),
 }
 
@@ -227,7 +228,7 @@ impl Primitive {
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
-            Primitive::Shader(shader) => &shader.bounds,
+            Primitive::Shader(shader) => &shader.base_data.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
     }
@@ -240,7 +241,7 @@ impl Primitive {
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
-            Primitive::Shader(shader) => &shader.content_mask,
+            Primitive::Shader(shader) => &shader.base_data.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
         }
     }
@@ -272,9 +273,9 @@ struct BatchIterator<'a> {
     polychrome_sprites: &'a [PolychromeSprite],
     polychrome_sprites_start: usize,
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
-    shaders: &'a [ShaderPrimitive],
+    shaders: &'a [ShaderInstance],
     shaders_start: usize,
-    shaders_iter: Peekable<slice::Iter<'a, ShaderPrimitive>>,
+    shaders_iter: Peekable<slice::Iter<'a, ShaderInstance>>,
     surfaces: &'a [PaintSurface],
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -486,7 +487,7 @@ pub(crate) enum PrimitiveBatch<'a> {
         texture_id: AtlasTextureId,
         sprites: &'a [PolychromeSprite],
     },
-    Shaders(&'a [ShaderPrimitive]),
+    Shaders(&'a [ShaderInstance]),
     Surfaces(&'a [PaintSurface]),
 }
 
@@ -697,30 +698,70 @@ impl From<PolychromeSprite> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct ShaderPrimitive {
-    pub order: DrawOrder,
-    pub shader_id: CustomShaderId,
+pub(crate) struct ShaderInstanceBase {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub user_data: Vec<u8>,
-    pub user_data_align: usize,
 }
 
-impl From<ShaderPrimitive> for Primitive {
-    fn from(value: ShaderPrimitive) -> Self {
-        Primitive::Shader(value)
+impl ShaderInstanceBase {
+    pub const ALIGN: usize = 8; // largest alignment is a vec2
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ShaderInstance {
+    pub order: DrawOrder,
+    pub shader_id: CustomShaderId,
+    pub base_data: ShaderInstanceBase,
+    pub data: SmallVec<[u8; 64]>,
+}
+
+impl ShaderInstance {
+    /// Returns the data offset and instance size for a given instance data size and align
+    pub fn size_info(data_size: usize, data_align: usize) -> (usize, usize) {
+        let instance_align = ShaderInstanceBase::ALIGN.max(data_align);
+        let data_offset = size_of::<ShaderInstanceBase>().next_multiple_of(data_align);
+        let instance_size = (data_offset + data_size).next_multiple_of(instance_align);
+
+        (data_offset, instance_size)
+    }
+
+    /// Write an array of instances to a raw buffer. The buffer *must* be large enough for the data.
+    pub unsafe fn pack_instances(
+        buffer: *mut u8,
+        instances: &[Self],
+        data_size: usize,
+        data_align: usize,
+    ) {
+        if instances.is_empty() {
+            return;
+        }
+
+        let (data_offset, instance_size) = Self::size_info(data_size, data_align);
+        unsafe {
+            for (idx, instance) in instances.iter().enumerate() {
+                let offset = idx * instance_size;
+                let dst = buffer.add(offset);
+
+                let src = (&instance.base_data as *const ShaderInstanceBase) as *const u8;
+                std::ptr::copy_nonoverlapping(src, dst, size_of::<ShaderInstanceBase>());
+
+                if data_size > 0 {
+                    debug_assert_eq!(data_size, instance.data.len());
+
+                    let src = instance.data.as_ptr();
+                    let dst = dst.add(data_offset);
+                    std::ptr::copy_nonoverlapping(src, dst, data_size);
+                }
+            }
+        }
     }
 }
 
-#[repr(C)]
-#[derive(Clone)]
-pub(crate) struct CustomShaderInstance {
-    pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+impl From<ShaderInstance> for Primitive {
+    fn from(value: ShaderInstance) -> Self {
+        Primitive::Shader(value)
+    }
 }
-
-// The wgsl implementation uses vec2<f32>, which has an alignment of 8, not 4
-pub(crate) const CUSTOM_SHADER_INSTANCE_ALIGN: usize = 8;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PaintSurface {

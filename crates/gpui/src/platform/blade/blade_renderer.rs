@@ -3,10 +3,9 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    Background, Bounds, CUSTOM_SHADER_INSTANCE_ALIGN, CustomShaderGlobalParams, CustomShaderId,
-    CustomShaderInstance, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
-    get_gamma_correction_ratios,
+    Background, Bounds, CustomShaderGlobalParams, CustomShaderId, DevicePixels, GpuSpecs,
+    MonochromeSprite, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene,
+    ShaderInstance, Shadow, Size, Underline, get_gamma_correction_ratios,
 };
 use blade_graphics::{self as gpu, ShaderData};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
@@ -322,9 +321,9 @@ impl BladePipelines {
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
         source: &str,
-        user_struct_name: Option<&str>,
-        user_data_size: usize,
-        user_data_align: usize,
+        data_struct_name: Option<&str>,
+        data_size: usize,
+        data_align: usize,
     ) -> Result<CustomShaderId, &'static str> {
         if let Some(id) = self.custom_ids.get(source).cloned() {
             return Ok(id);
@@ -334,19 +333,15 @@ impl BladePipelines {
         let shader = gpu.try_create_shader(gpu::ShaderDesc { source })?;
         shader.check_struct_size::<GlobalParams>();
 
-        if let Some(user_struct_name) = user_struct_name {
+        if let Some(data_struct_name) = data_struct_name {
             assert_eq!(
-                shader.get_struct_size(user_struct_name) as usize,
-                user_data_size.next_multiple_of(user_data_align)
+                shader.get_struct_size(data_struct_name) as usize,
+                data_size.next_multiple_of(data_align)
             );
         }
 
-        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(user_data_align);
-        assert_eq!(
-            shader.get_struct_size("Instance") as usize,
-            (size_of::<CustomShaderInstance>().next_multiple_of(user_data_align) + user_data_size)
-                .next_multiple_of(instance_align)
-        );
+        let (_, instance_size) = ShaderInstance::size_info(data_size, data_align);
+        assert_eq!(shader.get_struct_size("Instance") as usize, instance_size);
 
         let blend_mode = match surface_info.alpha {
             gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
@@ -374,8 +369,8 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
-            user_data_size,
-            user_data_align,
+            data_size,
+            data_align,
         ));
         self.custom_ids.insert(source.to_string(), id);
         Ok(id)
@@ -895,45 +890,27 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::Shaders(shaders) => {
+                PrimitiveBatch::Shaders(instances) => {
                     let (pipeline, user_data_size, user_data_align) = self
                         .pipelines
                         .custom
-                        .get(shaders[0].shader_id.0 as usize)
+                        .get(instances[0].shader_id.0 as usize)
                         .expect("Shader not registered");
-                    assert!(
-                        shaders
-                            .iter()
-                            .all(|shader| shader.user_data.len() == *user_data_size)
-                    );
 
-                    let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(*user_data_align);
-                    let user_data_offset =
-                        size_of::<CustomShaderInstance>().next_multiple_of(*user_data_align);
-                    let instance_size =
-                        (user_data_offset + user_data_size).next_multiple_of(instance_align);
-                    let mut instances = vec![0u8; instance_size * shaders.len()];
-                    for (idx, shader) in shaders.iter().enumerate() {
-                        let instance = CustomShaderInstance {
-                            bounds: shader.bounds,
-                            content_mask: shader.content_mask.clone(),
-                        };
-                        let instance_bytes = unsafe {
-                            std::slice::from_raw_parts(
-                                (&instance as *const CustomShaderInstance) as *const u8,
-                                size_of::<CustomShaderInstance>(),
-                            )
-                        };
+                    let (_, instance_size) =
+                        ShaderInstance::size_info(*user_data_size, *user_data_align);
+                    let instance_buf = self
+                        .instance_belt
+                        .alloc((instance_size * instances.len()) as u64, &self.gpu);
+                    unsafe {
+                        ShaderInstance::pack_instances(
+                            instance_buf.data(),
+                            instances,
+                            *user_data_size,
+                            *user_data_align,
+                        )
+                    };
 
-                        let offset = idx * instance_size;
-                        instances[offset..offset + instance_bytes.len()]
-                            .copy_from_slice(instance_bytes);
-                        instances[offset + user_data_offset
-                            ..offset + user_data_offset + *user_data_size]
-                            .copy_from_slice(&shader.user_data);
-                    }
-
-                    let instance_buf = self.instance_belt.alloc_bytes(&instances, &self.gpu);
                     let mut encoder = pass.with(pipeline);
                     encoder.bind(
                         0,
@@ -945,7 +922,7 @@ impl BladeRenderer {
                             b_instances: instance_buf,
                         },
                     );
-                    encoder.draw(0, 4, 0, shaders.len() as u32);
+                    encoder.draw(0, 4, 0, instances.len() as u32);
                 }
                 PrimitiveBatch::Surfaces(surfaces) => {
                     let mut _encoder = pass.with(&self.pipelines.surfaces);

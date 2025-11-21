@@ -1,9 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, CUSTOM_SHADER_INSTANCE_ALIGN, ContentMask,
-    CustomShaderGlobalParams, CustomShaderId, CustomShaderInstance, DevicePixels, MonochromeSprite,
-    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene,
-    ShaderPrimitive, Shadow, Size, Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, CustomShaderGlobalParams, CustomShaderId,
+    DevicePixels, MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch,
+    Quad, ScaledPixels, Scene, ShaderInstance, Shadow, Size, Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -440,9 +439,9 @@ impl MetalRenderer {
     pub fn register_custom_shader(
         &mut self,
         source: &str,
-        _user_struct_name: Option<&str>,
-        user_data_size: usize,
-        user_data_align: usize,
+        _data_struct_name: Option<&str>,
+        data_size: usize,
+        data_align: usize,
     ) -> Result<crate::CustomShaderId, &'static str> {
         if let Some(id) = self.custom_shader_ids.get(source).cloned() {
             return Ok(id);
@@ -524,7 +523,7 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
         );
         self.custom_shaders_pipeline_states
-            .push((pipeline, user_data_size, user_data_align));
+            .push((pipeline, data_size, data_align));
         self.custom_shader_ids.insert(source.to_string(), id);
         Ok(id)
     }
@@ -1178,26 +1177,21 @@ impl MetalRenderer {
 
     fn draw_custom_shaders(
         &mut self,
-        shaders: &[ShaderPrimitive],
+        instances: &[ShaderInstance],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        if shaders.is_empty() {
+        if instances.is_empty() {
             return true;
         }
         align_offset(instance_offset);
 
-        let (pipeline, user_data_size, user_data_align) = self
+        let (pipeline, instance_data_size, instance_data_align) = self
             .custom_shaders_pipeline_states
-            .get(shaders[0].shader_id.0 as usize)
+            .get(instances[0].shader_id.0 as usize)
             .expect("shader not registered");
-        assert!(
-            shaders
-                .iter()
-                .all(|shader| shader.user_data.len() == *user_data_size)
-        );
 
         let globals = CustomShaderGlobalParams {
             viewport_size: [viewport_size.width.0 as f32, viewport_size.height.0 as f32],
@@ -1223,53 +1217,37 @@ impl MetalRenderer {
         command_encoder.set_vertex_bytes(
             ShaderInputIndex::BufferSizes as u64,
             size_of::<u32>() as u64,
-            &(shaders.len() as u32) as *const u32 as *const _,
+            &(instances.len() as u32) as *const u32 as *const _,
         );
         command_encoder.set_fragment_bytes(
             ShaderInputIndex::BufferSizes as u64,
             size_of::<u32>() as u64,
-            &(shaders.len() as u32) as *const u32 as *const _,
+            &(instances.len() as u32) as *const u32 as *const _,
         );
 
-        let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(*user_data_align);
-        let user_data_offset = size_of::<CustomShaderInstance>().next_multiple_of(*user_data_align);
-        let instance_size = (user_data_offset + user_data_size).next_multiple_of(instance_align);
-
-        let total_bytes = instance_size * shaders.len();
-
+        let (_, instance_size) =
+            ShaderInstance::size_info(*instance_data_size, *instance_data_align);
         let buffer_contents =
             unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-        let next_offset = *instance_offset + total_bytes;
+        let next_offset = *instance_offset + instance_size * instances.len();
         if next_offset > instance_buffer.size {
             return false;
         }
 
         unsafe {
-            for (idx, shader) in shaders.iter().enumerate() {
-                let offset = idx * instance_size;
-                let dst = buffer_contents.add(offset);
-
-                let instance = CustomShaderInstance {
-                    bounds: shader.bounds,
-                    content_mask: shader.content_mask.clone(),
-                };
-
-                let src = (&instance as *const CustomShaderInstance) as *const u8;
-                ptr::copy_nonoverlapping(src, dst, size_of::<CustomShaderInstance>());
-
-                if *user_data_size > 0 {
-                    let src = shader.user_data.as_ptr();
-                    let dst = dst.add(user_data_offset);
-                    ptr::copy_nonoverlapping(src, dst, *user_data_size);
-                }
-            }
+            ShaderInstance::pack_instances(
+                buffer_contents,
+                instances,
+                *instance_data_size,
+                *instance_data_align,
+            );
         }
 
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::TriangleStrip,
             0,
             4,
-            shaders.len() as u64,
+            instances.len() as u64,
         );
         *instance_offset = next_offset;
         true
