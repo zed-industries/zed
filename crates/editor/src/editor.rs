@@ -22165,13 +22165,7 @@ impl Editor {
             .pending_input_keystrokes()
             .into_iter()
             .flatten()
-            .filter_map(|keystroke| {
-                if keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
-                    keystroke.key_char.clone()
-                } else {
-                    None
-                }
-            })
+            .filter_map(|keystroke| keystroke.key_char.clone())
             .collect();
 
         if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
