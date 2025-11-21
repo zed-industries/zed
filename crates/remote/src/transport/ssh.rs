@@ -1363,8 +1363,8 @@ fn build_command(
         )?;
     }
 
-    let (command, args) =
-        ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false).build(exec, &[]);
+    let (command, args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
+        .build(Some(exec.clone()), &[]);
 
     let mut args = Vec::new();
     args.extend(ssh_args);
