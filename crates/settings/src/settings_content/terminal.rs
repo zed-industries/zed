@@ -4,8 +4,7 @@ use collections::HashMap;
 use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::FontFamilyName;
 
@@ -32,7 +31,7 @@ pub struct ProjectTerminalSettingsContent {
     pub detect_venv: Option<VenvSettings>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
     #[serde(flatten)]
@@ -201,7 +200,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
@@ -339,7 +338,7 @@ pub enum AlternateScroll {
 }
 
 // Toolbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
@@ -386,7 +385,7 @@ pub enum VenvSettings {
         conda_manager: Option<CondaManager>,
     },
 }
-#[skip_serializing_none]
+#[with_fallible_options]
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
     pub venv_name: &'a str,
