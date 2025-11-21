@@ -1356,9 +1356,23 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetUiFontSize", { "persist": false }],
       "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
+    }
+  },
+  {
+    "context": "Welcome",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetUiFontSize", { "persist": false }]
     }
   },
   {
