@@ -78,6 +78,7 @@ pub struct DiffHunk {
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
     pub buffer_word_diffs: Vec<Range<Anchor>>,
+    // todo! these should probably be buffer offsets
     pub base_word_diffs: Vec<Range<usize>>,
 }
 

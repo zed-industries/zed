@@ -19394,10 +19394,10 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
-                        // todo! We might be able to ignore passing in the word diffs here
-                        // because they're not going to be used in staged or unstage
+                        // We don't need to pass in word diffs here because they're only used for rendering and
+                        // this function changes internal state
                         base_word_diffs: Vec::default(),
-                        buffer_word_diffs: hunk.buffer_word_diffs,
+                        buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.secondary_status,
