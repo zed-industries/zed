@@ -17112,9 +17112,6 @@ impl Editor {
 
             let multi_buffer = editor.read_with(cx, |editor, _| editor.buffer().clone())?;
 
-            let multi_buffer_snapshot =
-                multi_buffer.read_with(cx, |multi_buffer, cx| multi_buffer.snapshot(cx))?;
-
             let (locations, current_location_index) =
                 multi_buffer.update(cx, |multi_buffer, cx| {
                     let mut locations = locations
@@ -17134,6 +17131,7 @@ impl Editor {
                         })
                         .collect::<Vec<_>>();
 
+                    let multi_buffer_snapshot = multi_buffer.snapshot(cx);
                     // There is an O(n) implementation, but given this list will be
                     // small (usually <100 items), the extra O(log(n)) factor isn't
                     // worth the (surprisingly large amount of) extra complexity.
