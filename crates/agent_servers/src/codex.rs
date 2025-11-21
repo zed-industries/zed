@@ -8,7 +8,10 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CODEX_NAME};
-use settings::{SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore, update_settings_file};
+use task::Shell;
+use terminal::terminal_settings::TerminalSettings;
+use util::get_default_system_shell;
 
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 

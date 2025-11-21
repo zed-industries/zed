@@ -1,3 +1,5 @@
+use futures::task;
+
 use crate::shell::get_system_shell;
 use crate::shell::{Shell, ShellKind};
 
@@ -71,6 +73,7 @@ impl ShellBuilder {
         self
     }
 
+    // todo: Check callers if they quote the command themselves
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(
         mut self,
@@ -78,11 +81,21 @@ impl ShellBuilder {
         task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
-                command.push(' ');
-                command.push_str(&self.kind.to_shell_variable(arg));
-                command
-            });
+            dbg!(&task_command);
+            let task_command = self.kind.prepend_command_prefix(&task_command);
+            let task_command = self
+                .kind
+                .try_quote_prefix_aware(&task_command)
+                .expect("TODO");
+            let mut combined_command =
+                task_args
+                    .iter()
+                    .fold(task_command.into_owned(), |mut command, arg| {
+                        command.push(' ');
+                        command.push_str(&self.kind.to_shell_variable(arg));
+                        command
+                    });
+            println!("combined_command: {combined_command}");
             if self.redirect_stdin {
                 match self.kind {
                     ShellKind::Fish => {
