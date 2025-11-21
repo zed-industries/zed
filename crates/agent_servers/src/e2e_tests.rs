@@ -476,6 +476,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     env: None,
                     ignore_system_version: None,
                     default_mode: None,
+                    default_model: None,
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 codex: Some(BuiltinAgentServerSettings {
@@ -484,6 +485,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     env: None,
                     ignore_system_version: None,
                     default_mode: None,
+                    default_model: None,
                 }),
                 custom: collections::HashMap::default(),
             },

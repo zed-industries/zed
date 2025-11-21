@@ -32,7 +32,7 @@ impl QuickActionBar {
                     .is_some()
                 {
                     preview_type = Some(PreviewType::Markdown);
-                } else if SvgPreviewView::resolve_active_item_as_svg_editor(workspace, cx).is_some()
+                } else if SvgPreviewView::resolve_active_item_as_svg_buffer(workspace, cx).is_some()
                 {
                     preview_type = Some(PreviewType::Svg);
                 }

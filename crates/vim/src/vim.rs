@@ -19,6 +19,7 @@ mod state;
 mod surrounds;
 mod visual;
 
+use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
@@ -922,6 +923,9 @@ impl Vim {
                 cx,
                 |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
                     Mode::Replace => vim.paste_replace(window, cx),
+                    Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                        vim.paste(&VimPaste::default(), window, cx);
+                    }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
                     }

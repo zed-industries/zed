@@ -1,7 +1,9 @@
 use std::{
+    cell::LazyCell,
+    collections::BTreeSet,
     io::{BufRead, BufReader},
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     pin::pin,
     sync::Arc,
 };
@@ -22,7 +24,7 @@ use smol::{
 
 use text::BufferId;
 use util::{ResultExt, maybe, paths::compare_rel_paths};
-use worktree::{Entry, ProjectEntryId, Snapshot, Worktree};
+use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
@@ -178,7 +180,7 @@ impl Search {
 
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
-
+                let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
                         let Ok(open_buffers) = cx.update(|cx| self.all_loaded_buffers(&query, cx))
@@ -207,11 +209,10 @@ impl Search {
                         let (sorted_search_results_tx, sorted_search_results_rx) = unbounded();
 
                         let (input_paths_tx, input_paths_rx) = unbounded();
-
                         let tasks = vec![
                             cx.spawn(Self::provide_search_paths(
                                 std::mem::take(worktrees),
-                                query.include_ignored(),
+                                query.clone(),
                                 input_paths_tx,
                                 sorted_search_results_tx,
                             ))
@@ -366,26 +367,30 @@ impl Search {
 
     fn provide_search_paths(
         worktrees: Vec<Entity<Worktree>>,
-        include_ignored: bool,
+        query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
         results: Sender<oneshot::Receiver<ProjectPath>>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
             _ = maybe!(async move {
+                let gitignored_tracker = PathInclusionMatcher::new(query.clone());
                 for worktree in worktrees {
                     let (mut snapshot, worktree_settings) = worktree
                         .read_with(cx, |this, _| {
                             Some((this.snapshot(), this.as_local()?.settings()))
                         })?
                         .context("The worktree is not local")?;
-                    if include_ignored {
+                    if query.include_ignored() {
                         // Pre-fetch all of the ignored directories as they're going to be searched.
                         let mut entries_to_refresh = vec![];
-                        for entry in snapshot.entries(include_ignored, 0) {
-                            if entry.is_ignored && entry.kind.is_unloaded() {
-                                if !worktree_settings.is_path_excluded(&entry.path) {
-                                    entries_to_refresh.push(entry.path.clone());
-                                }
+
+                        for entry in snapshot.entries(query.include_ignored(), 0) {
+                            if gitignored_tracker.should_scan_gitignored_dir(
+                                entry,
+                                &snapshot,
+                                &worktree_settings,
+                            ) {
+                                entries_to_refresh.push(entry.path.clone());
                             }
                         }
                         let barrier = worktree.update(cx, |this, _| {
@@ -404,8 +409,9 @@ impl Search {
                     cx.background_executor()
                         .scoped(|scope| {
                             scope.spawn(async {
-                                for entry in snapshot.files(include_ignored, 0) {
+                                for entry in snapshot.files(query.include_ignored(), 0) {
                                     let (should_scan_tx, should_scan_rx) = oneshot::channel();
+
                                     let Ok(_) = tx
                                         .send(InputPath {
                                             entry: entry.clone(),
@@ -787,4 +793,230 @@ struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
     should_scan_tx: oneshot::Sender<ProjectPath>,
+}
+
+/// This struct encapsulates the logic to decide whether a given gitignored directory should be
+/// scanned based on include/exclude patterns of a search query (as include/exclude parameters may match paths inside it).
+/// It is kind-of doing an inverse of glob. Given a glob pattern like `src/**/` and a parent path like `src`, we need to decide whether the parent
+/// may contain glob hits.
+struct PathInclusionMatcher {
+    included: BTreeSet<PathBuf>,
+    query: Arc<SearchQuery>,
+}
+
+impl PathInclusionMatcher {
+    fn new(query: Arc<SearchQuery>) -> Self {
+        let mut included = BTreeSet::new();
+        // To do an inverse glob match, we split each glob into it's prefix and the glob part.
+        // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
+        // Then, when checking whether a given directory should be scanned, we check whether it is a non-empty substring of any glob prefix.
+        if query.filters_path() {
+            included.extend(
+                query
+                    .files_to_include()
+                    .sources()
+                    .iter()
+                    .flat_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
+            );
+        }
+        Self { included, query }
+    }
+
+    fn should_scan_gitignored_dir(
+        &self,
+        entry: &Entry,
+        snapshot: &Snapshot,
+        worktree_settings: &WorktreeSettings,
+    ) -> bool {
+        if !entry.is_ignored || !entry.kind.is_unloaded() {
+            return false;
+        }
+        if !self.query.include_ignored() {
+            return false;
+        }
+        if worktree_settings.is_path_excluded(&entry.path) {
+            return false;
+        }
+        if !self.query.filters_path() {
+            return true;
+        }
+
+        let as_abs_path = LazyCell::new(move || snapshot.absolutize(&entry.path));
+        let entry_path = entry.path.as_std_path();
+        // 3. Check Exclusions (Pruning)
+        // If the current path is a child of an excluded path, we stop.
+        let is_excluded = self.path_is_definitely_excluded(entry_path, snapshot);
+
+        if is_excluded {
+            return false;
+        }
+
+        // 4. Check Inclusions (Traversal)
+        if self.included.is_empty() {
+            return true;
+        }
+
+        // We scan if the current path is a descendant of an include prefix
+        // OR if the current path is an ancestor of an include prefix (we need to go deeper to find it).
+        let is_included = self.included.iter().any(|prefix| {
+            let (prefix_matches_entry, entry_matches_prefix) = if prefix.is_absolute() {
+                (
+                    prefix.starts_with(&**as_abs_path),
+                    as_abs_path.starts_with(prefix),
+                )
+            } else {
+                (
+                    prefix.starts_with(entry_path),
+                    entry_path.starts_with(prefix),
+                )
+            };
+
+            // Logic:
+            // 1. entry_matches_prefix: We are inside the target zone (e.g. glob: src/, current: src/lib/). Keep scanning.
+            // 2. prefix_matches_entry: We are above the target zone (e.g. glob: src/foo/, current: src/). Keep scanning to reach foo.
+            prefix_matches_entry || entry_matches_prefix
+        });
+
+        is_included
+    }
+    fn path_is_definitely_excluded(&self, path: &Path, snapshot: &Snapshot) -> bool {
+        if !self.query.files_to_exclude().sources().is_empty() {
+            let mut path = if self.query.match_full_paths() {
+                let mut full_path = snapshot.root_name().as_std_path().to_owned();
+                full_path.push(path);
+                full_path
+            } else {
+                path.to_owned()
+            };
+            loop {
+                if self.query.files_to_exclude().is_match(&path) {
+                    return true;
+                } else if !path.pop() {
+                    return false;
+                }
+            }
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use serde_json::json;
+    use settings::Settings;
+    use util::{
+        path,
+        paths::{PathMatcher, PathStyle},
+        rel_path::RelPath,
+    };
+    use worktree::{Entry, EntryKind, WorktreeSettings};
+
+    use crate::{
+        Project, project_search::PathInclusionMatcher, project_tests::init_test,
+        search::SearchQuery,
+    };
+
+    #[gpui::test]
+    async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                ".gitignore": "src/data/\n",
+                "src": {
+                    "data": {
+                        "main.csv": "field_1,field_2,field_3",
+                    },
+                    "lib": {
+                        "main.txt": "Are you familiar with fields?",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        let (worktree_settings, worktree_snapshot) = worktree.update(cx, |worktree, cx| {
+            let settings_location = worktree.settings_location(cx);
+            return (
+                WorktreeSettings::get(Some(settings_location), cx).clone(),
+                worktree.snapshot(),
+            );
+        });
+
+        // Manually create a test entry for the gitignored directory since it won't
+        // be loaded by the worktree
+        let entry = Entry {
+            id: ProjectEntryId::from_proto(1),
+            kind: EntryKind::UnloadedDir,
+            path: Arc::from(RelPath::unix(Path::new("src/data")).unwrap()),
+            inode: 0,
+            mtime: None,
+            canonical_path: None,
+            is_ignored: true,
+            is_hidden: false,
+            is_always_included: false,
+            is_external: false,
+            is_private: false,
+            size: 0,
+            char_bag: Default::default(),
+            is_fifo: false,
+        };
+
+        // 1. Test searching for `field`, including ignored files without any
+        // inclusion and exclusion filters.
+        let include_ignored = true;
+        let files_to_include = PathMatcher::default();
+        let files_to_exclude = PathMatcher::default();
+        let match_full_paths = false;
+        let search_query = SearchQuery::text(
+            "field",
+            false,
+            false,
+            include_ignored,
+            files_to_include,
+            files_to_exclude,
+            match_full_paths,
+            None,
+        )
+        .unwrap();
+
+        let path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
+        assert!(path_matcher.should_scan_gitignored_dir(
+            &entry,
+            &worktree_snapshot,
+            &worktree_settings
+        ));
+
+        // 2. Test searching for `field`, including ignored files but updating
+        // `files_to_include` to only include files under `src/lib`.
+        let include_ignored = true;
+        let files_to_include = PathMatcher::new(vec!["src/lib"], PathStyle::Posix).unwrap();
+        let files_to_exclude = PathMatcher::default();
+        let match_full_paths = false;
+        let search_query = SearchQuery::text(
+            "field",
+            false,
+            false,
+            include_ignored,
+            files_to_include,
+            files_to_exclude,
+            match_full_paths,
+            None,
+        )
+        .unwrap();
+
+        let path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
+        assert!(!path_matcher.should_scan_gitignored_dir(
+            &entry,
+            &worktree_snapshot,
+            &worktree_settings
+        ));
+    }
 }

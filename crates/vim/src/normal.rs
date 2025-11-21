@@ -3,7 +3,7 @@ mod convert;
 mod delete;
 mod increment;
 pub(crate) mod mark;
-mod paste;
+pub(crate) mod paste;
 pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;

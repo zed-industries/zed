@@ -469,15 +469,21 @@ impl AgentServerStore {
             }),
         );
         self.external_agents
-            .extend(new_settings.custom.iter().map(|(name, settings)| {
-                (
-                    ExternalAgentServerName(name.clone()),
-                    Box::new(LocalCustomAgent {
-                        command: settings.command.clone(),
-                        project_environment: project_environment.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                )
-            }));
+            .extend(
+                new_settings
+                    .custom
+                    .iter()
+                    .filter_map(|(name, settings)| match settings {
+                        CustomAgentServerSettings::Custom { command, .. } => Some((
+                            ExternalAgentServerName(name.clone()),
+                            Box::new(LocalCustomAgent {
+                                command: command.clone(),
+                                project_environment: project_environment.clone(),
+                            }) as Box<dyn ExternalAgentServer>,
+                        )),
+                        CustomAgentServerSettings::Extension { .. } => None,
+                    }),
+            );
         self.external_agents.extend(extension_agents.iter().map(
             |(agent_name, ext_id, targets, env, icon_path)| {
                 let name = ExternalAgentServerName(agent_name.clone().into());
@@ -1777,6 +1783,7 @@ pub struct BuiltinAgentServerSettings {
     pub env: Option<HashMap<String, String>>,
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
+    pub default_model: Option<String>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1799,6 +1806,7 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             env: value.env,
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
+            default_model: value.default_model,
         }
     }
 }
@@ -1815,25 +1823,88 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
 }
 
 #[derive(Clone, JsonSchema, Debug, PartialEq)]
-pub struct CustomAgentServerSettings {
-    pub command: AgentServerCommand,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
-    pub default_mode: Option<String>,
+pub enum CustomAgentServerSettings {
+    Custom {
+        command: AgentServerCommand,
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
+    Extension {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+    },
+}
+
+impl CustomAgentServerSettings {
+    pub fn command(&self) -> Option<&AgentServerCommand> {
+        match self {
+            CustomAgentServerSettings::Custom { command, .. } => Some(command),
+            CustomAgentServerSettings::Extension { .. } => None,
+        }
+    }
+
+    pub fn default_mode(&self) -> Option<&str> {
+        match self {
+            CustomAgentServerSettings::Custom { default_mode, .. }
+            | CustomAgentServerSettings::Extension { default_mode, .. } => default_mode.as_deref(),
+        }
+    }
+
+    pub fn default_model(&self) -> Option<&str> {
+        match self {
+            CustomAgentServerSettings::Custom { default_model, .. }
+            | CustomAgentServerSettings::Extension { default_model, .. } => {
+                default_model.as_deref()
+            }
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
     fn from(value: settings::CustomAgentServerSettings) -> Self {
-        CustomAgentServerSettings {
-            command: AgentServerCommand {
-                path: PathBuf::from(shellexpand::tilde(&value.path.to_string_lossy()).as_ref()),
-                args: value.args,
-                env: value.env,
+        match value {
+            settings::CustomAgentServerSettings::Custom {
+                path,
+                args,
+                env,
+                default_mode,
+                default_model,
+            } => CustomAgentServerSettings::Custom {
+                command: AgentServerCommand {
+                    path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
+                    args,
+                    env,
+                },
+                default_mode,
+                default_model,
             },
-            default_mode: value.default_mode,
+            settings::CustomAgentServerSettings::Extension {
+                default_mode,
+                default_model,
+            } => CustomAgentServerSettings::Extension {
+                default_mode,
+                default_model,
+            },
         }
     }
 }
@@ -2156,6 +2227,7 @@ mod extension_agent_tests {
             env: None,
             ignore_system_version: None,
             default_mode: None,
+            default_model: None,
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2166,17 +2238,22 @@ mod extension_agent_tests {
             "Tilde should be expanded for builtin agent path"
         );
 
-        let settings = settings::CustomAgentServerSettings {
+        let settings = settings::CustomAgentServerSettings::Custom {
             path: PathBuf::from("~/custom/agent"),
             args: vec!["serve".into()],
             env: None,
             default_mode: None,
+            default_model: None,
         };
 
-        let CustomAgentServerSettings {
+        let converted: CustomAgentServerSettings = settings.into();
+        let CustomAgentServerSettings::Custom {
             command: AgentServerCommand { path, .. },
             ..
-        } = settings.into();
+        } = converted
+        else {
+            panic!("Expected Custom variant");
+        };
 
         assert!(
             !path.to_string_lossy().starts_with("~"),

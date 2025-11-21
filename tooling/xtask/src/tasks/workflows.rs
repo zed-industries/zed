@@ -23,6 +23,9 @@ mod vars;
 pub struct GenerateWorkflowArgs {}
 
 pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
+    if !Path::new("crates/zed/").is_dir() {
+        anyhow::bail!("xtask workflows must be ran from the project root");
+    }
     let dir = Path::new(".github/workflows");
 
     let workflows = vec![

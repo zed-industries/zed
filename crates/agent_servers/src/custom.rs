@@ -44,19 +44,63 @@ impl crate::AgentServer for CustomAgentServer {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+            .and_then(|s| s.default_mode().map(|m| acp::SessionModeId(m.into())))
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
         update_settings_file(fs, cx, move |settings, _| {
-            if let Some(settings) = settings
+            let settings = settings
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .get_mut(&name)
-            {
-                settings.default_mode = mode_id.map(|m| m.to_string())
+                .entry(name.clone())
+                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
+                    default_model: None,
+                    default_mode: None,
+                });
+
+            match settings {
+                settings::CustomAgentServerSettings::Custom { default_mode, .. }
+                | settings::CustomAgentServerSettings::Extension { default_mode, .. } => {
+                    *default_mode = mode_id.map(|m| m.to_string());
+                }
+            }
+        });
+    }
+
+    fn default_model(&self, cx: &mut App) -> Option<acp::ModelId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .custom
+                .get(&self.name())
+                .cloned()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_model().map(|m| acp::ModelId(m.into())))
+    }
+
+    fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
+        let name = self.name();
+        update_settings_file(fs, cx, move |settings, _| {
+            let settings = settings
+                .agent_servers
+                .get_or_insert_default()
+                .custom
+                .entry(name.clone())
+                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
+                    default_model: None,
+                    default_mode: None,
+                });
+
+            match settings {
+                settings::CustomAgentServerSettings::Custom { default_model, .. }
+                | settings::CustomAgentServerSettings::Extension { default_model, .. } => {
+                    *default_model = model_id.map(|m| m.to_string());
+                }
             }
         });
     }
@@ -72,6 +116,7 @@ impl crate::AgentServer for CustomAgentServer {
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
+        let default_model = self.default_model(cx);
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
 
@@ -98,6 +143,7 @@ impl crate::AgentServer for CustomAgentServer {
                 command,
                 root_dir.as_ref(),
                 default_mode,
+                default_model,
                 is_remote,
                 cx,
             )

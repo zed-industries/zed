@@ -393,13 +393,8 @@ impl Model {
         }
     }
 
-    pub const DEFAULT_BETA_HEADERS: &[&str] = &["prompt-caching-2024-07-31"];
-
     pub fn beta_headers(&self) -> String {
-        let mut headers = Self::DEFAULT_BETA_HEADERS
-            .iter()
-            .map(|header| header.to_string())
-            .collect::<Vec<_>>();
+        let mut headers = vec![];
 
         match self {
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {

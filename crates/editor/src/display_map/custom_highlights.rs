@@ -40,7 +40,6 @@ impl<'a> CustomHighlightsChunks<'a> {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
             buffer_chunk: None,
             offset: range.start,
-
             text_highlights,
             highlight_endpoints: create_highlight_endpoints(
                 &range,
@@ -75,16 +74,9 @@ fn create_highlight_endpoints(
             let style = text_highlights.0;
             let ranges = &text_highlights.1;
 
-            let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe.end.cmp(&start, buffer);
-                if cmp.is_gt() {
-                    cmp::Ordering::Greater
-                } else {
-                    cmp::Ordering::Less
-                }
-            }) {
-                Ok(i) | Err(i) => i,
-            };
+            let start_ix = ranges
+                .binary_search_by(|probe| probe.end.cmp(&start, buffer).then(cmp::Ordering::Less))
+                .unwrap_or_else(|i| i);
 
             for range in &ranges[start_ix..] {
                 if range.start.cmp(&end, buffer).is_ge() {

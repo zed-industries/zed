@@ -123,7 +123,7 @@ impl Render for Breadcrumbs {
                                 .upgrade()
                                 .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
                             {
-                                callback(editor.to_any(), window, cx);
+                                callback(editor.to_any_view(), window, cx);
                             }
                         }
                     })

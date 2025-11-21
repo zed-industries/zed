@@ -483,8 +483,26 @@ impl DisplayMap {
         key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
+        merge: bool,
+        cx: &App,
     ) {
-        self.text_highlights.insert(key, Arc::new((style, ranges)));
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let to_insert = match self.text_highlights.remove(&key).filter(|_| merge) {
+            Some(previous) => {
+                let mut merged_ranges = previous.1.clone();
+                for new_range in ranges {
+                    let i = merged_ranges
+                        .binary_search_by(|probe| {
+                            probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
+                        })
+                        .unwrap_or_else(|i| i);
+                    merged_ranges.insert(i, new_range);
+                }
+                Arc::new((style, merged_ranges))
+            }
+            None => Arc::new((style, ranges)),
+        };
+        self.text_highlights.insert(key, to_insert);
     }
 
     pub(crate) fn highlight_inlays(
@@ -523,6 +541,15 @@ impl DisplayMap {
             .text_highlights
             .remove(&HighlightKey::Type(type_id))
             .is_some();
+        self.text_highlights.retain(|key, _| {
+            let retain = if let HighlightKey::TypePlus(key_type_id, _) = key {
+                key_type_id != &type_id
+            } else {
+                true
+            };
+            cleared |= !retain;
+            retain
+        });
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -1380,6 +1407,33 @@ impl DisplaySnapshot {
         self.text_highlights
             .get(&HighlightKey::Type(type_id))
             .cloned()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(
+        &self,
+    ) -> Vec<(gpui::Hsla, Range<Point>)> {
+        use itertools::Itertools;
+
+        let required_type_id = TypeId::of::<Tag>();
+        self.text_highlights
+            .iter()
+            .filter(|(key, _)| match key {
+                HighlightKey::Type(type_id) => type_id == &required_type_id,
+                HighlightKey::TypePlus(type_id, _) => type_id == &required_type_id,
+            })
+            .map(|(_, value)| value.clone())
+            .flat_map(|ranges| {
+                ranges
+                    .1
+                    .iter()
+                    .flat_map(|range| {
+                        Some((ranges.0.color?, range.to_point(self.buffer_snapshot())))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .sorted_by_key(|(_, range)| range.start)
+            .collect()
     }
 
     #[allow(unused)]
@@ -2387,6 +2441,8 @@ pub mod tests {
                         ..buffer_snapshot.anchor_after(Point::new(3, 18)),
                 ],
                 red.into(),
+                false,
+                cx,
             );
             map.insert_blocks(
                 [BlockProperties {
@@ -2698,7 +2754,7 @@ pub mod tests {
             ..Default::default()
         };
 
-        map.update(cx, |map, _cx| {
+        map.update(cx, |map, cx| {
             map.highlight_text(
                 HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
@@ -2710,6 +2766,8 @@ pub mod tests {
                     })
                     .collect(),
                 style,
+                false,
+                cx,
             );
         });
 

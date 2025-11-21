@@ -12,7 +12,7 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
-use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
+use cloud_llm_client::{CompletionMode, CompletionRequestStatus, UsageLimit};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -70,7 +70,15 @@ pub fn init_settings(cx: &mut App) {
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
-    StatusUpdate(CompletionRequestStatus),
+    Queued {
+        position: usize,
+    },
+    Started,
+    UsageUpdated {
+        amount: usize,
+        limit: UsageLimit,
+    },
+    ToolUseLimitReached,
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -91,6 +99,37 @@ pub enum LanguageModelCompletionEvent {
         message_id: String,
     },
     UsageUpdate(TokenUsage),
+}
+
+impl LanguageModelCompletionEvent {
+    pub fn from_completion_request_status(
+        status: CompletionRequestStatus,
+        upstream_provider: LanguageModelProviderName,
+    ) -> Result<Self, LanguageModelCompletionError> {
+        match status {
+            CompletionRequestStatus::Queued { position } => {
+                Ok(LanguageModelCompletionEvent::Queued { position })
+            }
+            CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
+            CompletionRequestStatus::UsageUpdated { amount, limit } => {
+                Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
+            }
+            CompletionRequestStatus::ToolUseLimitReached => {
+                Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
+            }
+            CompletionRequestStatus::Failed {
+                code,
+                message,
+                request_id: _,
+                retry_after,
+            } => Err(LanguageModelCompletionError::from_cloud_failure(
+                upstream_provider,
+                code,
+                message,
+                retry_after.map(Duration::from_secs_f64),
+            )),
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -633,7 +672,10 @@ pub trait LanguageModel: Send + Sync {
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {
-                                Ok(LanguageModelCompletionEvent::StatusUpdate { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::Started) => None,
+                                Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,

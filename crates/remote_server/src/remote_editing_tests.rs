@@ -1499,6 +1499,14 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init(SemanticVersion::default(), cx);
+        editor::init(cx);
+    });
+
     use editor::Editor;
     use gpui::VisualContext;
     let text_2 = "
@@ -1838,6 +1846,7 @@ async fn test_remote_external_agent_server(
                 &json!({
                     "agent_servers": {
                         "foo": {
+                            "type": "custom",
                             "command": "foo-cli",
                             "args": ["--flag"],
                             "env": {

@@ -6551,12 +6551,12 @@ async fn test_pane_split_left(cx: &mut TestAppContext) {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
     cx.simulate_keystrokes("cmd-k");
-    // sleep for longer than the timeout in keyboard shortcut handling
-    // to verify that it doesn't fire in this case.
+    // Sleep past the historical timeout to ensure the multi-stroke binding
+    // still fires now that unambiguous prefixes no longer auto-expire.
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.simulate_keystrokes("left");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 3);
     });
 }
 

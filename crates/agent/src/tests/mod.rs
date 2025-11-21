@@ -664,9 +664,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
     );
 
     // Simulate reaching tool use limit.
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::StatusUpdate(
-        cloud_llm_client::CompletionRequestStatus::ToolUseLimitReached,
-    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
     fake_model.end_last_completion_stream();
     let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
     assert!(
@@ -749,9 +747,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
     };
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::StatusUpdate(
-        cloud_llm_client::CompletionRequestStatus::ToolUseLimitReached,
-    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
     fake_model.end_last_completion_stream();
     let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
     assert!(

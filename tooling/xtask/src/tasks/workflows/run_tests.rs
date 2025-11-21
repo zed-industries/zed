@@ -25,7 +25,7 @@ pub(crate) fn run_tests() -> Workflow {
         "run_tests",
         r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))",
     );
-    let should_check_docs = PathCondition::new("run_docs", r"^docs/");
+    let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
         "run_action_checks",
         r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
@@ -363,7 +363,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::MAC_DEFAULT)
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
+            .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_step(steps::checkout_repo().with(("fetch-depth", 0))) // fetch full history
             .add_step(remove_untracked_files())
             .add_step(ensure_fresh_merge())

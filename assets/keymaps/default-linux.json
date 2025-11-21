@@ -865,6 +865,7 @@
     "context": "ProjectPanel",
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
+      "ctrl-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
       "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",

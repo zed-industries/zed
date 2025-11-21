@@ -1332,6 +1332,7 @@ struct BracketsConfig {
 #[derive(Clone, Debug, Default)]
 struct BracketsPatternConfig {
     newline_only: bool,
+    rainbow_exclude: bool,
 }
 
 pub struct DebugVariablesConfig {
@@ -1694,8 +1695,12 @@ impl Language {
                 .map(|ix| {
                     let mut config = BracketsPatternConfig::default();
                     for setting in query.property_settings(ix) {
-                        if setting.key.as_ref() == "newline.only" {
+                        let setting_key = setting.key.as_ref();
+                        if setting_key == "newline.only" {
                             config.newline_only = true
+                        }
+                        if setting_key == "rainbow.exclude" {
+                            config.rainbow_exclude = true
                         }
                     }
                     config
@@ -2649,8 +2654,9 @@ pub fn rust_lang() -> Arc<Language> {
 ("[" @open "]" @close)
 ("{" @open "}" @close)
 ("<" @open ">" @close)
-("\"" @open "\"" @close)
-(closure_parameters "|" @open "|" @close)"#,
+(closure_parameters "|" @open "|" @close)
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+(("'" @open "'" @close) (#set! rainbow.exclude))"#,
         )),
         text_objects: Some(Cow::from(
             r#"

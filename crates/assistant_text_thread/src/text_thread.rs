@@ -7,9 +7,10 @@ use assistant_slash_command::{
 use assistant_slash_commands::FileCommandMetadata;
 use client::{self, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
 use clock::ReplicaId;
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+use cloud_llm_client::{CompletionIntent, UsageLimit};
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
+
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
@@ -2073,14 +2074,15 @@ impl TextThread {
                                     });
 
                                 match event {
-                                    LanguageModelCompletionEvent::StatusUpdate(status_update) => {
-                                        if let CompletionRequestStatus::UsageUpdated { amount, limit } = status_update {
-                                            this.update_model_request_usage(
-                                                amount as u32,
-                                                limit,
-                                                cx,
-                                            );
-                                        }
+                                    LanguageModelCompletionEvent::Started |
+                                    LanguageModelCompletionEvent::Queued {..} |
+                                    LanguageModelCompletionEvent::ToolUseLimitReached { .. } => {}
+                                    LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
+                                        this.update_model_request_usage(
+                                            amount as u32,
+                                            limit,
+                                            cx,
+                                        );
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {

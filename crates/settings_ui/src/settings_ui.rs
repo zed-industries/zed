@@ -452,6 +452,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
