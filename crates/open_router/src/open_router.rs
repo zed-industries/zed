@@ -352,6 +352,8 @@ pub struct ResponseMessageDelta {
     pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
