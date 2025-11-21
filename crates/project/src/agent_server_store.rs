@@ -149,10 +149,7 @@ impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 #[cfg(test)]
 mod ext_agent_tests {
     use super::*;
-    use std::{
-        collections::HashSet,
-        fmt::Write as _,
-    };
+    use std::{collections::HashSet, fmt::Write as _};
 
     // Helper to build a store in Collab mode so we can mutate internal maps without
     // needing to spin up a full project environment.
