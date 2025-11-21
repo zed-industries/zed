@@ -67,10 +67,15 @@ impl RustLspAdapter {
     #[cfg(target_os = "linux")]
     async fn determine_libc_type() -> LibcType {
         use futures::pin_mut;
-        use smol::process::Command;
 
         async fn from_ldd_version() -> Option<LibcType> {
-            let ldd_output = Command::new("ldd").arg("--version").output().await.ok()?;
+            use util::command::new_smol_command;
+
+            let ldd_output = new_smol_command("ldd")
+                .arg("--version")
+                .output()
+                .await
+                .ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
             if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
@@ -442,7 +447,7 @@ impl LspInstaller for RustLspAdapter {
 
         // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
         // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+        log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
         let result = delegate
             .try_exec(LanguageServerBinary {
                 path: path.clone(),
@@ -529,7 +534,7 @@ impl LspInstaller for RustLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =

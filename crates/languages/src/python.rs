@@ -163,6 +163,45 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let label_len = label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
+        };
+
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.detail.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
+
+        Some(language::CodeLabel::filtered(
+            text,
+            label_len,
+            item.filter_text.as_deref(),
+            highlight_id
+                .map(|id| (0..label_len, id))
+                .into_iter()
+                .collect(),
+        ))
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -263,7 +302,7 @@ impl LspInstaller for TyLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
@@ -2176,7 +2215,7 @@ impl LspInstaller for RuffLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =

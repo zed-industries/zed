@@ -157,7 +157,7 @@ pub enum ThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The theme to use for light mode.
         light: ThemeName,
         /// The theme to use for dark mode.
@@ -186,7 +186,7 @@ pub enum IconThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The icon theme to use for light mode.
         light: IconThemeName,
         /// The icon theme to use for dark mode.
@@ -194,7 +194,6 @@ pub enum IconThemeSelection {
     },
 }
 
-// TODO: Rename ThemeMode -> ThemeAppearanceMode
 /// The mode use to select a theme.
 ///
 /// `Light` and `Dark` will select their respective themes.
@@ -215,7 +214,7 @@ pub enum IconThemeSelection {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum ThemeMode {
+pub enum ThemeAppearanceMode {
     /// Use the specified `light` theme.
     Light,
 
@@ -371,7 +370,7 @@ pub struct ThemeStyleContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct AccentContent(pub Option<String>);
+pub struct AccentContent(pub Option<SharedString>);
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct PlayerColorContent {

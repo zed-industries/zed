@@ -2352,8 +2352,8 @@ impl Snapshot {
         self.entries_by_path.first()
     }
 
-    /// TODO: what's the difference between `root_dir` and `abs_path`?
-    /// is there any? if so, document it.
+    /// Returns `None` for a single file worktree, or `Some(self.abs_path())` if
+    /// it is a directory.
     pub fn root_dir(&self) -> Option<Arc<Path>> {
         self.root_entry()
             .filter(|entry| entry.is_dir())
@@ -2382,6 +2382,36 @@ impl Snapshot {
                     None
                 }
             })
+    }
+
+    /// Resolves a path to an executable using the following heuristics:
+    ///
+    /// 1. If the path starts with `~`, it is expanded to the user's home directory.
+    /// 2. If the path is relative and contains more than one component,
+    ///    it is joined to the worktree root path.
+    /// 3. If the path is relative and exists in the worktree
+    ///    (even if falls under an exclusion filter),
+    ///    it is joined to the worktree root path.
+    /// 4. Otherwise the path is returned unmodified.
+    ///
+    /// Relative paths that do not exist in the worktree may
+    /// still be found using the `PATH` environment variable.
+    pub fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+        if let Some(path_str) = path.to_str() {
+            if let Some(remaining_path) = path_str.strip_prefix("~/") {
+                return home_dir().join(remaining_path);
+            } else if path_str == "~" {
+                return home_dir().to_path_buf();
+            }
+        }
+
+        if let Ok(rel_path) = RelPath::new(&path, self.path_style)
+            && (path.components().count() > 1 || self.entry_for_path(&rel_path).is_some())
+        {
+            self.abs_path().join(path)
+        } else {
+            path
+        }
     }
 
     pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {

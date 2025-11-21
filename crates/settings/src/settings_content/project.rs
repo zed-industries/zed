@@ -8,7 +8,7 @@ use settings_macros::MergeFrom;
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, Maybe, ProjectTerminalSettingsContent,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
     SlashCommandSettings,
 };
 
@@ -61,8 +61,8 @@ pub struct WorktreeSettingsContent {
     ///
     /// Default: null
     #[serde(default)]
-    #[serde(skip_serializing_if = "Maybe::is_unset")]
-    pub project_name: Maybe<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
 
     /// Whether to prevent this project from being shared in public channels.
     ///
@@ -108,7 +108,17 @@ pub struct WorktreeSettingsContent {
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
+    /// Options passed to the language server at startup.
+    ///
+    /// Ref: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize
+    ///
+    /// Consult the documentation for the specific language server to see which settings are supported.
     pub initialization_options: Option<serde_json::Value>,
+    /// Language server settings.
+    ///
+    /// Ref: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_configuration
+    ///
+    /// Consult the documentation for the specific language server to see which settings are supported.
     pub settings: Option<serde_json::Value>,
     /// If the server supports sending tasks over LSP extensions,
     /// this setting can be used to enable or disable them in Zed.
@@ -186,7 +196,7 @@ pub struct SessionSettingsContent {
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
-#[serde(tag = "source", rename_all = "snake_case")]
+#[serde(untagged, rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
     Custom {
         /// Whether the context server is enabled.
@@ -195,6 +205,16 @@ pub enum ContextServerSettingsContent {
 
         #[serde(flatten)]
         command: ContextServerCommand,
+    },
+    Http {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The URL of the remote context server.
+        url: String,
+        /// Optional headers to send.
+        #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+        headers: HashMap<String, String>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -207,19 +227,24 @@ pub enum ContextServerSettingsContent {
         settings: serde_json::Value,
     },
 }
+
 impl ContextServerSettingsContent {
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettingsContent::Custom {
                 enabled: custom_enabled,
-                command: _,
+                ..
             } => {
                 *custom_enabled = enabled;
             }
             ContextServerSettingsContent::Extension {
                 enabled: ext_enabled,
-                settings: _,
+                ..
             } => *ext_enabled = enabled,
+            ContextServerSettingsContent::Http {
+                enabled: remote_enabled,
+                ..
+            } => *remote_enabled = enabled,
         }
     }
 }
@@ -286,6 +311,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// How file paths are displayed in the git gutter.
+    ///
+    /// Default: file_name_first
+    pub path_style: Option<GitPathStyle>,
 }
 
 #[derive(
@@ -379,6 +408,28 @@ pub enum GitHunkStyleSetting {
     StagedHollow,
     /// Show unstaged hunks hollow and staged hunks with a filled background.
     UnstagedHollow,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPathStyle {
+    /// Show file name first, then path
+    #[default]
+    FileNameFirst,
+    /// Show full path first
+    FilePathFirst,
 }
 
 #[skip_serializing_none]

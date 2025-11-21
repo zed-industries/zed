@@ -38,8 +38,9 @@ use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
+    #[default]
     Normal,
     Insert,
     Replace,
@@ -66,21 +67,11 @@ impl Display for Mode {
 }
 
 impl Mode {
-    pub fn is_visual(self) -> bool {
+    pub fn is_visual(&self) -> bool {
         match self {
             Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
-    }
-
-    pub fn is_helix(self) -> bool {
-        matches!(self, Mode::HelixNormal | Mode::HelixSelect)
-    }
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Normal
     }
 }
 
@@ -310,8 +301,8 @@ impl MarksState {
 
     fn load(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx))? else {
-                return Ok(());
+            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx)).ok()? else {
+                return None;
             };
             let (marks, paths) = cx
                 .background_spawn(async move {
@@ -319,10 +310,12 @@ impl MarksState {
                     let paths = DB.get_global_marks_paths(workspace_id)?;
                     anyhow::Ok((marks, paths))
                 })
-                .await?;
+                .await
+                .log_err()?;
             this.update(cx, |this, cx| this.loaded(marks, paths, cx))
+                .ok()
         })
-        .detach_and_log_err(cx);
+        .detach();
     }
 
     fn loaded(
@@ -994,7 +987,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
-    pub is_helix_regex_search: bool,
+    pub helix_select: bool,
 }
 
 impl Operator {

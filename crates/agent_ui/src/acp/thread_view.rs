@@ -51,7 +51,7 @@ use ui::{
     PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, Workspace};
+use workspace::{CollaboratorId, NewTerminal, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -69,8 +69,8 @@ use crate::ui::{
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
-    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
-    RejectOnce, ToggleBurnMode, ToggleProfileSelector,
+    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory,
+    RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -125,8 +125,9 @@ impl ProfileProvider for Entity<agent::Thread> {
     }
 
     fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |thread, _cx| {
-            thread.set_profile(profile_id);
+        self.update(cx, |thread, cx| {
+            // Apply the profile and let the thread swap to its default model.
+            thread.set_profile(profile_id, cx);
         });
     }
 
@@ -277,6 +278,7 @@ pub struct AcpThreadView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
+    thread_error_markdown: Option<Entity<Markdown>>,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
@@ -336,19 +338,7 @@ impl AcpThreadView {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
-        let placeholder = if agent.name() == "Zed Agent" {
-            format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code"
-            || agent.name() == "Codex"
-            || !available_commands.borrow().is_empty()
-        {
-            format!(
-                "Message {} — @ to include context, / for commands",
-                agent.name()
-            )
-        } else {
-            format!("Message {} — @ to include context", agent.name())
-        };
+        let placeholder = placeholder_text(agent.name().as_ref(), false);
 
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -426,6 +416,7 @@ impl AcpThreadView {
             list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
+            thread_error_markdown: None,
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -600,9 +591,13 @@ impl AcpThreadView {
                             .connection()
                             .model_selector(thread.read(cx).session_id())
                             .map(|selector| {
+                                let agent_server = this.agent.clone();
+                                let fs = this.project.read(cx).fs().clone();
                                 cx.new(|cx| {
                                     AcpModelSelectorPopover::new(
                                         selector,
+                                        agent_server,
+                                        fs,
                                         PopoverMenuHandle::default(),
                                         this.focus_handle(cx),
                                         window,
@@ -809,6 +804,7 @@ impl AcpThreadView {
 
         if should_retry {
             self.thread_error = None;
+            self.thread_error_markdown = None;
             self.reset(window, cx);
         }
     }
@@ -1143,6 +1139,7 @@ impl AcpThreadView {
 
         self.is_loading_contents = true;
         let model_id = self.current_model_id(cx);
+        let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
             this.is_loading_contents = false;
@@ -1177,7 +1174,8 @@ impl AcpThreadView {
                     "Agent Message Sent",
                     agent = agent_telemetry_id,
                     session = session_id,
-                    model = model_id
+                    model = model_id,
+                    mode = mode_id
                 );
 
                 thread.send(contents, cx)
@@ -1190,6 +1188,7 @@ impl AcpThreadView {
                 agent = agent_telemetry_id,
                 session = session_id,
                 model = model_id,
+                mode = mode_id,
                 status,
                 turn_time_ms,
             );
@@ -1338,6 +1337,7 @@ impl AcpThreadView {
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
+        self.thread_error_markdown = None;
         cx.notify();
     }
 
@@ -1455,7 +1455,14 @@ impl AcpThreadView {
                     });
                 }
 
+                let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
+
+                let new_placeholder = placeholder_text(self.agent.name().as_ref(), has_commands);
+
+                self.message_editor.update(cx, |editor, cx| {
+                    editor.set_placeholder_text(&new_placeholder, window, cx);
+                });
             }
             AcpThreadEvent::ModeUpdated(_mode) => {
                 // The connection keeps track of the mode
@@ -3144,7 +3151,7 @@ impl AcpThreadView {
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
-                            if terminal_view
+                            let element = if terminal_view
                                 .read(cx)
                                 .content_mode(window, cx)
                                 .is_scrollable()
@@ -3152,7 +3159,15 @@ impl AcpThreadView {
                                 div().h_72().child(terminal_view).into_any_element()
                             } else {
                                 terminal_view.into_any_element()
-                            }
+                            };
+
+                            div()
+                                .on_action(cx.listener(|_this, _: &NewTerminal, window, cx| {
+                                    window.dispatch_action(NewThread.boxed_clone(), cx);
+                                    cx.stop_propagation();
+                                }))
+                                .child(element)
+                                .into_any_element()
                         })),
                 )
             })
@@ -4192,6 +4207,8 @@ impl AcpThreadView {
                     .justify_between()
                     .child(
                         h_flex()
+                            .gap_0p5()
+                            .child(self.render_add_context_button(cx))
                             .child(self.render_follow_toggle(cx))
                             .children(self.render_burn_mode_toggle(cx)),
                     )
@@ -4503,6 +4520,29 @@ impl AcpThreadView {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.toggle_following(window, cx);
+            }))
+    }
+
+    fn render_add_context_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let message_editor = self.message_editor.clone();
+        let menu_visible = message_editor.read(cx).is_completions_menu_visible(cx);
+
+        IconButton::new("add-context", IconName::AtSign)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .when(!menu_visible, |this| {
+                this.tooltip(move |_window, cx| {
+                    Tooltip::with_meta("Add Context", None, "Or type @ to include context", cx)
+                })
+            })
+            .on_click(cx.listener(move |_this, _, window, cx| {
+                let message_editor_clone = message_editor.clone();
+
+                window.defer(cx, move |window, cx| {
+                    message_editor_clone.update(cx, |message_editor, cx| {
+                        message_editor.trigger_completion_menu(window, cx);
+                    });
+                });
             }))
     }
 
@@ -4984,15 +5024,12 @@ impl AcpThreadView {
             }));
 
         let mut container = h_flex()
-            .id("thread-controls-container")
-            .group("thread-controls-container")
             .w_full()
             .py_2()
             .px_5()
             .gap_px()
             .opacity(0.6)
-            .hover(|style| style.opacity(1.))
-            .flex_wrap()
+            .hover(|s| s.opacity(1.))
             .justify_end();
 
         if AgentSettings::get_global(cx).enable_feedback
@@ -5002,23 +5039,13 @@ impl AcpThreadView {
         {
             let feedback = self.thread_feedback.feedback;
 
-            container = container
-                .child(
-                    div().visible_on_hover("thread-controls-container").child(
-                        Label::new(match feedback {
-                            Some(ThreadFeedback::Positive) => "Thanks for your feedback!",
-                            Some(ThreadFeedback::Negative) => {
-                                "We appreciate your feedback and will use it to improve."
-                            }
-                            None => {
-                                "Rating the thread sends all of your current conversation to the Zed team."
-                            }
-                        })
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall)
-                        .truncate(),
-                    ),
+            let tooltip_meta = || {
+                SharedString::new(
+                    "Rating the thread sends all of your current conversation to the Zed team.",
                 )
+            };
+
+            container = container
                 .child(
                     IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
                         .shape(ui::IconButtonShape::Square)
@@ -5027,7 +5054,12 @@ impl AcpThreadView {
                             Some(ThreadFeedback::Positive) => Color::Accent,
                             _ => Color::Ignored,
                         })
-                        .tooltip(Tooltip::text("Helpful Response"))
+                        .tooltip(move |window, cx| match feedback {
+                            Some(ThreadFeedback::Positive) => {
+                                Tooltip::text("Thanks for your feedback!")(window, cx)
+                            }
+                            _ => Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx),
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
                         })),
@@ -5040,7 +5072,16 @@ impl AcpThreadView {
                             Some(ThreadFeedback::Negative) => Color::Accent,
                             _ => Color::Ignored,
                         })
-                        .tooltip(Tooltip::text("Not Helpful"))
+                        .tooltip(move |window, cx| match feedback {
+                            Some(ThreadFeedback::Negative) => {
+                                Tooltip::text(
+                                    "We appreciate your feedback and will use it to improve in the future.",
+                                )(window, cx)
+                            }
+                            _ => {
+                                Tooltip::with_meta("Not Helpful Response", None, tooltip_meta(), cx)
+                            }
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
                         })),
@@ -5323,9 +5364,9 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thread_error(&self, cx: &mut Context<Self>) -> Option<Div> {
+    fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
-            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
             ThreadError::Refusal => self.render_refusal_error(cx),
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
@@ -5372,6 +5413,16 @@ impl AcpThreadView {
         )
     }
 
+    fn current_mode_id(&self, cx: &App) -> Option<Arc<str>> {
+        if let Some(thread) = self.as_native_thread(cx) {
+            Some(thread.read(cx).profile().0.clone())
+        } else if let Some(mode_selector) = self.mode_selector() {
+            Some(mode_selector.read(cx).mode().0)
+        } else {
+            None
+        }
+    }
+
     fn current_model_id(&self, cx: &App) -> Option<String> {
         self.model_selector
             .as_ref()
@@ -5410,7 +5461,12 @@ impl AcpThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
+    fn render_any_thread_error(
+        &mut self,
+        error: SharedString,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Callout {
         let can_resume = self
             .thread()
             .map_or(false, |thread| thread.read(cx).can_resume(cx));
@@ -5423,11 +5479,24 @@ impl AcpThreadView {
             supports_burn_mode && thread.completion_mode() == CompletionMode::Normal
         });
 
+        let markdown = if let Some(markdown) = &self.thread_error_markdown {
+            markdown.clone()
+        } else {
+            let markdown = cx.new(|cx| Markdown::new(error.clone(), None, None, cx));
+            self.thread_error_markdown = Some(markdown.clone());
+            markdown
+        };
+
+        let markdown_style = default_markdown_style(false, true, window, cx);
+        let description = self
+            .render_markdown(markdown, markdown_style)
+            .into_any_element();
+
         Callout::new()
             .severity(Severity::Error)
-            .title("Error")
             .icon(IconName::XCircle)
-            .description(error.clone())
+            .title("An Error Happened")
+            .description_slot(description)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
@@ -5446,11 +5515,9 @@ impl AcpThreadView {
                     })
                     .when(can_resume, |this| {
                         this.child(
-                            Button::new("retry", "Retry")
-                                .icon(IconName::RotateCw)
-                                .icon_position(IconPosition::Start)
+                            IconButton::new("retry", IconName::RotateCw)
                                 .icon_size(IconSize::Small)
-                                .label_size(LabelSize::Small)
+                                .tooltip(Tooltip::text("Retry Generation"))
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.resume_chat(cx);
                                 })),
@@ -5592,7 +5659,6 @@ impl AcpThreadView {
 
         IconButton::new("copy", IconName::Copy)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
             .tooltip(Tooltip::text("Copy Error Message"))
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
@@ -5602,7 +5668,6 @@ impl AcpThreadView {
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         IconButton::new("dismiss", IconName::Close)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
             .tooltip(Tooltip::text("Dismiss Error"))
             .on_click(cx.listener({
                 move |this, _, _, cx| {
@@ -5707,6 +5772,19 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
         .into_any_element()
 }
 
+fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
+    if agent_name == "Zed Agent" {
+        format!("Message the {} — @ to include context", agent_name)
+    } else if has_commands {
+        format!(
+            "Message {} — @ to include context, / for commands",
+            agent_name
+        )
+    } else {
+        format!("Message {} — @ to include context", agent_name)
+    }
+}
+
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.thread_state {
@@ -5807,7 +5885,7 @@ impl Render for AcpThreadView {
                     None
                 }
             })
-            .children(self.render_thread_error(cx))
+            .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
                     !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
@@ -5873,7 +5951,6 @@ fn default_markdown_style(
         syntax: cx.theme().syntax().clone(),
         selection_background_color: colors.element_selection_background,
         code_block_overflow_x_scroll: true,
-        table_overflow_x_scroll: true,
         heading_level_styles: Some(HeadingLevelStyles {
             h1: Some(TextStyleRefinement {
                 font_size: Some(rems(1.15).into()),
@@ -5941,6 +6018,7 @@ fn default_markdown_style(
         },
         link: TextStyleRefinement {
             background_color: Some(colors.editor_foreground.opacity(0.025)),
+            color: Some(colors.text_accent),
             underline: Some(UnderlineStyle {
                 color: Some(colors.text_accent.opacity(0.5)),
                 thickness: px(1.),
@@ -5993,6 +6071,7 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
+    use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
     use project::Project;
@@ -7161,7 +7240,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor
@@ -7223,7 +7302,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor

@@ -17,7 +17,7 @@ use editor::{
     multibuffer_context_lines,
 };
 use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, FocusOutEvent,
+    AnyElement, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
@@ -73,7 +73,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub(crate) struct ProjectDiagnosticsEditor {
-    project: Entity<Project>,
+    pub project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
@@ -182,7 +182,6 @@ impl ProjectDiagnosticsEditor {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
                     this.close_diagnosticless_buffers(
-                        window,
                         cx,
                         this.editor.focus_handle(cx).contains_focused(window, cx)
                             || this.focus_handle.contains_focused(window, cx),
@@ -247,10 +246,10 @@ impl ProjectDiagnosticsEditor {
                             window.focus(&this.focus_handle);
                         }
                     }
-                    EditorEvent::Blurred => this.close_diagnosticless_buffers(window, cx, false),
-                    EditorEvent::Saved => this.close_diagnosticless_buffers(window, cx, true),
+                    EditorEvent::Blurred => this.close_diagnosticless_buffers(cx, false),
+                    EditorEvent::Saved => this.close_diagnosticless_buffers(cx, true),
                     EditorEvent::SelectionsChanged { .. } => {
-                        this.close_diagnosticless_buffers(window, cx, true)
+                        this.close_diagnosticless_buffers(cx, true)
                     }
                     _ => {}
                 }
@@ -298,12 +297,7 @@ impl ProjectDiagnosticsEditor {
     ///  - have no diagnostics anymore
     ///  - are saved (not dirty)
     ///  - and, if `retain_selections` is true, do not have selections within them
-    fn close_diagnosticless_buffers(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-        retain_selections: bool,
-    ) {
+    fn close_diagnosticless_buffers(&mut self, cx: &mut Context<Self>, retain_selections: bool) {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
@@ -447,7 +441,7 @@ impl ProjectDiagnosticsEditor {
     fn focus_out(&mut self, _: FocusOutEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
-            self.close_diagnosticless_buffers(window, cx, false);
+            self.close_diagnosticless_buffers(cx, false);
         }
     }
 
@@ -461,8 +455,7 @@ impl ProjectDiagnosticsEditor {
                 });
             }
         });
-        self.multibuffer
-            .update(cx, |multibuffer, cx| multibuffer.clear(cx));
+        self.close_diagnosticless_buffers(cx, false);
         self.project.update(cx, |project, cx| {
             self.paths_to_update = project
                 .diagnostic_summaries(false, cx)
@@ -546,16 +539,21 @@ impl ProjectDiagnosticsEditor {
             }
             let mut blocks: Vec<DiagnosticBlock> = Vec::new();
 
+            let diagnostics_toolbar_editor = Arc::new(this.clone());
             for (_, group) in grouped {
                 let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
                 if group_severity.is_none_or(|s| s > max_severity) {
                     continue;
                 }
+                let languages = this
+                    .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
+                    .ok();
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
-                        Some(Arc::new(this.clone())),
+                        Some(diagnostics_toolbar_editor.clone()),
+                        languages,
                         cx,
                     )
                 })?;
@@ -563,7 +561,21 @@ impl ProjectDiagnosticsEditor {
                 blocks.extend(more);
             }
 
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = this.update(cx, |this, cx| {
+            let cmp_excerpts = |buffer_snapshot: &BufferSnapshot,
+                                a: &ExcerptRange<text::Anchor>,
+                                b: &ExcerptRange<text::Anchor>| {
+                let context_start = || a.context.start.cmp(&b.context.start, buffer_snapshot);
+                let context_end = || a.context.end.cmp(&b.context.end, buffer_snapshot);
+                let primary_start = || a.primary.start.cmp(&b.primary.start, buffer_snapshot);
+                let primary_end = || a.primary.end.cmp(&b.primary.end, buffer_snapshot);
+                context_start()
+                    .then_with(context_end)
+                    .then_with(primary_start)
+                    .then_with(primary_end)
+                    .then(cmp::Ordering::Greater)
+            };
+
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = this.update(cx, |this, cx| {
                 this.multibuffer.update(cx, |multi_buffer, cx| {
                     let is_dirty = multi_buffer
                         .buffer(buffer_id)
@@ -573,14 +585,13 @@ impl ProjectDiagnosticsEditor {
                         RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
                             .excerpts_for_buffer(buffer_id, cx)
                             .into_iter()
-                            .map(|(_, range)| ExcerptRange {
-                                context: range.context.to_point(&buffer_snapshot),
-                                primary: range.primary.to_point(&buffer_snapshot),
-                            })
+                            .map(|(_, range)| range)
+                            .sorted_by(|a, b| cmp_excerpts(&buffer_snapshot, a, b))
                             .collect(),
                     }
                 })
             })?;
+
             let mut result_blocks = vec![None; excerpt_ranges.len()];
             let context_lines = cx.update(|_, cx| multibuffer_context_lines(cx))?;
             for b in blocks {
@@ -591,26 +602,16 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
                 .await;
-
+                let initial_range = buffer_snapshot.anchor_after(b.initial_range.start)
+                    ..buffer_snapshot.anchor_before(b.initial_range.end);
+                let excerpt_range = ExcerptRange {
+                    context: excerpt_range,
+                    primary: initial_range,
+                };
                 let i = excerpt_ranges
-                    .binary_search_by(|probe| {
-                        probe
-                            .context
-                            .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(probe.primary.start.cmp(&b.initial_range.start))
-                            .then(probe.primary.end.cmp(&b.initial_range.end))
-                            .then(cmp::Ordering::Greater)
-                    })
+                    .binary_search_by(|probe| cmp_excerpts(&buffer_snapshot, probe, &excerpt_range))
                     .unwrap_or_else(|i| i);
-                excerpt_ranges.insert(
-                    i,
-                    ExcerptRange {
-                        context: excerpt_range,
-                        primary: b.initial_range.clone(),
-                    },
-                );
+                excerpt_ranges.insert(i, excerpt_range);
                 result_blocks.insert(i, Some(b));
             }
 
@@ -623,6 +624,13 @@ impl ProjectDiagnosticsEditor {
                     })
                 }
                 let (anchor_ranges, _) = this.multibuffer.update(cx, |multi_buffer, cx| {
+                    let excerpt_ranges = excerpt_ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange {
+                            context: range.context.to_point(&buffer_snapshot),
+                            primary: range.primary.to_point(&buffer_snapshot),
+                        })
+                        .collect();
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
@@ -872,11 +880,11 @@ impl Item for ProjectDiagnosticsEditor {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -968,8 +976,8 @@ async fn context_range_for_entry(
     context: u32,
     snapshot: BufferSnapshot,
     cx: &mut AsyncApp,
-) -> Range<Point> {
-    if let Some(rows) = heuristic_syntactic_expand(
+) -> Range<text::Anchor> {
+    let range = if let Some(rows) = heuristic_syntactic_expand(
         range.clone(),
         DIAGNOSTIC_EXPANSION_ROW_LIMIT,
         snapshot.clone(),
@@ -977,15 +985,17 @@ async fn context_range_for_entry(
     )
     .await
     {
-        return Range {
+        Range {
             start: Point::new(*rows.start(), 0),
             end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-        };
-    }
-    Range {
-        start: Point::new(range.start.row.saturating_sub(context), 0),
-        end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
-    }
+        }
+    } else {
+        Range {
+            start: Point::new(range.start.row.saturating_sub(context), 0),
+            end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
+        }
+    };
+    snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end)
 }
 
 /// Expands the input range using syntax information from TreeSitter. This expansion will be limited
@@ -999,11 +1009,14 @@ async fn heuristic_syntactic_expand(
     snapshot: BufferSnapshot,
     cx: &mut AsyncApp,
 ) -> Option<RangeInclusive<BufferRow>> {
+    let start = snapshot.clip_point(input_range.start, Bias::Right);
+    let end = snapshot.clip_point(input_range.end, Bias::Left);
     let input_row_count = input_range.end.row - input_range.start.row;
     if input_row_count > max_row_count {
         return None;
     }
 
+    let input_range = start..end;
     // If the outline node contains the diagnostic and is small enough, just use that.
     let outline_range = snapshot.outline_range_containing(input_range.clone());
     if let Some(outline_range) = outline_range.clone() {

@@ -2,7 +2,7 @@ use agent::HistoryStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::display_map::{CreaseId, EditorMargins};
-use editor::{Addon, AnchorRangeExt as _};
+use editor::{Addon, AnchorRangeExt as _, MultiBufferOffset};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
@@ -1165,7 +1165,7 @@ impl GenerationMode {
 /// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
 #[derive(Clone, Debug)]
 pub struct MessageCrease {
-    pub range: Range<usize>,
+    pub range: Range<MultiBufferOffset>,
     pub icon_path: SharedString,
     pub label: SharedString,
     /// None for a deserialized message, Some otherwise.

@@ -255,6 +255,12 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // Whether to colorize brackets in the editor.
+  // (also known as "rainbow brackets")
+  //
+  // The colors that are used for different indentation levels are defined in the theme (theme key: `accents`).
+  // They can be customized by using theme overrides.
+  "colorize_brackets": false,
   // When to show the scrollbar in the completion menu.
   // This setting can take four values:
   //
@@ -605,6 +611,10 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
+  "sticky_scroll": {
+    // Whether to stick scopes to the top of the editor.
+    "enabled": false
+  },
   "relative_line_numbers": "disabled",
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
@@ -612,9 +622,13 @@
   "search": {
     // Whether to show the project search button in the status bar.
     "button": true,
+    // Whether to only match on whole words.
     "whole_word": false,
+    // Whether to match case sensitively.
     "case_sensitive": false,
+    // Whether to include gitignored files in search results.
     "include_ignored": false,
+    // Whether to interpret the search query as a regular expression.
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false
@@ -734,14 +748,31 @@
       //    "never"
       "show": "always"
     },
+    // Sort order for entries in the project panel.
+    // This setting can take three values:
+    //
+    // 1. Show directories first, then files:
+    //    "directories_first"
+    // 2. Mix directories and files together:
+    //    "mixed"
+    // 3. Show files first, then directories:
+    //    "files_first"
+    "sort_mode": "directories_first",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
-    // Whether to automatically open files when pasting them in the project panel.
-    "open_file_on_paste": true
+    // Settings for automatically opening files.
+    "auto_open": {
+      // Whether to automatically open newly created files in the editor.
+      "on_create": true,
+      // Whether to automatically open files after pasting or duplicating them.
+      "on_paste": true,
+      // Whether to automatically open files dropped from external sources.
+      "on_drop": true
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -1291,7 +1322,10 @@
     //    "hunk_style": "staged_hollow"
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
-    "hunk_style": "staged_hollow"
+    "hunk_style": "staged_hollow",
+    // Should the name or path be displayed first in the git view.
+    // "path_style": "file_name_first" or "file_path_first"
+    "path_style": "file_name_first"
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1535,6 +1569,8 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     "max_scroll_history_lines": 10000,
+    // The multiplier for scrolling speed in the terminal.
+    "scroll_multiplier": 1.0,
     // The minimum APCA perceptual contrast between foreground and background colors.
     // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     // especially for dark mode. Values range from 0 to 106.
@@ -2031,6 +2067,18 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Linux.
+  "linux": {},
+  // Settings overrides to use when using macOS.
+  "macos": {},
+  // Settings overrides to use when using Windows.
+  "windows": {
+    "languages": {
+      "PHP": {
+        "language_servers": ["intelephense", "!phpactor", "..."]
+      }
+    }
   },
   // Whether to show full labels in line indicator or short ones
   //

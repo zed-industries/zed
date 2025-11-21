@@ -291,6 +291,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -1322,6 +1323,7 @@ struct BracketsConfig {
 #[derive(Clone, Debug, Default)]
 struct BracketsPatternConfig {
     newline_only: bool,
+    rainbow_exclude: bool,
 }
 
 pub struct DebugVariablesConfig {
@@ -1684,8 +1686,12 @@ impl Language {
                 .map(|ix| {
                     let mut config = BracketsPatternConfig::default();
                     for setting in query.property_settings(ix) {
-                        if setting.key.as_ref() == "newline.only" {
+                        let setting_key = setting.key.as_ref();
+                        if setting_key == "newline.only" {
                             config.newline_only = true
+                        }
+                        if setting_key == "rainbow.exclude" {
+                            config.rainbow_exclude = true
                         }
                     }
                     config
@@ -2613,6 +2619,9 @@ pub fn rust_lang() -> Arc<Language> {
         Some(tree_sitter_rust::LANGUAGE.into()),
     )
     .with_queries(LanguageQueries {
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/rust/outline.scm"
+        ))),
         indents: Some(Cow::from(
             r#"
 [
@@ -2636,8 +2645,9 @@ pub fn rust_lang() -> Arc<Language> {
 ("[" @open "]" @close)
 ("{" @open "}" @close)
 ("<" @open ">" @close)
-("\"" @open "\"" @close)
-(closure_parameters "|" @open "|" @close)"#,
+(closure_parameters "|" @open "|" @close)
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+(("'" @open "'" @close) (#set! rainbow.exclude))"#,
         )),
         text_objects: Some(Cow::from(
             r#"
@@ -2651,6 +2661,35 @@ pub fn rust_lang() -> Arc<Language> {
         ..LanguageQueries::default()
     })
     .expect("Could not parse queries");
+    Arc::new(language)
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn markdown_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_md::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/brackets.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/injections.scm"
+        ))),
+        ..Default::default()
+    })
+    .expect("Could not parse markdown queries");
     Arc::new(language)
 }
 

@@ -213,7 +213,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
+- Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
 **Options**
@@ -2519,11 +2519,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
@@ -3184,12 +3185,52 @@ Non-negative `integer` values
 
 ```json [settings]
 "search": {
+  "button": true,
   "whole_word": false,
   "case_sensitive": false,
   "include_ignored": false,
-  "regex": false
+  "regex": false,
+  "center_on_match": false
 },
 ```
+
+### Button
+
+- Description: Whether to show the project search button in the status bar.
+- Setting: `button`
+- Default: `true`
+
+### Whole Word
+
+- Description: Whether to only match on whole words.
+- Setting: `whole_word`
+- Default: `false`
+
+### Case Sensitive
+
+- Description: Whether to match case sensitively. This setting affects both
+  searches and editor actions like "Select Next Occurrence", "Select Previous
+  Occurrence", and "Select All Occurrences".
+- Setting: `case_sensitive`
+- Default: `false`
+
+### Include Ignore
+
+- Description: Whether to include gitignored files in search results.
+- Setting: `include_ignored`
+- Default: `false`
+
+### Regex
+
+- Description: Whether to interpret the search query as a regular expression.
+- Setting: `regex`
+- Default: `false`
+
+### Center On Match
+
+- Description: Whether to center the cursor on each search match when navigating.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Search Wrap
 
@@ -3545,6 +3586,7 @@ List of `integer` column numbers
     "option_as_meta": false,
     "button": true,
     "shell": "system",
+    "scroll_multiplier": 3.0,
     "toolbar": {
       "breadcrumbs": false
     },
@@ -3957,6 +3999,26 @@ Disable with:
 }
 ```
 
+### Terminal: Scroll Multiplier
+
+- Description: The multiplier for scrolling speed in the terminal when using mouse wheel or trackpad.
+- Setting: `scroll_multiplier`
+- Default: `1.0`
+
+**Options**
+
+Positive floating point values. Values less than or equal to 0 will be clamped to a minimum of 0.01.
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "scroll_multiplier": 5.0
+  }
+}
+```
+
 ## Terminal: Toolbar
 
 - Description: Whether or not to show various elements in the terminal toolbar.
@@ -4236,10 +4298,15 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "indent_guides": {
       "show": "always"
     },
+    "sort_mode": "directories_first",
     "hide_root": false,
     "hide_hidden": false,
     "starts_open": true,
-    "open_file_on_paste": true
+    "auto_open": {
+      "on_create": true,
+      "on_paste": true,
+      "on_drop": true
+    }
   }
 }
 ```
@@ -4448,6 +4515,58 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
+### Sort Mode
+
+- Description: Sort order for entries in the project panel
+- Setting: `sort_mode`
+- Default: `directories_first`
+
+**Options**
+
+1. Show directories first, then files
+
+```json [settings]
+{
+  "sort_mode": "directories_first"
+}
+```
+
+2. Mix directories and files together
+
+```json [settings]
+{
+  "sort_mode": "mixed"
+}
+```
+
+3. Show files first, then directories
+
+```json [settings]
+{
+  "sort_mode": "files_first"
+}
+```
+
+### Auto Open
+
+- Description: Control whether files are opened automatically after different creation flows in the project panel.
+- Setting: `auto_open`
+- Default:
+
+```json [settings]
+"auto_open": {
+  "on_create": true,
+  "on_paste": true,
+  "on_drop": true
+}
+```
+
+**Options**
+
+- `on_create`: Whether to automatically open newly created files in the editor.
+- `on_paste`: Whether to automatically open files after pasting or duplicating them.
+- `on_drop`: Whether to automatically open files dropped from external sources.
+
 ## Agent
 
 Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
@@ -4567,6 +4686,18 @@ See the [debugger page](./debugger.md) for more information about debugging supp
   "share_on_join": false
 },
 ```
+
+## Colorize Brackets
+
+- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
+- Setting: `colorize_brackets`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ## Unnecessary Code Fade
 

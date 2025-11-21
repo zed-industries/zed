@@ -293,10 +293,11 @@ impl Telemetry {
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
-        let state = self.state.lock();
-        let enabled = state.settings.metrics;
-        drop(state);
-        enabled
+        self.state.lock().settings.metrics
+    }
+
+    pub fn diagnostics_enabled(self: &Arc<Self>) -> bool {
+        self.state.lock().settings.diagnostics
     }
 
     pub fn set_authenticated_user_info(
@@ -435,7 +436,7 @@ impl Telemetry {
         Some(project_types)
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();
         // RUST_LOG=telemetry=trace to debug telemetry events
         log::trace!(target: "telemetry", "{:?}", event);
@@ -443,6 +444,12 @@ impl Telemetry {
         if !state.settings.metrics {
             return;
         }
+
+        match &mut event {
+            Event::Flexible(event) => event
+                .event_properties
+                .insert("event_source".into(), "zed".into()),
+        };
 
         if state.flush_events_task.is_none() {
             let this = self.clone();

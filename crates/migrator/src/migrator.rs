@@ -215,6 +215,14 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
         MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
         MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_12::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_12,
+        ),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_20::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_20,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -332,6 +340,14 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_10_03,
     migrations::m_2025_10_03::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_11_12,
+    migrations::m_2025_11_12::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_11_20,
+    migrations::m_2025_11_20::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -1181,6 +1197,63 @@ mod tests {
             )],
             settings,
             None,
+        );
+    }
+
+    #[test]
+    fn test_custom_agent_server_settings_migration() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2025_11_20::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_11_20,
+            )],
+            r#"{
+    "agent_servers": {
+        "gemini": {
+            "default_model": "gemini-1.5-pro"
+        },
+        "claude": {},
+        "codex": {},
+        "my-custom-agent": {
+            "command": "/path/to/agent",
+            "args": ["--foo"],
+            "default_model": "my-model"
+        },
+        "already-migrated-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
+        },
+        "future-extension-agent": {
+            "type": "extension",
+            "default_model": "ext-model"
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "agent_servers": {
+        "gemini": {
+            "default_model": "gemini-1.5-pro"
+        },
+        "claude": {},
+        "codex": {},
+        "my-custom-agent": {
+            "type": "custom",
+            "command": "/path/to/agent",
+            "args": ["--foo"],
+            "default_model": "my-model"
+        },
+        "already-migrated-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
+        },
+        "future-extension-agent": {
+            "type": "extension",
+            "default_model": "ext-model"
+        }
+    }
+}"#,
+            ),
         );
     }
 
@@ -2189,6 +2262,51 @@ mod tests {
                         "include_ignored": "smart"
                     }
                 }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_project_panel_open_file_on_paste_migration() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": true }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": false }
+                    }
+                }
+                "#
                 .unindent(),
             ),
         );
