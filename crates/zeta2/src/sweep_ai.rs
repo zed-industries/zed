@@ -91,9 +91,9 @@ pub struct AdditionalCompletion {
     pub finish_reason: Option<String>,
 }
 
-pub(crate) fn write_event(event: crate::HistoryEvent, f: &mut impl fmt::Write) -> fmt::Result {
+pub(crate) fn write_event(event: crate::Event, f: &mut impl fmt::Write) -> fmt::Result {
     match event {
-        crate::HistoryEvent::BufferChange {
+        crate::Event::BufferChange {
             old_snapshot,
             new_snapshot,
             ..
