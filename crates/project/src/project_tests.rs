@@ -8611,7 +8611,7 @@ async fn test_repository_pending_ops_staging(
 
     // Ensure we have no pending ops for any of the untracked files
     repo.read_with(cx, |repo, _cx| {
-        assert!(repo.pending_ops_by_path.is_empty());
+        assert!(repo.pending_ops().next().is_none());
     });
 
     let mut id = 1u16;
@@ -9575,7 +9575,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::StatusesChanged { full_scan: true },
+            RepositoryEvent::StatusesChanged,
             RepositoryEvent::MergeHeadsChanged,
         ],
         "Initial worktree scan should produce a repo update event"
@@ -9743,8 +9743,8 @@ async fn test_odd_events_for_ignored_dirs(
         vec![
             RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
-            RepositoryEvent::StatusesChanged { full_scan: false },
-            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged,
+            RepositoryEvent::StatusesChanged,
         ],
         "Initial worktree scan should produce a repo update event"
     );

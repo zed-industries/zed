@@ -43,8 +43,7 @@
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
-      "ctrl-alt-l": "lsp_tool::ToggleMenu",
-      "ctrl-alt-.": "project_panel::ToggleHideHidden"
+      "ctrl-alt-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -866,6 +865,7 @@
     "context": "ProjectPanel",
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
+      "ctrl-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
       "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",
@@ -1251,9 +1251,23 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "ctrl-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "ctrl--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "ctrl-0": ["zed::ResetUiFontSize", { "persist": false }],
       "ctrl-enter": "onboarding::Finish",
       "alt-shift-l": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
+    }
+  },
+  {
+    "context": "Welcome",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "ctrl-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "ctrl--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "ctrl-0": ["zed::ResetUiFontSize", { "persist": false }]
     }
   },
   {

@@ -49,8 +49,7 @@
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
-      "ctrl-cmd-l": "lsp_tool::ToggleMenu",
-      "cmd-alt-.": "project_panel::ToggleHideHidden"
+      "ctrl-cmd-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -313,7 +312,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
-      "cmd-alt-t": "agent::NewThread"
+      "cmd-alt-n": "agent::NewExternalAgentThread"
     }
   },
   {
@@ -936,6 +935,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
+      "cmd-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
       "cmd-n": "project_panel::NewFile",
       "cmd-d": "project_panel::Duplicate",
@@ -1356,9 +1356,23 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetUiFontSize", { "persist": false }],
       "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
+    }
+  },
+  {
+    "context": "Welcome",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetUiFontSize", { "persist": false }]
     }
   },
   {

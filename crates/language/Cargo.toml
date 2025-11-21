@@ -21,6 +21,7 @@ test-support = [
     "tree-sitter-rust",
     "tree-sitter-python",
     "tree-sitter-typescript",
+    "tree-sitter-md",
     "settings/test-support",
     "util/test-support",
 ]
@@ -59,6 +60,7 @@ sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
