@@ -108,7 +108,7 @@ pub struct Buffer {
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
     syntax_map: Mutex<SyntaxMap>,
-    reparsing: bool,
+    reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -986,7 +986,7 @@ impl Buffer {
             file,
             capability,
             syntax_map,
-            reparsing: false,
+            reparse: None,
             non_text_state_update_count: 0,
             parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
@@ -1498,7 +1498,7 @@ impl Buffer {
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
-        self.reparsing
+        self.reparse.is_some()
     }
 
     /// Indicates whether the buffer contains any regions that may be
@@ -1531,7 +1531,7 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
-        if self.reparsing {
+        if self.reparse.is_some() {
             return;
         }
         let language = if let Some(language) = self.language.clone() {
@@ -1559,9 +1559,8 @@ impl Buffer {
         });
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        self.reparsing = true;
         // todo(lw): hot foreground spawn
-        cx.spawn(async move |this, cx| {
+        self.reparse = Some(cx.spawn(async move |this, cx| {
             let new_syntax_map = cx.background_spawn(parse_task).await;
             this.update(cx, move |this, cx| {
                 let grammar_changed = || {
@@ -1579,14 +1578,13 @@ impl Buffer {
                     || language_registry_changed()
                     || grammar_changed();
                 this.did_finish_parsing(new_syntax_map, cx);
-                this.reparsing = false;
+                this.reparse = None;
                 if parse_again {
                     this.reparse(cx);
                 }
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
