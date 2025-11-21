@@ -12,10 +12,11 @@ use editor::{
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
-    Animation, AnimationExt as _, AppContext, Context, Empty, Entity, EntityId, Image, ImageFormat,
-    Img, SharedString, Subscription, Task, WeakEntity, pulsating_between,
+    Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Empty, Entity, EntityId,
+    Image, ImageFormat, Img, SharedString, Subscription, Task, WeakEntity, pulsating_between,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
+use itertools::Either;
 use language::Buffer;
 use language_model::LanguageModelImage;
 use multi_buffer::MultiBufferRow;
@@ -527,6 +528,155 @@ impl MentionSet {
             })
         })
     }
+}
+
+pub(crate) fn paste_images_as_context(
+    editor: Entity<Editor>,
+    mention_set: Entity<MentionSet>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Task<()>> {
+    let clipboard = cx.read_from_clipboard()?;
+    Some(window.spawn(cx, async move |cx| {
+        use itertools::Itertools;
+        let (mut images, paths) = clipboard
+            .into_entries()
+            .filter_map(|entry| match entry {
+                ClipboardEntry::Image(image) => Some(Either::Left(image)),
+                ClipboardEntry::ExternalPaths(paths) => Some(Either::Right(paths)),
+                _ => None,
+            })
+            .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
+
+        if !paths.is_empty() {
+            images.extend(
+                cx.background_spawn(async move {
+                    let mut images = vec![];
+                    for path in paths.into_iter().flat_map(|paths| paths.paths().to_owned()) {
+                        let Ok(content) = async_fs::read(path).await else {
+                            continue;
+                        };
+                        let Ok(format) = image::guess_format(&content) else {
+                            continue;
+                        };
+                        images.push(gpui::Image::from_bytes(
+                            match format {
+                                image::ImageFormat::Png => gpui::ImageFormat::Png,
+                                image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                                image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                                image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                                image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                                image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                                image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                                _ => continue,
+                            },
+                            content,
+                        ));
+                    }
+                    images
+                })
+                .await,
+            );
+        }
+
+        if images.is_empty() {
+            return;
+        }
+
+        let replacement_text = MentionUri::PastedImage.as_link().to_string();
+        cx.update(|_window, cx| {
+            cx.stop_propagation();
+        })
+        .ok();
+        for image in images {
+            let Ok((excerpt_id, text_anchor, multibuffer_anchor)) =
+                editor.update_in(cx, |message_editor, window, cx| {
+                    let snapshot = message_editor.snapshot(window, cx);
+                    let (excerpt_id, _, buffer_snapshot) =
+                        snapshot.buffer_snapshot().as_singleton().unwrap();
+
+                    let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                    let multibuffer_anchor = snapshot
+                        .buffer_snapshot()
+                        .anchor_in_excerpt(*excerpt_id, text_anchor);
+                    message_editor.edit(
+                        [(
+                            multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                            format!("{replacement_text} "),
+                        )],
+                        cx,
+                    );
+                    (*excerpt_id, text_anchor, multibuffer_anchor)
+                })
+            else {
+                break;
+            };
+
+            let content_len = replacement_text.len();
+            let Some(start_anchor) = multibuffer_anchor else {
+                continue;
+            };
+            let Ok(end_anchor) = editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+            }) else {
+                continue;
+            };
+            let image = Arc::new(image);
+            let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
+                insert_crease_for_mention(
+                    excerpt_id,
+                    text_anchor,
+                    content_len,
+                    MentionUri::PastedImage.name().into(),
+                    IconName::Image.path().into(),
+                    Some(Task::ready(Ok(image.clone())).shared()),
+                    editor.clone(),
+                    window,
+                    cx,
+                )
+            }) else {
+                continue;
+            };
+            let task = cx
+                .spawn(async move |cx| {
+                    let format = image.format;
+                    let image = cx
+                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                        .map_err(|e| e.to_string())?
+                        .await;
+                    drop(tx);
+                    if let Some(image) = image {
+                        Ok(Mention::Image(MentionImage {
+                            data: image.source,
+                            format,
+                        }))
+                    } else {
+                        Err("Failed to convert image".into())
+                    }
+                })
+                .shared();
+
+            mention_set
+                .update(cx, |mention_set, _cx| {
+                    mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+                })
+                .ok();
+
+            if task.await.notify_async_err(cx).is_none() {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.edit([(start_anchor..end_anchor, "")], cx);
+                    })
+                    .ok();
+                mention_set
+                    .update(cx, |mention_set, _cx| {
+                        mention_set.remove_mention(&crease_id)
+                    })
+                    .ok();
+            }
+        }
+    }))
 }
 
 pub(crate) fn insert_crease_for_mention(

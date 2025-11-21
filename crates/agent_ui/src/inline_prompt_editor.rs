@@ -33,6 +33,7 @@ use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
 use crate::mention_set::MentionSet;
+use crate::mention_set::paste_images_as_context;
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 
@@ -290,8 +291,13 @@ impl<T: 'static> PromptEditor<T> {
         self.editor.read(cx).text(cx)
     }
 
-    fn paste(&mut self, _: &Paste, _window: &mut Window, _cx: &mut Context<Self>) {
-        //todo
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if inline_assistant_model_supports_images(cx)
+            && let Some(task) =
+                paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
+        {
+            task.detach();
+        }
     }
 
     fn handle_prompt_editor_events(
