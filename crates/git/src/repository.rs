@@ -12,7 +12,7 @@ use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
@@ -137,10 +137,18 @@ impl Upstream {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub enum CommitMessageCleanup {
+    #[default]
+    Strip,
+    Whitespace,
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
+    pub cleanup: CommitMessageCleanup,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -1637,12 +1645,16 @@ impl GitRepository for RealGitRepository {
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
         async move {
+            let cleanup_kind = match options.cleanup {
+                CommitMessageCleanup::Strip => "--cleanup=strip",
+                CommitMessageCleanup::Whitespace => "--cleanup=whitespace",
+            };
             let mut cmd = new_smol_command(git_binary_path);
             cmd.current_dir(&working_directory?)
                 .envs(env.iter())
                 .args(["commit", "--quiet", "-m"])
                 .arg(&message.to_string())
-                .arg("--cleanup=strip")
+                .arg(cleanup_kind)
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 

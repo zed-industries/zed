@@ -4,6 +4,7 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
+use git::repository::CommitMessageCleanup;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::LanguageServerName;
 use paths::{
@@ -352,6 +353,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+    /// How commit cleanup is handled in the commit message.
+    ///
+    /// Default: strip
+    pub commit_cleanup: CommitMessageCleanup,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -522,6 +527,10 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
+            commit_cleanup: match git.commit_cleanup.unwrap_or_default() {
+                settings::CommitMessageCleanup::Strip => CommitMessageCleanup::Strip,
+                settings::CommitMessageCleanup::Whitespace => CommitMessageCleanup::Whitespace,
+            },
         };
         Self {
             context_servers: project

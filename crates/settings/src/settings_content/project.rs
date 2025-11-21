@@ -315,6 +315,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// How to cleanup a git commit message.
+    ///
+    /// Default: strip
+    pub commit_cleanup: Option<CommitMessageCleanup>,
 }
 
 #[derive(
@@ -430,6 +434,26 @@ pub enum GitPathStyle {
     FileNameFirst,
     /// Show full path first
     FilePathFirst,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitMessageCleanup {
+    #[default]
+    Strip,
+    Whitespace,
 }
 
 #[skip_serializing_none]
