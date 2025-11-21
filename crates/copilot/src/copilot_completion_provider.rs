@@ -68,7 +68,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         false
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &App) -> bool {
         self.pending_refresh.is_some() && self.completions.is_empty()
     }
 

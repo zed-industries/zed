@@ -5,12 +5,14 @@
       "cmd-}": "pane::ActivateNextItem",
       "cmd-0": "git_panel::ToggleFocus", // overrides `cmd-0` zoom reset
       "shift-escape": null, // Unmap workspace::zoom
+      "cmd-~": "git::Branch",
       "ctrl-f2": "debugger::Stop",
       "f6": "debugger::Pause",
       "f7": "debugger::StepInto",
       "f8": "debugger::StepOver",
       "shift-f8": "debugger::StepOut",
       "f9": "debugger::Continue",
+      "shift-f9": "debugger::Start",
       "alt-shift-f9": "debugger::Start"
     }
   },
@@ -45,7 +47,7 @@
       "alt-f7": "editor::FindAllReferences",
       "cmd-alt-f7": "editor::FindAllReferences",
       "cmd-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
-      "cmd-alt-b": "editor::GoToDefinitionSplit",
+      "cmd-alt-b": "editor::GoToImplementation",
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
@@ -68,7 +70,11 @@
       "cmd-r": ["buffer_search::Deploy", { "replace_enabled": true }],
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-l": "go_to_line::Toggle",
-      "alt-enter": "editor::ToggleCodeActions"
+      "alt-enter": "editor::ToggleCodeActions",
+      "ctrl-space": "editor::ShowCompletions",
+      "cmd-j": "editor::Hover",
+      "cmd-p": "editor::ShowSignatureHelp",
+      "cmd-\\": "assistant::InlineAssist"
     }
   },
   {
@@ -96,9 +102,13 @@
       "cmd-shift-f12": "workspace::ToggleAllDocks",
       "cmd-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-alt-r": "task::Spawn",
+      "shift-f10": "task::Spawn",
+      "cmd-f5": "task::Rerun",
       "cmd-e": "file_finder::Toggle",
-      // "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "cmd-shift-o": "file_finder::Toggle",
+      "cmd-shift-n": "file_finder::Toggle",
+      "cmd-n": "project_symbols::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
       "cmd-alt-o": "project_symbols::Toggle", // JetBrains: Go to Symbol
@@ -135,7 +145,9 @@
     "context": "Pane",
     "bindings": {
       "cmd-alt-left": "pane::GoBack",
-      "cmd-alt-right": "pane::GoForward"
+      "cmd-alt-right": "pane::GoForward",
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
     }
   },
   {

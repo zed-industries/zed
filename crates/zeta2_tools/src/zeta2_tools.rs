@@ -1,6 +1,6 @@
 mod zeta2_context_view;
 
-use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc};
 
 use chrono::TimeDelta;
 use client::{Client, UserStore};
@@ -237,24 +237,13 @@ impl Zeta2Inspector {
     fn set_zeta_options(&mut self, options: ZetaOptions, cx: &mut Context<Self>) {
         self.zeta.update(cx, |this, _cx| this.set_options(options));
 
-        const DEBOUNCE_TIME: Duration = Duration::from_millis(100);
-
         if let Some(prediction) = self.last_prediction.as_mut() {
             if let Some(buffer) = prediction.buffer.upgrade() {
                 let position = prediction.position;
-                let zeta = self.zeta.clone();
                 let project = self.project.clone();
-                prediction._task = Some(cx.spawn(async move |_this, cx| {
-                    cx.background_executor().timer(DEBOUNCE_TIME).await;
-                    if let Some(task) = zeta
-                        .update(cx, |zeta, cx| {
-                            zeta.refresh_prediction(&project, &buffer, position, cx)
-                        })
-                        .ok()
-                    {
-                        task.await.log_err();
-                    }
-                }));
+                self.zeta.update(cx, |zeta, cx| {
+                    zeta.refresh_prediction_from_buffer(project, buffer, position, cx)
+                });
                 prediction.state = LastPredictionState::Requested;
             } else {
                 self.last_prediction.take();

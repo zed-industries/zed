@@ -3,15 +3,14 @@ use std::num::NonZeroUsize;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
     CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
     ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
 };
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
@@ -112,7 +111,7 @@ pub struct WorkspaceSettingsContent {
     pub zoomed_padding: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
@@ -142,7 +141,7 @@ pub struct ItemSettingsContent {
     pub show_close_button: Option<ShowCloseButton>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
@@ -244,7 +243,7 @@ pub enum ActivateOnClose {
     LeftNeighbour,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePaneModifiers {
@@ -350,7 +349,7 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
@@ -367,13 +366,13 @@ pub struct TabBarSettingsContent {
     pub show_tab_bar_buttons: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
 pub struct StatusBarSettingsContent {
     /// Whether to show the status bar.
     ///
     /// Default: true
-    #[serde(rename = "experimental.show", default)]
+    #[serde(rename = "experimental.show")]
     pub show: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
@@ -465,7 +464,7 @@ pub enum PaneSplitDirectionVertical {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
-#[skip_serializing_none]
+#[with_fallible_options]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
     /// workspace when the centered layout is used.
@@ -510,7 +509,7 @@ impl OnLastWindowClosed {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelAutoOpenSettings {
     /// Whether to automatically open newly created files in the editor.
@@ -527,7 +526,7 @@ pub struct ProjectPanelAutoOpenSettings {
     pub on_drop: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
@@ -663,7 +662,7 @@ pub enum ProjectPanelSortMode {
     FilesFirst,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]

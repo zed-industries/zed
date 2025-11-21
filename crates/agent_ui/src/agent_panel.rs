@@ -17,6 +17,7 @@ use settings::{
 
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
+use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -34,7 +35,6 @@ use crate::{
     acp::{AcpThreadHistory, ThreadHistoryEvent},
 };
 use crate::{ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary};
-use crate::{ManageProfiles, context_store::ContextStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -431,7 +431,6 @@ pub struct AgentPanel {
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,
-    inline_assist_context_store: Entity<ContextStore>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     active_view: ActiveView,
@@ -543,7 +542,6 @@ impl AgentPanel {
         let client = workspace.client().clone();
         let workspace = workspace.weak_handle();
 
-        let inline_assist_context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
@@ -680,7 +678,6 @@ impl AgentPanel {
             configuration: None,
             configuration_subscription: None,
             context_server_registry,
-            inline_assist_context_store,
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
@@ -719,10 +716,6 @@ impl AgentPanel {
 
     pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
         &self.prompt_store
-    }
-
-    pub(crate) fn inline_assist_context_store(&self) -> &Entity<ContextStore> {
-        &self.inline_assist_context_store
     }
 
     pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
@@ -2664,23 +2657,19 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         cx: &mut Context<RulesLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
-            let Some(project) = self
-                .workspace
-                .upgrade()
-                .map(|workspace| workspace.read(cx).project().downgrade())
-            else {
+            let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
-            let prompt_store = None;
-            let thread_store = None;
-            let context_store = cx.new(|_| ContextStore::new(project.clone()));
+            let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+                return;
+            };
+            let project = workspace.read(cx).project().downgrade();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
-                context_store,
                 project,
-                prompt_store,
-                thread_store,
+                panel.read(cx).thread_store().clone(),
+                None,
                 initial_prompt,
                 window,
                 cx,

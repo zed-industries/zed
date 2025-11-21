@@ -1,17 +1,16 @@
 use std::ops::Range;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
-use futures::{Future, FutureExt, future::join_all};
+use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName, LspAdapter,
-    LspAdapterDelegate, Toolchain,
+    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
+    LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
@@ -155,47 +154,51 @@ impl ExtensionLspAdapter {
 
 #[async_trait(?Send)]
 impl DynLspInstaller for ExtensionLspAdapter {
-    fn get_language_server_command<'a>(
+    fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
-        _: &'a mut Option<(bool, LanguageServerBinary)>,
-        _: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        _: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _: AsyncApp,
+    ) -> LanguageServerBinaryLocations {
         async move {
-            let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
-            let command = self
-                .extension
-                .language_server_command(
-                    self.language_server_id.clone(),
-                    self.language_name.clone(),
-                    delegate,
-                )
-                .await?;
+            let ret = maybe!(async move {
+                let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+                let command = self
+                    .extension
+                    .language_server_command(
+                        self.language_server_id.clone(),
+                        self.language_name.clone(),
+                        delegate,
+                    )
+                    .await?;
 
-            let path = self.extension.path_from_extension(command.command.as_ref());
+                let path = self.extension.path_from_extension(command.command.as_ref());
 
-            // TODO: This should now be done via the `zed::make_file_executable` function in
-            // Zed extension API, but we're leaving these existing usages in place temporarily
-            // to avoid any compatibility issues between Zed and the extension versions.
-            //
-            // We can remove once the following extension versions no longer see any use:
-            // - toml@0.0.2
-            // - zig@0.0.1
-            if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
-                && path.starts_with(&self.extension.work_dir())
-            {
-                make_file_executable(&path)
-                    .await
-                    .context("failed to set file permissions")?;
-            }
+                // TODO: This should now be done via the `zed::make_file_executable` function in
+                // Zed extension API, but we're leaving these existing usages in place temporarily
+                // to avoid any compatibility issues between Zed and the extension versions.
+                //
+                // We can remove once the following extension versions no longer see any use:
+                // - toml@0.0.2
+                // - zig@0.0.1
+                if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
+                    && path.starts_with(&self.extension.work_dir())
+                {
+                    make_file_executable(&path)
+                        .await
+                        .context("failed to set file permissions")?;
+                }
 
-            Ok(LanguageServerBinary {
-                path,
-                arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
-                env: Some(command.env.into_iter().collect()),
+                Ok(LanguageServerBinary {
+                    path,
+                    arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
+                    env: Some(command.env.into_iter().collect()),
+                })
             })
+            .await;
+            (ret, None)
         }
         .boxed_local()
     }

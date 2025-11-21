@@ -5,7 +5,6 @@ use gpui::{
     App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
     Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
-use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
     LanguageServer, LanguageServerBinary, LanguageServerName, LanguageServerSelector, MessageType,
@@ -241,13 +240,15 @@ impl LspLogView {
                                 ],
                                 cx,
                             );
-                            if text.len() > 1024
-                                && let Some((fold_offset, _)) =
-                                    text.char_indices().dropping(1024).next()
-                                && fold_offset < text.len()
-                            {
+                            if text.len() > 1024 {
+                                let b = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                                let fold_offset =
+                                    b.as_rope().ceil_char_boundary(last_offset.0 + 1024);
                                 editor.fold_ranges(
-                                    vec![last_offset + fold_offset..last_offset + text.len()],
+                                    vec![
+                                        MultiBufferOffset(fold_offset)
+                                            ..MultiBufferOffset(b.as_rope().len()),
+                                    ],
                                     false,
                                     window,
                                     cx,

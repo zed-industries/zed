@@ -297,6 +297,7 @@ pub struct AcpThreadView {
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
     show_codex_windows_warning: bool,
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 enum ThreadState {
@@ -437,6 +438,7 @@ impl AcpThreadView {
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
             show_codex_windows_warning,
+            in_flight_prompt: None,
         }
     }
 
@@ -1155,6 +1157,7 @@ impl AcpThreadView {
             }
 
             this.update_in(cx, |this, window, cx| {
+                this.in_flight_prompt = Some(contents.clone());
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
                 this.message_editor.update(cx, |message_editor, cx| {
@@ -1182,7 +1185,12 @@ impl AcpThreadView {
             })?;
             let res = send.await;
             let turn_time_ms = turn_start_time.elapsed().as_millis();
-            let status = if res.is_ok() { "success" } else { "failure" };
+            let status = if res.is_ok() {
+                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
+                "success"
+            } else {
+                "failure"
+            };
             telemetry::event!(
                 "Agent Turn Completed",
                 agent = agent_telemetry_id,
@@ -5694,6 +5702,11 @@ impl AcpThreadView {
                         provider_id: None,
                     };
                     this.clear_thread_error(cx);
+                    if let Some(message) = this.in_flight_prompt.take() {
+                        this.message_editor.update(cx, |editor, cx| {
+                            editor.set_message(message, window, cx);
+                        });
+                    }
                     let this = cx.weak_entity();
                     window.defer(cx, |window, cx| {
                         Self::handle_auth_required(this, err, agent, connection, window, cx);

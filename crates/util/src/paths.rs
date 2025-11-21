@@ -625,7 +625,14 @@ impl PathWithPosition {
     pub fn parse_str(s: &str) -> Self {
         let trimmed = s.trim();
         let path = Path::new(trimmed);
-        let maybe_file_name_with_row_col = path.file_name().unwrap_or_default().to_string_lossy();
+        let Some(maybe_file_name_with_row_col) = path.file_name().unwrap_or_default().to_str()
+        else {
+            return Self {
+                path: Path::new(s).to_path_buf(),
+                row: None,
+                column: None,
+            };
+        };
         if maybe_file_name_with_row_col.is_empty() {
             return Self {
                 path: Path::new(s).to_path_buf(),
@@ -640,15 +647,15 @@ impl PathWithPosition {
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
         match SUFFIX_RE
-            .captures(&maybe_file_name_with_row_col)
+            .captures(maybe_file_name_with_row_col)
             .map(|caps| caps.extract())
         {
             Some((_, [file_name, maybe_row, maybe_column])) => {
                 let row = maybe_row.parse::<u32>().ok();
                 let column = maybe_column.parse::<u32>().ok();
 
-                let suffix_length = maybe_file_name_with_row_col.len() - file_name.len();
-                let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
+                let (_, suffix) = trimmed.split_once(file_name).unwrap();
+                let path_without_suffix = &trimmed[..trimmed.len() - suffix.len()];
 
                 Self {
                     path: Path::new(path_without_suffix).to_path_buf(),

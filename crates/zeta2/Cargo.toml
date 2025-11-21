@@ -32,7 +32,9 @@ indoc.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true
+lsp.workspace = true
 open_ai.workspace = true
+pretty_assertions.workspace = true
 project.workspace = true
 release_channel.workspace = true
 serde.workspace = true
@@ -44,7 +46,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
-pretty_assertions.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

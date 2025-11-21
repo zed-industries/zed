@@ -58,7 +58,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, Settings, SettingsStore, VIM_KEYMAP_PATH,
+    KeymapFileLoadResult, MigrationStatus, Settings, SettingsStore, VIM_KEYMAP_PATH,
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
@@ -1363,44 +1363,63 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
         .detach();
 }
 
-pub fn handle_settings_file_changes(
-    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut App,
-    settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
-) {
-    MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
+fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, cx: &mut App) {
+    if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
+        let settings_type = if is_user { "user" } else { "global" };
+        log::error!("Failed to load {} settings: {err}", settings_type);
+    }
 
-    // Helper function to process settings content
-    let process_settings = move |content: String,
-                                 is_user: bool,
-                                 store: &mut SettingsStore,
-                                 cx: &mut App|
-          -> bool {
-        let result = if is_user {
-            store.set_user_settings(&content, cx)
-        } else {
-            store.set_global_settings(&content, cx)
-        };
+    let error = match result.parse_status {
+        settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
+        settings::ParseStatus::Success => None,
+    };
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
-        let id = NotificationId::Named("failed-to-migrate-settings".into());
-        // Apply migrations to both user and global settings
-        let content_migrated = match result.migration_status {
-            settings::MigrationStatus::Succeeded => {
-                dismiss_app_notification(&id, cx);
+    let showed_parse_error = match error {
+        Some(error) => {
+            if let Some(InvalidSettingsError::LocalSettings { .. }) =
+                error.downcast_ref::<InvalidSettingsError>()
+            {
+                false
+                // Local settings errors are displayed by the projects
+            } else {
+                show_app_notification(id, cx, move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
+                            .primary_message("Open Settings File")
+                            .primary_icon(IconName::Settings)
+                            .primary_on_click(|window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::OpenSettingsFile.boxed_clone(),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            })
+                    })
+                });
                 true
             }
-            settings::MigrationStatus::NotNeeded => {
-                dismiss_app_notification(&id, cx);
-                false
-            }
-            settings::MigrationStatus::Failed { error: err } => {
+        }
+        None => {
+            dismiss_app_notification(&id, cx);
+            false
+        }
+    };
+    let id = NotificationId::Named("failed-to-migrate-settings".into());
+
+    match result.migration_status {
+        settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
+            dismiss_app_notification(&id, cx);
+        }
+        settings::MigrationStatus::Failed { error: err } => {
+            if !showed_parse_error {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
                             format!(
                                 "Failed to migrate settings\n\
-                                    {err}"
+                                {err}"
                             ),
                             cx,
                         )
@@ -1412,26 +1431,17 @@ pub fn handle_settings_file_changes(
                         })
                     })
                 });
-                // notify user here
-                false
             }
-        };
-
-        if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
-            let settings_type = if is_user { "user" } else { "global" };
-            log::error!("Failed to load {} settings: {err}", settings_type);
         }
-
-        settings_changed(
-            match result.parse_status {
-                settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
-                settings::ParseStatus::Success => None,
-            },
-            cx,
-        );
-
-        content_migrated
     };
+}
+
+pub fn handle_settings_file_changes(
+    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut App,
+) {
+    MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
     // Initial load of both settings files
     let global_content = cx
@@ -1444,8 +1454,8 @@ pub fn handle_settings_file_changes(
         .unwrap();
 
     SettingsStore::update_global(cx, |store, cx| {
-        process_settings(global_content, false, store, cx);
-        process_settings(user_content, true, store, cx);
+        notify_settings_errors(store.set_user_settings(&user_content, cx), true, cx);
+        notify_settings_errors(store.set_global_settings(&global_content, cx), false, cx);
     });
 
     // Watch for changes in both files
@@ -1462,7 +1472,14 @@ pub fn handle_settings_file_changes(
             };
 
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let migrating_in_memory = process_settings(content, is_user, store, cx);
+                let result = if is_user {
+                    store.set_user_settings(&content, cx)
+                } else {
+                    store.set_global_settings(&content, cx)
+                };
+                let migrating_in_memory =
+                    matches!(&result.migration_status, MigrationStatus::Succeeded);
+                notify_settings_errors(result, is_user, cx);
                 if let Some(notifier) = MigrationNotification::try_global(cx) {
                     notifier.update(cx, |_, cx| {
                         cx.emit(MigrationEvent::ContentChanged {
@@ -1722,36 +1739,6 @@ pub fn load_default_keymap(cx: &mut App) {
         cx.bind_keys(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );
-    }
-}
-
-pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
-
-    match error {
-        Some(error) => {
-            if let Some(InvalidSettingsError::LocalSettings { .. }) =
-                error.downcast_ref::<InvalidSettingsError>()
-            {
-                // Local settings errors are displayed by the projects
-                return;
-            }
-            show_app_notification(id, cx, move |cx| {
-                cx.new(|cx| {
-                    MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
-                        .primary_message("Open Settings File")
-                        .primary_icon(IconName::Settings)
-                        .primary_on_click(|window, cx| {
-                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
-                            cx.emit(DismissEvent);
-                        })
-                })
-            });
-        }
-        None => {
-            dismiss_app_notification(&id, cx);
-        }
     }
 }
 
@@ -4497,7 +4484,7 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
@@ -4615,7 +4602,7 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
             handle_keymap_file_changes(keymap_rx, cx);
         });
 

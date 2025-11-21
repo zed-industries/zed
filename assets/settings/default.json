@@ -1585,7 +1585,59 @@
     //
     // Most terminal themes have APCA values of 40-70.
     // A value of 45 preserves colorful themes while ensuring legibility.
-    "minimum_contrast": 45
+    "minimum_contrast": 45,
+    // Regexes used to identify paths for hyperlink navigation. Supports optional named capture
+    // groups `path`, `line`, `column`, and `link`. If none of these are present, the entire match
+    // is the hyperlink target. If `path` is present, it is the hyperlink target, along with `line`
+    // and `column` if present. `link` may be used to customize what text in terminal is part of the
+    // hyperlink. If `link` is not present, the text of the entire match is used. If `line` and
+    // `column` are not present, the default built-in line and column suffix processing is used
+    // which parses `line:column` and `(line,column)` variants. The default value handles Python
+    // diagnostics and common path, line, column syntaxes. This can be extended or replaced to
+    // handle specific scenarios. For example, to enable support for hyperlinking paths which
+    // contain spaces in rust output,
+    //
+    // [
+    //   "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
+    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)"
+    // ],
+    //
+    // could be used. Processing stops at the first regex with a match, even if no link is
+    // produced which is the case when the cursor is not over the hyperlinked text. For best
+    // performance it is recommended to order regexes from most common to least common. For
+    // readability and documentation, each regex may be an array of strings which are collected
+    // into one multi-line regex string for use in terminal path hyperlink detection.
+    "path_hyperlink_regexes": [
+      // Python-style diagnostics
+      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+      // Common path syntax with optional line, column, description, trailing punctuation, or
+      // surrounding symbols or quotes
+      [
+        "(?x)",
+        "# optionally starts with 0-2 opening prefix symbols",
+        "[({\\[<]{0,2}",
+        "# which may be followed by an opening quote",
+        "(?<quote>[\"'`])?",
+        "# `path` is the shortest sequence of any non-space character",
+        "(?<link>(?<path>[^ ]+?",
+        "    # which may end with a line and optionally a column,",
+        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+        "))",
+        "# which must be followed by a matching quote",
+        "(?(<quote>)\\k<quote>)",
+        "# and optionally a single closing symbol",
+        "[)}\\]>]?",
+        "# if line/column matched, may be followed by a description",
+        "(?(<line_column>):[^ 0-9][^ ]*)?",
+        "# which may be followed by trailing punctuation",
+        "[.,:)}\\]>]*",
+        "# and always includes trailing whitespace or end of line",
+        "([ ]+|$)"
+      ]
+    ],
+    // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
+    // timeout of `0` will disable path hyperlinking in terminal.
+    "path_hyperlink_timeout_ms": 1
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
