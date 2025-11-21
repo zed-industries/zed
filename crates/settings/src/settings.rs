@@ -34,7 +34,7 @@ pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, MigrationStatus, ParseStatus, Settings, SettingsFile,
-    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsStore,
+    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
