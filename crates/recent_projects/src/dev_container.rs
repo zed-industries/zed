@@ -1,20 +1,12 @@
-// TODO, parse devcontainer.json from here
-// Things to do:
-// - Runs `devcontainer up`
-// - Parses the output, and provides the project for opening
-
 use std::{path::Path, sync::Arc};
 
-use gpui::{AppContext, AsyncWindowContext};
-use language::Patch;
-use project::Project;
+use gpui::AsyncWindowContext;
 use serde::Deserialize;
 use settings::DevContainerConnection;
 use workspace::Workspace;
 
 use crate::remote_connections::Connection;
 
-// {"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerUp {
@@ -50,7 +42,7 @@ async fn check_for_devcontainer_cli() -> Result<(), DevContainerError> {
         }
     }
 }
-// {"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}
+
 async fn devcontainer_up(path: Arc<Path>) -> Result<DevContainerUp, DevContainerError> {
     let mut command = util::command::new_smol_command("devcontainer");
     command.arg("up");
@@ -59,26 +51,45 @@ async fn devcontainer_up(path: Arc<Path>) -> Result<DevContainerUp, DevContainer
 
     match command.output().await {
         Ok(output) => {
-            let raw = String::from_utf8_lossy(&output.stdout);
-            log::info!("Response is {}", raw);
-            let parsed: DevContainerUp = serde_json::from_str(&raw).unwrap();
-            Ok(parsed)
+            if output.status.success() {
+                let raw = String::from_utf8_lossy(&output.stdout);
+                serde_json::from_str::<DevContainerUp>(&raw).map_err(|e| {
+                    log::error!(
+                        "Unable to parse response from 'devcontainer up' command, error: {:?}",
+                        e
+                    );
+                    DevContainerError::DevContainerParseFailed
+                })
+            } else {
+                log::error!(
+                    "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Err(DevContainerError::DevContainerUpFailed)
+            }
         }
         Err(e) => {
-            log::error!("Unable to find devcontainer CLI in $PATH: {:?}", e);
-            Err(DevContainerError::DevContainerCliNotAvailable)
+            log::error!("Error running devcontainer up: {:?}", e);
+            Err(DevContainerError::DevContainerUpFailed)
         }
     }
 }
 
-fn project_directory(cx: &mut AsyncWindowContext) -> Arc<Path> {
-    let workspace = cx.window_handle().downcast::<Workspace>().unwrap();
+fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
+    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        return None;
+    };
 
-    let foo = workspace.update(cx, |workspace, _, cx| {
+    match workspace.update(cx, |workspace, _, cx| {
         workspace.project().read(cx).active_project_directory(cx)
-    });
-
-    foo.unwrap().expect("is some") // Has to be handled since there is a chance there's no project open
+    }) {
+        Ok(dir) => dir,
+        Err(e) => {
+            log::error!("Error getting project directory from workspace: {:?}", e);
+            None
+        }
+    }
 }
 
 pub(crate) async fn start_dev_container(
@@ -88,17 +99,18 @@ pub(crate) async fn start_dev_container(
 
     check_for_devcontainer_cli().await?;
 
-    let directory = project_directory(cx);
+    let Some(directory) = project_directory(cx) else {
+        return Err(DevContainerError::DevContainerNotFound);
+    };
 
     if let Ok(DevContainerUp {
-        outcome,
         container_id,
-        remote_user,
         remote_workspace_folder,
+        ..
     }) = devcontainer_up(directory).await
     {
         let connection = Connection::DevContainer(DevContainerConnection {
-            name: "test".into(), // TODO is this needed
+            name: container_id.clone().into(),
             image: "mcr.microsoft.com/devcontainers/rust:latest".into(),
             container_id: container_id.into(),
             working_directory: remote_workspace_folder.clone().into(),
@@ -115,6 +127,7 @@ pub(crate) enum DevContainerError {
     DockerNotAvailable,
     DevContainerCliNotAvailable,
     DevContainerUpFailed,
+    DevContainerNotFound,
     DevContainerParseFailed,
 }
 
