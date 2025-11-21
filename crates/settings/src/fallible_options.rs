@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::ParseStatus;
 
 thread_local! {
-    static ERRORS: RefCell<Option<Vec<anyhow::Error>>> = RefCell::new(None);
+    static ERRORS: RefCell<Option<Vec<anyhow::Error>>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn parse_json<'de, T>(json: &'de str) -> (Option<T>, ParseStatus)
@@ -92,9 +92,9 @@ mod tests {
         assert_eq!(
             settings.unwrap(),
             Foo {
-                foo: Some("bar".into()).into(),
-                bar: None.into(),
-                baz: None.into(),
+                foo: Some("bar".into()),
+                bar: None,
+                baz: None,
             }
         );
 
