@@ -4,8 +4,9 @@ use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
-    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    ZED_VERSION_HEADER_NAME,
+    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejection,
+    MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+    RejectEditPredictionsBody, ZED_VERSION_HEADER_NAME,
 };
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
@@ -17,8 +18,8 @@ use edit_prediction_context::{
     SyntaxIndex, SyntaxIndexState,
 };
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
-use futures::AsyncReadExt as _;
 use futures::channel::{mpsc, oneshot};
+use futures::{AsyncReadExt as _, StreamExt as _};
 use gpui::http_client::{AsyncBody, Method};
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task,
@@ -169,6 +170,9 @@ pub struct Zeta {
     sweep_api_token: Option<String>,
     sweep_ai_debug_info: Arc<str>,
     data_collection_choice: DataCollectionChoice,
+    rejected_predictions: Vec<EditPredictionRejection>,
+    reject_predictions_tx: mpsc::UnboundedSender<()>,
+    reject_predictions_debounce_task: Option<Task<()>>,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -271,6 +275,7 @@ struct ZetaProject {
 struct CurrentEditPrediction {
     pub requested_by: PredictionRequestedBy,
     pub prediction: EditPrediction,
+    pub was_shown: bool,
 }
 
 impl CurrentEditPrediction {
@@ -329,7 +334,7 @@ impl PredictionRequestedBy {
 
 struct PendingPrediction {
     id: usize,
-    _task: Task<()>,
+    task: Task<Option<EditPredictionId>>,
 }
 
 /// A prediction from the perspective of a buffer.
@@ -423,6 +428,17 @@ impl Zeta {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
         let data_collection_choice = Self::load_data_collection_choice();
 
+        let (reject_tx, mut reject_rx) = mpsc::unbounded();
+        cx.spawn(async move |this, cx| {
+            while let Some(()) = reject_rx.next().await {
+                this.update(cx, |this, cx| this.reject_edit_predictions(cx))?
+                    .await
+                    .log_err();
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+
         Self {
             projects: HashMap::default(),
             client,
@@ -451,6 +467,9 @@ impl Zeta {
                 .log_err(),
             data_collection_choice,
             sweep_ai_debug_info: sweep_ai::debug_info(cx),
+            rejected_predictions: Vec::new(),
+            reject_predictions_debounce_task: None,
+            reject_predictions_tx: reject_tx,
         }
     }
 
@@ -732,6 +751,7 @@ impl Zeta {
         let CurrentEditPrediction {
             requested_by,
             prediction,
+            ..
         } = project_state.current_prediction.as_ref()?;
 
         if prediction.targets_buffer(buffer.read(cx)) {
@@ -753,8 +773,9 @@ impl Zeta {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        if self.edit_prediction_model != ZetaEditPredictionModel::Zeta2 {
-            return;
+        match self.edit_prediction_model {
+            ZetaEditPredictionModel::Zeta1 | ZetaEditPredictionModel::Zeta2 => {}
+            ZetaEditPredictionModel::Sweep => return,
         }
 
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
@@ -765,7 +786,9 @@ impl Zeta {
             return;
         };
         let request_id = prediction.prediction.id.to_string();
-        project_state.pending_predictions.clear();
+        for pending_prediction in mem::take(&mut project_state.pending_predictions) {
+            self.cancel_pending_prediction(pending_prediction, cx);
+        }
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
@@ -802,11 +825,112 @@ impl Zeta {
         .detach_and_log_err(cx);
     }
 
-    fn discard_current_prediction(&mut self, project: &Entity<Project>) {
-        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
-            project_state.current_prediction.take();
-            project_state.pending_predictions.clear();
+    fn reject_edit_predictions(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        match self.edit_prediction_model {
+            ZetaEditPredictionModel::Zeta1 | ZetaEditPredictionModel::Zeta2 => {}
+            ZetaEditPredictionModel::Sweep => return Task::ready(anyhow::Ok(())),
+        }
+
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let app_version = AppVersion::global(cx);
+        let last_rejection = self.rejected_predictions.last().cloned();
+        let Some(last_rejection) = last_rejection else {
+            return Task::ready(anyhow::Ok(()));
         };
+
+        let body = serde_json::to_string(&RejectEditPredictionsBody {
+            rejections: self.rejected_predictions.clone(),
+        })
+        .ok();
+
+        cx.spawn(async move |this, cx| {
+            let url = client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/reject", &[])?;
+
+            cx.background_spawn(Self::send_api_request::<()>(
+                move |builder| {
+                    let req = builder.uri(url.as_ref()).body(body.clone().into());
+                    Ok(req?)
+                },
+                client,
+                llm_token,
+                app_version,
+            ))
+            .await
+            .context("Failed to reject edit predictions")?;
+
+            this.update(cx, |this, _| {
+                if let Some(ix) = this
+                    .rejected_predictions
+                    .iter()
+                    .position(|rejection| rejection.request_id == last_rejection.request_id)
+                {
+                    this.rejected_predictions.drain(..ix + 1);
+                }
+            })
+        })
+    }
+
+    fn discard_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
+        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
+            project_state.pending_predictions.clear();
+            if let Some(prediction) = project_state.current_prediction.take() {
+                self.discard_prediction(prediction.prediction.id, prediction.was_shown, cx);
+            }
+        };
+    }
+
+    fn did_show_current_prediction(&mut self, project: &Entity<Project>, _cx: &mut Context<Self>) {
+        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
+            if let Some(current_prediction) = project_state.current_prediction.as_mut() {
+                current_prediction.was_shown = true;
+            }
+        }
+    }
+
+    fn discard_prediction(
+        &mut self,
+        prediction_id: EditPredictionId,
+        was_shown: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.rejected_predictions.push(EditPredictionRejection {
+            request_id: prediction_id.to_string(),
+            was_shown,
+        });
+
+        let reached_request_limit =
+            self.rejected_predictions.len() >= MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST;
+        let reject_tx = self.reject_predictions_tx.clone();
+        self.reject_predictions_debounce_task = Some(cx.spawn(async move |_this, cx| {
+            const DISCARD_COMPLETIONS_DEBOUNCE: Duration = Duration::from_secs(15);
+            if !reached_request_limit {
+                cx.background_executor()
+                    .timer(DISCARD_COMPLETIONS_DEBOUNCE)
+                    .await;
+            }
+            reject_tx.unbounded_send(()).log_err();
+        }));
+    }
+
+    fn cancel_pending_prediction(
+        &self,
+        pending_prediction: PendingPrediction,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            let Some(prediction_id) = pending_prediction.task.await else {
+                return;
+            };
+
+            this.update(cx, |this, cx| {
+                this.discard_prediction(prediction_id, false, cx);
+            })
+            .ok();
+        })
+        .detach()
     }
 
     fn is_refreshing(&self, project: &Entity<Project>) -> bool {
@@ -829,12 +953,13 @@ impl Zeta {
                 })
                 .log_err()
             else {
-                return Task::ready(anyhow::Ok(()));
+                return Task::ready(anyhow::Ok(None));
             };
 
             let project = project.clone();
             cx.spawn(async move |cx| {
                 if let Some(prediction) = request_task.await? {
+                    let id = prediction.id.clone();
                     this.update(cx, |this, cx| {
                         let project_state = this
                             .projects
@@ -844,6 +969,7 @@ impl Zeta {
                         let new_prediction = CurrentEditPrediction {
                             requested_by: PredictionRequestedBy::Buffer(buffer.entity_id()),
                             prediction: prediction,
+                            was_shown: false,
                         };
 
                         if project_state
@@ -858,8 +984,10 @@ impl Zeta {
                         }
                         anyhow::Ok(())
                     })??;
+                    Ok(Some(id))
+                } else {
+                    Ok(None)
                 }
-                Ok(())
             })
         })
     }
@@ -889,7 +1017,7 @@ impl Zeta {
                 .log_err()
                 .flatten()
             else {
-                return Task::ready(anyhow::Ok(()));
+                return Task::ready(anyhow::Ok(None));
             };
 
             cx.spawn(async move |cx| {
@@ -906,7 +1034,7 @@ impl Zeta {
                 )
                 .await?
                 else {
-                    return anyhow::Ok(());
+                    return anyhow::Ok(None);
                 };
 
                 let Some(prediction) = this
@@ -915,9 +1043,10 @@ impl Zeta {
                     })?
                     .await?
                 else {
-                    return anyhow::Ok(());
+                    return anyhow::Ok(None);
                 };
 
+                let id = prediction.id.clone();
                 this.update(cx, |this, cx| {
                     if let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) {
                         zeta_project.current_prediction.get_or_insert_with(|| {
@@ -925,12 +1054,13 @@ impl Zeta {
                             CurrentEditPrediction {
                                 requested_by: PredictionRequestedBy::DiagnosticsUpdate,
                                 prediction,
+                                was_shown: false,
                             }
                         });
                     }
                 })?;
 
-                anyhow::Ok(())
+                anyhow::Ok(Some(id))
             })
         });
     }
@@ -945,7 +1075,11 @@ impl Zeta {
         project: Entity<Project>,
         throttle_entity: EntityId,
         cx: &mut Context<Self>,
-        do_refresh: impl FnOnce(WeakEntity<Self>, &mut AsyncApp) -> Task<Result<()>> + 'static,
+        do_refresh: impl FnOnce(
+            WeakEntity<Self>,
+            &mut AsyncApp,
+        ) -> Task<Result<Option<EditPredictionId>>>
+        + 'static,
     ) {
         let zeta_project = self.get_or_init_zeta_project(&project, cx);
         let pending_prediction_id = zeta_project.next_pending_prediction_id;
@@ -962,7 +1096,7 @@ impl Zeta {
                 cx.background_executor().timer(timeout).await;
             }
 
-            do_refresh(this.clone(), cx).await.log_err();
+            let edit_prediction_id = do_refresh(this.clone(), cx).await.log_err().flatten();
 
             this.update(cx, |this, cx| {
                 let zeta_project = this.get_or_init_zeta_project(&project, cx);
@@ -970,25 +1104,31 @@ impl Zeta {
                 if zeta_project.pending_predictions[0].id == pending_prediction_id {
                     zeta_project.pending_predictions.remove(0);
                 } else {
-                    zeta_project.pending_predictions.clear();
+                    let pending_predictions = mem::take(&mut zeta_project.pending_predictions);
+                    for pending_prediction in pending_predictions {
+                        this.cancel_pending_prediction(pending_prediction, cx)
+                    }
                 }
 
                 cx.notify();
             })
             .ok();
+
+            edit_prediction_id
         });
 
         if zeta_project.pending_predictions.len() <= 1 {
             zeta_project.pending_predictions.push(PendingPrediction {
                 id: pending_prediction_id,
-                _task: task,
+                task,
             });
         } else if zeta_project.pending_predictions.len() == 2 {
-            zeta_project.pending_predictions.pop();
+            let pending_prediction = zeta_project.pending_predictions.pop().unwrap();
             zeta_project.pending_predictions.push(PendingPrediction {
                 id: pending_prediction_id,
-                _task: task,
+                task,
             });
+            self.cancel_pending_prediction(pending_prediction, cx);
         }
     }
 
@@ -2779,8 +2919,8 @@ mod tests {
             .unwrap();
         refresh_task.await.unwrap();
 
-        zeta.update(cx, |zeta, _cx| {
-            zeta.discard_current_prediction(&project);
+        zeta.update(cx, |zeta, cx| {
+            zeta.discard_current_prediction(&project, cx);
         });
 
         // Prediction for another file

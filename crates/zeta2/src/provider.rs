@@ -131,8 +131,14 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, _cx| {
-            zeta.discard_current_prediction(&self.project);
+        self.zeta.update(cx, |zeta, cx| {
+            zeta.discard_current_prediction(&self.project, cx);
+        });
+    }
+
+    fn did_show(&mut self, cx: &mut Context<Self>) {
+        self.zeta.update(cx, |zeta, cx| {
+            zeta.did_show_current_prediction(&self.project, cx);
         });
     }
 
@@ -162,8 +168,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let snapshot = buffer.snapshot();
 
         let Some(edits) = prediction.interpolate(&snapshot) else {
-            self.zeta.update(cx, |zeta, _cx| {
-                zeta.discard_current_prediction(&self.project);
+            self.zeta.update(cx, |zeta, cx| {
+                zeta.discard_current_prediction(&self.project, cx);
             });
             return None;
         };
