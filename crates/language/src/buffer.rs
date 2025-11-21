@@ -107,9 +107,8 @@ pub struct Buffer {
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
-    sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
-    reparse: Option<Task<()>>,
+    reparsing: bool,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -987,9 +986,8 @@ impl Buffer {
             file,
             capability,
             syntax_map,
-            reparse: None,
+            reparsing: false,
             non_text_state_update_count: 0,
-            sync_parse_timeout: Duration::from_millis(1),
             parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             wait_for_autoindent_txs: Default::default(),
@@ -1500,18 +1498,13 @@ impl Buffer {
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
-        self.reparse.is_some()
+        self.reparsing
     }
 
     /// Indicates whether the buffer contains any regions that may be
     /// written in a language that hasn't been loaded yet.
     pub fn contains_unknown_injections(&self) -> bool {
         self.syntax_map.lock().contains_unknown_injections()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
-        self.sync_parse_timeout = timeout;
     }
 
     /// Called after an edit to synchronize the buffer's main parse tree with
@@ -1538,7 +1531,7 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
-        if self.reparse.is_some() {
+        if self.reparsing {
             return;
         }
         let language = if let Some(language) = self.language.clone() {
@@ -1566,45 +1559,34 @@ impl Buffer {
         });
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        match cx
-            .background_executor()
-            .block_with_timeout(self.sync_parse_timeout, parse_task)
-        {
-            Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, cx);
-                self.reparse = None;
-            }
-            // TODO JK hotspot
-            Err(parse_task) => {
-                // todo(lw): hot foreground spawn
-                log::error!("Oops, we failed in bg, so let's try fg instead");
-                self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = cx.background_spawn(parse_task).await;
-                    this.update(cx, move |this, cx| {
-                        let grammar_changed = || {
-                            this.language.as_ref().is_none_or(|current_language| {
-                                !Arc::ptr_eq(&language, current_language)
-                            })
-                        };
-                        let language_registry_changed = || {
-                            new_syntax_map.contains_unknown_injections()
-                                && language_registry.is_some_and(|registry| {
-                                    registry.version() != new_syntax_map.language_registry_version()
-                                })
-                        };
-                        let parse_again = this.version.changed_since(&parsed_version)
-                            || language_registry_changed()
-                            || grammar_changed();
-                        this.did_finish_parsing(new_syntax_map, cx);
-                        this.reparse = None;
-                        if parse_again {
-                            this.reparse(cx);
-                        }
-                    })
-                    .ok();
-                }));
-            }
-        }
+        self.reparsing = true;
+        // todo(lw): hot foreground spawn
+        cx.spawn(async move |this, cx| {
+            let new_syntax_map = cx.background_spawn(parse_task).await;
+            this.update(cx, move |this, cx| {
+                let grammar_changed = || {
+                    this.language
+                        .as_ref()
+                        .is_none_or(|current_language| !Arc::ptr_eq(&language, current_language))
+                };
+                let language_registry_changed = || {
+                    new_syntax_map.contains_unknown_injections()
+                        && language_registry.is_some_and(|registry| {
+                            registry.version() != new_syntax_map.language_registry_version()
+                        })
+                };
+                let parse_again = this.version.changed_since(&parsed_version)
+                    || language_registry_changed()
+                    || grammar_changed();
+                this.did_finish_parsing(new_syntax_map, cx);
+                this.reparsing = false;
+                if parse_again {
+                    this.reparse(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {

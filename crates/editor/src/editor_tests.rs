@@ -17830,11 +17830,6 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
     )
     .await;
 
-    cx.update_buffer(|buffer, _| {
-        // This causes autoindent to be async.
-        buffer.set_sync_parse_timeout(Duration::ZERO)
-    });
-
     cx.set_state("fn c() {\n    d()ˇ\n}\n");
     cx.simulate_keystroke("\n");
     cx.run_until_parked();
