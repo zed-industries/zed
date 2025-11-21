@@ -3640,7 +3640,6 @@ impl MultiBufferSnapshot {
                 Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
                     .to_offset(self);
 
-            // todo! use multibuffer new types here
             let word_diffs = hunk
                 .base_word_diffs
                 .iter()
