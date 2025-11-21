@@ -187,6 +187,7 @@ pub struct GitStoreCheckpoint {
 pub struct StatusEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
+    pub old_path: Option<RepoPath>,
 }
 
 impl StatusEntry {
@@ -208,6 +209,7 @@ impl StatusEntry {
             repo_path: self.repo_path.to_proto(),
             simple_status,
             status: Some(status_to_proto(self.status)),
+            old_path: self.old_path.as_ref().map(|p| p.to_proto()),
         }
     }
 }
@@ -218,7 +220,8 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
-        Ok(Self { repo_path, status })
+        let old_path = value.old_path.and_then(|p| RepoPath::from_proto(&p).ok());
+        Ok(Self { repo_path, status, old_path })
     }
 }
 
@@ -5355,6 +5358,7 @@ impl Repository {
                             changed_path_statuses.push(Edit::Insert(StatusEntry {
                                 repo_path: repo_path.clone(),
                                 status: *status,
+                                old_path: statuses.renamed_paths.get(repo_path).cloned(),
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
@@ -5728,6 +5732,7 @@ async fn compute_snapshot(
             .map(|(repo_path, status)| StatusEntry {
                 repo_path: repo_path.clone(),
                 status: *status,
+                old_path: statuses.renamed_paths.get(repo_path).cloned(),
             }),
         (),
     );

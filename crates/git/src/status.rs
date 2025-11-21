@@ -1,9 +1,9 @@
 use crate::{Oid, repository::RepoPath};
 use anyhow::{Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, sync::Arc};
+use std::{cell::RefCell, str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -430,19 +430,28 @@ impl std::ops::Sub for GitSummary {
 #[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
 }
 
 impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
+        let parts: Vec<&str> = s.split('\0').collect();
+        let renamed_paths = RefCell::new(HashMap::default());
+        let skip_indices = RefCell::new(HashSet::default());
+
+        let mut entries = parts
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| {
+                if skip_indices.borrow().contains(&i) {
+                    return None;
+                }
                 let sep = entry.get(2..3)?;
                 if sep != " " {
                     return None;
-                };
+                }
                 let path = &entry[3..];
                 // The git status output includes untracked directories as well as untracked files.
                 // We do our own processing to compute the "summary" status of each directory,
@@ -451,13 +460,38 @@ impl FromStr for GitStatus {
                 if path.ends_with('/') {
                     return None;
                 }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
+                let status = entry.as_bytes()[0..2].try_into().ok()?;
                 let status = FileStatus::from_bytes(status).log_err()?;
-                // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
-                Some((path, status))
+
+                let is_renamed = matches!(
+                    status,
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Renamed | StatusCode::Copied,
+                        ..
+                    }) | FileStatus::Tracked(TrackedStatus {
+                        worktree_status: StatusCode::Renamed | StatusCode::Copied,
+                        ..
+                    })
+                );
+
+                if is_renamed && i + 1 < parts.len() {
+                    let old_path_str = parts[i + 1];
+                    if old_path_str.is_empty() || old_path_str.ends_with('/') {
+                        return None;
+                    }
+                    let new_path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
+                    let old_path = RepoPath::from_rel_path(RelPath::unix(old_path_str).log_err()?);
+                    renamed_paths.borrow_mut().insert(new_path.clone(), old_path);
+                    skip_indices.borrow_mut().insert(i + 1);
+                    Some((new_path, status))
+                } else {
+                    // git-status outputs `/`-delimited repo paths, even on Windows.
+                    let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
+                    Some((path, status))
+                }
             })
             .collect::<Vec<_>>();
+
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
@@ -481,6 +515,7 @@ impl FromStr for GitStatus {
         });
         Ok(Self {
             entries: entries.into(),
+            renamed_paths: renamed_paths.into_inner(),
         })
     }
 }
@@ -489,6 +524,7 @@ impl Default for GitStatus {
     fn default() -> Self {
         Self {
             entries: Arc::new([]),
+            renamed_paths: HashMap::default(),
         }
     }
 }
@@ -580,8 +616,89 @@ mod tests {
 
     use crate::{
         repository::RepoPath,
-        status::{TreeDiff, TreeDiffStatus},
+        status::{GitStatus, TreeDiff, TreeDiffStatus},
     };
+
+    #[test]
+    fn test_git_status_parsing_with_renames() {
+        // Test git status output with renamed files (using -z for null-byte separation)
+        // Format: "XY path\0" for regular files, "R  new_path\0old_path\0" for renames
+        let input = "M  modified.rs\x00A  added.rs\x00D  deleted.rs\x00R  project/new/renamed.rs\x00project/old/renamed.rs\x00".to_owned();
+
+        let output: GitStatus = input.parse().unwrap();
+
+        // Check entries
+        let entries: Vec<_> = output.entries.iter().collect();
+        assert_eq!(entries.len(), 4);
+
+        // Check added file
+        assert_eq!(entries[0].0, RepoPath::new("added.rs").unwrap());
+        assert!(entries[0].1.is_created());
+
+        // Check deleted file
+        assert_eq!(entries[1].0, RepoPath::new("deleted.rs").unwrap());
+        assert!(entries[1].1.is_deleted());
+
+        // Check modified file
+        assert_eq!(entries[2].0, RepoPath::new("modified.rs").unwrap());
+        assert!(entries[2].1.is_modified());
+
+        // Check renamed file
+        assert_eq!(entries[3].0, RepoPath::new("project/new/renamed.rs").unwrap());
+
+        // Check renamed_paths map contains the old path
+        assert_eq!(
+            output.renamed_paths.get(&RepoPath::new("project/new/renamed.rs").unwrap()),
+            Some(&RepoPath::new("project/old/renamed.rs").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_git_status_parsing_with_multiple_renames() {
+        // Test multiple renamed files in a single status output
+        let input = "R  src/new_file1.rs\x00src/old_file1.rs\x00R  src/new_file2.rs\x00src/old_file2.rs\x00M  src/modified.rs\x00".to_owned();
+
+        let output: GitStatus = input.parse().unwrap();
+
+        // Check entries - should have 3 entries (2 renames + 1 modified), not 5
+        let entries: Vec<_> = output.entries.iter().collect();
+        assert_eq!(entries.len(), 3);
+
+        // Check renamed_paths map contains both renames
+        assert_eq!(
+            output.renamed_paths.get(&RepoPath::new("src/new_file1.rs").unwrap()),
+            Some(&RepoPath::new("src/old_file1.rs").unwrap())
+        );
+        assert_eq!(
+            output.renamed_paths.get(&RepoPath::new("src/new_file2.rs").unwrap()),
+            Some(&RepoPath::new("src/old_file2.rs").unwrap())
+        );
+        assert_eq!(output.renamed_paths.len(), 2);
+    }
+
+    #[test]
+    fn test_git_status_parsing_with_copied_files() {
+        // Test copied files (git status shows as "C  " similar to renames)
+        // Format: "C  new_path\0old_path\0" for copies
+        let input = "C  src/copy1.rs\x00src/original1.rs\x00C  src/copy2.rs\x00src/original2.rs\x00A  src/new.rs\x00".to_owned();
+
+        let output: GitStatus = input.parse().unwrap();
+
+        // Check entries - should have 3 entries (2 copies + 1 added), not 5
+        let entries: Vec<_> = output.entries.iter().collect();
+        assert_eq!(entries.len(), 3);
+
+        // Check renamed_paths map contains both copies (we track copies the same way as renames)
+        assert_eq!(
+            output.renamed_paths.get(&RepoPath::new("src/copy1.rs").unwrap()),
+            Some(&RepoPath::new("src/original1.rs").unwrap())
+        );
+        assert_eq!(
+            output.renamed_paths.get(&RepoPath::new("src/copy2.rs").unwrap()),
+            Some(&RepoPath::new("src/original2.rs").unwrap())
+        );
+        assert_eq!(output.renamed_paths.len(), 2);
+    }
 
     #[test]
     fn test_tree_diff_parsing() {
