@@ -215,6 +215,8 @@ pub enum RequestMessage {
         content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_details: Option<serde_json::Value>,
     },
     User {
         content: MessageContent,
