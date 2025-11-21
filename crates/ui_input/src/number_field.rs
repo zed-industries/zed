@@ -432,19 +432,23 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                             .bg(bg_color)
                             .in_focus(|this| this.border_color(focus_border_color))
                             .child(match *self.mode.read(cx) {
-                                NumberFieldMode::Read => h_flex()
-                                    .px_1()
-                                    .flex_1()
-                                    .justify_center()
-                                    .child(Label::new((self.format)(&self.value)))
-                                    .into_any_element(),
-                                // Edit mode is disabled until we implement center text alignment for editor
-                                // mode.write(cx, NumberFieldMode::Edit);
-                                //
-                                // When we get to making Edit mode work, we shouldn't even focus the decrement/increment buttons.
-                                // Focus should go instead straight to the editor, avoiding any double-step focus.
-                                // In this world, the buttons become a mouse-only interaction, given users should be able
-                                // to do everything they'd do with the buttons straight in the editor anyway.
+                                NumberFieldMode::Read => {
+                                    let mode = self.mode.clone();
+                                    div()
+                                        .id("number_field_value")
+                                        .px_1()
+                                        .flex_1()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(hover_bg_color))
+                                        .child(Label::new((self.format)(&self.value)))
+                                        .on_click(move |_, _, cx| {
+                                            mode.write(cx, NumberFieldMode::Edit);
+                                        })
+                                        .into_any_element()
+                                }
                                 NumberFieldMode::Edit => h_flex()
                                     .flex_1()
                                     .child(window.use_state(cx, {
@@ -452,7 +456,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                             let previous_focus_handle = window.focused(cx);
                                             let mut editor = Editor::single_line(window, cx);
                                             let mut style = EditorStyle::default();
-                                            style.text.text_align = gpui::TextAlign::Right;
+                                            style.text.text_align = gpui::TextAlign::Center;
                                             editor.set_style(style, window, cx);
 
                                             editor.set_text(format!("{}", self.value), window, cx);
