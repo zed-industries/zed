@@ -248,7 +248,7 @@ impl Zeta2Inspector {
                     cx.background_executor().timer(DEBOUNCE_TIME).await;
                     if let Some(task) = zeta
                         .update(cx, |zeta, cx| {
-                            zeta.refresh_prediction(&project, &buffer, position, cx)
+                            zeta.refresh_prediction_from_buffer(&project, &buffer, position, cx)
                         })
                         .ok()
                     {

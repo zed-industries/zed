@@ -12,7 +12,7 @@ use language::ToPoint as _;
 use project::Project;
 use util::ResultExt as _;
 
-use crate::{BufferEditPrediction, Zeta, ZetaEditPredictionModel};
+use crate::{BufferEditPrediction, Zeta, ZetaEditPredictionModel, ZetaEvent};
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
@@ -29,19 +29,26 @@ impl ZetaEditPredictionProvider {
         project: Entity<Project>,
         client: &Arc<Client>,
         user_store: &Entity<UserStore>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let zeta = Zeta::global(client, user_store, cx);
         zeta.update(cx, |zeta, cx| {
             zeta.register_project(&project, cx);
         });
 
+        cx.subscribe(&zeta, |_this, _zeta, event, cx| match event {
+            ZetaEvent::DiagnosticBasedPredictionAvailable => {
+                cx.notify();
+            }
+        })
+        .detach();
+
         Self {
-            zeta,
             next_pending_prediction_id: 0,
             pending_predictions: ArrayVec::new(),
             last_request_timestamp: Instant::now(),
             project: project,
+            zeta,
         }
     }
 }
@@ -140,7 +147,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
             let refresh_task = this.update(cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.refresh_prediction(&project, &buffer, cursor_position, cx)
+                    zeta.refresh_prediction_from_buffer(&project, &buffer, cursor_position, cx)
                 })
             });
 

@@ -21735,7 +21735,6 @@ dependencies = [
  "collections",
  "edit_prediction",
  "edit_prediction_context",
- "editor",
  "feature_flags",
  "futures 0.3.31",
  "gpui",
