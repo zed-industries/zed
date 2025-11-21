@@ -278,13 +278,11 @@
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
-      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
-      "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
@@ -363,18 +361,6 @@
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
       "alt-enter": "editor::Newline"
-    }
-  },
-  {
-    "context": "ContextStrip",
-    "use_key_equivalents": true,
-    "bindings": {
-      "up": "agent::FocusUp",
-      "right": "agent::FocusRight",
-      "left": "agent::FocusLeft",
-      "down": "agent::FocusDown",
-      "backspace": "agent::RemoveFocusedContext",
-      "enter": "agent::AcceptSuggestedContext"
     }
   },
   {
@@ -889,9 +875,7 @@
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-alt-/": "agent::ToggleModelSelector",
-      "cmd-alt-e": "agent::RemoveAllContext",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist"
     }
