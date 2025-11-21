@@ -117,7 +117,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, Point, ToPoint as _};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 use virtual_document::VirtualDocumentStore;
 
 use util::{
