@@ -113,8 +113,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     VariableName::File.template_value(),
                 ],
                 cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
@@ -132,8 +131,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
@@ -1677,6 +1675,93 @@ mod tests {
         assert!(
             bun_test_index.unwrap() < node_test_index.unwrap(),
             "Bun should come before Node"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_vitest_uses_no_file_parallelism_flag(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let package_json = json!({
+            "devDependencies": {
+                "vitest": "4.0.0"
+            }
+        })
+        .to_string();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "package.json": package_json,
+                "file.test.ts": "",
+            }),
+        )
+        .await;
+
+        let provider = TypeScriptContextProvider::new(fs.clone());
+        let package_json_data = cx
+            .update(|cx| {
+                provider.combined_package_json_data(
+                    fs.clone(),
+                    path!("/root").as_ref(),
+                    rel_path("file.test.ts"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert!(package_json_data.vitest_package_path.is_some());
+
+        let mut task_templates = TaskTemplates::default();
+        package_json_data.fill_task_templates(&mut task_templates);
+
+        let vitest_file_test = task_templates
+            .0
+            .iter()
+            .find(|template| template.label.contains("vitest file test"))
+            .expect("vitest file test task should exist");
+
+        assert!(
+            vitest_file_test
+                .args
+                .contains(&"--no-file-parallelism".to_owned()),
+            "vitest file test should use --no-file-parallelism flag"
+        );
+
+        let vitest_symbol_test = task_templates
+            .0
+            .iter()
+            .find(|template| template.label.contains("vitest test $ZED_SYMBOL"))
+            .expect("vitest symbol test task should exist");
+
+        assert!(
+            vitest_symbol_test
+                .args
+                .contains(&"--no-file-parallelism".to_owned()),
+            "vitest symbol test should use --no-file-parallelism flag"
+        );
+
+        assert!(
+            !vitest_file_test
+                .args
+                .iter()
+                .any(|arg| arg.contains("poolOptions")),
+            "vitest file test should not use deprecated poolOptions flags"
+        );
+
+        assert!(
+            !vitest_symbol_test
+                .args
+                .iter()
+                .any(|arg| arg.contains("poolOptions")),
+            "vitest symbol test should not use deprecated poolOptions flags"
         );
     }
 }
