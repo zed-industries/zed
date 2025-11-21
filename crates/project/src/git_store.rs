@@ -221,7 +221,11 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
         let old_path = value.old_path.and_then(|p| RepoPath::from_proto(&p).ok());
-        Ok(Self { repo_path, status, old_path })
+        Ok(Self {
+            repo_path,
+            status,
+            old_path,
+        })
     }
 }
 

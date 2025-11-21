@@ -481,7 +481,9 @@ impl FromStr for GitStatus {
                     }
                     let new_path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
                     let old_path = RepoPath::from_rel_path(RelPath::unix(old_path_str).log_err()?);
-                    renamed_paths.borrow_mut().insert(new_path.clone(), old_path);
+                    renamed_paths
+                        .borrow_mut()
+                        .insert(new_path.clone(), old_path);
                     skip_indices.borrow_mut().insert(i + 1);
                     Some((new_path, status))
                 } else {
@@ -644,11 +646,16 @@ mod tests {
         assert!(entries[2].1.is_modified());
 
         // Check renamed file
-        assert_eq!(entries[3].0, RepoPath::new("project/new/renamed.rs").unwrap());
+        assert_eq!(
+            entries[3].0,
+            RepoPath::new("project/new/renamed.rs").unwrap()
+        );
 
         // Check renamed_paths map contains the old path
         assert_eq!(
-            output.renamed_paths.get(&RepoPath::new("project/new/renamed.rs").unwrap()),
+            output
+                .renamed_paths
+                .get(&RepoPath::new("project/new/renamed.rs").unwrap()),
             Some(&RepoPath::new("project/old/renamed.rs").unwrap())
         );
     }
@@ -666,11 +673,15 @@ mod tests {
 
         // Check renamed_paths map contains both renames
         assert_eq!(
-            output.renamed_paths.get(&RepoPath::new("src/new_file1.rs").unwrap()),
+            output
+                .renamed_paths
+                .get(&RepoPath::new("src/new_file1.rs").unwrap()),
             Some(&RepoPath::new("src/old_file1.rs").unwrap())
         );
         assert_eq!(
-            output.renamed_paths.get(&RepoPath::new("src/new_file2.rs").unwrap()),
+            output
+                .renamed_paths
+                .get(&RepoPath::new("src/new_file2.rs").unwrap()),
             Some(&RepoPath::new("src/old_file2.rs").unwrap())
         );
         assert_eq!(output.renamed_paths.len(), 2);
@@ -690,11 +701,15 @@ mod tests {
 
         // Check renamed_paths map contains both copies (we track copies the same way as renames)
         assert_eq!(
-            output.renamed_paths.get(&RepoPath::new("src/copy1.rs").unwrap()),
+            output
+                .renamed_paths
+                .get(&RepoPath::new("src/copy1.rs").unwrap()),
             Some(&RepoPath::new("src/original1.rs").unwrap())
         );
         assert_eq!(
-            output.renamed_paths.get(&RepoPath::new("src/copy2.rs").unwrap()),
+            output
+                .renamed_paths
+                .get(&RepoPath::new("src/copy2.rs").unwrap()),
             Some(&RepoPath::new("src/original2.rs").unwrap())
         );
         assert_eq!(output.renamed_paths.len(), 2);
