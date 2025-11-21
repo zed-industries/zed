@@ -2550,6 +2550,11 @@ mod tests {
             zeta
         });
 
+        // Register buffer with zeta
+        zeta.update(cx, |zeta, cx| {
+            zeta.register_buffer(&buffer, &project, cx);
+        });
+
         // Create provider
         let provider = cx.new(|cx| {
             ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx)
@@ -2561,9 +2566,7 @@ mod tests {
             provider.refresh(buffer.clone(), cursor, false, cx);
         });
 
-        cx.background_executor.run_until_parked();
-
-        // Verify that pending completions were created
+        // Check immediately after refresh, before background execution completes
         provider.read_with(cx, |provider, _| {
             assert!(
                 !provider.pending_completions.is_empty(),
@@ -2571,8 +2574,45 @@ mod tests {
             );
         });
 
+        cx.background_executor.run_until_parked();
+
         // Restore original environment variable
         unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        if let Some(url) = original_url {
+            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_authenticated_user_can_request_predictions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Save and clear ZED_PREDICT_EDITS_URL to ensure test isolation
+        let original_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
+        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/test/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Use the test helper which correctly sets up authentication
+        let (zeta, _, _) = make_test_zeta(&project, cx).await;
+
+        // Directly test that request_completion works for authenticated user
+        let edit_prediction = run_edit_prediction(&buffer, &project, &zeta, cx).await;
+
+        // Verify we got a valid prediction back
+        assert!(!edit_prediction.edits.is_empty(), "Expected edit predictions for authenticated user");
+
+        // Restore original environment variable
         if let Some(url) = original_url {
             unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
         }
