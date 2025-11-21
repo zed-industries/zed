@@ -509,7 +509,6 @@ impl MetalRenderer {
                 &naga::back::msl::PipelineOptions::default(),
             )
             .expect("error translating wgsl to msl");
-        println!("{msl}");
 
         let library = self
             .device
@@ -1235,35 +1234,35 @@ impl MetalRenderer {
         let instance_align = CUSTOM_SHADER_INSTANCE_ALIGN.max(*user_data_align);
         let user_data_offset = size_of::<CustomShaderInstance>().next_multiple_of(*user_data_align);
         let instance_size = (user_data_offset + user_data_size).next_multiple_of(instance_align);
-        let mut instances = vec![0u8; instance_size * shaders.len()];
-        for (idx, shader) in shaders.iter().enumerate() {
-            let instance = CustomShaderInstance {
-                bounds: shader.bounds,
-                content_mask: shader.content_mask.clone(),
-            };
-            let instance_bytes = unsafe {
-                std::slice::from_raw_parts(
-                    (&instance as *const CustomShaderInstance) as *const u8,
-                    size_of::<CustomShaderInstance>(),
-                )
-            };
 
-            let offset = idx * instance_size;
-            instances[offset..offset + instance_bytes.len()].copy_from_slice(instance_bytes);
-            instances[offset + user_data_offset..offset + user_data_offset + *user_data_size]
-                .copy_from_slice(&shader.user_data);
-        }
+        let total_bytes = instance_size * shaders.len();
 
         let buffer_contents =
             unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-        let next_offset = *instance_offset + instances.len();
+        let next_offset = *instance_offset + total_bytes;
         if next_offset > instance_buffer.size {
             return false;
         }
 
         unsafe {
-            // TODO: write directly to the buffer
-            ptr::copy_nonoverlapping(instances.as_ptr(), buffer_contents, instances.len());
+            for (idx, shader) in shaders.iter().enumerate() {
+                let offset = idx * instance_size;
+                let dst = buffer_contents.add(offset);
+
+                let instance = CustomShaderInstance {
+                    bounds: shader.bounds,
+                    content_mask: shader.content_mask.clone(),
+                };
+
+                let src = (&instance as *const CustomShaderInstance) as *const u8;
+                ptr::copy_nonoverlapping(src, dst, size_of::<CustomShaderInstance>());
+
+                if *user_data_size > 0 {
+                    let src = shader.user_data.as_ptr();
+                    let dst = dst.add(user_data_offset);
+                    ptr::copy_nonoverlapping(src, dst, *user_data_size);
+                }
+            }
         }
 
         command_encoder.draw_primitives_instanced(
