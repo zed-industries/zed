@@ -8814,14 +8814,13 @@ impl Editor {
                 cx,
             ),
             EditPrediction::MoveOutside { snapshot, .. } => {
-                const EDGE_MARGIN: Pixels = px(30.);
                 let mut element = self
                     .render_edit_prediction_jump_outside_popover(snapshot, window, cx)
                     .into_any();
 
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin_x = text_bounds.size.width - size.width - EDGE_MARGIN;
-                let origin = text_bounds.origin + gpui::Point::new(origin_x, EDGE_MARGIN);
+                let origin_x = text_bounds.size.width - size.width - px(30.);
+                let origin = text_bounds.origin + gpui::Point::new(origin_x, px(16.));
                 element.prepaint_at(origin, window, cx);
 
                 Some((element, origin))
