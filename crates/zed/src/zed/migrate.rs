@@ -6,7 +6,6 @@ use settings::{KeymapFile, Settings, SettingsStore};
 use util::ResultExt;
 use workspace::notifications::NotifyTaskExt;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{Entity, EventEmitter, Global, Task, TextStyle, TextStyleRefinement};
@@ -25,7 +24,6 @@ pub enum MigrationType {
 pub struct MigrationBanner {
     migration_type: Option<MigrationType>,
     should_migrate_task: Option<Task<()>>,
-    location: Option<PathBuf>,
     markdown: Option<Entity<Markdown>>,
 }
 
@@ -69,7 +67,6 @@ impl MigrationBanner {
         Self {
             migration_type: None,
             should_migrate_task: None,
-            location: None,
             markdown: None,
         }
     }
@@ -87,6 +84,7 @@ impl MigrationBanner {
                     cx.emit(ToolbarItemEvent::ChangeLocation(
                         ToolbarItemLocation::Hidden,
                     ));
+                    self.reset(cx);
                 };
             }
         }
@@ -126,6 +124,13 @@ impl MigrationBanner {
         ));
         cx.notify();
     }
+
+    fn reset(&mut self, cx: &mut Context<Self>) {
+        self.should_migrate_task.take();
+        self.migration_type.take();
+        self.markdown.take();
+        cx.notify();
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for MigrationBanner {}
@@ -137,14 +142,16 @@ impl ToolbarItemView for MigrationBanner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.location = active_pane_item
+        self.reset(cx);
+
+        let Some(target) = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
-            .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)));
-        let Some(target) = &self.location else {
+            .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
+        else {
             return ToolbarItemLocation::Hidden;
         };
 
-        if target == paths::keymap_file() {
+        if &target == paths::keymap_file() {
             self.migration_type = Some(MigrationType::Keymap);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = cx.background_spawn(should_migrate_keymap(fs));
@@ -156,7 +163,7 @@ impl ToolbarItemView for MigrationBanner {
                     .log_err();
                 }
             }));
-        } else if target == paths::settings_file() {
+        } else if &target == paths::settings_file() {
             self.migration_type = Some(MigrationType::Settings);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = cx.background_spawn(should_migrate_settings(fs));
