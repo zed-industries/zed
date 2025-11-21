@@ -1569,7 +1569,7 @@ impl Zeta {
                     }],
                     stream: false,
                     max_completion_tokens: None,
-                    stop: Default::default(),
+                    stop: vec!["<[end_of_sentence]>".into()],
                     temperature: 0.7,
                     tool_choice: None,
                     parallel_tool_calls: None,
@@ -1636,7 +1636,9 @@ impl Zeta {
                         // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
                     }
-                    PromptFormat::Minimal | PromptFormat::MinimalQwen => {
+                    PromptFormat::Minimal
+                    | PromptFormat::MinimalQwen
+                    | PromptFormat::SeedCoder1120 => {
                         if output_text.contains("--- a/\n+++ b/\nNo edits") {
                             let edits = vec![];
                             (&active_snapshot, edits)
