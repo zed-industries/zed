@@ -880,6 +880,52 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            OpenRequestKind::GitCommit { path, sha } => {
+                cx.spawn(async move |cx| {
+                    // Open workspace using the path, which will route to the correct window
+                    let workspace = if path.is_empty() || request.open_paths.is_empty() {
+                        // No path specified, use any active workspace
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?
+                    } else {
+                        // Use the normal open_paths flow which does smart workspace routing
+                        let paths_with_position =
+                            derive_paths_with_position(app_state.fs.as_ref(), request.open_paths)
+                                .await;
+                        let (workspace, _results) = open_paths_with_positions(
+                            &paths_with_position,
+                            &[],
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                        .await?;
+                        workspace
+                    };
+
+                    let _ = workspace
+                        .update(cx, |workspace, window, cx| {
+                            let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                            else {
+                                log::error!("no active repository found for commit view");
+                                return Err(anyhow::anyhow!("no active repository found"));
+                            };
+
+                            git_ui::commit_view::CommitView::open(
+                                sha,
+                                repo.downgrade(),
+                                workspace.weak_handle(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                            Ok(())
+                        })
+                        .log_err();
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
         }
 
         return;
