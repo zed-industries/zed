@@ -387,6 +387,16 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn commit_graph(&self, _limit: usize) -> BoxFuture<'_, Result<git::repository::CommitGraph>> {
+        async {
+            Ok(git::repository::CommitGraph {
+                commits: Vec::new(),
+                truncated: false,
+            })
+        }
+        .boxed()
+    }
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         unimplemented!()
     }

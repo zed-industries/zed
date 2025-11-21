@@ -9,6 +9,7 @@ use ui::{
 };
 
 mod blame_ui;
+mod git_graph_view;
 
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -26,7 +27,7 @@ use ui::prelude::*;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
-use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
+use crate::{git_graph_view::GitGraphView, git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -71,6 +72,9 @@ pub fn init(cx: &mut App) {
         branch_picker::register(workspace);
         worktree_picker::register(workspace);
         stash_picker::register(workspace);
+        workspace.register_action(|workspace, _: &git_graph_view::OpenGitGraph, window, cx| {
+            GitGraphView::open(workspace, window, cx);
+        });
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
