@@ -1405,9 +1405,13 @@ impl Thread {
             RedactedThinking { data } => self.handle_redacted_thinking_event(data, cx),
             ReasoningDetails(details) => {
                 let last_message = self.pending_message();
-                // Only store if we don't already have reasoning_details
-                // (to avoid overwriting with empty array from subsequent events)
-                if last_message.reasoning_details.is_none() {
+                // Store the last non-empty reasoning_details (overwrites earlier ones)
+                // This ensures we keep the encrypted reasoning with signatures, not the early text reasoning
+                if let serde_json::Value::Array(ref arr) = details {
+                    if !arr.is_empty() {
+                        last_message.reasoning_details = Some(details);
+                    }
+                } else {
                     last_message.reasoning_details = Some(details);
                 }
             }
