@@ -293,7 +293,19 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowDecorations {
     /// Zed draws its own window decorations/titlebar (client-side decoration)
