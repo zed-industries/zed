@@ -5,6 +5,9 @@ edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
+[lib]
+path = "src/speech_settings.rs"
+
 [lints]
 workspace = true
 

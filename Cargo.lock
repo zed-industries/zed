@@ -21410,6 +21410,7 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "speech",
+ "speech_settings",
  "supermaven",
  "svg_preview",
  "sysinfo 0.37.2",

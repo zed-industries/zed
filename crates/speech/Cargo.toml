@@ -3,13 +3,19 @@ name = "speech"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "src/speech.rs"
+
+[lints]
+workspace = true
+
 [dependencies]
-gpui = { path = "../gpui" }
-whisper-rs = { version = "0.15.1", features = ["tracing_backend", "vulkan"] }
-cpal = "0.15.3"
-anyhow = "1.0.86"
+anyhow.workspace = true
 async-channel = "2.3.1"
-log = "0.4.21"
+cpal = "0.15.3"
+gpui.workspace = true
+log.workspace = true
 parking_lot = "0.12.1"
-paths = { path = "../paths" }
-speech_settings = { path = "../speech_settings" }
+paths.workspace = true
+speech_settings.workspace = true
+whisper-rs = { version = "0.15.1", features = ["tracing_backend", "vulkan"] }
