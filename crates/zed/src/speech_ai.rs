@@ -71,6 +71,7 @@ impl SpeechInlineAssistantBridge {
                 if let Err(err) = cx.update(|cx| {
                     let action = InlineAssist {
                         prompt: Some(prompt.clone()),
+                        auto_start: true,
                     };
                     cx.dispatch_action(&action);
                 }) {

@@ -2671,6 +2671,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 panel.read(cx).thread_store().clone(),
                 None,
                 initial_prompt,
+                false,
                 window,
                 cx,
             )

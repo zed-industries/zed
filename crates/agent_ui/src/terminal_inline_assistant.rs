@@ -75,6 +75,7 @@ impl TerminalInlineAssistant {
         thread_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
+        auto_start: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -124,6 +125,10 @@ impl TerminalInlineAssistant {
         self.assists.insert(assist_id, terminal_assistant);
 
         self.focus_assist(assist_id, window, cx);
+
+        if auto_start {
+            self.start_assist(assist_id, cx);
+        }
     }
 
     fn focus_assist(
