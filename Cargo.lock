@@ -19734,14 +19734,13 @@ dependencies = [
  "anyhow",
  "command_palette",
  "gpui",
- "schemars 1.0.1",
+ "schemars 1.0.4",
  "serde",
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
- "workspace-hack",
- "zed-util",
 ]
 
 [[package]]
@@ -21353,8 +21352,8 @@ dependencies = [
  "watch",
  "web_search",
  "web_search_providers",
- "windows 0.61.3",
  "which_key",
+ "windows 0.61.3",
  "winresource",
  "workspace",
  "zed-reqwest",
