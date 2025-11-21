@@ -25,7 +25,7 @@ pub(crate) fn run_tests() -> Workflow {
         "run_tests",
         r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))",
     );
-    let should_check_docs = PathCondition::new("run_docs", r"^docs/");
+    let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
         "run_action_checks",
         r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
