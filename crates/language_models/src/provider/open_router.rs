@@ -591,22 +591,11 @@ impl OpenRouterEventMapper {
         let mut events = Vec::new();
 
         if let Some(details) = choice.delta.reasoning_details.clone() {
-            // Emit reasoning_details immediately if non-empty
-            if let serde_json::Value::Array(ref arr) = details {
-                if !arr.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                        details.clone(),
-                    )));
-                    // Store it so we know we already emitted it
-                    self.reasoning_details = Some(details);
-                }
-            } else {
-                // Non-array reasoning_details, emit immediately
-                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                    details.clone(),
-                )));
-                self.reasoning_details = Some(details);
-            }
+            // Emit reasoning_details immediately
+            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                details.clone(),
+            )));
+            self.reasoning_details = Some(details);
         }
 
         if let Some(reasoning) = choice.delta.reasoning.clone() {
