@@ -295,10 +295,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|_, _: &MenuSelectNext, window, cx| {
-            if !Vim::enabled(cx) {
-                window.dispatch_action(menu::SelectNext.boxed_clone(), cx);
-                return;
-            }
             let count = Vim::take_count(cx).unwrap_or(1);
 
             for _ in 0..count {
@@ -307,10 +303,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|_, _: &MenuSelectPrevious, window, cx| {
-            if !Vim::enabled(cx) {
-                window.dispatch_action(menu::SelectPrevious.boxed_clone(), cx);
-                return;
-            }
             let count = Vim::take_count(cx).unwrap_or(1);
 
             for _ in 0..count {
@@ -319,19 +311,12 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|_, _: &ToggleProjectPanelFocus, window, cx| {
-            if !Vim::enabled(cx) {
-                window.dispatch_action(project_panel::ToggleFocus.boxed_clone(), cx);
-                return;
-            }
             if Vim::take_count(cx).is_none() {
                 window.dispatch_action(zed_actions::project_panel::ToggleFocus.boxed_clone(), cx);
             }
         });
 
         workspace.register_action(|workspace, n: &Number, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let vim = workspace
                 .focused_pane(window, cx)
                 .read(cx)
@@ -369,9 +354,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let pane = workspace.active_pane();
             let Some(size) = workspace.bounding_box_for_pane(pane) else {
                 return;
@@ -389,9 +371,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneRight, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -406,9 +385,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneLeft, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -423,9 +399,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -434,9 +407,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
@@ -445,9 +415,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let vim = workspace
                 .focused_pane(window, cx)
                 .read(cx)
@@ -460,9 +427,6 @@ pub fn init(cx: &mut App) {
             })
         });
         workspace.register_action(|_, _: &GoToTab, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let count = Vim::take_count(cx);
             Vim::take_forced_motion(cx);
 
@@ -480,9 +444,6 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &GoToPreviousTab, window, cx| {
-            if !Vim::enabled(cx) {
-                return;
-            }
             let count = Vim::take_count(cx);
             Vim::take_forced_motion(cx);
 
@@ -1395,6 +1356,9 @@ impl Vim {
     }
 
     pub fn extend_key_context(&self, context: &mut KeyContext, cx: &App) {
+        if !Vim::enabled(cx) {
+            return;
+        }
         let mut mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
@@ -1437,10 +1401,6 @@ impl Vim {
         }
         context.set("vim_mode", mode);
         context.set("vim_operator", operator_id);
-
-        if !Vim::enabled(cx) {
-            context.add("vim_mode_off");
-        }
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {

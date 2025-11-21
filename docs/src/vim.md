@@ -45,9 +45,9 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 > }
 > ```
 
-## Using Vim Actions without Modal Editing
+## Using Vim Actions without Vim mode
 
-Even when vim mode is **disabled**, all Vim actions (operators, text objects, and motions) are available for custom keybindings. This allows you to use Vim's powerful editing commands without entering modal editing mode.
+Even when vim mode is **disabled**, all Vim actions (operators, text objects, and motions) are available for custom keybindings. This allows you to use Vim's powerful editing commands without entering modal editing mode. There are some limitations to this approach, notably you don't have the ability to switch between different Vim modes.
 
 ## Zed-specific features
 
@@ -416,7 +416,6 @@ Vim mode adds several contexts to the `"Editor"` context:
 | vim_mode == waiting  | Waiting for an arbitrary key (e.g., after typing `f` or `t`)                                                                                                                       |
 | vim_mode == operator | Waiting for another binding to trigger (e.g., after typing `c` or `d`)                                                                                                             |
 | vim_operator         | Set to `none` unless `vim_mode == operator`, in which case it is set to the current operator's default keybinding (e.g., after typing `d`, `vim_operator == d`)                    |
-| vim_mode_off         | Indicates that Vim mode is disabled, but is still available for keybinds                                                                                                           |
 
 > **Note**: Contexts are matched only on one level at a time. So it is possible to use the expression `"Editor && vim_mode == normal"`, but `"Workspace && vim_mode == normal"` will never match because we set the vim context at the `"Editor"` level.
 
