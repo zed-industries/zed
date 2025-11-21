@@ -13035,6 +13035,7 @@ dependencies = [
  "settings",
  "sha2",
  "shellexpand 2.1.2",
+ "shlex",
  "smallvec",
  "smol",
  "snippet",

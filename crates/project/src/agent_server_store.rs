@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     borrow::Borrow,
+    env,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -24,6 +25,8 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
+use shellexpand;
+use shlex;
 use task::{Shell, SpawnInTerminal};
 use util::{ResultExt as _, debug_panic};
 
@@ -192,6 +195,36 @@ mod ext_agent_tests {
         let mut s = String::new();
         write!(&mut s, "{name}").unwrap();
         assert_eq!(s, "Ext: Tool");
+    }
+
+    #[test]
+    fn env_agent_server_config_parses() {
+        let old_bin = env::var("ZED_AGENT_SERVER_BIN").ok();
+        let old_args = env::var("ZED_AGENT_SERVER_ARGS").ok();
+        let old_name = env::var("ZED_AGENT_SERVER_NAME").ok();
+
+        env::set_var("ZED_AGENT_SERVER_BIN", "~/bin/my-agent");
+        env::set_var("ZED_AGENT_SERVER_ARGS", "--foo bar");
+        env::set_var("ZED_AGENT_SERVER_NAME", "local-env-agent");
+
+        let cfg = env_agent_server_config().expect("env agent server present");
+        assert_eq!(cfg.0.to_string(), "local-env-agent");
+        assert!(cfg.1.path.ends_with("my-agent"));
+        assert_eq!(cfg.1.args, vec!["--foo", "bar"]);
+
+        // Restore environment
+        match old_bin {
+            Some(v) => env::set_var("ZED_AGENT_SERVER_BIN", v),
+            None => env::remove_var("ZED_AGENT_SERVER_BIN"),
+        }
+        match old_args {
+            Some(v) => env::set_var("ZED_AGENT_SERVER_ARGS", v),
+            None => env::remove_var("ZED_AGENT_SERVER_ARGS"),
+        }
+        match old_name {
+            Some(v) => env::set_var("ZED_AGENT_SERVER_NAME", v),
+            None => env::remove_var("ZED_AGENT_SERVER_NAME"),
+        }
     }
 
     #[test]
@@ -509,6 +542,16 @@ impl AgentServerStore {
                 )
             },
         ));
+
+        if let Some((env_name, cmd)) = env_agent_server_config() {
+            self.external_agents.insert(
+                env_name,
+                Box::new(LocalCustomAgent {
+                    command: cmd,
+                    project_environment: project_environment.clone(),
+                }),
+            );
+        }
 
         *old_settings = Some(new_settings.clone());
 
@@ -1511,6 +1554,43 @@ fn get_platform_info() -> Option<(&'static str, &'static str, &'static str)> {
 fn asset_name(version: &str) -> Option<String> {
     let (arch, platform, ext) = get_platform_info()?;
     Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
+}
+
+fn env_agent_server_config() -> Option<(ExternalAgentServerName, AgentServerCommand)> {
+    let path = env::var("ZED_AGENT_SERVER_BIN").ok()?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let args = env::var("ZED_AGENT_SERVER_ARGS")
+        .ok()
+        .and_then(|raw| {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                Some(Vec::new())
+            } else {
+                shlex::split(raw).or_else(|| {
+                    Some(
+                        raw.split_whitespace()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            }
+        })
+        .unwrap_or_default();
+
+    let name =
+        env::var("ZED_AGENT_SERVER_NAME").unwrap_or_else(|_| "local-agent-server".to_string());
+
+    let cmd = AgentServerCommand {
+        path: PathBuf::from(shellexpand::tilde(trimmed).as_ref()),
+        args,
+        env: None,
+    };
+
+    Some((ExternalAgentServerName(name.into()), cmd))
 }
 
 struct LocalExtensionArchiveAgent {
