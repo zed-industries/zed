@@ -1,24 +1,15 @@
-use std::{
-    cmp,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{cmp, sync::Arc, time::Duration};
 
-use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
-use gpui::{App, Entity, Task, prelude::*};
+use gpui::{App, Entity, prelude::*};
 use language::ToPoint as _;
 use project::Project;
-use util::ResultExt as _;
 
 use crate::{BufferEditPrediction, Zeta, ZetaEditPredictionModel};
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
-    next_pending_prediction_id: usize,
-    pending_predictions: ArrayVec<PendingPrediction, 2>,
-    last_request_timestamp: Instant,
     project: Entity<Project>,
 }
 
@@ -29,26 +20,23 @@ impl ZetaEditPredictionProvider {
         project: Entity<Project>,
         client: &Arc<Client>,
         user_store: &Entity<UserStore>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let zeta = Zeta::global(client, user_store, cx);
         zeta.update(cx, |zeta, cx| {
             zeta.register_project(&project, cx);
         });
 
+        cx.observe(&zeta, |_this, _zeta, cx| {
+            cx.notify();
+        })
+        .detach();
+
         Self {
-            zeta,
-            next_pending_prediction_id: 0,
-            pending_predictions: ArrayVec::new(),
-            last_request_timestamp: Instant::now(),
             project: project,
+            zeta,
         }
     }
-}
-
-struct PendingPrediction {
-    id: usize,
-    _task: Task<()>,
 }
 
 impl EditPredictionProvider for ZetaEditPredictionProvider {
@@ -95,8 +83,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         }
     }
 
-    fn is_refreshing(&self) -> bool {
-        !self.pending_predictions.is_empty()
+    fn is_refreshing(&self, cx: &App) -> bool {
+        self.zeta.read(cx).is_refreshing(&self.project)
     }
 
     fn refresh(
@@ -123,59 +111,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
 
         self.zeta.update(cx, |zeta, cx| {
             zeta.refresh_context_if_needed(&self.project, &buffer, cursor_position, cx);
+            zeta.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
         });
-
-        let pending_prediction_id = self.next_pending_prediction_id;
-        self.next_pending_prediction_id += 1;
-        let last_request_timestamp = self.last_request_timestamp;
-
-        let project = self.project.clone();
-        let task = cx.spawn(async move |this, cx| {
-            if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
-                .checked_duration_since(Instant::now())
-            {
-                cx.background_executor().timer(timeout).await;
-            }
-
-            let refresh_task = this.update(cx, |this, cx| {
-                this.last_request_timestamp = Instant::now();
-                this.zeta.update(cx, |zeta, cx| {
-                    zeta.refresh_prediction(&project, &buffer, cursor_position, cx)
-                })
-            });
-
-            if let Some(refresh_task) = refresh_task.ok() {
-                refresh_task.await.log_err();
-            }
-
-            this.update(cx, |this, cx| {
-                if this.pending_predictions[0].id == pending_prediction_id {
-                    this.pending_predictions.remove(0);
-                } else {
-                    this.pending_predictions.clear();
-                }
-
-                cx.notify();
-            })
-            .ok();
-        });
-
-        // We always maintain at most two pending predictions. When we already
-        // have two, we replace the newest one.
-        if self.pending_predictions.len() <= 1 {
-            self.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                _task: task,
-            });
-        } else if self.pending_predictions.len() == 2 {
-            self.pending_predictions.pop();
-            self.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                _task: task,
-            });
-        }
-
-        cx.notify();
     }
 
     fn cycle(
@@ -191,14 +128,12 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         self.zeta.update(cx, |zeta, cx| {
             zeta.accept_current_prediction(&self.project, cx);
         });
-        self.pending_predictions.clear();
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
         self.zeta.update(cx, |zeta, _cx| {
             zeta.discard_current_prediction(&self.project);
         });
-        self.pending_predictions.clear();
     }
 
     fn suggest(
