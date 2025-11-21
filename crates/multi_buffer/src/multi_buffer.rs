@@ -3638,7 +3638,8 @@ impl MultiBufferSnapshot {
 
             // todo! We only need to get this information if word_diffs is not empty
             // maybe we could also pass up if the hunk is expanded or not?
-            let hunk_start_offset = ToOffset::to_offset(&range.start, self);
+
+            let hunk_start_offset = self.point_to_offset(hunk.range.start);
             let diff_base_offset = hunk.diff_base_byte_range.len();
             let buffer = &excerpt.buffer;
             let hunk_buffer_start_offset = hunk.buffer_range.start.to_offset(buffer);

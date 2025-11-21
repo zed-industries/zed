@@ -890,61 +890,79 @@ fn process_patch_hunk(
     let end = Point::new(buffer_row_range.end, 0);
     let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
 
-    let (base_word_diffs, buffer_word_diffs) =
-        if !diff_base_byte_range.is_empty() && !buffer_row_range.is_empty() {
-            let base_text: String = diff_base
-                .chunks_in_range(diff_base_byte_range.clone())
-                .collect();
+    let (base_word_diffs, buffer_word_diffs) = if !diff_base_byte_range.is_empty()
+        && !buffer_row_range.is_empty()
+    {
+        let base_text: String = diff_base
+            .chunks_in_range(diff_base_byte_range.clone())
+            .collect();
 
-            let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
+        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
-            let diff = similar::TextDiff::configure()
-                .algorithm(similar::Algorithm::Myers)
-                .diff_chars(&base_text, &buffer_text);
+        let diff = similar::TextDiff::configure()
+            .algorithm(similar::Algorithm::Myers)
+            .diff_chars(&base_text, &buffer_text);
 
-            // todo! make sure ranges in in these vecs don't overlap and are merged
-            // can do so by popping the last element and merging it with the next element
-            let mut base_word_diffs = Vec::default();
-            let mut buffer_word_diffs = Vec::default();
+        // todo! make sure ranges in in these vecs don't overlap and are merged
+        // can do so by popping the last element and merging it with the next element
+        let mut base_word_diffs: Vec<Range<usize>> = Vec::default();
+        let mut buffer_word_diffs: Vec<Range<usize>> = Vec::default();
 
-            // Editor Element expects this to be relative to the start of the deleted hunk
-            let mut base_offset = 0; //todo! check this // bytes
-            let mut buffer_offset = buffer_range.start.to_offset(buffer);
+        // Editor Element expects this to be relative to the start of the deleted hunk
+        let mut base_offset = 0; //todo! check this // bytes
+        let mut buffer_offset = buffer_range.start.to_offset(buffer);
 
-            for change in diff.iter_all_changes() {
-                let change_offset = change.value().len();
+        for change in diff.iter_all_changes() {
+            let change_offset = change.value().len();
 
-                match change.tag() {
-                    similar::ChangeTag::Equal => {
-                        buffer_offset += change_offset;
-                        base_offset += change_offset;
-                    }
-                    similar::ChangeTag::Insert => {
-                        if change.value().trim().is_empty() {
-                            buffer_offset += change_offset;
-                            continue;
+            match change.tag() {
+                similar::ChangeTag::Equal => {
+                    buffer_offset += change_offset;
+                    base_offset += change_offset;
+                }
+                similar::ChangeTag::Insert => {
+                    buffer_offset += change_offset;
+
+                    if !change.value().trim().is_empty() {
+                        if let Some(last_diff) = buffer_word_diffs.last_mut()
+                            && last_diff.end >= buffer_offset - change_offset
+                        {
+                            last_diff.end = buffer_offset;
+                        } else {
+                            buffer_word_diffs.push(buffer_offset - change_offset..buffer_offset);
                         }
-
-                        let start = buffer.anchor_before(buffer_offset);
-                        buffer_offset += change_offset;
-                        let end = buffer.anchor_after(buffer_offset);
-
-                        buffer_word_diffs.push(start..end);
                     }
-                    similar::ChangeTag::Delete => {
-                        base_offset += change_offset;
+                }
+                similar::ChangeTag::Delete => {
+                    base_offset += change_offset;
 
-                        if !change.value().trim().is_empty() {
+                    if !change.value().trim().is_empty() {
+                        if let Some(last_diff) = base_word_diffs.last_mut()
+                            && last_diff.end >= base_offset - change_offset
+                        {
+                            last_diff.end = base_offset;
+                        } else {
                             base_word_diffs.push(base_offset - change_offset..base_offset);
                         }
                     }
                 }
             }
+        }
 
-            (base_word_diffs, buffer_word_diffs)
-        } else {
-            (Vec::default(), Vec::default())
-        };
+        (
+            base_word_diffs,
+            buffer_word_diffs
+                .into_iter()
+                .map(|range| {
+                    let start = buffer.anchor_before(range.start);
+                    let end = buffer.anchor_after(range.end);
+                    start..end
+                })
+                .collect(),
+        )
+    } else {
+        (Vec::default(), Vec::default())
+    };
 
     InternalDiffHunk {
         buffer_range,
