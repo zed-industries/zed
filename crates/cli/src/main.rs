@@ -139,12 +139,10 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
                 match fs::canonicalize(&path) {
                     Ok(canonicalized_path) => Ok(canonicalized_path),
                     Err(_) => {
-                        let path_argument = path.to_path_buf();
-
-                        let absolute_path = if path_argument.is_absolute() {
-                            path_argument
+                        let absolute_path = if path.is_absolute() {
+                            path
                         } else {
-                            curdir.join(path_argument)
+                            curdir.join(path)
                         };
 
                         Ok(absolute_path)
