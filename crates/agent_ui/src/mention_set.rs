@@ -138,6 +138,10 @@ impl MentionSet {
         self.mentions.remove(crease_id);
     }
 
+    pub fn creases(&self) -> HashSet<CreaseId> {
+        self.mentions.keys().cloned().collect()
+    }
+
     pub fn mentions(&self) -> HashSet<MentionUri> {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
@@ -703,8 +707,8 @@ pub(crate) fn insert_crease_for_mention(
 
         let placeholder = FoldPlaceholder {
             render: render_mention_fold_button(
-                crease_label,
-                crease_icon,
+                crease_label.clone(),
+                crease_icon.clone(),
                 start..end,
                 rx,
                 image,
@@ -720,7 +724,10 @@ pub(crate) fn insert_crease_for_mention(
             placeholder,
             render_toggle: None,
             render_trailer: None,
-            metadata: None,
+            metadata: Some(CreaseMetadata {
+                label: crease_label,
+                icon_path: crease_icon,
+            }),
         };
 
         let ids = editor.insert_creases(vec![crease.clone()], cx);

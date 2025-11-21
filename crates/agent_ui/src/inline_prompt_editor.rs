@@ -1,9 +1,9 @@
 use agent::HistoryStore;
 use collections::VecDeque;
-use editor::ToOffset as _;
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
 use editor::display_map::EditorMargins;
+use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
@@ -19,6 +19,7 @@ use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
 use std::cmp;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -32,8 +33,8 @@ use crate::buffer_codegen::BufferCodegen;
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
-use crate::mention_set::MentionSet;
 use crate::mention_set::paste_images_as_context;
+use crate::mention_set::{MentionSet, crease_for_mention};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 
@@ -248,15 +249,16 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
-        // let existing_creases = self.editor.update(cx, extract_message_creases);
+        let existing_creases = self.editor.update(cx, |editor, cx| {
+            extract_message_creases(editor, &self.mention_set, window, cx)
+        });
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
-            //todo
-            // insert_message_creases(&mut editor, &existing_creases, window, cx);
+            insert_message_creases(&mut editor, &existing_creases, window, cx);
 
             if focus {
                 window.focus(&editor.focus_handle(cx));
@@ -1163,4 +1165,59 @@ impl GenerationMode {
             GenerationMode::Transform => "Accept Transform",
         }
     }
+}
+
+/// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
+#[derive(Clone, Debug)]
+struct MessageCrease {
+    range: Range<MultiBufferOffset>,
+    icon_path: SharedString,
+    label: SharedString,
+}
+
+fn extract_message_creases(
+    editor: &mut Editor,
+    mention_set: &Entity<MentionSet>,
+    window: &mut Window,
+    cx: &mut Context<'_, Editor>,
+) -> Vec<MessageCrease> {
+    let creases = mention_set.read(cx).creases();
+    let snapshot = editor.snapshot(window, cx);
+    snapshot
+        .crease_snapshot
+        .creases()
+        .filter(|(id, _)| creases.contains(id))
+        .filter_map(|(_, crease)| {
+            let metadata = crease.metadata()?.clone();
+            Some(MessageCrease {
+                range: crease.range().to_offset(snapshot.buffer()),
+                label: metadata.label,
+                icon_path: metadata.icon_path,
+            })
+        })
+        .collect()
+}
+
+fn insert_message_creases(
+    editor: &mut Editor,
+    message_creases: &[MessageCrease],
+    window: &mut Window,
+    cx: &mut Context<'_, Editor>,
+) {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let creases = message_creases
+        .iter()
+        .map(|crease| {
+            let start = buffer_snapshot.anchor_after(crease.range.start);
+            let end = buffer_snapshot.anchor_before(crease.range.end);
+            crease_for_mention(
+                crease.label.clone(),
+                crease.icon_path.clone(),
+                start..end,
+                cx.weak_entity(),
+            )
+        })
+        .collect::<Vec<_>>();
+    editor.insert_creases(creases.clone(), cx);
+    editor.fold_creases(creases, false, window, cx);
 }
