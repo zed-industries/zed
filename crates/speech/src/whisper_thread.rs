@@ -7,11 +7,11 @@ use log::{error, info, warn};
 use parking_lot::Mutex;
 use whisper_rs::{DtwModelPreset, WhisperContextParameters};
 
-use crate::{
-    SpeechNotification, TranscriberThreadState, HIGH_PASS_CUTOFF_HZ, TARGET_SAMPLE_RATE,
-    WHISPER_MODEL_NAME,
-    downmix_multi_channel, resample_to_target, apply_high_pass_filter,
-};
+const WHISPER_MODEL_NAME: &str = "ggml-base.en.bin";
+const TARGET_SAMPLE_RATE: usize = 16_000;
+const HIGH_PASS_CUTOFF_HZ: f32 = 80.0;
+
+use crate::{SpeechNotification, TranscriberThreadState};
 
 pub fn transcription_loop_body(
     state: Arc<Mutex<TranscriberThreadState>>,
@@ -159,105 +159,158 @@ pub fn transcription_loop_body(
     let mut hp_prev_output = 0.0f32;
 
     loop {
-        if *state.lock() == TranscriberThreadState::Listening {
-            if let Ok(chunk) = rx.try_recv() {
-                let mono_chunk = if !needs_downmix || input_channels == 1 {
-                    chunk.clone()
-                } else if input_channels == 2 {
-                    match whisper_rs::convert_stereo_to_mono_audio(&chunk) {
-                        Ok(mono) => mono,
-                        Err(err) => {
-                            warn!("stereo downmix failed: {:?}", err);
-                            downmix_multi_channel(&chunk, input_channels)
-                        }
-                    }
-                } else {
-                    downmix_multi_channel(&chunk, input_channels)
-                };
-                let mut processed_chunk = if needs_resample {
-                    resample_to_target(&mono_chunk, resample_ratio)
-                } else {
-                    mono_chunk
-                };
+        let state = (*state.lock()).clone();
 
-                if !processed_chunk.is_empty() {
-                    apply_high_pass_filter(
-                        &mut processed_chunk,
-                        &mut hp_prev_input,
-                        &mut hp_prev_output,
-                        HIGH_PASS_CUTOFF_HZ,
-                    );
-                }
-                let average_magnitude = if processed_chunk.is_empty() {
-                    0.0
-                } else {
-                    processed_chunk
-                        .iter()
-                        .map(|sample| sample.abs())
-                        .sum::<f32>()
-                        / processed_chunk.len() as f32
-                };
-                if average_magnitude > 0.005 {
-                    accumulated_silence = 0;
-                    voiced_samples = voiced_samples.saturating_add(processed_chunk.len());
-                } else {
-                    accumulated_silence = accumulated_silence.saturating_add(processed_chunk.len());
-                }
+        if state == TranscriberThreadState::Disabled {
+            return Ok(());
+        }
 
-                audio_buffer.extend_from_slice(&processed_chunk);
-
-                let heard_enough = audio_buffer.len() >= min_buffer_samples
-                    && accumulated_silence >= silence_trigger_samples;
-                let forced_flush = audio_buffer.len() >= max_buffer_samples;
-
-                if heard_enough || forced_flush {
-                    let has_voice = voiced_samples >= TARGET_SAMPLE_RATE / 5; // ~200ms voiced
-                    if !has_voice {
-                        audio_buffer.clear();
-                        accumulated_silence = 0;
-                        voiced_samples = 0;
-                        continue;
-                    } else {
-                        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
-                        // TODO: Make this configurable
-                        params.set_n_threads(8);
-                        params.set_language(Some("en"));
-
-                        whisper_state
-                            .full(params, &audio_buffer)
-                            .map_err(|e| anyhow::anyhow!("failed to run model: {}", e))?;
-
-                        let num_segments = whisper_state.full_n_segments();
-                        info!("Transcription produced {} segments", num_segments);
-                        for i in 0..num_segments {
-                            if let Some(segment) = whisper_state.get_segment(i) {
-                                warn!("Segment: {segment}");
-                                let text = segment
-                                    .to_str()
-                                    .map_err(|e| {
-                                        anyhow::anyhow!("failed to get segment text: {}", e)
-                                    })?
-                                    .to_owned();
-                                transcription_sender.send_blocking(text)?;
-                            }
-                        }
-                    }
-
-                    audio_buffer.clear();
-                    accumulated_silence = 0;
-                    voiced_samples = 0;
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-        } else {
+        if state != TranscriberThreadState::Listening {
             // If not listening, clear the buffer and sleep for a bit
             audio_buffer.clear();
             accumulated_silence = 0;
             voiced_samples = 0;
             hp_prev_input = 0.0;
             hp_prev_output = 0.0;
+
             std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
         }
+
+        if let Ok(chunk) = rx.try_recv() {
+            let mono_chunk = if !needs_downmix || input_channels == 1 {
+                chunk.clone()
+            } else if input_channels == 2 {
+                match whisper_rs::convert_stereo_to_mono_audio(&chunk) {
+                    Ok(mono) => mono,
+                    Err(err) => {
+                        warn!("stereo downmix failed: {:?}", err);
+                        downmix_multi_channel(&chunk, input_channels)
+                    }
+                }
+            } else {
+                downmix_multi_channel(&chunk, input_channels)
+            };
+            let mut processed_chunk = if needs_resample {
+                resample_to_target(&mono_chunk, resample_ratio)
+            } else {
+                mono_chunk
+            };
+
+            if !processed_chunk.is_empty() {
+                apply_high_pass_filter(
+                    &mut processed_chunk,
+                    &mut hp_prev_input,
+                    &mut hp_prev_output,
+                    HIGH_PASS_CUTOFF_HZ,
+                );
+            }
+            let average_magnitude = if processed_chunk.is_empty() {
+                0.0
+            } else {
+                processed_chunk
+                    .iter()
+                    .map(|sample| sample.abs())
+                    .sum::<f32>()
+                    / processed_chunk.len() as f32
+            };
+            if average_magnitude > 0.005 {
+                accumulated_silence = 0;
+                voiced_samples = voiced_samples.saturating_add(processed_chunk.len());
+            } else {
+                accumulated_silence = accumulated_silence.saturating_add(processed_chunk.len());
+            }
+
+            audio_buffer.extend_from_slice(&processed_chunk);
+
+            let forced_flush = audio_buffer.len() >= max_buffer_samples;
+            let heard_enough = audio_buffer.len() >= min_buffer_samples
+                && accumulated_silence >= silence_trigger_samples;
+
+            if heard_enough || forced_flush {
+                let has_voice = voiced_samples >= TARGET_SAMPLE_RATE / 5; // ~200ms voiced
+                if !has_voice {
+                    audio_buffer.clear();
+                    accumulated_silence = 0;
+                    voiced_samples = 0;
+                    continue;
+                }
+
+                let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+                // TODO: Make this configurable
+                params.set_n_threads(8);
+                params.set_language(Some("en"));
+
+                whisper_state
+                    .full(params, &audio_buffer)
+                    .map_err(|e| anyhow::anyhow!("failed to run model: {}", e))?;
+
+                let num_segments = whisper_state.full_n_segments();
+                info!("Transcription produced {} segments", num_segments);
+                for i in 0..num_segments {
+                    if let Some(segment) = whisper_state.get_segment(i) {
+                        warn!("Segment: {segment}");
+                        let text = segment
+                            .to_str()
+                            .map_err(|e| anyhow::anyhow!("failed to get segment text: {}", e))?
+                            .to_owned();
+                        transcription_sender.send_blocking(text)?;
+                    }
+                }
+
+                audio_buffer.clear();
+                accumulated_silence = 0;
+                voiced_samples = 0;
+            }
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+}
+
+fn downmix_multi_channel(data: &[f32], channels: usize) -> Vec<f32> {
+    if channels <= 1 {
+        return data.to_vec();
+    }
+    let mut mono = Vec::with_capacity(data.len() / channels + 1);
+    for frame in data.chunks(channels) {
+        let sum: f32 = frame.iter().copied().sum();
+        mono.push(sum / channels as f32);
+    }
+    mono
+}
+
+fn resample_to_target(chunk: &[f32], ratio: f32) -> Vec<f32> {
+    if (ratio - 1.0).abs() < f32::EPSILON || chunk.is_empty() {
+        return chunk.to_vec();
+    }
+    let output_len = ((chunk.len() as f32) * ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(output_len.max(1));
+    for i in 0..output_len {
+        let src_pos = i as f32 / ratio;
+        let idx = src_pos.floor() as usize;
+        let frac = src_pos - idx as f32;
+        let next_idx = if idx + 1 < chunk.len() { idx + 1 } else { idx };
+        let a = chunk[idx];
+        let b = chunk[next_idx];
+        output.push(a * (1.0 - frac) + b * frac);
+    }
+    output
+}
+
+fn apply_high_pass_filter(
+    samples: &mut [f32],
+    prev_input: &mut f32,
+    prev_output: &mut f32,
+    cutoff_hz: f32,
+) {
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+    let dt = 1.0 / TARGET_SAMPLE_RATE as f32;
+    let alpha = rc / (rc + dt);
+    for sample in samples.iter_mut() {
+        let output = alpha * (*prev_output + *sample - *prev_input);
+        *prev_input = *sample;
+        *prev_output = output;
+        *sample = output;
     }
 }
