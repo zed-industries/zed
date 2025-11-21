@@ -764,6 +764,12 @@ impl InlineAssistId {
 
 struct PromptEditorCompletionProviderDelegate;
 
+fn inline_assistant_model_supports_images(cx: &App) -> bool {
+    LanguageModelRegistry::read_global(cx)
+        .inline_assistant_model()
+        .map_or(false, |m| m.model.supports_images())
+}
+
 impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate {
     fn supported_modes(&self, _cx: &App) -> Vec<PromptContextType> {
         vec![
@@ -775,8 +781,8 @@ impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate
         ]
     }
 
-    fn supports_images(&self, _cx: &App) -> bool {
-        true //todo
+    fn supports_images(&self, cx: &App) -> bool {
+        inline_assistant_model_supports_images(cx)
     }
 
     fn available_commands(&self, _cx: &App) -> Vec<crate::completion_provider::AvailableCommand> {
