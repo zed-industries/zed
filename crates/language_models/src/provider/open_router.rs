@@ -1000,8 +1000,7 @@ mod tests {
                     thought_signature_value = tool_use.thought_signature.clone();
                 }
                 Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
-                    has_reasoning_details = true;
-                    reasoning_details_value = Some(details);
+                    reasoning_details_events.push(details);
                 }
                 _ => {}
             }
