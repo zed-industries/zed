@@ -15,6 +15,7 @@ use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 use project::{CompletionDisplayOptions, CompletionSource};
+use semantic_version::SemanticVersion;
 use task::DebugScenario;
 use task::TaskContext;
 
@@ -1169,6 +1170,7 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
+                sort_semver: Reverse<Option<SemanticVersion>>,
                 sort_exact: Reverse<i32>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
@@ -1192,7 +1194,7 @@ impl CompletionsMenu {
                 .retain(|string_match| !completions[string_match.candidate_id].is_snippet_kind());
         }
 
-        matches.sort_unstable_by_key(|string_match| {
+        matches.sort_by_cached_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
 
             let sort_text = match &completion.source {
@@ -1234,8 +1236,10 @@ impl CompletionsMenu {
                 } else {
                     0
                 });
+                let sort_semver = Reverse(parse_semver_label(sort_label));
 
                 MatchTier::WordStartMatch {
+                    sort_semver,
                     sort_exact,
                     sort_snippet,
                     sort_score,
@@ -1294,6 +1298,18 @@ impl CompletionsMenu {
         cx.notify();
         self.scroll_handle_aside.set_offset(offset);
     }
+}
+
+fn parse_semver_label(label: &str) -> Option<SemanticVersion> {
+    let trimmed = label.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let trimmed = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed);
+    trimmed.parse().ok()
 }
 
 #[derive(Clone)]
