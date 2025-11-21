@@ -35,6 +35,7 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod split;
 pub mod tasks;
 
 #[cfg(test)]
@@ -215,6 +216,7 @@ use crate::{
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
+    split::{SplitDiff, SplittableEditor},
 };
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
@@ -11246,6 +11248,35 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn breakpoint_store(&self) -> Option<Entity<BreakpointStore>> {
         self.breakpoint_store.clone()
+    }
+
+    fn split_diff(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let buffer = self
+            .buffer()
+            .update(cx, |buffer, cx| cx.new(|cx| buffer.clone(cx)));
+        let split_editor = cx.new(|cx| {
+            let mut split_editor =
+                SplittableEditor::new_unsplit(buffer, workspace.clone(), window, cx);
+            split_editor.split(window, cx);
+            split_editor
+        });
+        let workspace = workspace.downgrade();
+        window.defer(cx, move |window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(
+                        split_editor.boxed_clone(),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                })
+                .ok();
+        });
     }
 
     pub fn prepare_restore_change(

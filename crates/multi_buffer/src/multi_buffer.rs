@@ -714,12 +714,8 @@ impl MultiBuffer {
         let follower = cx.new(|cx| self.clone(cx));
         follower.update(cx, |follower, cx| {
             follower.capability = Capability::ReadOnly;
-            follower.set_all_diff_hunks_expanded(cx);
-            follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions))
         });
         self.follower = Some(follower.clone());
-        self.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-        self.set_all_diff_hunks_expanded(cx);
         follower
     }
 
