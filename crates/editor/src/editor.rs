@@ -306,7 +306,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
-        word_diffs: Vec<Range<usize>>,
+        word_diffs: Vec<Range<MultiBufferOffset>>,
     },
 }
 
@@ -19396,7 +19396,7 @@ impl Editor {
                         buffer_range: hunk.buffer_range,
                         // todo! We might be able to ignore passing in the word diffs here
                         // because they're not going to be used in staged or unstage
-                        base_word_diffs: hunk.word_diffs,
+                        base_word_diffs: Vec::default(),
                         buffer_word_diffs: hunk.buffer_word_diffs,
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,

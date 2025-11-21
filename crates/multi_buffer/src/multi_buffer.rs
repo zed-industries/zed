@@ -143,7 +143,7 @@ pub struct MultiBufferDiffHunk {
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
     /// The word diffs for this hunk.
-    pub word_diffs: Vec<Range<usize>>,
+    pub word_diffs: Vec<Range<MultiBufferOffset>>,
     /// The word diffs for this hunk.
     pub buffer_word_diffs: Vec<Range<text::Anchor>>,
 }
@@ -3638,26 +3638,21 @@ impl MultiBufferSnapshot {
 
             // todo! We only need to get this information if word_diffs is not empty
             // maybe we could also pass up if the hunk is expanded or not?
-
-            let hunk_start_offset = self.point_to_offset(hunk.range.start);
-            let diff_base_offset = hunk.diff_base_byte_range.len();
-            let buffer = &excerpt.buffer;
-            let hunk_buffer_start_offset = hunk.buffer_range.start.to_offset(buffer);
+            let hunk_start_offset =
+                Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
+                    .to_offset(self);
 
             // todo! use multibuffer new types here
-            let base_word_diffs_absolute: Vec<Range<usize>> = hunk
+            let base_word_diffs_absolute: Vec<Range<MultiBufferOffset>> = hunk
                 .base_word_diffs
                 .iter()
-                .map(|diff| diff.start + hunk_start_offset.0..diff.end + hunk_start_offset.0)
+                .map(|diff| {
+                    MultiBufferOffset(diff.start) + hunk_start_offset
+                        ..MultiBufferOffset(diff.end) + hunk_start_offset
+                })
                 .chain(hunk.buffer_word_diffs.iter().map(|diff| {
-                    let range = diff.to_offset(buffer);
-                    let start = range.start.saturating_sub(hunk_buffer_start_offset)
-                        + hunk_start_offset.0
-                        + diff_base_offset;
-                    let end = range.end.saturating_sub(hunk_buffer_start_offset)
-                        + hunk_start_offset.0
-                        + diff_base_offset;
-                    start..end
+                    Anchor::range_in_buffer(excerpt.id, excerpt.buffer_id, diff.clone())
+                        .to_offset(self)
                 }))
                 .collect();
 
@@ -3667,6 +3662,7 @@ impl MultiBufferSnapshot {
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
                 word_diffs: base_word_diffs_absolute,
+                // todo!: clean up by removing below field
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),

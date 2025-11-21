@@ -57,8 +57,8 @@ use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset,
-    MultiBufferPoint, MultiBufferRow, RowInfo,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    MultiBufferRow, RowInfo,
 };
 
 use project::{
@@ -5586,13 +5586,19 @@ impl EditorElement {
         cx: &mut App,
     ) {
         for (hunk, _) in display_hunks {
-            if let DisplayDiffHunk::Unfolded { word_diffs, .. } = hunk {
+            if let DisplayDiffHunk::Unfolded {
+                word_diffs, status, ..
+            } = hunk
+            {
+                // Some views always have line highlights even if the status is not modified
+                if !status.is_modified() {
+                    continue;
+                }
+
                 for word_diff in word_diffs {
                     // todo! word diff should be in multibuffer offset type already
-                    let start_point = (MultiBufferOffset(word_diff.start))
-                        .to_display_point(&snapshot.display_snapshot);
-                    let end_point = (MultiBufferOffset(word_diff.end))
-                        .to_display_point(&snapshot.display_snapshot);
+                    let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
+                    let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
 
                     let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
 

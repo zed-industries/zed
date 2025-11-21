@@ -954,7 +954,7 @@ fn process_patch_hunk(
             buffer_word_diffs
                 .into_iter()
                 .map(|range| {
-                    let start = buffer.anchor_before(range.start);
+                    let start = buffer.anchor_after(range.start);
                     let end = buffer.anchor_after(range.end);
                     start..end
                 })
