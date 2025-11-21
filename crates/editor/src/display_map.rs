@@ -134,12 +134,14 @@ pub struct DisplayMap {
 #[derive(Debug, Default)]
 pub struct PositionedSemanticTokens {
     pub tokens: Vec<PositionedSemanticToken>,
+    // TODO kb remove, display map is always the last one
     pub version: Global,
 }
 
 /// A `SemanticToken`, but positioned to an offset in a buffer, and stylized.
 #[derive(Debug)]
 pub struct PositionedSemanticToken {
+    // TODO kb anchors!
     pub range: Range<usize>,
     pub style: HighlightStyle,
 }

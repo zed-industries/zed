@@ -478,6 +478,7 @@ impl Render for QuickActionBar {
                                     menu = menu.item(inline_diagnostics_item)
                                 }
 
+                                // TODO kb check in a build if this is possible to toggle reliably with settings changes
                                 let mut semantic_tokens_item = ContextMenuEntry::new("Semantic Tokens")
                                     .toggleable(IconPosition::Start, semantic_tokens_available && semantic_tokens_enabled)
                                     .action(ToggleInlineDiagnostics.boxed_clone())

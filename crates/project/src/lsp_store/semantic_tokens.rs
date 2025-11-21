@@ -1,3 +1,5 @@
+// TODO kb move impl LspStore here all semantic token-related methods
+
 use std::{iter::Peekable, slice::ChunksExact};
 
 use collections::IndexMap;
@@ -13,7 +15,7 @@ pub struct BufferSemanticTokens {
     pub servers: IndexMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
-pub struct BufferSemanticTokensIter<'a> {
+struct BufferSemanticTokensIter<'a> {
     iters: Vec<(lsp::LanguageServerId, Peekable<SemanticTokensIter<'a>>)>,
 }
 
@@ -58,7 +60,7 @@ pub struct SemanticToken {
 }
 
 impl BufferSemanticTokens {
-    pub fn all_tokens(&self) -> BufferSemanticTokensIter<'_> {
+    pub fn all_tokens(&self) -> impl Iterator<Item = (lsp::LanguageServerId, SemanticToken)> {
         let iters = self
             .servers
             .iter()
@@ -96,6 +98,7 @@ impl Iterator for BufferSemanticTokensIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let (i, _) = self
             .iters
+            // TODO kb can we avoid re-iterating each time?
             .iter_mut()
             .enumerate()
             .filter_map(|(i, (_, iter))| iter.peek().map(|peeked| (i, peeked)))

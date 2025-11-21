@@ -1922,10 +1922,7 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::RefreshSemanticTokens {
-                        server_id: _,
-                        request_id: _,
-                    } => {
+                    project::Event::RefreshSemanticTokens { .. } => {
                         editor.refresh_semantic_tokens(window, cx);
                     }
                     project::Event::LanguageServerRemoved(..) => {
@@ -1940,7 +1937,6 @@ impl Editor {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
-                        editor.update_semantic_tokens(window, cx);
                     }
                     project::Event::SnippetEdit(id, snippet_edits) => {
                         // todo(lw): Non singletons
@@ -1973,7 +1969,7 @@ impl Editor {
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
-                            editor.update_buffer_semantic_tokens(&buffer, window, cx);
+                            editor.update_buffer_semantic_tokens(buffer, window, cx);
                         }
                     }
 
@@ -2353,7 +2349,7 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             accent_overrides: Vec::new(),
             fetched_tree_sitter_chunks: HashMap::default(),
-            semantic_tokens_enabled: true,
+            semantic_tokens_enabled: full_mode,
             update_semantic_tokens_task: Task::ready(()),
         };
 
@@ -6716,10 +6712,7 @@ impl Editor {
 
     pub fn toggle_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.semantic_tokens_enabled = !self.semantic_tokens_enabled;
-
-        for buffer in self.buffer.read(cx).all_buffers() {
-            self.update_buffer_semantic_tokens(&buffer, window, cx);
-        }
+        self.update_semantic_tokens(window, cx);
     }
 
     pub fn semantic_tokens_available(&self, cx: &App) -> bool {
@@ -6735,7 +6728,10 @@ impl Editor {
         self.semantic_tokens_enabled
     }
 
-    pub(crate) fn refresh_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn refresh_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.mode().is_full() {
+            return;
+        }
         let Some(sema) = self.semantics_provider.as_ref() else {
             return;
         };
@@ -6747,15 +6743,18 @@ impl Editor {
         self.update_semantic_tokens(window, cx);
     }
 
-    pub(crate) fn update_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.mode().is_full() {
+            return;
+        }
         for buffer in self.buffer.read(cx).all_buffers() {
-            self.update_buffer_semantic_tokens(&buffer, window, cx);
+            self.update_buffer_semantic_tokens(buffer, window, cx);
         }
     }
 
-    pub(crate) fn update_buffer_semantic_tokens(
+    fn update_buffer_semantic_tokens(
         &mut self,
-        buffer: &Entity<Buffer>,
+        buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -6766,12 +6765,12 @@ impl Editor {
             return;
         }
 
-        let buffer_entity = buffer.clone();
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        let file = buffer.file();
-
-        let settings = language_settings(buffer.language().map(|l| l.name()), file, cx);
+        let buffer_id = buffer.read(cx).remote_id();
+        let settings = language_settings(
+            buffer.read(cx).language().map(|l| l.name()),
+            buffer.read(cx).file(),
+            cx,
+        );
         if !settings.semantic_tokens {
             self.display_map.update(cx, |display_map, _| {
                 display_map.semantic_tokens.remove(&buffer_id);
@@ -6779,44 +6778,44 @@ impl Editor {
             return;
         }
 
-        let Some(sema) = self.semantics_provider.as_ref() else {
+        let Some((sema, project)) = self.semantics_provider.as_ref().zip(self.project.clone())
+        else {
             return;
         };
 
         // `semantic_tokens` gets debounced, so we can call this frequently.
-        let task = sema.semantic_tokens(buffer_entity, cx);
+        let task = sema.semantic_tokens(buffer.clone(), cx);
+        self.update_semantic_tokens_task = cx.spawn_in(window, async move |editor, cx| {
+            let tokens = match task.await {
+                Ok(tokens) => tokens,
+                Err(e) => {
+                    log::error!("Failed to get semantic tokens: {e:#}");
+                    return;
+                },
+            };
 
-        self.update_semantic_tokens_task = cx.spawn_in(window, async move |this, cx| {
-            let tokens = task.await;
-
-            this.update(cx, |this, cx| {
-                if let (Some(tokens), Some(project)) = (tokens.log_err(), this.project()) {
-                    this.display_map.update(cx, |display_map, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.display_map.update(cx, |display_map, cx| {
                         let lsp_store = project.read(cx).lsp_store().read(cx);
                         let legends = tokens.servers.keys().filter_map(|&server| {
-                            let caps = lsp_store.lsp_server_capabilities.get(&server)?;
-                            let provider = caps.semantic_tokens_provider.as_ref()?;
-                            let legend = match provider {
+                            let legend = match lsp_store.lsp_server_capabilities.get(&server)?.semantic_tokens_provider.as_ref()? {
                                 lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
                                 lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
                             };
                             Some((server, legend))
                         });
 
-                        if let Some(buffer) = this.buffer.read(cx).buffer(buffer_id) {
-                            let view = PositionedSemanticTokens::new(
-                                buffer.read(cx),
-                                &tokens,
-                                legends,
-                                cx,
-                            );
-                            display_map
-                                .semantic_tokens
-                                .insert(buffer_id, Arc::new(view));
-                        }
-                    });
-                    cx.notify();
-                }
+                        let view = PositionedSemanticTokens::new(
+                            buffer.read(cx),
+                            &tokens,
+                            legends,
+                            cx,
+                        );
+                        display_map
+                            .semantic_tokens
+                            .insert(buffer_id, Arc::new(view));
+                });
+                cx.notify();
             })
             .log_err();
         });
@@ -18376,7 +18375,13 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if self.ignore_lsp_data() || !self.diagnostics_enabled() {
+        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
+        // skip any LSP updates for it.
+
+        if self.active_diagnostics == ActiveDiagnostic::All
+            || !self.mode().is_full()
+            || !self.diagnostics_enabled()
+        {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
@@ -21457,7 +21462,7 @@ impl Editor {
                 }
 
                 if let Some(buffer) = edited_buffer {
-                    self.update_buffer_semantic_tokens(buffer, window, cx);
+                    self.update_buffer_semantic_tokens(buffer.clone(), window, cx);
 
                     if buffer.read(cx).file().is_none() {
                         cx.emit(EditorEvent::TitleChanged);
@@ -22618,7 +22623,7 @@ impl Editor {
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
-        if self.ignore_lsp_data() {
+        if !self.mode().is_full() {
             return;
         }
         for (_, (visible_buffer, _, _)) in self.visible_excerpts(cx) {
@@ -22627,7 +22632,7 @@ impl Editor {
     }
 
     fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if self.ignore_lsp_data() {
+        if !self.mode().is_full() {
             return;
         }
 
@@ -22645,12 +22650,6 @@ impl Editor {
                 self.registered_buffers.remove(&buffer_id);
             }
         }
-    }
-
-    fn ignore_lsp_data(&self) -> bool {
-        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
-        // skip any LSP updates for it.
-        self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 }
 
@@ -24017,6 +24016,7 @@ impl SemanticsProvider for Entity<Project> {
     }
 }
 
+// TODO kb move all related things into their own module
 struct SemanticTokenStylizer<'a> {
     rules: &'a SemanticTokenRules,
     token_types: Vec<&'a str>,

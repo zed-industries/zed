@@ -3226,6 +3226,7 @@ impl LocalLspStore {
             }
         }
         servers_to_remove.retain(|server_id| !servers_to_preserve.contains(server_id));
+        // TODO kb clean up old tokens here and other places
         self.language_server_ids
             .retain(|_, state| !servers_to_remove.contains(&state.id));
         for server_id_to_remove in &servers_to_remove {
@@ -7078,6 +7079,7 @@ impl LspStore {
 
     pub fn refresh_semantic_tokens(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
         self.latest_lsp_data(buffer, cx).semantic_tokens = None;
+        // TODO kb we need new tokens after this
     }
 
     pub fn semantic_tokens(
@@ -7087,6 +7089,7 @@ impl LspStore {
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
+        // TODO kb this won't work on remote, cannot make accents on server_id
         let server_ids = self.local_lsp_servers_for_buffer(&buffer, cx);
 
         // If there are no servers yet, don't try and debounce. This makes startup quicker.
@@ -7099,7 +7102,7 @@ impl LspStore {
             .semantic_tokens
             .get_or_insert_default();
 
-        if let Some((updating_for, task)) = semantic_tokens_data.update.as_ref()
+        if let Some((updating_for, task)) = &semantic_tokens_data.update
             && !version_queried_for.changed_since(updating_for)
         {
             return task.clone();
@@ -7128,15 +7131,21 @@ impl LspStore {
                         })
                     })
                 {
-                    return self.send_semantic_tokens_delta(buffer.clone(), cx, server_id, request);
+                    return self.fetch_semantic_tokens_delta(
+                        buffer.clone(),
+                        cx,
+                        server_id,
+                        request,
+                    );
                 }
             }
 
-            self.send_semantic_tokens_full(buffer.clone(), cx, server_id)
+            self.fetch_semantic_tokens_full(buffer.clone(), cx, server_id)
         }));
 
         let task: SemanticTokensTask = cx
             .spawn(async move |lsp_store, cx| {
+                // TODO kb this is a bit too late to debounce, need to get up into the editor?
                 cx.background_executor()
                     .timer(Duration::from_millis(30))
                     .await;
@@ -7173,7 +7182,7 @@ impl LspStore {
         task
     }
 
-    fn send_semantic_tokens_full(
+    fn fetch_semantic_tokens_full(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -7187,6 +7196,7 @@ impl LspStore {
             server,
             SemanticTokensFull,
             move |response, store| {
+                // TODO kb here and below: this is racy, as the document version could have changed already
                 if let Some(lsp_data) = store.current_lsp_data(buffer_id) {
                     let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
 
@@ -7201,7 +7211,7 @@ impl LspStore {
         )
     }
 
-    fn send_semantic_tokens_delta(
+    fn fetch_semantic_tokens_delta(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -7248,7 +7258,7 @@ impl LspStore {
         handle_response: impl FnOnce(<R as LspCommand>::Response, &mut LspStore) + 'static,
     ) -> Task<anyhow::Result<()>> {
         if self.upstream_client().is_some() {
-            // TODO: Semantic tokens on remote servers.
+            // TODO kb Semantic tokens on remote servers.
             return Task::ready(Ok(()));
         } else {
             let lsp_request_task =

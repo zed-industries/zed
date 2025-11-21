@@ -137,14 +137,16 @@ fn create_highlight_endpoints(
                     continue;
                 }
 
+                struct SemanticTokenHighllights;
+
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: token_range.start,
-                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighllights>()),
                     style: Some(token.style),
                 });
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: token_range.end,
-                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighllights>()),
                     style: None,
                 });
             }
@@ -154,6 +156,7 @@ fn create_highlight_endpoints(
     highlight_endpoints.into_iter().peekable()
 }
 
+// TODO kb why cannot we use the latest version always?
 pub fn range_from_version(
     buffer: &BufferSnapshot,
     range: Range<usize>,
