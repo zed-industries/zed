@@ -869,3 +869,222 @@ impl Render for ConfigurationView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use open_router::{ChoiceDelta, FunctionChunk, ResponseMessageDelta, ToolCallChunk};
+
+    #[gpui::test]
+    async fn test_reasoning_details_preservation_with_tool_calls() {
+        // This test verifies that reasoning_details are properly captured and preserved
+        // when a model uses tool calling with reasoning/thinking tokens.
+        //
+        // The key regression this prevents:
+        // - OpenRouter sends multiple reasoning_details updates during streaming
+        // - First with actual content (encrypted reasoning data)
+        // - Then with empty array on completion
+        // - We must NOT overwrite the real data with the empty array
+
+        let mut mapper = OpenRouterEventMapper::new();
+
+        // Simulate the streaming events as they come from OpenRouter/Gemini
+        let events = vec![
+            // Event 1: Initial reasoning details with text
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_details: Some(serde_json::json!([
+                            {
+                                "type": "reasoning.text",
+                                "text": "Let me analyze this request...",
+                                "format": "google-gemini-v1",
+                                "index": 0
+                            }
+                        ])),
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Event 2: More reasoning details
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_details: Some(serde_json::json!([
+                            {
+                                "type": "reasoning.encrypted",
+                                "data": "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123",
+                                "format": "google-gemini-v1",
+                                "index": 0,
+                                "id": "tool_call_abc123"
+                            }
+                        ])),
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Event 3: Tool call starts
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("tool_call_abc123".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("list_directory".into()),
+                                arguments: Some("{\"path\":\"test\"}".into()),
+                                thought_signature: Some("sha256:test_signature_xyz789".into()),
+                            }),
+                        }]),
+                        reasoning_details: None,
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Event 4: Empty reasoning_details on tool_calls finish
+            // This is the critical event - we must not overwrite with this empty array!
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_details: Some(serde_json::json!([])),
+                    },
+                    finish_reason: Some("tool_calls".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        // Process all events
+        let mut collected_events = Vec::new();
+        for event in events {
+            let mapped = mapper.map_event(event);
+            collected_events.extend(mapped);
+        }
+
+        // Verify we got the expected events
+        let mut has_tool_use = false;
+        let mut has_reasoning_details = false;
+        let mut reasoning_details_value = None;
+        let mut thought_signature_value = None;
+
+        for event_result in collected_events {
+            match event_result {
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                    has_tool_use = true;
+                    assert_eq!(tool_use.id.to_string(), "tool_call_abc123");
+                    assert_eq!(tool_use.name.as_ref(), "list_directory");
+                    thought_signature_value = tool_use.thought_signature.clone();
+                }
+                Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
+                    has_reasoning_details = true;
+                    reasoning_details_value = Some(details);
+                }
+                _ => {}
+            }
+        }
+
+        // Assertions
+        assert!(has_tool_use, "Should have emitted ToolUse event");
+        assert!(
+            has_reasoning_details,
+            "Should have emitted ReasoningDetails event"
+        );
+
+        // Verify reasoning_details contains the encrypted data, not the empty array
+        let details = reasoning_details_value.expect("Should have reasoning_details");
+        if let serde_json::Value::Array(arr) = &details {
+            assert!(!arr.is_empty(), "Reasoning details should not be empty!");
+            assert_eq!(arr.len(), 1);
+
+            // Verify it's the encrypted reasoning, not the text reasoning
+            let item = &arr[0];
+            assert_eq!(item["type"], "reasoning.encrypted");
+            assert!(
+                item["data"]
+                    .as_str()
+                    .unwrap()
+                    .contains("EtgDCtUDAdHtim9OF5jm4aeZSBAtl")
+            );
+        } else {
+            panic!("Reasoning details should be an array");
+        }
+
+        // Verify thought_signature was captured
+        assert!(
+            thought_signature_value.is_some(),
+            "Tool use should have thought_signature"
+        );
+        assert_eq!(
+            thought_signature_value.unwrap(),
+            "sha256:test_signature_xyz789"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_empty_reasoning_details_not_emitted() {
+        // Verify that empty reasoning_details arrays are not emitted as events
+        let mut mapper = OpenRouterEventMapper::new();
+
+        let event = ResponseStreamEvent {
+            id: Some("response_456".into()),
+            created: 1234567890,
+            model: "google/gemini-3-pro-preview".into(),
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: None,
+                    tool_calls: None,
+                    reasoning_details: Some(serde_json::json!([])),
+                },
+                finish_reason: Some("stop".into()),
+            }],
+            usage: None,
+        };
+
+        let mapped = mapper.map_event(event);
+
+        // Verify no ReasoningDetails event was emitted
+        for event_result in mapped {
+            if let Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) = event_result {
+                panic!("Should not emit ReasoningDetails event for empty array");
+            }
+        }
+    }
+}
