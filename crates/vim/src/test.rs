@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
     actions::{DeleteLine, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::DisplayRow,
@@ -908,6 +908,9 @@ fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
                 .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot()))
                 .collect::<Vec<_>>(),
             ranges
+                .iter()
+                .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
+                .collect::<Vec<_>>()
         )
     });
 }
@@ -967,7 +970,7 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
                 .iter()
                 .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot()))
                 .collect::<Vec<_>>(),
-            vec![0..1]
+            vec![MultiBufferOffset(0)..MultiBufferOffset(1)]
         )
     });
     cx.executor().advance_clock(Duration::from_millis(500));

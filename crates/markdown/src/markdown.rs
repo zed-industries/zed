@@ -54,6 +54,7 @@ pub struct HeadingLevelStyles {
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
+    pub container_style: StyleRefinement,
     pub code_block: StyleRefinement,
     pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
@@ -74,6 +75,7 @@ impl Default for MarkdownStyle {
     fn default() -> Self {
         Self {
             base_text_style: Default::default(),
+            container_style: Default::default(),
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
@@ -748,6 +750,12 @@ impl MarkdownElement {
     }
 }
 
+impl Styled for MarkdownElement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style.container_style
+    }
+}
+
 impl Element for MarkdownElement {
     type RequestLayoutState = RenderedMarkdown;
     type PrepaintState = Hitbox;
@@ -768,6 +776,7 @@ impl Element for MarkdownElement {
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
@@ -1441,9 +1450,17 @@ struct ListStackEntry {
 }
 
 impl MarkdownElementBuilder {
-    fn new(base_text_style: TextStyle, syntax_theme: Arc<SyntaxTheme>) -> Self {
+    fn new(
+        container_style: &StyleRefinement,
+        base_text_style: TextStyle,
+        syntax_theme: Arc<SyntaxTheme>,
+    ) -> Self {
         Self {
-            div_stack: vec![div().debug_selector(|| "inner".into()).into()],
+            div_stack: vec![{
+                let mut base_div = div();
+                base_div.style().refine(container_style);
+                base_div.debug_selector(|| "inner".into()).into()
+            }],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),

@@ -67,10 +67,15 @@ impl RustLspAdapter {
     #[cfg(target_os = "linux")]
     async fn determine_libc_type() -> LibcType {
         use futures::pin_mut;
-        use smol::process::Command;
 
         async fn from_ldd_version() -> Option<LibcType> {
-            let ldd_output = Command::new("ldd").arg("--version").output().await.ok()?;
+            use util::command::new_smol_command;
+
+            let ldd_output = new_smol_command("ldd")
+                .arg("--version")
+                .output()
+                .await
+                .ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
             if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {

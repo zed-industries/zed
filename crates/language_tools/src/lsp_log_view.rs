@@ -1,9 +1,9 @@
 use collections::VecDeque;
 use copilot::Copilot;
-use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
+use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
-    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
+    App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
+    Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
@@ -231,7 +231,7 @@ impl LspLogView {
                             let last_offset = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end = editor
                                 .selections
-                                .newest::<usize>(&editor.display_snapshot(cx))
+                                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                                 .start
                                 >= last_offset;
                             editor.edit(
@@ -748,11 +748,11 @@ impl Item for LspLogView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

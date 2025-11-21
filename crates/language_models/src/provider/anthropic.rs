@@ -711,6 +711,7 @@ impl AnthropicEventMapper {
                                     is_input_complete: false,
                                     raw_input: tool_use.input_json.clone(),
                                     input,
+                                    thought_signature: None,
                                 },
                             ))];
                         }
@@ -734,6 +735,7 @@ impl AnthropicEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_use.input_json.clone(),
+                                thought_signature: None,
                             },
                         )),
                         Err(json_parse_err) => {

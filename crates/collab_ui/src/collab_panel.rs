@@ -32,7 +32,7 @@ use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip,
+    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tab, Tooltip,
     prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
@@ -287,7 +287,7 @@ impl CollabPanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", window, cx);
+                editor.set_placeholder_text("Search channels…", window, cx);
                 editor
             });
 
@@ -1496,7 +1496,7 @@ impl CollabPanel {
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.filter_editor.update(cx, |editor, cx| {
-            if editor.buffer().read(cx).len(cx) > 0 {
+            if editor.buffer().read(cx).len(cx).0 > 0 {
                 editor.set_text("", window, cx);
                 true
             } else {
@@ -2412,21 +2412,27 @@ impl CollabPanel {
         });
         v_flex()
             .size_full()
+            .gap_1()
+            .child(
+                h_flex()
+                    .p_2()
+                    .h(Tab::container_height(cx))
+                    .gap_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.render_filter_input(&self.filter_editor, cx)),
+            )
             .child(
                 list(
                     self.list_state.clone(),
                     cx.processor(Self::render_list_entry),
                 )
                 .size_full(),
-            )
-            .child(
-                v_flex()
-                    .child(div().mx_2().border_primary(cx).border_t_1())
-                    .child(
-                        v_flex()
-                            .p_2()
-                            .child(self.render_filter_input(&self.filter_editor, cx)),
-                    ),
             )
     }
 

@@ -53,14 +53,16 @@ use std::{
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
-    process::Command,
     ptr,
     rc::Rc,
     slice, str,
     sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
-use util::ResultExt;
+use util::{
+    ResultExt,
+    command::{new_smol_command, new_std_command},
+};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -552,7 +554,7 @@ impl Platform for MacPlatform {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/bin/bash")
+        let restart_process = new_std_command("/bin/bash")
             .arg("-c")
             .arg(script)
             .arg(app_pid)
@@ -867,7 +869,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = smol::process::Command::new("open")
+                if let Some(mut child) = new_smol_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
