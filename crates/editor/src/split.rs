@@ -12,7 +12,7 @@ use workspace::{
 
 use crate::{Editor, EditorEvent};
 
-#[derive(Clone, Copy, PartialEq, Eq, Action)]
+#[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
 pub(crate) struct SplitDiff;
 
@@ -75,9 +75,10 @@ impl SplittableEditor {
         };
         let follower = self.primary.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, cx| {
+                let follower = buffer.get_or_create_follower(cx);
                 buffer.set_all_diff_hunks_expanded(cx);
                 buffer.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-                buffer.get_or_create_follower(cx)
+                follower
             })
         });
         follower.update(cx, |follower, cx| {
@@ -141,13 +142,13 @@ impl Render for SplittableEditor {
         let Some(active) = self.panes.panes().into_iter().next() else {
             return div().into_any_element();
         };
-        div()
-            .child(self.panes.render(
+        self.panes
+            .render(
                 None,
                 &ActivePaneDecorator::new(active, &self.workspace),
                 window,
                 cx,
-            ))
+            )
             .into_any_element()
     }
 }

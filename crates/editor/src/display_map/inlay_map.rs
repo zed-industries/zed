@@ -490,7 +490,6 @@ impl InlayMap {
         buffer_snapshot: MultiBufferSnapshot,
         mut buffer_edits: Vec<text::Edit<usize>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
-        dbg!(&buffer_edits);
         let snapshot = &mut self.snapshot;
 
         if buffer_edits.is_empty()
