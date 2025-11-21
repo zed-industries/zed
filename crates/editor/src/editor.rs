@@ -8814,23 +8814,13 @@ impl Editor {
                 cx,
             ),
             EditPrediction::MoveOutside { snapshot, .. } => {
-                let file_name = snapshot
-                    .file()
-                    .map(|file| file.file_name(cx))
-                    .unwrap_or("untitled");
                 let mut element = self
-                    .render_edit_prediction_line_popover(
-                        format!("Jump to {file_name}"),
-                        Some(IconName::ZedPredict),
-                        window,
-                        cx,
-                    )
+                    .render_edit_prediction_jump_outside_popover(snapshot, window, cx)
                     .into_any();
 
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin_x = text_bounds.size.width / 2. - size.width / 2.;
-                let origin_y = text_bounds.size.height - size.height - px(30.);
-                let origin = text_bounds.origin + gpui::Point::new(origin_x, origin_y);
+                let origin_x = text_bounds.size.width - size.width - px(30.);
+                let origin = text_bounds.origin + gpui::Point::new(origin_x, px(16.));
                 element.prepaint_at(origin, window, cx);
 
                 Some((element, origin))
@@ -9393,6 +9383,67 @@ impl Editor {
                         .child(Icon::new(icon).size(IconSize::Small)),
                 )
             })
+    }
+
+    fn render_edit_prediction_jump_outside_popover(
+        &self,
+        snapshot: &BufferSnapshot,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Stateful<Div> {
+        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let has_keybind = keybind.is_some();
+
+        let file_name = snapshot
+            .file()
+            .map(|file| SharedString::new(file.file_name(cx)))
+            .unwrap_or(SharedString::new_static("untitled"));
+
+        h_flex()
+            .id("ep-jump-outside-popover")
+            .py_1()
+            .px_2()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .bg(Self::edit_prediction_line_popover_bg_color(cx))
+            .border_color(Self::edit_prediction_callout_popover_border_color(cx))
+            .shadow_xs()
+            .when(!has_keybind, |el| {
+                let status_colors = cx.theme().status();
+
+                el.bg(status_colors.error_background)
+                    .border_color(status_colors.error.opacity(0.6))
+                    .pl_2()
+                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .cursor_default()
+                    .hoverable_tooltip(move |_window, cx| {
+                        cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+                    })
+            })
+            .children(keybind)
+            .child(
+                Label::new(file_name)
+                    .size(LabelSize::Small)
+                    .buffer_font(cx)
+                    .when(!has_keybind, |el| {
+                        el.color(cx.theme().status().error.into()).strikethrough()
+                    }),
+            )
+            .when(!has_keybind, |el| {
+                el.child(
+                    h_flex().ml_1().child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(cx.theme().status().error.into()),
+                    ),
+                )
+            })
+            .child(
+                div()
+                    .mt(px(1.5))
+                    .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
+            )
     }
 
     fn edit_prediction_line_popover_bg_color(cx: &App) -> Hsla {
