@@ -379,7 +379,7 @@ impl TerminalBuilder {
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
-            mouse_down_detected_element: None,
+            mouse_down_hyperlink: None,
             #[cfg(windows)]
             shell_program: None,
             activation_script: Vec::new(),
@@ -605,7 +605,7 @@ impl TerminalBuilder {
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
-                mouse_down_detected_element: None,
+                mouse_down_hyperlink: None,
                 #[cfg(windows)]
                 shell_program,
                 activation_script: activation_script.clone(),
@@ -835,7 +835,7 @@ pub struct Terminal {
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
-    mouse_down_detected_element: Option<(String, Match)>,
+    mouse_down_hyperlink: Option<(String, bool, Match)>,
     #[cfg(windows)]
     shell_program: Option<String>,
     template: CopyTemplate,
@@ -1763,8 +1763,7 @@ impl Terminal {
     ) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if !self.mouse_mode(e.modifiers.shift) {
-            // Check if we have a detected element from mouse down
-            if let Some((_, element_range)) = &self.mouse_down_detected_element {
+            if let Some((_, _, element_range)) = &self.mouse_down_hyperlink {
                 let point = grid_point(
                     position,
                     self.last_content.terminal_bounds,
@@ -1772,10 +1771,8 @@ impl Terminal {
                 );
 
                 if !element_range.contains(&point) {
-                    // Moved outside element bounds - clear click state and start selection
-                    self.mouse_down_detected_element = None;
+                    self.mouse_down_hyperlink = None;
                 } else {
-                    // Still within element - preserve click state, don't start selection
                     return;
                 }
             }
@@ -1826,18 +1823,16 @@ impl Terminal {
             self.last_content.display_offset,
         );
 
-        // Detect any clickable element on Ctrl/Cmd+click for element-bounded click detection
         if e.button == MouseButton::Left
             && e.modifiers.secondary()
             && !self.mouse_mode(e.modifiers.shift)
         {
             let term_lock = self.term.lock();
-            self.mouse_down_detected_element = terminal_hyperlinks::find_from_grid_point(
+            self.mouse_down_hyperlink = terminal_hyperlinks::find_from_grid_point(
                 &term_lock,
                 point,
                 &mut self.hyperlink_regex_searches,
-            )
-            .map(|(text, _is_url, match_range)| (text, match_range));
+            );
         }
 
         if self.mouse_mode(e.modifiers.shift) {
@@ -1910,31 +1905,21 @@ impl Terminal {
                 self.copy(Some(true));
             }
 
-            // Check for element-bounded click (works with drag across element)
-            if let Some((down_text, down_range)) = self.mouse_down_detected_element.take() {
+            if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
                 let point = grid_point(
                     position,
                     self.last_content.terminal_bounds,
                     self.last_content.display_offset,
                 );
 
-                // Detect element at mouse up position
                 {
                     let term_lock = self.term.lock();
-                    if let Some((up_text, _is_url, up_range)) =
-                        terminal_hyperlinks::find_from_grid_point(
-                            &term_lock,
-                            point,
-                            &mut self.hyperlink_regex_searches,
-                        )
-                    {
-                        // Verify same element: matching text and overlapping ranges
-                        let ranges_overlap = down_range.start().line <= up_range.end().line
-                            && down_range.end().line >= up_range.start().line
-                            && down_range.start().column <= up_range.end().column
-                            && down_range.end().column >= up_range.start().column;
-
-                        if down_text == up_text && ranges_overlap {
+                    if let Some(mouse_up_hyperlink) = terminal_hyperlinks::find_from_grid_point(
+                        &term_lock,
+                        point,
+                        &mut self.hyperlink_regex_searches,
+                    ) {
+                        if mouse_down_hyperlink == mouse_up_hyperlink {
                             self.events
                                 .push_back(InternalEvent::FindHyperlink(position, true));
                             self.selection_phase = SelectionPhase::Ended;
