@@ -1896,7 +1896,9 @@ mod tests {
 
         // Ensure test isolation from ZED_PREDICT_EDITS_URL environment variable
         let original_predict_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
-        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        unsafe {
+            std::env::remove_var("ZED_PREDICT_EDITS_URL");
+        }
 
         assert_eq!(
             apply_edit_prediction(
@@ -1953,7 +1955,9 @@ mod tests {
 
         // Restore original environment variable
         if let Some(url) = original_predict_url {
-            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+            unsafe {
+                std::env::set_var("ZED_PREDICT_EDITS_URL", url);
+            }
         }
     }
 
@@ -2131,7 +2135,9 @@ mod tests {
 
         // Ensure test isolation from ZED_PREDICT_EDITS_URL environment variable
         let original_predict_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
-        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        unsafe {
+            std::env::remove_var("ZED_PREDICT_EDITS_URL");
+        }
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -2194,7 +2200,9 @@ mod tests {
 
         // Restore original environment variable
         if let Some(url) = original_predict_url {
-            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+            unsafe {
+                std::env::set_var("ZED_PREDICT_EDITS_URL", url);
+            }
         }
     }
 
@@ -2204,7 +2212,9 @@ mod tests {
 
         // Ensure test isolation from ZED_PREDICT_EDITS_URL environment variable
         let original_predict_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
-        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        unsafe {
+            std::env::remove_var("ZED_PREDICT_EDITS_URL");
+        }
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -2280,7 +2290,9 @@ mod tests {
 
         // Restore original environment variable
         if let Some(url) = original_predict_url {
-            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+            unsafe {
+                std::env::set_var("ZED_PREDICT_EDITS_URL", url);
+            }
         }
     }
 
@@ -2417,7 +2429,9 @@ mod tests {
 
         // Save and clear ZED_PREDICT_EDITS_URL to ensure test isolation
         let original_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
-        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        unsafe {
+            std::env::remove_var("ZED_PREDICT_EDITS_URL");
+        }
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(path!("/test"), json!({ "main.rs": "fn main() {}" }))
@@ -2458,9 +2472,8 @@ mod tests {
         });
 
         // Create provider
-        let provider = cx.new(|cx| {
-            ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx)
-        });
+        let provider =
+            cx.new(|cx| ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx));
 
         // Attempt to refresh - should be blocked
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)));
@@ -2478,7 +2491,9 @@ mod tests {
 
         // Restore original environment variable
         if let Some(url) = original_url {
-            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+            unsafe {
+                std::env::set_var("ZED_PREDICT_EDITS_URL", url);
+            }
         }
     }
 
@@ -2488,7 +2503,9 @@ mod tests {
 
         // Save and set ZED_PREDICT_EDITS_URL for test
         let original_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
-        unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", "http://localhost:9999/test"); }
+        unsafe {
+            std::env::set_var("ZED_PREDICT_EDITS_URL", "http://localhost:9999/test");
+        }
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(path!("/test"), json!({ "main.rs": "fn main() {}" }))
@@ -2556,9 +2573,8 @@ mod tests {
         });
 
         // Create provider
-        let provider = cx.new(|cx| {
-            ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx)
-        });
+        let provider =
+            cx.new(|cx| ZetaEditPredictionProvider::new(zeta.clone(), project.clone(), None, cx));
 
         // Attempt to refresh - should succeed with custom URL
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)));
@@ -2577,9 +2593,13 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         // Restore original environment variable
-        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        unsafe {
+            std::env::remove_var("ZED_PREDICT_EDITS_URL");
+        }
         if let Some(url) = original_url {
-            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+            unsafe {
+                std::env::set_var("ZED_PREDICT_EDITS_URL", url);
+            }
         }
     }
 
@@ -2589,7 +2609,9 @@ mod tests {
 
         // Save and clear ZED_PREDICT_EDITS_URL to ensure test isolation
         let original_url = std::env::var("ZED_PREDICT_EDITS_URL").ok();
-        unsafe { std::env::remove_var("ZED_PREDICT_EDITS_URL"); }
+        unsafe {
+            std::env::remove_var("ZED_PREDICT_EDITS_URL");
+        }
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(path!("/test"), json!({ "main.rs": "fn main() {}" }))
@@ -2610,11 +2632,16 @@ mod tests {
         let edit_prediction = run_edit_prediction(&buffer, &project, &zeta, cx).await;
 
         // Verify we got a valid prediction back
-        assert!(!edit_prediction.edits.is_empty(), "Expected edit predictions for authenticated user");
+        assert!(
+            !edit_prediction.edits.is_empty(),
+            "Expected edit predictions for authenticated user"
+        );
 
         // Restore original environment variable
         if let Some(url) = original_url {
-            unsafe { std::env::set_var("ZED_PREDICT_EDITS_URL", url); }
+            unsafe {
+                std::env::set_var("ZED_PREDICT_EDITS_URL", url);
+            }
         }
     }
 

@@ -238,7 +238,9 @@ fn assign_edit_prediction_provider(
                     }
 
                     editor.set_edit_prediction_provider(Some(provider), window, cx);
-                } else if user_store.read(cx).current_user().is_some() || std::env::var("ZED_PREDICT_EDITS_URL").is_ok() {
+                } else if user_store.read(cx).current_user().is_some()
+                    || std::env::var("ZED_PREDICT_EDITS_URL").is_ok()
+                {
                     if cx.has_flag::<Zeta2FeatureFlag>() {
                         let zeta = zeta2::Zeta::global(client, &user_store, cx);
                         let provider = cx.new(|cx| {
