@@ -808,6 +808,9 @@ impl GitPanel {
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
                     if let Some(diff_task) =
+                        // this needs to become load the diff
+                        // this just waits for the load_diff_task to be completed
+                        // later we will make all files load for small diffs
                         active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())?
                     {
                         diff_task.await;
@@ -3860,6 +3863,7 @@ impl GitPanel {
         })
     }
 
+    // context menu
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -4085,6 +4089,7 @@ impl GitPanel {
                     this.selected_entry = Some(ix);
                     cx.notify();
                     if event.modifiers().secondary() {
+                        // the click handler
                         this.open_file(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
