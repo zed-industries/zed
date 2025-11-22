@@ -162,18 +162,17 @@ impl RenderOnce for Star {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl gpui::IntoElement {
         shader_element_with_data(FragmentShader::new(
             "
-            let r = min(input.size.x, input.size.y) / 2.0;
-            let p = vec2<f32>(input.position.x - input.origin.x, input.position.y - input.origin.y) - input.size / 2.0;
-            let p_rot = mat2x2<f32>(data.cosine, -data.sine, data.sine, data.cosine) * p;
-            let d = sd_pentagram(p_rot, r * 0.90) - r * 0.1;
+            let radius = min(input.size.x, input.size.y) / 2.0;
+            let pos = mat2x2<f32>(data.cosine, -data.sine, data.sine, data.cosine) * (input.position.xy - input.origin - input.size / 2.0);
+            let signed_dst = sd_pentagram(pos, radius * 0.90) - radius * 0.1;
 
-            let border = clamp(d + data.border, 0.0, 1.0);
+            let border = clamp(signed_dst + data.border, 0.0, 1.0);
             var color = mix(data.bg, data.border_color, border);
-            color.w = 1.0 - clamp(d, 0.0, 1.0);
+            color.w = 1.0 - clamp(signed_dst, 0.0, 1.0);
 
             return color;"
         ).with_item("
-            // https://iquilezles.org/articles/distfunctions2d/
+            // ported from https://iquilezles.org/articles/distfunctions2d/
             fn sd_pentagram(pos: vec2<f32>, r: f32) -> f32 {
                 var p = vec2<f32>(pos.x, -pos.y);
                 let k1x = 0.809016994; // cos(pi/5)
