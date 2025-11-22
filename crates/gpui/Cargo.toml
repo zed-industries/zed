@@ -17,7 +17,7 @@ categories = ["gui"]
 workspace = true
 
 [features]
-default = ["font-kit", "wayland", "x11", "windows-manifest", "macos-blade"]
+default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",

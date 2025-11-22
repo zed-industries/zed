@@ -243,7 +243,7 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
 /// }
 /// ```
 pub unsafe trait ShaderUniform: Clone + Copy + 'static {
-    /// The name of the type in wgsl (ie. `f32`, `UserData`)
+    /// The name of the type in wgsl (ie. `f32`, `InstanceData`)
     const NAME: &str;
 
     /// The type's definition, if it is a struct.

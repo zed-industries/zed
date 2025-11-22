@@ -150,7 +150,7 @@ fn star() -> Star {
 
 #[repr(C)]
 #[derive(ShaderUniform, Clone, Copy)]
-struct StarUserData {
+struct StarInstanceData {
     bg: [f32; 4],
     border_color: [f32; 4],
     border: f32,
@@ -193,7 +193,7 @@ impl RenderOnce for Star {
                 return length(p - v3 * clamp(dot(p, v3), 0.0, k1z * r)) * sign(p.y * v3.x - p.x * v3.y);
             }
         "),
-        StarUserData {
+        StarInstanceData {
             bg: [self.bg.r, self.bg.g, self.bg.b, self.bg.a],
             border_color: [self.border_color.r, self.border_color.g, self.border_color.b, self.border_color.a],
             border: self.border.to_pixels(window.rem_size()).into(),
