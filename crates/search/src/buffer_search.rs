@@ -3081,7 +3081,11 @@ mod tests {
             // Simulate typing in the query editor
             search_bar.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit([(0..0, "expression")], None, cx);
+                    buffer.edit(
+                        [(MultiBufferOffset(0)..MultiBufferOffset(0), "expression")],
+                        None,
+                        cx,
+                    );
                 });
             });
         });
