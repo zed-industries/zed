@@ -297,6 +297,7 @@ pub struct AcpThreadView {
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
     show_codex_windows_warning: bool,
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 enum ThreadState {
@@ -437,6 +438,7 @@ impl AcpThreadView {
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
             show_codex_windows_warning,
+            in_flight_prompt: None,
         }
     }
 
@@ -591,9 +593,13 @@ impl AcpThreadView {
                             .connection()
                             .model_selector(thread.read(cx).session_id())
                             .map(|selector| {
+                                let agent_server = this.agent.clone();
+                                let fs = this.project.read(cx).fs().clone();
                                 cx.new(|cx| {
                                     AcpModelSelectorPopover::new(
                                         selector,
+                                        agent_server,
+                                        fs,
                                         PopoverMenuHandle::default(),
                                         this.focus_handle(cx),
                                         window,
@@ -1135,6 +1141,7 @@ impl AcpThreadView {
 
         self.is_loading_contents = true;
         let model_id = self.current_model_id(cx);
+        let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
             this.is_loading_contents = false;
@@ -1150,6 +1157,7 @@ impl AcpThreadView {
             }
 
             this.update_in(cx, |this, window, cx| {
+                this.in_flight_prompt = Some(contents.clone());
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
                 this.message_editor.update(cx, |message_editor, cx| {
@@ -1169,19 +1177,26 @@ impl AcpThreadView {
                     "Agent Message Sent",
                     agent = agent_telemetry_id,
                     session = session_id,
-                    model = model_id
+                    model = model_id,
+                    mode = mode_id
                 );
 
                 thread.send(contents, cx)
             })?;
             let res = send.await;
             let turn_time_ms = turn_start_time.elapsed().as_millis();
-            let status = if res.is_ok() { "success" } else { "failure" };
+            let status = if res.is_ok() {
+                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
+                "success"
+            } else {
+                "failure"
+            };
             telemetry::event!(
                 "Agent Turn Completed",
                 agent = agent_telemetry_id,
                 session = session_id,
                 model = model_id,
+                mode = mode_id,
                 status,
                 turn_time_ms,
             );
@@ -5017,15 +5032,12 @@ impl AcpThreadView {
             }));
 
         let mut container = h_flex()
-            .id("thread-controls-container")
-            .group("thread-controls-container")
             .w_full()
             .py_2()
             .px_5()
             .gap_px()
             .opacity(0.6)
-            .hover(|style| style.opacity(1.))
-            .flex_wrap()
+            .hover(|s| s.opacity(1.))
             .justify_end();
 
         if AgentSettings::get_global(cx).enable_feedback
@@ -5035,23 +5047,13 @@ impl AcpThreadView {
         {
             let feedback = self.thread_feedback.feedback;
 
-            container = container
-                .child(
-                    div().visible_on_hover("thread-controls-container").child(
-                        Label::new(match feedback {
-                            Some(ThreadFeedback::Positive) => "Thanks for your feedback!",
-                            Some(ThreadFeedback::Negative) => {
-                                "We appreciate your feedback and will use it to improve."
-                            }
-                            None => {
-                                "Rating the thread sends all of your current conversation to the Zed team."
-                            }
-                        })
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall)
-                        .truncate(),
-                    ),
+            let tooltip_meta = || {
+                SharedString::new(
+                    "Rating the thread sends all of your current conversation to the Zed team.",
                 )
+            };
+
+            container = container
                 .child(
                     IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
                         .shape(ui::IconButtonShape::Square)
@@ -5060,7 +5062,12 @@ impl AcpThreadView {
                             Some(ThreadFeedback::Positive) => Color::Accent,
                             _ => Color::Ignored,
                         })
-                        .tooltip(Tooltip::text("Helpful Response"))
+                        .tooltip(move |window, cx| match feedback {
+                            Some(ThreadFeedback::Positive) => {
+                                Tooltip::text("Thanks for your feedback!")(window, cx)
+                            }
+                            _ => Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx),
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
                         })),
@@ -5073,7 +5080,16 @@ impl AcpThreadView {
                             Some(ThreadFeedback::Negative) => Color::Accent,
                             _ => Color::Ignored,
                         })
-                        .tooltip(Tooltip::text("Not Helpful"))
+                        .tooltip(move |window, cx| match feedback {
+                            Some(ThreadFeedback::Negative) => {
+                                Tooltip::text(
+                                    "We appreciate your feedback and will use it to improve in the future.",
+                                )(window, cx)
+                            }
+                            _ => {
+                                Tooltip::with_meta("Not Helpful Response", None, tooltip_meta(), cx)
+                            }
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
                         })),
@@ -5405,6 +5421,16 @@ impl AcpThreadView {
         )
     }
 
+    fn current_mode_id(&self, cx: &App) -> Option<Arc<str>> {
+        if let Some(thread) = self.as_native_thread(cx) {
+            Some(thread.read(cx).profile().0.clone())
+        } else if let Some(mode_selector) = self.mode_selector() {
+            Some(mode_selector.read(cx).mode().0)
+        } else {
+            None
+        }
+    }
+
     fn current_model_id(&self, cx: &App) -> Option<String> {
         self.model_selector
             .as_ref()
@@ -5676,6 +5702,11 @@ impl AcpThreadView {
                         provider_id: None,
                     };
                     this.clear_thread_error(cx);
+                    if let Some(message) = this.in_flight_prompt.take() {
+                        this.message_editor.update(cx, |editor, cx| {
+                            editor.set_message(message, window, cx);
+                        });
+                    }
                     let this = cx.weak_entity();
                     window.defer(cx, |window, cx| {
                         Self::handle_auth_required(this, err, agent, connection, window, cx);
@@ -6053,6 +6084,7 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
+    use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
     use project::Project;
@@ -7221,7 +7253,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor
@@ -7283,7 +7315,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor

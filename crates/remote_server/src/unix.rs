@@ -16,6 +16,7 @@ use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+use util::command::new_smol_command;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
@@ -372,7 +373,7 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
         .thread_name(|ix| format!("RayonWorker{}", ix))
         .build_global()
@@ -656,7 +657,7 @@ pub(crate) fn execute_proxy(
 
 async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
-    smol::process::Command::new("kill")
+    new_smol_command("kill")
         .arg(pid.to_string())
         .output()
         .await
@@ -707,7 +708,7 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
-    let mut server_process = smol::process::Command::new(binary_name);
+    let mut server_process = new_smol_command(binary_name);
     server_process
         .arg("run")
         .arg("--log-file")
@@ -772,7 +773,7 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match smol::process::Command::new("kill")
+    match new_smol_command("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()

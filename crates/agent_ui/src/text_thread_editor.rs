@@ -11,8 +11,8 @@ use assistant_slash_commands::{
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferSnapshot,
-    RowExt, ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
+    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
@@ -24,11 +24,11 @@ use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem,
-    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
-    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, actions, div, img, point,
-    prelude::*, pulsating_between, size,
+    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, ClipboardItem, Empty, Entity,
+    EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement,
+    Styled, Subscription, Task, WeakEntity, actions, div, img, point, prelude::*,
+    pulsating_between, size,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -68,7 +68,7 @@ use workspace::{
 };
 use workspace::{
     Save, Toast, Workspace,
-    item::{self, FollowableItem, Item, ItemHandle},
+    item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
     searchable::{SearchEvent, SearchableItem},
@@ -392,7 +392,7 @@ impl TextThreadEditor {
                 let cursor = user_message
                     .start
                     .to_offset(self.text_thread.read(cx).buffer().read(cx));
-                cursor..cursor
+                MultiBufferOffset(cursor)..MultiBufferOffset(cursor)
             };
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |selections| {
@@ -433,7 +433,7 @@ impl TextThreadEditor {
         let cursors = self.cursors(cx);
         self.text_thread.update(cx, |text_thread, cx| {
             let messages = text_thread
-                .messages_for_offsets(cursors, cx)
+                .messages_for_offsets(cursors.into_iter().map(|cursor| cursor.0), cx)
                 .into_iter()
                 .map(|message| message.id)
                 .collect();
@@ -441,9 +441,11 @@ impl TextThreadEditor {
         });
     }
 
-    fn cursors(&self, cx: &mut App) -> Vec<usize> {
+    fn cursors(&self, cx: &mut App) -> Vec<MultiBufferOffset> {
         let selections = self.editor.update(cx, |editor, cx| {
-            editor.selections.all::<usize>(&editor.display_snapshot(cx))
+            editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx))
         });
         selections
             .into_iter()
@@ -1582,7 +1584,11 @@ impl TextThreadEditor {
     fn get_clipboard_contents(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
+    ) -> (
+        String,
+        CopyMetadata,
+        Vec<text::Selection<MultiBufferOffset>>,
+    ) {
         let (mut selection, creases) = self.editor.update(cx, |editor, cx| {
             let mut selection = editor
                 .selections
@@ -1640,30 +1646,26 @@ impl TextThreadEditor {
 
         // If selection is empty, we want to copy the entire line
         if selection.range().is_empty() {
-            let snapshot = text_thread.buffer().read(cx).snapshot();
+            let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
             let point = snapshot.offset_to_point(selection.range().start);
             selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
             selection.end = snapshot
                 .point_to_offset(cmp::min(Point::new(point.row + 1, 0), snapshot.max_point()));
-            for chunk in text_thread
-                .buffer()
-                .read(cx)
-                .text_for_range(selection.range())
-            {
+            for chunk in snapshot.text_for_range(selection.range()) {
                 text.push_str(chunk);
             }
         } else {
             for message in text_thread.messages(cx) {
-                if message.offset_range.start >= selection.range().end {
+                if message.offset_range.start >= selection.range().end.0 {
                     break;
-                } else if message.offset_range.end >= selection.range().start {
-                    let range = cmp::max(message.offset_range.start, selection.range().start)
-                        ..cmp::min(message.offset_range.end, selection.range().end);
+                } else if message.offset_range.end >= selection.range().start.0 {
+                    let range = cmp::max(message.offset_range.start, selection.range().start.0)
+                        ..cmp::min(message.offset_range.end, selection.range().end.0);
                     if !range.is_empty() {
                         for chunk in text_thread.buffer().read(cx).text_for_range(range) {
                             text.push_str(chunk);
                         }
-                        if message.offset_range.end < selection.range().end {
+                        if message.offset_range.end < selection.range().end.0 {
                             text.push('\n');
                         }
                     }
@@ -1861,7 +1863,7 @@ impl TextThreadEditor {
             self.editor.update(cx, |editor, cx| {
                 let paste_position = editor
                     .selections
-                    .newest::<usize>(&editor.display_snapshot(cx))
+                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                     .head();
                 editor.paste(action, window, cx);
 
@@ -1909,13 +1911,16 @@ impl TextThreadEditor {
                 editor.transact(window, cx, |editor, _window, cx| {
                     let edits = editor
                         .selections
-                        .all::<usize>(&editor.display_snapshot(cx))
+                        .all::<MultiBufferOffset>(&editor.display_snapshot(cx))
                         .into_iter()
                         .map(|selection| (selection.start..selection.end, "\n"));
                     editor.edit(edits, cx);
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for selection in editor.selections.all::<usize>(&editor.display_snapshot(cx)) {
+                    for selection in editor
+                        .selections
+                        .all::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                    {
                         image_positions.push(snapshot.anchor_before(selection.end));
                     }
                 });
@@ -2007,7 +2012,7 @@ impl TextThreadEditor {
                 let range = selection
                     .map(|endpoint| endpoint.to_offset(&buffer))
                     .range();
-                text_thread.split_message(range, cx);
+                text_thread.split_message(range.start.0..range.end.0, cx);
             }
         });
     }
@@ -2701,11 +2706,11 @@ impl Item for TextThreadEditor {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -3081,7 +3086,7 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::SelectionEffects;
+    use editor::{MultiBufferOffset, SelectionEffects};
     use fs::FakeFs;
     use gpui::{App, TestAppContext, VisualTestContext};
     use indoc::indoc;
@@ -3287,15 +3292,16 @@ mod tests {
         text_thread: &Entity<TextThread>,
         message_ix: usize,
         cx: &mut TestAppContext,
-    ) -> Range<usize> {
-        text_thread.update(cx, |text_thread, cx| {
+    ) -> Range<MultiBufferOffset> {
+        let range = text_thread.update(cx, |text_thread, cx| {
             text_thread
                 .messages(cx)
                 .nth(message_ix)
                 .unwrap()
                 .anchor_range
                 .to_offset(&text_thread.buffer().read(cx).snapshot())
-        })
+        });
+        MultiBufferOffset(range.start)..MultiBufferOffset(range.end)
     }
 
     fn assert_copy_paste_text_thread_editor<T: editor::ToOffset>(

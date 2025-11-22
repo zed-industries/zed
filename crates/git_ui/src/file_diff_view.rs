@@ -5,8 +5,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, Task, Window,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Task, Window,
 };
 use language::Buffer;
 use project::Project;
@@ -268,11 +268,11 @@ impl Item for FileDiffView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

@@ -124,7 +124,6 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
-    map<string, string> renamed_paths = 14;
 }
 
 message RemoveRepository {
@@ -531,4 +530,14 @@ message GitCreateWorktree {
     string name = 3;
     string directory = 4;
     optional string commit = 5;
+}
+
+message RunGitHook {
+    enum GitHook {
+        PRE_COMMIT = 0;
+    }
+
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    GitHook hook = 3;
 }

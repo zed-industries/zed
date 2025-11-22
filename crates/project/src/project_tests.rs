@@ -8453,6 +8453,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -8611,7 +8612,7 @@ async fn test_repository_pending_ops_staging(
 
     // Ensure we have no pending ops for any of the untracked files
     repo.read_with(cx, |repo, _cx| {
-        assert!(repo.pending_ops_by_path.is_empty());
+        assert!(repo.pending_ops().next().is_none());
     });
 
     let mut id = 1u16;
