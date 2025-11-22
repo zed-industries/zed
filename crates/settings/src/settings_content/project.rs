@@ -315,7 +315,7 @@ pub struct GitSettings {
     pub path_style: Option<GitPathStyle>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct GitEnabledSettings {
