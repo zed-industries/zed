@@ -118,7 +118,10 @@ impl Model {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
             Self::Grok4 | Self::GrokCodeFast1 => 256_000,
-            Self::Grok4FastReasoning | Self::Grok4FastNonReasoning | Self::Grok41FastReasoning | Self::Grok41FastNonReasoning => 128_000,
+            Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning
+            | Self::Grok41FastReasoning
+            | Self::Grok41FastNonReasoning => 128_000,
             Self::Grok2Vision => 8_192,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
