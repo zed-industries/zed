@@ -6106,10 +6106,6 @@ where
             && *position == self.diff_transforms.start().output_dimension.0
         {
             self.diff_transforms.prev();
-            while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item()
-            {
-                self.diff_transforms.prev();
-            }
         }
 
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension.0;
@@ -6135,10 +6131,6 @@ where
             && *position == self.diff_transforms.start().output_dimension.0
         {
             self.diff_transforms.prev();
-            while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item()
-            {
-                self.diff_transforms.prev();
-            }
         }
 
         let overshoot = *position - self.diff_transforms.start().output_dimension.0;
@@ -6174,10 +6166,6 @@ where
             && self.diff_transforms.next_item().is_some()
         {
             self.diff_transforms.next();
-            while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item()
-            {
-                self.diff_transforms.next();
-            }
         }
     }
 
@@ -6212,16 +6200,6 @@ where
                 }
             }
         }
-
-        // There is a postcondition that the cursor will not be left on a
-        // filtered hunk. We need to make sure we aren't, then also advance to
-        // the correct excerpt.
-        while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
-            self.diff_transforms.next();
-            if self.diff_transforms.end().excerpt_dimension > self.excerpts.end() {
-                self.excerpts.next();
-            }
-        }
     }
 
     fn prev(&mut self) {
@@ -6242,13 +6220,6 @@ where
                 {
                     self.excerpts.prev();
                 }
-            }
-        }
-
-        while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
-            self.diff_transforms.prev();
-            if self.diff_transforms.start().excerpt_dimension < *self.excerpts.start() {
-                self.excerpts.prev();
             }
         }
     }
@@ -6295,8 +6266,6 @@ where
         })
     }
 
-    //
-
     fn main_buffer_position(&self) -> Option<D> {
         let excerpt = self.excerpts.item()?;
         let buffer = &excerpt.buffer;
@@ -6311,7 +6280,6 @@ where
         let excerpt = self.excerpts.item()?;
         match self.diff_transforms.item()? {
             DiffTransform::FilteredInsertedHunk { .. } => {
-                // FIXME
                 panic!("parked on filtered inserted hunk")
             }
             DiffTransform::DeletedHunk {
@@ -7043,6 +7011,7 @@ impl Iterator for MultiBufferRows<'_> {
             };
         }
 
+        dbg!(&region.range, &region.diff_hunk_status);
         let overshoot = self.point - dbg!(region.range.start);
         let buffer_point = region.buffer_range.start + overshoot;
         let expand_info = if self.is_singleton {

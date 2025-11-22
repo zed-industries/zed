@@ -2838,6 +2838,17 @@ async fn test_random_multibuffer_impl(
             .map(|b| b.row)
             .collect::<HashSet<_>>();
         snapshot.debug_print_transforms();
+        let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
+            cx.update(|cx| reference.expected_content(None, true, cx));
+        eprintln!(
+            "unfiltered:\n{}",
+            format_diff(
+                &unfiltered_text,
+                &unfiltered_row_infos,
+                &unfiltered_boundary_rows,
+                None
+            )
+        );
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
 
         let (expected_text, expected_row_infos, expected_boundary_rows) =
@@ -2863,9 +2874,6 @@ async fn test_random_multibuffer_impl(
         );
 
         log::info!("Multibuffer content:\n{}", actual_diff);
-
-        let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
-            cx.update(|cx| reference.expected_content(None, true, cx));
 
         assert_eq!(
             actual_row_infos.len(),
