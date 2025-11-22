@@ -1,18 +1,16 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::{InlineAssistant, context_store::ContextStore};
+use crate::InlineAssistant;
 
 use client::{Client, UserStore};
-use clock::FakeSystemClock;
 use editor::{Editor, MultiBuffer};
 use futures::channel::mpsc;
 use gpui::{AppContext, TestAppContext, UpdateGlobal};
-use http_client::FakeHttpClient;
 use language::Buffer;
-use language_model::{LanguageModelRegistry, SelectedModel, fake_provider::FakeLanguageModel};
+use language_model::{LanguageModelRegistry, SelectedModel};
 use project::{FakeFs, Project};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, PromptStore};
 use smol::stream::StreamExt;
 use workspace::Workspace;
 
@@ -57,8 +55,17 @@ async fn eval_inline_assistant(cx: &mut TestAppContext) {
         cx.set_global(inline_assistant);
     });
 
+    // let prompt_store = cx.update(|cx| PromptStore::global(cx)).await.unwrap();
+    let project = Project::test(fs.clone(), [], cx).await;
+
+    // Create workspace with window
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        window.activate_window();
+        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+    });
+
     // Initialize required systems and set up language model
-    let fake_model = cx.update(|cx| {
+    let fake_model = cx.update(|_window, cx| {
         if use_real_model {
             // Reconfigure to use a real model instead of the fake one
             let model_name = std::env::var("ZED_AGENT_MODEL")
@@ -82,20 +89,11 @@ async fn eval_inline_assistant(cx: &mut TestAppContext) {
         }
     });
 
-    let project = Project::test(fs.clone(), [], cx).await;
-
-    // Create workspace with window
-    let (workspace, window_cx) = cx.add_window_view(|window, cx| {
-        window.activate_window();
-        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-    });
-
     // Create all entities and call assist within the window context to avoid borrowing issues
-    let (_editor, buffer) = window_cx.update(|window, cx| {
+    let (_editor, buffer) = cx.update(|window, cx| {
         let buffer = cx.new(|cx| Buffer::local("// Test buffer content\n", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
         let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
-        let context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
 
         // Add editor to workspace
         workspace.update(cx, |workspace, cx| {
@@ -108,7 +106,6 @@ async fn eval_inline_assistant(cx: &mut TestAppContext) {
                 .assist(
                     &editor,
                     workspace.downgrade(),
-                    context_store,
                     project.downgrade(),
                     None, // prompt_store
                     None, // thread_store
@@ -143,11 +140,6 @@ async fn eval_inline_assistant(cx: &mut TestAppContext) {
         cx.executor()
             .block_test(async { completion_rx.next().await });
     }
-
-    // Step 0. Get actual prompting working in our psuedo-harness
-    // Step 1. Think up a nice eval that does something simple
-    // Step 2. Pull out the `eval()` method, we're all going to use "iterations" and "expected passrate"
-    // Step 3. Implement an EvalInput for inline assistant, that does the stuff we did earlier
 
     let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
 
