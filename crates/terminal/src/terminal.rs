@@ -155,8 +155,8 @@ enum InternalEvent {
     ScrollToAlacPoint(AlacPoint),
     SetSelection(Option<(Selection, AlacPoint)>),
     UpdateSelection(Point<Pixels>),
-    // Adjusted mouse position, should open
     FindHyperlink(Point<Pixels>, bool),
+    ProcessHyperlink((String, bool, Match), bool),
     // Whether keep selection when copy
     Copy(Option<bool>),
     // Vi mode events
@@ -1140,7 +1140,6 @@ impl Terminal {
             }
             InternalEvent::FindHyperlink(position, open) => {
                 trace!("Finding hyperlink at position: position={position:?}, open={open:?}");
-                let prev_hovered_word = self.last_content.last_hovered_word.take();
 
                 let point = grid_point(
                     *position,
@@ -1154,47 +1153,53 @@ impl Terminal {
                     point,
                     &mut self.hyperlink_regex_searches,
                 ) {
-                    Some((maybe_url_or_path, is_url, url_match)) => {
-                        let target = if is_url {
-                            // Treat "file://" URLs like file paths to ensure
-                            // that line numbers at the end of the path are
-                            // handled correctly.
-                            // file://{path} should be urldecoded, returning a urldecoded {path}
-                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
-                                let decoded_path = urlencoding::decode(path)
-                                    .map(|decoded| decoded.into_owned())
-                                    .unwrap_or(path.to_owned());
-
-                                MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: decoded_path,
-                                    terminal_dir: self.working_directory(),
-                                })
-                            } else {
-                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
-                            }
-                        } else {
-                            MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                maybe_path: maybe_url_or_path.clone(),
-                                terminal_dir: self.working_directory(),
-                            })
-                        };
-                        if *open {
-                            cx.emit(Event::Open(target));
-                        } else {
-                            self.update_selected_word(
-                                prev_hovered_word,
-                                url_match,
-                                maybe_url_or_path,
-                                target,
-                                cx,
-                            );
-                        }
+                    Some(hyperlink) => {
+                        self.process_hyperlink(hyperlink, *open, cx);
                     }
                     None => {
                         cx.emit(Event::NewNavigationTarget(None));
                     }
                 }
             }
+            InternalEvent::ProcessHyperlink(hyperlink, open) => {
+                self.process_hyperlink(hyperlink.clone(), *open, cx);
+            }
+        }
+    }
+
+    fn process_hyperlink(
+        &mut self,
+        hyperlink: (String, bool, Match),
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let (maybe_url_or_path, is_url, url_match) = hyperlink;
+        let prev_hovered_word = self.last_content.last_hovered_word.take();
+
+        let target = if is_url {
+            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
+                let decoded_path = urlencoding::decode(path)
+                    .map(|decoded| decoded.into_owned())
+                    .unwrap_or(path.to_owned());
+
+                MaybeNavigationTarget::PathLike(PathLikeTarget {
+                    maybe_path: decoded_path,
+                    terminal_dir: self.working_directory(),
+                })
+            } else {
+                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+            }
+        } else {
+            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                maybe_path: maybe_url_or_path.clone(),
+                terminal_dir: self.working_directory(),
+            })
+        };
+
+        if open {
+            cx.emit(Event::Open(target));
+        } else {
+            self.update_selected_word(prev_hovered_word, url_match, maybe_url_or_path, target, cx);
         }
     }
 
@@ -1912,22 +1917,22 @@ impl Terminal {
                     self.last_content.display_offset,
                 );
 
-                {
-                    let term_lock = self.term.lock();
-                    if let Some(mouse_up_hyperlink) = terminal_hyperlinks::find_from_grid_point(
-                        &term_lock,
-                        point,
-                        &mut self.hyperlink_regex_searches,
-                    ) {
-                        if mouse_down_hyperlink == mouse_up_hyperlink {
-                            self.events
-                                .push_back(InternalEvent::FindHyperlink(position, true));
-                            self.selection_phase = SelectionPhase::Ended;
-                            self.last_mouse = None;
-                            return;
-                        }
+                let term_lock = self.term.lock();
+                if let Some(mouse_up_hyperlink) = terminal_hyperlinks::find_from_grid_point(
+                    &term_lock,
+                    point,
+                    &mut self.hyperlink_regex_searches,
+                ) {
+                    if mouse_down_hyperlink == mouse_up_hyperlink {
+                        drop(term_lock);
+                        self.events
+                            .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
+                        self.selection_phase = SelectionPhase::Ended;
+                        self.last_mouse = None;
+                        return;
                     }
                 }
+                drop(term_lock);
             }
 
             //Hyperlinks
@@ -2446,9 +2451,60 @@ mod tests {
         term::cell::Cell,
     };
     use collections::HashMap;
-    use gpui::{Pixels, Point, TestAppContext, bounds, point, size, smol_timeout};
+    use gpui::{
+        Context, Entity, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+        MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Styled, TestAppContext, Window,
+        bounds, div, point, size, smol_timeout,
+    };
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
+
+    struct TerminalTestWrapper {
+        terminal: Entity<Terminal>,
+        terminal_region: Bounds<Pixels>,
+    }
+
+    impl TerminalTestWrapper {
+        fn new(terminal: Entity<Terminal>) -> Self {
+            Self {
+                terminal,
+                terminal_region: bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            }
+        }
+    }
+
+    impl Render for TerminalTestWrapper {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let region = self.terminal_region;
+
+            div()
+                .size_full()
+                .on_mouse_down(MouseButton::Left, {
+                    let terminal = self.terminal.clone();
+                    cx.listener(move |_this, event: &MouseDownEvent, _window, cx| {
+                        terminal.update(cx, |terminal, cx| {
+                            terminal.mouse_down(event, cx);
+                        });
+                    })
+                })
+                .on_mouse_up(MouseButton::Left, {
+                    let terminal = self.terminal.clone();
+                    cx.listener(move |_this, event: &MouseUpEvent, _window, cx| {
+                        terminal.update(cx, |terminal, cx| {
+                            terminal.mouse_up(event, cx);
+                        });
+                    })
+                })
+                .on_mouse_move({
+                    let terminal = self.terminal.clone();
+                    cx.listener(move |_this, event: &MouseMoveEvent, _window, cx| {
+                        terminal.update(cx, |terminal, cx| {
+                            terminal.mouse_drag(event, region, cx);
+                        });
+                    })
+                })
+        }
+    }
 
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
@@ -2900,5 +2956,178 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_same_position(cx: &mut TestAppContext) {
+        use gpui::VisualTestContext;
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"Visit https://zed.dev/ for more\r\n", cx);
+        });
+
+        let window = cx.add_window(|_window, _cx| TerminalTestWrapper::new(terminal.clone()));
+        let _wrapper = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        terminal.update(cx, |terminal, _cx| {
+            let term_lock = terminal.term.lock();
+            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+            drop(term_lock);
+
+            let terminal_bounds = TerminalBounds::new(
+                px(20.0),
+                px(10.0),
+                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            );
+            terminal.last_content.terminal_bounds = terminal_bounds;
+        });
+
+        let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
+        let click_position = point(px(80.0), px(10.0));
+
+        visual_cx.simulate_mouse_down(click_position, MouseButton::Left, Modifiers::control());
+        visual_cx.simulate_mouse_up(click_position, MouseButton::Left, Modifiers::control());
+
+        cx.run_until_parked();
+
+        terminal.update(&mut visual_cx, |terminal, _cx| {
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
+        use gpui::VisualTestContext;
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(
+                b"Visit https://zed.dev/ for more\r\nThis is another line\r\n",
+                cx,
+            );
+        });
+
+        let window = cx.add_window(|_window, _cx| TerminalTestWrapper::new(terminal.clone()));
+        let _wrapper = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        terminal.update(cx, |terminal, _cx| {
+            let term_lock = terminal.term.lock();
+            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+            drop(term_lock);
+
+            let terminal_bounds = TerminalBounds::new(
+                px(20.0),
+                px(10.0),
+                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            );
+            terminal.last_content.terminal_bounds = terminal_bounds;
+        });
+
+        let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
+        let down_position = point(px(80.0), px(10.0));
+        let up_position = point(px(10.0), px(50.0));
+
+        visual_cx.simulate_mouse_down(down_position, MouseButton::Left, Modifiers::control());
+        visual_cx.simulate_mouse_move(up_position, Some(MouseButton::Left), Modifiers::control());
+        visual_cx.simulate_mouse_up(up_position, MouseButton::Left, Modifiers::control());
+
+        terminal.update(&mut visual_cx, |terminal, _cx| {
+            assert!(
+                !terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                "Should NOT have ProcessHyperlink event when dragging outside the hyperlink"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_drag_within_bounds(cx: &mut TestAppContext) {
+        use gpui::VisualTestContext;
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"Visit https://zed.dev/ for more\r\n", cx);
+        });
+
+        let window = cx.add_window(|_window, _cx| TerminalTestWrapper::new(terminal.clone()));
+        let _wrapper = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        terminal.update(cx, |terminal, _cx| {
+            let term_lock = terminal.term.lock();
+            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+            drop(term_lock);
+
+            let terminal_bounds = TerminalBounds::new(
+                px(20.0),
+                px(10.0),
+                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            );
+            terminal.last_content.terminal_bounds = terminal_bounds;
+        });
+
+        let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
+        let down_position = point(px(70.0), px(10.0));
+        let up_position = point(px(130.0), px(10.0));
+
+        visual_cx.simulate_mouse_down(down_position, MouseButton::Left, Modifiers::control());
+        visual_cx.simulate_mouse_move(up_position, Some(MouseButton::Left), Modifiers::control());
+        visual_cx.simulate_mouse_up(up_position, MouseButton::Left, Modifiers::control());
+
+        cx.run_until_parked();
+
+        terminal.update(&mut visual_cx, |terminal, _cx| {
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when dragging within hyperlink bounds"
+            );
+        });
     }
 }
