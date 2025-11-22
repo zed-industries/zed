@@ -20,15 +20,21 @@ use editor::{
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat, KeyContext,
-    SharedString, Subscription, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
+    KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, Language, language_settings::InlayHintKind};
 use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    fmt::Write,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{ResultExt, debug_panic};
@@ -575,7 +581,7 @@ impl MessageEditor {
 
         let has_file_context = editor_clipboard_selections
             .as_ref()
-            .map(|selections| {
+            .map(|selections: &Vec<editor::ClipboardSelection>| {
                 selections
                     .iter()
                     .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
@@ -618,33 +624,78 @@ impl MessageEditor {
                         };
 
                         let mention_uri = MentionUri::Symbol {
-                            abs_path,
+                            abs_path: abs_path.clone(),
                             name: display_name.clone(),
                             line_range: range,
                         };
 
                         let mention_text = mention_uri.as_link().to_string();
-                        let (start_anchor, content_len) = self.editor.update(cx, |editor, cx| {
-                            let snapshot = editor.buffer().read(cx).snapshot(cx);
-                            let (_excerpt_id, _, buffer_snapshot) =
-                                snapshot.as_singleton().unwrap();
-                            let start_offset = buffer_snapshot.len();
-                            let start_anchor = buffer_snapshot.anchor_before(start_offset);
+                        let (excerpt_id, text_anchor, content_len) =
+                            self.editor.update(cx, |editor, cx| {
+                                let buffer = editor.buffer().read(cx);
+                                let snapshot = buffer.snapshot(cx);
+                                let (excerpt_id, _, buffer_snapshot) =
+                                    snapshot.as_singleton().unwrap();
+                                let excerpt_id = *excerpt_id; // Copy the ExcerptId
+                                let start_offset = buffer_snapshot.len();
+                                let text_anchor = buffer_snapshot.anchor_before(start_offset);
 
-                            editor.insert(&mention_text, window, cx);
-                            editor.insert(" ", window, cx);
+                                editor.insert(&mention_text, window, cx);
+                                editor.insert(" ", window, cx);
 
-                            (start_anchor, mention_text.len())
-                        });
+                                (excerpt_id, text_anchor, mention_text.len())
+                            });
 
-                        let _ = self.confirm_mention_completion(
-                            crease_text.into(),
-                            start_anchor,
+                        let Some((crease_id, tx)) = insert_crease_for_mention(
+                            excerpt_id,
+                            text_anchor,
                             content_len,
-                            mention_uri,
+                            crease_text.into(),
+                            mention_uri.icon_path(cx),
+                            None,
+                            self.editor.clone(),
                             window,
                             cx,
-                        );
+                        ) else {
+                            continue;
+                        };
+                        drop(tx);
+
+                        // Create the mention task for Symbol - load the file content
+                        let project = self.project.clone();
+                        let mention_task = cx
+                            .spawn(async move |_, cx| {
+                                let project_path = project
+                                    .update(cx, |project, cx| {
+                                        project.project_path_for_absolute_path(&abs_path, cx)
+                                    })
+                                    .map_err(|e| e.to_string())?
+                                    .ok_or_else(|| "project path not found".to_string())?;
+
+                                let buffer = project
+                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                    .map_err(|e| e.to_string())?
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+
+                                buffer
+                                    .update(cx, |buffer, cx| {
+                                        let start =
+                                            Point::new(start_line - 1, 0).min(buffer.max_point());
+                                        let end = Point::new(end_line, 0).min(buffer.max_point());
+                                        let content = buffer.text_for_range(start..end).collect();
+                                        Mention::Text {
+                                            content,
+                                            tracked_buffers: vec![cx.entity()],
+                                        }
+                                    })
+                                    .map_err(|e| e.to_string())
+                            })
+                            .shared();
+
+                        self.mention_set.update(cx, |mention_set, _cx| {
+                            mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                        });
                     }
                 }
                 return;
@@ -653,6 +704,7 @@ impl MessageEditor {
 
         if !self.prompt_capabilities.borrow().image {
             return;
+        }
         if self.prompt_capabilities.borrow().image
             && let Some(task) =
                 paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
