@@ -3343,6 +3343,7 @@ impl MultiBufferSnapshot {
 
             eprintln!("{kind}(len: {}, lines: {:?})", summary.len, summary.lines);
         }
+        eprintln!("----------------------");
     }
 
     pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
@@ -4501,8 +4502,15 @@ impl MultiBufferSnapshot {
                         diff_transforms.next();
                         continue;
                     }
-                    let overshoot = excerpt_position - diff_transforms.start().0.0;
-                    position.add_assign(&overshoot);
+
+                    // Filtered hunks take no space in output co-ordinates
+                    if !matches!(
+                        diff_transforms.item(),
+                        Some(DiffTransform::FilteredInsertedHunk { .. })
+                    ) {
+                        let overshoot = excerpt_position - diff_transforms.start().0.0;
+                        position.add_assign(&overshoot);
+                    }
                 }
             }
 
@@ -7035,7 +7043,7 @@ impl Iterator for MultiBufferRows<'_> {
             };
         }
 
-        let overshoot = self.point - region.range.start;
+        let overshoot = self.point - dbg!(region.range.start);
         let buffer_point = region.buffer_range.start + overshoot;
         let expand_info = if self.is_singleton {
             None
