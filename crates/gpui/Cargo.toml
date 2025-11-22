@@ -262,6 +262,11 @@ bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
 naga.workspace = true
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+metal.workspace = true
+core-video.workspace = true
+objc.workspace = true
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
 naga.workspace = true
 
@@ -329,3 +334,7 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "metal_triangle"
+path = "examples/metal_triangle.rs"
