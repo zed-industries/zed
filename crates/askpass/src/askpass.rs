@@ -374,7 +374,7 @@ fn generate_askpass_script(
     Ok(format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & {askpass_program} --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
     ))
 }
