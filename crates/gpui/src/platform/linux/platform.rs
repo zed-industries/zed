@@ -651,7 +651,12 @@ pub(super) fn open_uri_internal(
                     .await
                     .and_then(|e| e.response())
                 {
-                    Ok(()) => return,
+                    Ok(request) => {
+                        match request.response() {
+                            Ok(_) => return,
+                            Err(e) => log::error!("Portal request failed or was cancelled: {}", e),
+                        }
+                    }
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
 
