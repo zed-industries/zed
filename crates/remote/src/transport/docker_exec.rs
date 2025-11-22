@@ -554,7 +554,7 @@ impl RemoteConnection for DockerExecConnection {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        port_forward: Option<(u16, String, u16)>,
+        _port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         use std::fmt::Write as _;
 
@@ -636,9 +636,9 @@ impl RemoteConnection for DockerExecConnection {
 
     fn build_forward_ports_command(
         &self,
-        forwards: Vec<(u16, String, u16)>,
+        _forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
-        todo!()
+        todo!("Not currently supported for docker_exec")
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {

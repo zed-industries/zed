@@ -87,19 +87,36 @@ impl CreateRemoteServer {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum DevContainerCreationProgress {
+    Initial,
+    Creating,
+    Error(String),
+}
+
+#[derive(Clone)]
 struct CreateRemoteDevContainer {
     // 3 Navigable Options
     // - Create from devcontainer.json
     // - Edit devcontainer.json
     // - Go back
     entries: [NavigableEntry; 3],
+    progress: DevContainerCreationProgress,
 }
 
 impl CreateRemoteDevContainer {
     fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
         let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
         entries[0].focus_handle.focus(window);
-        Self { entries }
+        Self {
+            entries,
+            progress: DevContainerCreationProgress::Initial,
+        }
+    }
+
+    fn progress(&mut self, progress: DevContainerCreationProgress) -> Self {
+        self.progress = progress;
+        self.clone()
     }
 }
 
@@ -899,6 +916,15 @@ impl RemoteServerProjects {
         cx.notify();
     }
 
+    fn view_in_progress_dev_container(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = Mode::CreateRemoteDevContainer(
+            CreateRemoteDevContainer::new(window, cx)
+                .progress(DevContainerCreationProgress::Creating),
+        );
+        self.focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
     fn create_remote_project(
         &mut self,
         index: ServerIndex,
@@ -1018,7 +1044,10 @@ impl RemoteServerProjects {
 
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
-            Mode::CreateRemoteDevContainer(_) => {}
+            Mode::CreateRemoteDevContainer(_) => {
+                println!("Confirming");
+                // self.focus_handle.focus(window);
+            }
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
@@ -1514,18 +1543,28 @@ impl RemoteServerProjects {
                 let replace_window = window.window_handle().downcast::<Workspace>();
 
                 cx.spawn_in(window, async move |entity, cx| {
+                    let (connection, starting_dir) = match start_dev_container(cx).await {
+                        Ok((c, s)) => (c, s),
+                        Err(e) => {
+                            log::error!("Failed to start dev container: {:?}", e);
+                            entity
+                                .update_in(cx, |remote_server_projects, window, cx| {
+                                    remote_server_projects.mode = Mode::CreateRemoteDevContainer(
+                                        CreateRemoteDevContainer::new(window, cx).progress(
+                                            DevContainerCreationProgress::Error(format!("{:?}", e)),
+                                        ),
+                                    );
+                                    // cx.emit(DismissEvent);
+                                })
+                                .log_err();
+                            return;
+                        }
+                    };
                     entity
                         .update(cx, |_, cx| {
                             cx.emit(DismissEvent);
                         })
                         .log_err();
-                    let (connection, starting_dir) = match start_dev_container(cx).await {
-                        Ok((c, s)) => (c, s),
-                        Err(e) => {
-                            log::error!("Failed to start dev container: {:?}", e);
-                            return;
-                        }
-                    };
 
                     let result = open_remote_project(
                         connection.into(),
@@ -1554,6 +1593,43 @@ impl RemoteServerProjects {
             }
         });
 
+        if state.progress == DevContainerCreationProgress::Creating {
+            println!("Creating...");
+            // TODO, make this UI identical to the remote connection delegate's UI
+            let view = div().track_focus(&self.focus_handle(cx)).size_full().child(
+                v_flex()
+                    .child(Label::new("Loading Title..."))
+                    .child(ListSeparator)
+                    .child(
+                        ListItem::new("Creating...")
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .child(Label::new("Creating...")),
+                    ),
+            );
+            // self.focus_handle(cx).focus(window);
+            return view.into_any_element();
+        }
+
+        match &state.progress {
+            DevContainerCreationProgress::Error(message) => {
+                let view = div().track_focus(&self.focus_handle(cx)).size_full().child(
+                    v_flex().child(ListSeparator).child(
+                        ListItem::new("Error")
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .child(Label::new(format!(
+                                "Error creating dev container: {}",
+                                message
+                            ))),
+                    ),
+                );
+                self.focus_handle(cx).focus(window);
+                return view.into_any_element();
+            }
+            _ => {}
+        };
+
         let mut view = Navigable::new(
             div()
                 .track_focus(&self.focus_handle(cx))
@@ -1567,7 +1643,8 @@ impl RemoteServerProjects {
                                 .track_focus(&state.entries[0].focus_handle)
                                 .on_action(cx.listener(
                                     move |this, _: &menu::Confirm, window, cx| {
-                                        callback(this, window, cx)
+                                        callback(this, window, cx);
+                                        this.view_in_progress_dev_container(window, cx);
                                     },
                                 ))
                                 .child(
