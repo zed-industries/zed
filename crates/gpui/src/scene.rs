@@ -701,6 +701,7 @@ impl From<PolychromeSprite> for Primitive {
 pub(crate) struct ShaderInstanceBase {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    pub opacity: f32,
 }
 
 #[allow(unused)]

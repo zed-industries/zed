@@ -15,7 +15,8 @@ use {
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct CustomShaderGlobalParams {
     pub viewport_size: [f32; 2],
-    pub pad: [u32; 2],
+    pub premultiplied_alpha: u32,
+    pub pad: u32,
 }
 
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]

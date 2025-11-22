@@ -1,10 +1,9 @@
 use std::marker::PhantomData;
 
-use refineable::Refineable;
-
 use crate::{
-    App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
-    Pixels, Style, StyleRefinement, Styled, Window,
+    App, Bounds, Element, ElementId, GlobalElementId, Hitbox, InspectorElementId,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, StyleRefinement, Styled,
+    Window,
 };
 
 /// Fragment shader which can be rendered using `shader_element` or `shader_element_with_data`.
@@ -41,12 +40,18 @@ impl<T: ShaderUniform> FragmentShader<T> {
 pub struct ShaderElement<T: ShaderUniform> {
     shader: FragmentShader<T>,
     instance_data: T,
-    style: StyleRefinement,
+    interactivity: Interactivity,
 }
 
 impl<T: ShaderUniform> Styled for ShaderElement<T> {
     fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+        &mut self.interactivity.base_style
+    }
+}
+
+impl<T: ShaderUniform> InteractiveElement for ShaderElement<T> {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        &mut self.interactivity
     }
 }
 
@@ -55,7 +60,7 @@ pub fn shader_element(shader: FragmentShader<()>) -> ShaderElement<()> {
     ShaderElement {
         shader,
         instance_data: (),
-        style: Default::default(),
+        interactivity: Interactivity::new(),
     }
 }
 
@@ -67,7 +72,7 @@ pub fn shader_element_with_data<T: ShaderUniform>(
     ShaderElement {
         shader,
         instance_data,
-        style: Default::default(),
+        interactivity: Interactivity::new(),
     }
 }
 
@@ -81,61 +86,80 @@ impl<T: ShaderUniform> IntoElement for ShaderElement<T> {
 
 impl<T: ShaderUniform> Element for ShaderElement<T> {
     type RequestLayoutState = ();
-
-    type PrepaintState = ();
+    type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.interactivity.element_id.clone()
     }
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
+        self.interactivity.source_location
     }
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.refine(&self.style);
-        (window.request_layout(style, [], cx), ())
+        let layout_id = self.interactivity.request_layout(
+            global_id,
+            inspector_id,
+            window,
+            cx,
+            |style, window, cx| window.request_layout(style, None, cx),
+        );
+        (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self::PrepaintState {
+        self.interactivity.prepaint(
+            global_id,
+            inspector_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, _, _| hitbox,
+        )
     }
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
+        hitbox: &mut Option<Hitbox>,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) {
-        let instance_data_field = if size_of::<T>() != 0 {
-            format!("instance_data: {},", T::NAME)
+        let (instance_data_field, instance_data_param, instance_data_arg) = if size_of::<T>() != 0 {
+            (
+                format!("instance_data: {},", T::NAME),
+                format!(", data: {}", T::NAME),
+                ", b_instances.instances[input.instance_id].instance_data",
+            )
         } else {
-            String::new()
+            (String::new(), String::new(), "")
         };
         let instance_data_definition = T::DEFINITION.unwrap_or("");
+
         let source = format!(
             r#"
             struct GlobalParams {{
                 viewport_size: vec2<f32>,
-                pad: vec2<u32>,
+                premultiplied_alpha: u32,
+                opacity: f32,
             }}
 
             var<uniform> globals: GlobalParams;
@@ -171,6 +195,7 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
             struct Instance {{
                 bounds: Bounds,
                 content_mask: Bounds,
+                opacity: f32,
                 {instance_data_field}
             }}
 
@@ -185,7 +210,8 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
                 @location(0) clip_distances: vec4<f32>,
                 @location(1) origin: vec2<f32>,
                 @location(2) size: vec2<f32>,
-                @location(3) instance_id: u32,
+                @location(3) opacity: f32,
+                @location(4) instance_id: u32,
             }}
 
             @vertex
@@ -198,11 +224,16 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
                 out.clip_distances = distance_from_clip_rect(unit_vertex, instance.bounds, instance.content_mask);
                 out.origin = instance.bounds.origin;
                 out.size = instance.bounds.size;
+                out.opacity = instance.opacity;
                 out.instance_id = instance_id;
                 return out;
             }}
 
             {}
+
+            fn user_fs(input: VertexOut{instance_data_param}) -> vec4<f32> {{
+                {}
+            }}
 
             @fragment
             fn fs(input: VertexOut) -> @location(0) vec4<f32> {{
@@ -210,22 +241,30 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
                     return vec4<f32>(0.0);
                 }}
 
-                {}
-                {}
+                let color = user_fs(input{instance_data_arg});
+
+                let alpha = color.a * input.opacity;
+                let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
+                return vec4<f32>(color.rgb * multiplier, alpha);
             }}
             "#,
             self.shader.extra_items.as_deref().unwrap_or(""),
-            if size_of::<T>() != 0 {
-                "let data = b_instances.instances[input.instance_id].instance_data;"
-            } else {
-                ""
-            },
             self.shader.main_body
         );
 
-        window
-            .paint_shader(bounds, &source, &self.instance_data)
-            .unwrap();
+        self.interactivity.paint(
+            global_id,
+            inspector_id,
+            bounds,
+            hitbox.as_ref(),
+            window,
+            cx,
+            |_style, window, _cx| {
+                window
+                    .paint_shader(bounds, &source, &self.instance_data)
+                    .unwrap();
+            },
+        );
     }
 }
 

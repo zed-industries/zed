@@ -1199,11 +1199,17 @@ impl MetalRenderer {
 
         let globals = CustomShaderGlobalParams {
             viewport_size: [viewport_size.width.0 as f32, viewport_size.height.0 as f32],
-            pad: [0; 2],
+            premultiplied_alpha: 0,
+            pad: 0,
         };
 
         command_encoder.set_render_pipeline_state(&pipeline);
         command_encoder.set_vertex_bytes(
+            ShaderInputIndex::Globals as u64,
+            size_of::<CustomShaderGlobalParams>() as u64,
+            &globals as *const CustomShaderGlobalParams as *const _,
+        );
+        command_encoder.set_fragment_bytes(
             ShaderInputIndex::Globals as u64,
             size_of::<CustomShaderGlobalParams>() as u64,
             &globals as *const CustomShaderGlobalParams as *const _,

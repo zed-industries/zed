@@ -920,7 +920,11 @@ impl BladeRenderer {
                         &ShaderCustomShaderData {
                             globals: CustomShaderGlobalParams {
                                 viewport_size: globals.viewport_size,
-                                pad: [0, 0],
+                                premultiplied_alpha: match self.surface.info().alpha {
+                                    gpu::AlphaMode::Ignored | gpu::AlphaMode::PostMultiplied => 0,
+                                    gpu::AlphaMode::PreMultiplied => 1,
+                                },
+                                pad: 0,
                             },
                             b_instances: instance_buf,
                         },
