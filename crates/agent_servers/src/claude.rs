@@ -1,13 +1,10 @@
 use agent_client_protocol as acp;
 use fs::Fs;
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{SettingsStore, update_settings_file};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{any::Any, path::PathBuf};
-use task::Shell;
-use terminal::terminal_settings::TerminalSettings;
-use util::get_default_system_shell;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, SharedString, Task};

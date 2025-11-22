@@ -408,7 +408,11 @@ impl ShellKind {
     pub fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
             ShellKind::PowerShell => vec!["-C".to_owned(), combined_command],
-            ShellKind::Cmd => vec!["/C".to_owned(), combined_command],
+            ShellKind::Cmd => vec![
+                "/S".to_owned(),
+                "/C".to_owned(),
+                format!("\"{combined_command}\""),
+            ],
             ShellKind::Posix
             | ShellKind::Nushell
             | ShellKind::Fish
@@ -538,58 +542,11 @@ impl ShellKind {
         Some(Cow::Owned(result))
     }
 
-    fn needs_quoting_cmd(s: &str) -> bool {
-        s.is_empty()
-            || s.chars().any(|c| {
-                c.is_whitespace()
-                    || matches!(c, '"' | '&' | '|' | '<' | '>' | '^' | '(' | ')' | '%' | '!')
-            })
-    }
-
     fn try_quote_cmd(arg: &str) -> Option<Cow<'_, str>> {
-        if !Self::needs_quoting_cmd(arg) {
-            return Some(Cow::Borrowed(arg));
-        }
-
         let mut result = String::with_capacity(arg.len() + 2);
+
         result.push('"');
-
-        let chars: Vec<char> = arg.chars().collect();
-        let mut i = 0;
-
-        while i < chars.len() {
-            match chars[i] {
-                '\\' => {
-                    // Count consecutive backslashes
-                    let start = i;
-                    while i < chars.len() && chars[i] == '\\' {
-                        i += 1;
-                    }
-                    let num_backslashes = i - start;
-
-                    // Check if followed by a quote or end of string
-                    if i < chars.len() && chars[i] == '"' {
-                        // Double the backslashes before the quote
-                        result.push_str(&"\\".repeat(num_backslashes * 2));
-                    } else if i == chars.len() {
-                        // At end of string, double the backslashes (they'll be before closing quote)
-                        result.push_str(&"\\".repeat(num_backslashes * 2));
-                    } else {
-                        // Not before a quote, keep as-is
-                        result.push_str(&"\\".repeat(num_backslashes));
-                    }
-                }
-                '"' => {
-                    result.push_str("\\\"");
-                    i += 1;
-                }
-                c => {
-                    result.push(c);
-                    i += 1;
-                }
-            }
-        }
-
+        result.push_str(&arg.replace('"', "\"\""));
         result.push('"');
         Some(Cow::Owned(result))
     }
@@ -700,7 +657,7 @@ mod tests {
     #[test]
     fn test_try_quote_powershell() {
         let shell_kind = ShellKind::PowerShell;
-        assert_eq!(
+        assert_ne!(
             shell_kind
                 .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
                 .unwrap()

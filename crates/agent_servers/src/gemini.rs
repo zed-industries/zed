@@ -7,10 +7,6 @@ use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::agent_server_store::GEMINI_NAME;
-use settings::Settings as _;
-use task::Shell;
-use terminal::terminal_settings::TerminalSettings;
-use util::get_default_system_shell;
 
 #[derive(Clone)]
 pub struct Gemini;

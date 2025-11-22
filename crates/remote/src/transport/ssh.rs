@@ -1363,7 +1363,22 @@ fn build_command(
         )?;
     }
 
-    let (command, args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
+    if let Some(input_program) = input_program {
+        write!(
+            exec,
+            "{}",
+            ssh_shell_kind
+                .try_quote_prefix_aware(&input_program)
+                .context("shell quoting")?
+        )?;
+        for arg in input_args {
+            let arg = ssh_shell_kind.try_quote(&arg).context("shell quoting")?;
+            write!(exec, " {}", &arg)?;
+        }
+    } else {
+        write!(exec, "{ssh_shell} -l")?;
+    };
+    let (command, command_args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
         .build(Some(exec.clone()), &[]);
 
     let mut args = Vec::new();
@@ -1375,7 +1390,9 @@ fn build_command(
     }
 
     args.push("-t".into());
-    args.push(exec);
+    args.push(command);
+    args.extend(command_args);
+
     Ok(CommandTemplate {
         program: "ssh".into(),
         args,
