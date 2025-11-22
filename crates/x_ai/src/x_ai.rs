@@ -66,6 +66,8 @@ impl Model {
             "grok-4" => Ok(Self::Grok4),
             "grok-4-fast-reasoning" => Ok(Self::Grok4FastReasoning),
             "grok-4-fast-non-reasoning" => Ok(Self::Grok4FastNonReasoning),
+            "grok-4-1-fast-reasoning" => Ok(Self::Grok41FastReasoning),
+            "grok-4-1-fast-non-reasoning" => Ok(Self::Grok41FastNonReasoning),
             "grok-2-vision" => Ok(Self::Grok2Vision),
             "grok-3" => Ok(Self::Grok3),
             "grok-3-mini" => Ok(Self::Grok3Mini),
@@ -103,8 +105,8 @@ impl Model {
             Self::Grok4 => "Grok 4",
             Self::Grok4FastReasoning => "Grok 4 Fast",
             Self::Grok4FastNonReasoning => "Grok 4 Fast (Non-Reasoning)",
-            Self::Grok4FastReasoning => "Grok 4.1 Fast",
-            Self::Grok4FastNonReasoning => "Grok 4.1 Fast (Non-Reasoning)",
+            Self::Grok41FastReasoning => "Grok 4.1 Fast",
+            Self::Grok41FastNonReasoning => "Grok 4.1 Fast (Non-Reasoning)",
             Self::GrokCodeFast1 => "Grok Code Fast 1",
             Self::Custom {
                 name, display_name, ..
