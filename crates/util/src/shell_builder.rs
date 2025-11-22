@@ -1,4 +1,4 @@
-use futures::task;
+use std::borrow::Cow;
 
 use crate::shell::get_system_shell;
 use crate::shell::{Shell, ShellKind};
@@ -73,7 +73,6 @@ impl ShellBuilder {
         self
     }
 
-    // todo: Check callers if they quote the command themselves
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(
         mut self,
@@ -81,12 +80,12 @@ impl ShellBuilder {
         task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            dbg!(&task_command);
             let task_command = self.kind.prepend_command_prefix(&task_command);
             let task_command = if !task_args.is_empty() {
-                self.kind
-                    .try_quote_prefix_aware(&task_command)
-                    .expect("TODO")
+                match self.kind.try_quote_prefix_aware(&task_command) {
+                    Some(task_command) => task_command,
+                    None => task_command,
+                }
             } else {
                 task_command
             };
@@ -95,15 +94,13 @@ impl ShellBuilder {
                     .iter()
                     .fold(task_command.into_owned(), |mut command, arg| {
                         command.push(' ');
-                        command.push_str(
-                            &self
-                                .kind
-                                .try_quote(&self.kind.to_shell_variable(arg))
-                                .expect("TODO"),
-                        );
+                        let shell_variable = self.kind.to_shell_variable(arg);
+                        command.push_str(&match self.kind.try_quote(&shell_variable) {
+                            Some(shell_variable) => shell_variable,
+                            None => Cow::Owned(shell_variable),
+                        });
                         command
                     });
-            println!("combined_command: {combined_command}");
             if self.redirect_stdin {
                 match self.kind {
                     ShellKind::Fish => {
@@ -135,6 +132,10 @@ impl ShellBuilder {
         }
 
         (self.program, self.args)
+    }
+
+    pub fn kind(&self) -> ShellKind {
+        self.kind
     }
 }
 

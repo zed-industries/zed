@@ -485,7 +485,6 @@ impl RemoteConnection for WslRemoteConnection {
                 command,
             ]
         };
-        // todo same for ssh
         wsl_args.extend(args);
 
         Ok(CommandTemplate {
