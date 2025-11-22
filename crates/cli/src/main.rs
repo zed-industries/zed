@@ -157,39 +157,6 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
 }
 
-fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
-    let mut source = PathWithPosition::parse_str(source);
-    let mut command = util::command::new_std_command("wsl.exe");
-
-    let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
-        if user.is_empty() {
-            anyhow::bail!("user is empty in wsl argument");
-        }
-        (Some(user), distro)
-    } else {
-        (None, wsl)
-    };
-
-    if let Some(user) = user {
-        command.arg("--user").arg(user);
-    }
-
-    let output = command
-        .arg("--distribution")
-        .arg(distro_name)
-        .arg("--exec")
-        .arg("wslpath")
-        .arg("-m")
-        .arg(&source.path)
-        .output()?;
-
-    let result = String::from_utf8_lossy(&output.stdout);
-    let prefix = format!("//wsl.localhost/{}", distro_name);
-    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
-
-    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
-}
-
 fn main() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
@@ -345,7 +312,7 @@ fn main() -> Result<()> {
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
         } else if let Some(wsl) = wsl {
-            urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
+            urls.push(format!("file://{}", path));
         } else {
             paths.push(parse_path_with_position(path)?);
         }
