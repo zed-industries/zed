@@ -3347,11 +3347,29 @@ impl MultiBuffer {
                         }
 
                         if !hunk_buffer_range.is_empty() {
+                            let is_filtered =
+                                filter_mode == Some(MultiBufferFilterMode::KeepDeletions);
+                            // If the added region is filtered out and ends just before the excerpt's trailing newline,
+                            // we want to filter out the trailing newline as well; otherwise, we get an extra newline
+                            // in the output summary. But we don't want to do this if the _next_ excerpt is completely empty
+                            // (which can only happen if it's the last excerpt in the multibuffer), because in that case
+                            // the trailing newline of the _current_ excerpt needs to be a separate diff transform,
+                            // so that the next, empty excerpt can be represented by a region.
+                            let insertion_end_offset = if is_filtered
+                                && hunk_excerpt_end == excerpt_end
+                                && excerpt.has_trailing_newline
+                                && excerpts.next_item().is_none_or(|next_excerpt| {
+                                    sum_tree::Item::summary(next_excerpt, ()).text
+                                        != MBTextSummary::default()
+                                }) {
+                                excerpts.end()
+                            } else {
+                                hunk_excerpt_end.min(excerpt_end)
+                            };
                             *end_of_current_insert = Some(CurrentInsertedHunk {
-                                insertion_end_offset: hunk_excerpt_end.min(excerpt_end),
+                                insertion_end_offset,
                                 hunk_info,
-                                is_filtered: filter_mode
-                                    == Some(MultiBufferFilterMode::KeepDeletions),
+                                is_filtered,
                             });
                         }
                     }
@@ -3750,20 +3768,6 @@ impl MultiBufferSnapshot {
         self.chunks(MultiBufferOffset::ZERO..self.len(), false)
             .map(|chunk| chunk.text)
             .collect()
-    }
-
-    pub fn debug_print_transforms(&self) {
-        for transform in self.diff_transforms.iter() {
-            let (kind, summary) = match transform {
-                DiffTransform::DeletedHunk { summary, .. } => ("   Deleted", (*summary).into()),
-                DiffTransform::FilteredInsertedHunk { summary, .. } => ("  Filtered", *summary),
-                DiffTransform::InsertedHunk { summary, .. } => ("  Inserted", *summary),
-                DiffTransform::Unmodified { summary, .. } => ("Unmodified", *summary),
-            };
-
-            eprintln!("{kind}(len: {}, lines: {:?})", summary.len, summary.lines);
-        }
-        eprintln!("----------------------");
     }
 
     pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
@@ -6575,7 +6579,7 @@ impl MultiBufferSnapshot {
 
         if self.diff_transforms.summary().input != self.excerpts.summary().text {
             panic!(
-                "incorrect input summary. expected {:?}, got {:?}. transforms: {:+?}",
+                "incorrect input summary. expected {:#?}, got {:#?}. transforms: {:#?}",
                 self.excerpts.summary().text,
                 self.diff_transforms.summary().input,
                 self.diff_transforms.items(()),
@@ -6612,6 +6616,10 @@ where
             && self.diff_transforms.start().output_dimension == position
         {
             self.diff_transforms.prev();
+            while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item()
+            {
+                self.diff_transforms.prev();
+            }
         }
 
         let mut excerpt_position = self.diff_transforms.start().excerpt_dimension;
@@ -6671,6 +6679,9 @@ where
         {
             self.diff_transforms.next();
         }
+        while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
+            self.diff_transforms.next();
+        }
     }
 
     fn next(&mut self) {
@@ -6704,11 +6715,18 @@ where
                 }
             }
         }
+
+        // FIXME
+        while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
+            self.diff_transforms.next();
+            if self.diff_transforms.end().excerpt_dimension > self.excerpts.end() {
+                self.excerpts.next();
+            }
+        }
     }
 
     fn prev(&mut self) {
         self.cached_region.take();
-        // FIXME skip filtered
         match self
             .diff_transforms
             .start()
@@ -6724,6 +6742,14 @@ where
                 {
                     self.excerpts.prev();
                 }
+            }
+        }
+
+        // FIXME
+        while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
+            self.diff_transforms.prev();
+            if self.diff_transforms.start().excerpt_dimension < *self.excerpts.start() {
+                self.excerpts.prev();
             }
         }
     }
@@ -6826,6 +6852,7 @@ where
 
                 let mut start = self.diff_transforms.start().output_dimension.0;
                 let mut buffer_start = buffer_context_start;
+                // FIXME wrong
                 if self.diff_transforms.start().excerpt_dimension < *self.excerpts.start() {
                     let overshoot =
                         *self.excerpts.start() - self.diff_transforms.start().excerpt_dimension;
@@ -6839,6 +6866,7 @@ where
                 let mut end;
                 let mut buffer_end;
                 let has_trailing_newline;
+                // FIXME wrong
                 if self.diff_transforms.end().excerpt_dimension < self.excerpts.end() {
                     let overshoot =
                         self.diff_transforms.end().excerpt_dimension - *self.excerpts.start();
@@ -7489,7 +7517,6 @@ impl<'a, MBD: MultiBufferDimension> sum_tree::Dimension<'a, DiffTransformSummary
 
 impl MultiBufferRows<'_> {
     pub fn seek(&mut self, MultiBufferRow(row): MultiBufferRow) {
-        // mutates self.point
         self.point = Point::new(row, 0);
         self.cursor.seek(&self.point);
     }
@@ -7498,8 +7525,6 @@ impl MultiBufferRows<'_> {
 impl Iterator for MultiBufferRows<'_> {
     type Item = RowInfo;
 
-    /// Postcondition: the inner diff_transform cursor will not be left parked
-    /// on a filter transform
     fn next(&mut self) -> Option<Self::Item> {
         if self.is_empty && self.point.row == 0 {
             self.point += Point::new(1, 0);
@@ -7575,8 +7600,8 @@ impl Iterator for MultiBufferRows<'_> {
             };
         }
 
-        dbg!(&region.range, &region.diff_hunk_status);
-        let overshoot = self.point - dbg!(region.range.start);
+        // dbg!(&region.range, &region.diff_hunk_status);
+        let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
         let expand_info = if self.is_singleton {
             None
