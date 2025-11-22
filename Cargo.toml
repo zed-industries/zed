@@ -165,7 +165,6 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
-    "crates/sweep_ai",
     "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
@@ -399,7 +398,6 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
-sweep_ai = { path = "crates/sweep_ai" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
@@ -609,7 +607,6 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
-ref-cast = "1.0.24"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
@@ -643,7 +640,6 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
-serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
@@ -721,6 +717,7 @@ wasmtime = { version = "29", default-features = false, features = [
     "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
+wax = "0.6"
 which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
@@ -784,6 +781,7 @@ features = [
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

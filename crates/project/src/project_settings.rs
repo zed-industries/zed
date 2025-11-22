@@ -348,6 +348,26 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// How file paths are displayed in the git gutter.
+    ///
+    /// Default: file_name_first
+    pub path_style: GitPathStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum GitPathStyle {
+    #[default]
+    FileNameFirst,
+    FilePathFirst,
+}
+
+impl From<settings::GitPathStyle> for GitPathStyle {
+    fn from(style: settings::GitPathStyle) -> Self {
+        match style {
+            settings::GitPathStyle::FileNameFirst => GitPathStyle::FileNameFirst,
+            settings::GitPathStyle::FilePathFirst => GitPathStyle::FilePathFirst,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -501,6 +521,7 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            path_style: git.path_style.unwrap().into(),
         };
         Self {
             context_servers: project

@@ -56,6 +56,27 @@ impl AgentServer for Codex {
         });
     }
 
+    fn default_model(&self, cx: &mut App) -> Option<acp::ModelId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).codex.clone()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_model.clone().map(|m| acp::ModelId(m.into())))
+    }
+
+    fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
+        update_settings_file(fs, cx, |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .codex
+                .get_or_insert_default()
+                .default_model = model_id.map(|m| m.to_string())
+        });
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,
@@ -69,6 +90,7 @@ impl AgentServer for Codex {
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
+        let default_model = self.default_model(cx);
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -92,6 +114,7 @@ impl AgentServer for Codex {
                 command,
                 root_dir.as_ref(),
                 default_mode,
+                default_model,
                 is_remote,
                 cx,
             )

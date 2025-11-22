@@ -19,10 +19,11 @@ mod state;
 mod surrounds;
 mod visual;
 
+use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
-    ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    SelectionEffects, ToPoint,
     actions::Paste,
     movement::{self, FindRange},
 };
@@ -922,6 +923,9 @@ impl Vim {
                 cx,
                 |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
                     Mode::Replace => vim.paste_replace(window, cx),
+                    Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                        vim.paste(&VimPaste::default(), window, cx);
+                    }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
                     }
@@ -1388,7 +1392,7 @@ impl Vim {
         let newest_selection_empty = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx))
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .is_empty()
         });
         let editor = editor.read(cx);
@@ -1488,7 +1492,7 @@ impl Vim {
             let snapshot = &editor.snapshot(window, cx);
             let selection = editor
                 .selections
-                .newest::<usize>(&snapshot.display_snapshot);
+                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
 
             let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
