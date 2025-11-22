@@ -44,7 +44,9 @@ actions!(
         /// Duplicates the selected rule.
         DuplicateRule,
         /// Toggles whether the selected rule is a default rule.
-        ToggleDefaultRule
+        ToggleDefaultRule,
+        /// Resets the CommitMessage rule to default content.
+        ResetRule
     ]
 );
 
@@ -573,13 +575,19 @@ impl RulesLibrary {
     pub fn save_rule(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
-        if prompt_id.is_built_in() {
+        // Allow CommitMessage to be saved (editable built-in), but not other built-ins
+        if prompt_id.is_built_in() && prompt_id != PromptId::CommitMessage {
             return;
         }
 
         let rule_metadata = self.store.read(cx).metadata(prompt_id).unwrap();
         let rule_editor = self.rule_editors.get_mut(&prompt_id).unwrap();
-        let title = rule_editor.title_editor.read(cx).text(cx);
+        let title = if prompt_id == PromptId::CommitMessage {
+            // Force title to always be "Git Commit Prompt" for CommitMessage rule
+            "Git Commit Prompt".to_string()
+        } else {
+            rule_editor.title_editor.read(cx).text(cx)
+        };
         let body = rule_editor.body_editor.update(cx, |editor, cx| {
             editor
                 .buffer()
@@ -706,7 +714,11 @@ impl RulesLibrary {
                             let mut editor = Editor::single_line(window, cx);
                             editor.set_placeholder_text("Untitled", window, cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
-                            if prompt_id.is_built_in() {
+                            if prompt_id.is_built_in() && prompt_id != PromptId::CommitMessage {
+                                editor.set_read_only(true);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
+                            } else if prompt_id == PromptId::CommitMessage {
+                                // CommitMessage title is not editable but body is
                                 editor.set_read_only(true);
                                 editor.set_show_edit_predictions(Some(false), window, cx);
                             }
@@ -721,7 +733,7 @@ impl RulesLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, window, cx);
-                            if prompt_id.is_built_in() {
+                            if prompt_id.is_built_in() && prompt_id != PromptId::CommitMessage {
                                 editor.set_read_only(true);
                                 editor.set_show_edit_predictions(Some(false), window, cx);
                             }
@@ -855,6 +867,46 @@ impl RulesLibrary {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
+        }
+    }
+
+    pub fn reset_rule(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
+        if prompt_id == PromptId::CommitMessage {
+            const DEFAULT_COMMIT_PROMPT: &str =
+                include_str!("../../git_ui/src/commit_message_prompt.txt");
+            const DEFAULT_COMMIT_TITLE: &str = "Git Commit Prompt";
+
+            let default_flag = self
+                .store
+                .read(cx)
+                .metadata(prompt_id)
+                .map(|metadata| metadata.default)
+                .unwrap_or(true);
+
+            self.store
+                .update(cx, |store, cx| {
+                    store.save(
+                        prompt_id,
+                        Some(DEFAULT_COMMIT_TITLE.into()),
+                        default_flag,
+                        DEFAULT_COMMIT_PROMPT.into(),
+                        cx,
+                    )
+                })
+                .detach_and_log_err(cx);
+
+            self.picker
+                .update(cx, |picker, cx| picker.refresh(window, cx));
+
+            // Reload the editor with default content
+            if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
+                rule_editor.title_editor.update(cx, |editor, cx| {
+                    editor.set_text(DEFAULT_COMMIT_TITLE, window, cx);
+                });
+                rule_editor.body_editor.update(cx, |editor, cx| {
+                    editor.set_text(DEFAULT_COMMIT_PROMPT, window, cx);
+                });
+            }
         }
     }
 
@@ -993,6 +1045,10 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if prompt_id == PromptId::CommitMessage {
+            // Don't allow title editing for CommitMessage rule
+            return;
+        }
         match event {
             EditorEvent::BufferEdited => {
                 self.save_rule(prompt_id, window, cx);
@@ -1257,7 +1313,20 @@ impl RulesLibrary {
                                                     .color(Color::Muted),
                                                 )
                                         }))
-                                        .child(if prompt_id.is_built_in() {
+                                        .child(if prompt_id == PromptId::CommitMessage {
+                                            IconButton::new("reset-rule", IconName::RotateCcw)
+                                                .tooltip(move |_window, cx| {
+                                                    Tooltip::for_action(
+                                                        "Reset to Default",
+                                                        &ResetRule,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(Box::new(ResetRule), cx);
+                                                })
+                                                .into_any_element()
+                                        } else if prompt_id.is_built_in() {
                                             div()
                                                 .id("built-in-rule")
                                                 .child(
@@ -1383,6 +1452,11 @@ impl Render for RulesLibrary {
                 }))
                 .on_action(cx.listener(|this, &ToggleDefaultRule, window, cx| {
                     this.toggle_default_for_active_rule(window, cx)
+                }))
+                .on_action(cx.listener(|this, &ResetRule, window, cx| {
+                    if let Some(prompt_id) = this.active_rule_id {
+                        this.reset_rule(prompt_id, window, cx);
+                    }
                 }))
                 .size_full()
                 .overflow_hidden()

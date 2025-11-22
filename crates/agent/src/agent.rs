@@ -428,6 +428,7 @@ impl NativeAgent {
                         uuid: match prompt_metadata.id {
                             prompt_store::PromptId::User { uuid } => uuid,
                             prompt_store::PromptId::EditWorkflow => return None,
+                            prompt_store::PromptId::CommitMessage => return None,
                         },
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
