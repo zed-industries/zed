@@ -6,7 +6,7 @@ use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
-use lsp::{CompletionItemKind, LanguageServerBinary, LanguageServerName, Position};
+use lsp::{CompletionItemKind, LanguageServerBinary, LanguageServerName};
 
 use regex::Regex;
 use serde_json::json;
@@ -214,7 +214,7 @@ impl LspAdapter for GoLspAdapter {
     ) {
         // Go back to the position the last character was written in.
         // Otherwise, we sometimes get 'block' for the new position.
-        let position = PointUtf16::new(position.row, position.column-1);
+        let position = PointUtf16::new(position.row, position.column - 1);
 
         let offset = buffer.point_utf16_to_offset(position);
         let mut inside_type_context = false;
@@ -227,7 +227,7 @@ impl LspAdapter for GoLspAdapter {
             let mut node = layer.node().descendant_for_byte_range(offset, offset);
 
             if node.is_none() {
-                return
+                return;
             }
 
             while let Some(n) = node {
@@ -248,7 +248,7 @@ impl LspAdapter for GoLspAdapter {
                     }
                     "block" => {
                         break;
-                    },
+                    }
                     _ => {}
                 }
                 node = n.parent();
