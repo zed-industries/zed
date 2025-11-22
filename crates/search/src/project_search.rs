@@ -1,7 +1,8 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleSearchOnInput,
+    ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
@@ -98,6 +99,12 @@ pub fn init(cx: &mut App) {
         register_workspace_action(workspace, move |search_bar, _: &ToggleRegex, window, cx| {
             search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
         });
+        register_workspace_action(
+            workspace,
+            move |search_bar, _: &ToggleSearchOnInput, window, cx| {
+                search_bar.toggle_search_option(SearchOptions::SEARCH_ON_INPUT, window, cx);
+            },
+        );
         register_workspace_action(
             workspace,
             move |search_bar, action: &ToggleReplace, window, cx| {
@@ -892,7 +899,7 @@ impl ProjectSearchView {
                         }
                     }
                     // Trigger search on input:
-                    if EditorSettings::get_global(cx).search.search_on_input {
+                    if this.search_options.contains(SearchOptions::SEARCH_ON_INPUT) {
                         let query = this.search_query_text(cx);
                         if query.is_empty() {
                             // Clear results immediately when query is empty and abort ongoing search
@@ -1541,7 +1548,7 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            let should_auto_focus = !EditorSettings::get_global(cx).search.search_on_input;
+            let should_auto_focus = !self.search_options.contains(SearchOptions::SEARCH_ON_INPUT);
             if is_new_search
                 && self.query_editor.focus_handle(cx).is_focused(window)
                 && should_auto_focus
@@ -1577,9 +1584,15 @@ impl ProjectSearchView {
         v_flex()
             .gap_1()
             .child(
-                Label::new("Hit enter to search. For more options:")
-                    .color(Color::Muted)
-                    .mb_2(),
+                Label::new(
+                    if self.search_options.contains(SearchOptions::SEARCH_ON_INPUT) {
+                        "Start typing to search. For more options:"
+                    } else {
+                        "Hit enter to search. For more options:"
+                    },
+                )
+                .color(Color::Muted)
+                .mb_2(),
             )
             .child(
                 Button::new("filter-paths", "Include/exclude specific paths")
@@ -1609,6 +1622,20 @@ impl ProjectSearchView {
                     .key_binding(KeyBinding::for_action_in(&ToggleRegex, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
+                    }),
+            )
+            .child(
+                Button::new("search-on-input", "Search on input")
+                    .icon(IconName::Eye)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action_in(
+                        &ToggleSearchOnInput,
+                        &focus_handle,
+                        cx,
+                    ))
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(ToggleSearchOnInput.boxed_clone(), cx)
                     }),
             )
             .child(
@@ -2100,6 +2127,11 @@ impl Render for ProjectSearchBar {
                         focus_handle.clone(),
                     ))
                     .child(SearchOption::Regex.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    ))
+                    .child(SearchOption::SearchOnInput.as_button(
                         search.search_options,
                         SearchSource::Project(cx),
                         focus_handle.clone(),

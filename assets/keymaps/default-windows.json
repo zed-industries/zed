@@ -422,7 +422,8 @@
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-r": "search::ToggleRegex" // vscode
+      "alt-r": "search::ToggleRegex", // vscode
+      "alt-ctrl-q": "search::ToggleSearchOnInput"
     }
   },
   {
@@ -447,7 +448,8 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-r": "search::ToggleRegex" // vscode
+      "alt-r": "search::ToggleRegex", // vscode
+      "alt-ctrl-q": "search::ToggleSearchOnInput"
     }
   },
   {
@@ -492,6 +494,7 @@
       "alt-f": "project_search::ToggleFilters",
       "shift-enter": "project_search::ToggleAllSearchResults",
       "alt-r": "search::ToggleRegex",
+      "alt-ctrl-q": "search::ToggleSearchOnInput",
       // "ctrl-shift-alt-x": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab"
     }

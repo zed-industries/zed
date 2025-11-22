@@ -769,7 +769,7 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
-    /// Whether to show search results immediately on input.
+    /// Show search results on input by default.
     pub search_on_input: Option<bool>,
 }
 
