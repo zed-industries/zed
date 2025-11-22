@@ -752,6 +752,7 @@ impl LanguageModel for CloudLanguageModel {
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         let thinking_allowed = request.thinking_allowed;
+        let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
@@ -801,8 +802,9 @@ impl LanguageModel for CloudLanguageModel {
                         Box::pin(
                             response_lines(response, includes_status_messages)
                                 .chain(usage_updated_event(usage))
-                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)), // .map(|_| {}),
                         ),
+                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -849,6 +851,7 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
+                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -895,6 +898,7 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
+                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -935,6 +939,7 @@ impl LanguageModel for CloudLanguageModel {
                                 .chain(usage_updated_event(usage))
                                 .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
+                        &provider_name,
                         move |event| mapper.map_event(event),
                     ))
                 });
@@ -946,6 +951,7 @@ impl LanguageModel for CloudLanguageModel {
 
 fn map_cloud_completion_events<T, F>(
     stream: Pin<Box<dyn Stream<Item = Result<CompletionEvent<T>>> + Send>>,
+    provider: &LanguageModelProviderName,
     mut map_callback: F,
 ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
 where
@@ -954,6 +960,7 @@ where
         + Send
         + 'static,
 {
+    let provider = provider.clone();
     stream
         .flat_map(move |event| {
             futures::stream::iter(match event {
@@ -961,12 +968,28 @@ where
                     vec![Err(LanguageModelCompletionError::from(error))]
                 }
                 Ok(CompletionEvent::Status(event)) => {
-                    vec![Ok(LanguageModelCompletionEvent::StatusUpdate(event))]
+                    vec![
+                        LanguageModelCompletionEvent::from_completion_request_status(
+                            event,
+                            provider.clone(),
+                        ),
+                    ]
                 }
                 Ok(CompletionEvent::Event(event)) => map_callback(event),
             })
         })
         .boxed()
+}
+
+fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> LanguageModelProviderName {
+    match provider {
+        cloud_llm_client::LanguageModelProvider::Anthropic => {
+            language_model::ANTHROPIC_PROVIDER_NAME
+        }
+        cloud_llm_client::LanguageModelProvider::OpenAi => language_model::OPEN_AI_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::Google => language_model::GOOGLE_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::XAi => language_model::X_AI_PROVIDER_NAME,
+    }
 }
 
 fn usage_updated_event<T>(

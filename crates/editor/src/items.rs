@@ -21,6 +21,7 @@ use language::{
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
+use multi_buffer::MultiBufferOffset;
 use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -587,6 +588,21 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 impl Item for Editor {
     type Event = EditorEvent;
 
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        cx: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if TypeId::of::<Self>() == type_id {
+            Some(self_handle.clone().into())
+        } else if TypeId::of::<MultiBuffer>() == type_id {
+            Some(self_handle.read(cx).buffer.clone().into())
+        } else {
+            None
+        }
+    }
+
     fn navigate(
         &mut self,
         data: Box<dyn std::any::Any>,
@@ -941,7 +957,7 @@ impl Item for Editor {
 
     fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let cursor = self.selections.newest_anchor().head();
-        let multibuffer = &self.buffer().read(cx);
+        let multibuffer = self.buffer().read(cx);
         let (buffer_id, symbols) = multibuffer
             .read(cx)
             .symbols_containing(cursor, Some(variant.syntax()))?;
@@ -1735,7 +1751,7 @@ impl SearchableItem for Editor {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {
-                vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
+                vec![buffer.anchor_before(MultiBufferOffset(0))..buffer.anchor_after(buffer.len())]
             } else {
                 search_within_ranges
             };
@@ -1746,7 +1762,10 @@ impl SearchableItem for Editor {
                 {
                     ranges.extend(
                         query
-                            .search(search_buffer, Some(search_range.clone()))
+                            .search(
+                                search_buffer,
+                                Some(search_range.start.0..search_range.end.0),
+                            )
                             .await
                             .into_iter()
                             .map(|match_range| {

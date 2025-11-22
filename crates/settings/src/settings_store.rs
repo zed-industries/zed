@@ -32,7 +32,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
+    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId, fallible_options,
     merge_from::MergeFrom,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
@@ -666,44 +666,31 @@ impl SettingsStore {
         file: SettingsFile,
     ) -> (Option<SettingsContentType>, SettingsParseResult) {
         let mut migration_status = MigrationStatus::NotNeeded;
-        let settings: SettingsContentType = if user_settings_content.is_empty() {
-            parse_json_with_comments("{}").expect("Empty settings should always be valid")
+        let (settings, parse_status) = if user_settings_content.is_empty() {
+            fallible_options::parse_json("{}")
         } else {
             let migration_res = migrator::migrate_settings(user_settings_content);
-            let content = match &migration_res {
-                Ok(Some(content)) => content,
-                Ok(None) => user_settings_content,
-                Err(_) => user_settings_content,
-            };
-            let parse_result = parse_json_with_comments(content);
-            migration_status = match migration_res {
+            migration_status = match &migration_res {
                 Ok(Some(_)) => MigrationStatus::Succeeded,
                 Ok(None) => MigrationStatus::NotNeeded,
                 Err(err) => MigrationStatus::Failed {
                     error: err.to_string(),
                 },
             };
-            match parse_result {
-                Ok(settings) => settings,
-                Err(err) => {
-                    let result = SettingsParseResult {
-                        parse_status: ParseStatus::Failed {
-                            error: err.to_string(),
-                        },
-                        migration_status,
-                    };
-                    self.file_errors.insert(file, result.clone());
-                    return (None, result);
-                }
-            }
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => user_settings_content,
+                Err(_) => user_settings_content,
+            };
+            fallible_options::parse_json(content)
         };
 
         let result = SettingsParseResult {
-            parse_status: ParseStatus::Success,
+            parse_status,
             migration_status,
         };
         self.file_errors.insert(file, result.clone());
-        return (Some(settings), result);
+        return (settings, result);
     }
 
     pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {

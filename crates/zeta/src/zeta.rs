@@ -1486,7 +1486,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         true
     }
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &App) -> bool {
         !self.pending_completions.is_empty()
     }
 

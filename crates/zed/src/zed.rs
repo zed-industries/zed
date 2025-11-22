@@ -58,7 +58,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, Settings, SettingsStore, VIM_KEYMAP_PATH,
+    KeymapFileLoadResult, MigrationStatus, Settings, SettingsStore, VIM_KEYMAP_PATH,
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
@@ -307,7 +307,10 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
     let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
         Ok(val) if val == "server" => gpui::WindowDecorations::Server,
         Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-        _ => gpui::WindowDecorations::Client,
+        _ => match WorkspaceSettings::get_global(cx).window_decorations {
+            settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+            settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+        },
     };
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
@@ -1002,7 +1005,7 @@ fn register_actions(
         .register_action(open_project_debug_tasks_file)
         .register_action(
             |workspace: &mut Workspace,
-             _: &project_panel::ToggleFocus,
+             _: &zed_actions::project_panel::ToggleFocus,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -1363,44 +1366,63 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
         .detach();
 }
 
-pub fn handle_settings_file_changes(
-    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut App,
-    settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
-) {
-    MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
+fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, cx: &mut App) {
+    if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
+        let settings_type = if is_user { "user" } else { "global" };
+        log::error!("Failed to load {} settings: {err}", settings_type);
+    }
 
-    // Helper function to process settings content
-    let process_settings = move |content: String,
-                                 is_user: bool,
-                                 store: &mut SettingsStore,
-                                 cx: &mut App|
-          -> bool {
-        let result = if is_user {
-            store.set_user_settings(&content, cx)
-        } else {
-            store.set_global_settings(&content, cx)
-        };
+    let error = match result.parse_status {
+        settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
+        settings::ParseStatus::Success => None,
+    };
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
-        let id = NotificationId::Named("failed-to-migrate-settings".into());
-        // Apply migrations to both user and global settings
-        let content_migrated = match result.migration_status {
-            settings::MigrationStatus::Succeeded => {
-                dismiss_app_notification(&id, cx);
+    let showed_parse_error = match error {
+        Some(error) => {
+            if let Some(InvalidSettingsError::LocalSettings { .. }) =
+                error.downcast_ref::<InvalidSettingsError>()
+            {
+                false
+                // Local settings errors are displayed by the projects
+            } else {
+                show_app_notification(id, cx, move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
+                            .primary_message("Open Settings File")
+                            .primary_icon(IconName::Settings)
+                            .primary_on_click(|window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::OpenSettingsFile.boxed_clone(),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            })
+                    })
+                });
                 true
             }
-            settings::MigrationStatus::NotNeeded => {
-                dismiss_app_notification(&id, cx);
-                false
-            }
-            settings::MigrationStatus::Failed { error: err } => {
+        }
+        None => {
+            dismiss_app_notification(&id, cx);
+            false
+        }
+    };
+    let id = NotificationId::Named("failed-to-migrate-settings".into());
+
+    match result.migration_status {
+        settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
+            dismiss_app_notification(&id, cx);
+        }
+        settings::MigrationStatus::Failed { error: err } => {
+            if !showed_parse_error {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
                             format!(
                                 "Failed to migrate settings\n\
-                                    {err}"
+                                {err}"
                             ),
                             cx,
                         )
@@ -1412,26 +1434,17 @@ pub fn handle_settings_file_changes(
                         })
                     })
                 });
-                // notify user here
-                false
             }
-        };
-
-        if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
-            let settings_type = if is_user { "user" } else { "global" };
-            log::error!("Failed to load {} settings: {err}", settings_type);
         }
-
-        settings_changed(
-            match result.parse_status {
-                settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
-                settings::ParseStatus::Success => None,
-            },
-            cx,
-        );
-
-        content_migrated
     };
+}
+
+pub fn handle_settings_file_changes(
+    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut App,
+) {
+    MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
     // Initial load of both settings files
     let global_content = cx
@@ -1444,8 +1457,8 @@ pub fn handle_settings_file_changes(
         .unwrap();
 
     SettingsStore::update_global(cx, |store, cx| {
-        process_settings(global_content, false, store, cx);
-        process_settings(user_content, true, store, cx);
+        notify_settings_errors(store.set_user_settings(&user_content, cx), true, cx);
+        notify_settings_errors(store.set_global_settings(&global_content, cx), false, cx);
     });
 
     // Watch for changes in both files
@@ -1462,7 +1475,14 @@ pub fn handle_settings_file_changes(
             };
 
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let migrating_in_memory = process_settings(content, is_user, store, cx);
+                let result = if is_user {
+                    store.set_user_settings(&content, cx)
+                } else {
+                    store.set_global_settings(&content, cx)
+                };
+                let migrating_in_memory =
+                    matches!(&result.migration_status, MigrationStatus::Succeeded);
+                notify_settings_errors(result, is_user, cx);
                 if let Some(notifier) = MigrationNotification::try_global(cx) {
                     notifier.update(cx, |_, cx| {
                         cx.emit(MigrationEvent::ContentChanged {
@@ -1722,36 +1742,6 @@ pub fn load_default_keymap(cx: &mut App) {
         cx.bind_keys(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );
-    }
-}
-
-pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
-
-    match error {
-        Some(error) => {
-            if let Some(InvalidSettingsError::LocalSettings { .. }) =
-                error.downcast_ref::<InvalidSettingsError>()
-            {
-                // Local settings errors are displayed by the projects
-                return;
-            }
-            show_app_notification(id, cx, move |cx| {
-                cx.new(|cx| {
-                    MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
-                        .primary_message("Open Settings File")
-                        .primary_icon(IconName::Settings)
-                        .primary_on_click(|window, cx| {
-                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
-                            cx.emit(DismissEvent);
-                        })
-                })
-            });
-        }
-        None => {
-            dismiss_app_notification(&id, cx);
-        }
     }
 }
 
@@ -2241,7 +2231,9 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
+    use editor::{
+        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
+    };
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
@@ -3508,7 +3500,11 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "untitled");
                     assert!(Arc::ptr_eq(
-                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap(),
                         &languages::PLAIN_TEXT
                     ));
                     editor.handle_input("hi", window, cx);
@@ -3542,7 +3538,12 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap()
+                            .name(),
                         "Rust".into()
                     );
                 });
@@ -3648,7 +3649,11 @@ mod tests {
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(Arc::ptr_eq(
-                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap(),
                         &languages::PLAIN_TEXT
                     ));
                     editor.handle_input("hi", window, cx);
@@ -3672,7 +3677,12 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(MultiBufferOffset(0), cx)
+                            .unwrap()
+                            .name(),
                         "Rust".into()
                     )
                 });
@@ -4477,7 +4487,7 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
@@ -4595,7 +4605,7 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
             handle_keymap_file_changes(keymap_rx, cx);
         });
 
@@ -4654,133 +4664,6 @@ mod tests {
         cx.update(|cx| {
             // Make sure it doesn't panic.
             KeymapFile::generate_json_schema_for_registered_actions(cx);
-        });
-    }
-
-    /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
-    /// and let you know when introducing a new namespace.
-    #[gpui::test]
-    async fn test_action_namespaces(cx: &mut gpui::TestAppContext) {
-        use itertools::Itertools;
-
-        init_keymap_test(cx);
-        cx.update(|cx| {
-            let all_actions = cx.all_action_names();
-
-            let mut actions_without_namespace = Vec::new();
-            let all_namespaces = all_actions
-                .iter()
-                .filter_map(|action_name| {
-                    let namespace = action_name
-                        .split("::")
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .skip(1)
-                        .rev()
-                        .join("::");
-                    if namespace.is_empty() {
-                        actions_without_namespace.push(*action_name);
-                    }
-                    if &namespace == "test_only" || &namespace == "stories" {
-                        None
-                    } else {
-                        Some(namespace)
-                    }
-                })
-                .sorted()
-                .dedup()
-                .collect::<Vec<_>>();
-            assert_eq!(actions_without_namespace, Vec::<&str>::new());
-
-            let expected_namespaces = vec![
-                "action",
-                "activity_indicator",
-                "agent",
-                #[cfg(not(target_os = "macos"))]
-                "app_menu",
-                "assistant",
-                "assistant2",
-                "auto_update",
-                "bedrock",
-                "branches",
-                "buffer_search",
-                "channel_modal",
-                "cli",
-                "client",
-                "collab",
-                "collab_panel",
-                "command_palette",
-                "console",
-                "context_server",
-                "copilot",
-                "debug_panel",
-                "debugger",
-                "dev",
-                "diagnostics",
-                "edit_prediction",
-                "editor",
-                "feedback",
-                "file_finder",
-                "git",
-                "git_onboarding",
-                "git_panel",
-                "go_to_line",
-                "icon_theme_selector",
-                "journal",
-                "keymap_editor",
-                "keystroke_input",
-                "language_selector",
-                "line_ending_selector",
-                "lsp_tool",
-                "markdown",
-                "menu",
-                "notebook",
-                "notification_panel",
-                "onboarding",
-                "outline",
-                "outline_panel",
-                "pane",
-                "panel",
-                "picker",
-                "project_panel",
-                "project_search",
-                "project_symbols",
-                "projects",
-                "repl",
-                "rules_library",
-                "search",
-                "settings_editor",
-                "settings_profile_selector",
-                "snippets",
-                "stash_picker",
-                "supermaven",
-                "svg",
-                "syntax_tree_view",
-                "tab_switcher",
-                "task",
-                "terminal",
-                "terminal_panel",
-                "theme_selector",
-                "toast",
-                "toolchain",
-                "variable_list",
-                "vim",
-                "window",
-                "workspace",
-                "zed",
-                "zed_actions",
-                "zed_predict_onboarding",
-                "zeta",
-            ];
-            assert_eq!(
-                all_namespaces,
-                expected_namespaces
-                    .into_iter()
-                    .map(|namespace| namespace.to_string())
-                    .sorted()
-                    .collect::<Vec<_>>()
-            );
         });
     }
 

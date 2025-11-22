@@ -74,8 +74,7 @@ where
         + Sub<T, Output = TDelta>
         + Add<TDelta, Output = T>
         + AddAssign<TDelta>
-        + Default
-        + std::fmt::Debug,
+        + Default,
     TDelta: Ord + Copy,
 {
     #[must_use]

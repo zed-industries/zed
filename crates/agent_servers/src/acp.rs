@@ -35,6 +35,7 @@ pub struct AcpConnection {
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
     default_mode: Option<acp::SessionModeId>,
+    default_model: Option<acp::ModelId>,
     root_dir: PathBuf,
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
@@ -57,6 +58,7 @@ pub async fn connect(
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
+    default_model: Option<acp::ModelId>,
     is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
@@ -66,6 +68,7 @@ pub async fn connect(
         command.clone(),
         root_dir,
         default_mode,
+        default_model,
         is_remote,
         cx,
     )
@@ -82,6 +85,7 @@ impl AcpConnection {
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
+        default_model: Option<acp::ModelId>,
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
@@ -207,6 +211,7 @@ impl AcpConnection {
             sessions,
             agent_capabilities: response.agent_capabilities,
             default_mode,
+            default_model,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -245,39 +250,61 @@ impl AgentConnection for AcpConnection {
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
         let default_mode = self.default_mode.clone();
+        let default_model = self.default_model.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        let mcp_servers = if project.read(cx).is_local() {
-            context_server_store
-                .configured_server_ids()
-                .iter()
-                .filter_map(|id| {
-                    let configuration = context_server_store.configuration_for_server(id)?;
-                    let command = configuration.command();
-                    Some(acp::McpServer::Stdio {
-                        name: id.0.to_string(),
-                        command: command.path.clone(),
-                        args: command.args.clone(),
-                        env: if let Some(env) = command.env.as_ref() {
-                            env.iter()
-                                .map(|(name, value)| acp::EnvVariable {
-                                    name: name.clone(),
-                                    value: value.clone(),
-                                    meta: None,
-                                })
-                                .collect()
-                        } else {
-                            vec![]
-                        },
+        let mcp_servers =
+            if project.read(cx).is_local() {
+                context_server_store
+                    .configured_server_ids()
+                    .iter()
+                    .filter_map(|id| {
+                        let configuration = context_server_store.configuration_for_server(id)?;
+                        match &*configuration {
+                        project::context_server_store::ContextServerConfiguration::Custom {
+                            command,
+                            ..
+                        }
+                        | project::context_server_store::ContextServerConfiguration::Extension {
+                            command,
+                            ..
+                        } => Some(acp::McpServer::Stdio {
+                            name: id.0.to_string(),
+                            command: command.path.clone(),
+                            args: command.args.clone(),
+                            env: if let Some(env) = command.env.as_ref() {
+                                env.iter()
+                                    .map(|(name, value)| acp::EnvVariable {
+                                        name: name.clone(),
+                                        value: value.clone(),
+                                        meta: None,
+                                    })
+                                    .collect()
+                            } else {
+                                vec![]
+                            },
+                        }),
+                        project::context_server_store::ContextServerConfiguration::Http {
+                            url,
+                            headers,
+                        } => Some(acp::McpServer::Http {
+                            name: id.0.to_string(),
+                            url: url.to_string(),
+                            headers: headers.iter().map(|(name, value)| acp::HttpHeader {
+                                name: name.clone(),
+                                value: value.clone(),
+                                meta: None,
+                            }).collect(),
+                        }),
+                    }
                     })
-                })
-                .collect()
-        } else {
-            // In SSH projects, the external agent is running on the remote
-            // machine, and currently we only run MCP servers on the local
-            // machine. So don't pass any MCP servers to the agent in that case.
-            Vec::new()
-        };
+                    .collect()
+            } else {
+                // In SSH projects, the external agent is running on the remote
+                // machine, and currently we only run MCP servers on the local
+                // machine. So don't pass any MCP servers to the agent in that case.
+                Vec::new()
+            };
 
         cx.spawn(async move |cx| {
             let response = conn
@@ -312,6 +339,7 @@ impl AgentConnection for AcpConnection {
                             let default_mode = default_mode.clone();
                             let session_id = response.session_id.clone();
                             let modes = modes.clone();
+                            let conn = conn.clone();
                             async move |_| {
                                 let result = conn.set_session_mode(acp::SetSessionModeRequest {
                                     session_id,
@@ -342,6 +370,53 @@ impl AgentConnection for AcpConnection {
                 } else {
                     log::warn!(
                         "`{name}` does not support modes, but `default_mode` was set in settings.",
+                    );
+                }
+            }
+
+            if let Some(default_model) = default_model {
+                if let Some(models) = models.as_ref() {
+                    let mut models_ref = models.borrow_mut();
+                    let has_model = models_ref.available_models.iter().any(|model| model.model_id == default_model);
+
+                    if has_model {
+                        let initial_model_id = models_ref.current_model_id.clone();
+
+                        cx.spawn({
+                            let default_model = default_model.clone();
+                            let session_id = response.session_id.clone();
+                            let models = models.clone();
+                            let conn = conn.clone();
+                            async move |_| {
+                                let result = conn.set_session_model(acp::SetSessionModelRequest {
+                                    session_id,
+                                    model_id: default_model,
+                                    meta: None,
+                                })
+                                .await.log_err();
+
+                                if result.is_none() {
+                                    models.borrow_mut().current_model_id = initial_model_id;
+                                }
+                            }
+                        }).detach();
+
+                        models_ref.current_model_id = default_model;
+                    } else {
+                        let available_models = models_ref
+                            .available_models
+                            .iter()
+                            .map(|model| format!("- `{}`: {}", model.model_id, model.name))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
+                        log::warn!(
+                            "`{default_model}` is not a valid {name} model. Available options:\n{available_models}",
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "`{name}` does not support model selection, but `default_model` was set in settings.",
                     );
                 }
             }
