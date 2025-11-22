@@ -19,7 +19,7 @@ use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, Upd
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
-use onboarding::{FIRST_OPEN, show_onboarding_view};
+use onboarding::{FIRST_OPEN, go_to_welcome_page, show_onboarding_view};
 use prompt_store::PromptBuilder;
 use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
@@ -1032,127 +1032,196 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        let use_system_window_tabs = cx
-            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
-            .unwrap_or(false);
-        let mut results: Vec<Result<(), Error>> = Vec::new();
-        let mut tasks = Vec::new();
+    let restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
 
-        for (index, (location, paths)) in locations.into_iter().enumerate() {
-            match location {
-                SerializedWorkspaceLocation::Local => {
-                    let app_state = app_state.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let open_task = cx.update(|cx| {
-                            workspace::open_paths(
-                                &paths.paths(),
-                                app_state,
-                                workspace::OpenOptions::default(),
-                                cx,
-                            )
-                        })?;
-                        open_task.await.map(|_| ())
-                    });
+    async fn open_welcome_page(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            workspace::open_new(Default::default(), app_state, cx, |_, _, cx| {
+                go_to_welcome_page(cx)
+            })
+        })?
+        .await
+    }
 
-                    // If we're using system window tabs and this is the first workspace,
-                    // wait for it to finish so that the other windows can be added as tabs.
-                    if use_system_window_tabs && index == 0 {
-                        results.push(task.await);
-                    } else {
-                        tasks.push(task);
-                    }
-                }
-                SerializedWorkspaceLocation::Remote(mut connection_options) => {
-                    let app_state = app_state.clone();
-                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
-                        cx.update(|cx| {
-                            SshSettings::get_global(cx)
-                                .fill_connection_options_from_settings(options)
-                        })?;
-                    }
-                    let task = cx.spawn(async move |cx| {
-                        recent_projects::open_remote_project(
-                            connection_options,
-                            paths.paths().into_iter().map(PathBuf::from).collect(),
+    match restore_behavior {
+        settings::RestoreOnStartupBehavior::LastSession => {
+            if let Some(locations) = get_last_session_workspaces(&app_state, cx) {
+                open_serialized_workspace(locations, &app_state, cx).await?;
+            } else if let Some(location) = workspace::last_opened_workspace_location().await {
+                open_serialized_workspace(vec![location], &app_state, cx).await?;
+            } else {
+                open_welcome_page(app_state, cx).await?;
+            }
+        }
+        settings::RestoreOnStartupBehavior::LastWorkspace => {
+            if let Some(location) = workspace::last_opened_workspace_location().await {
+                open_serialized_workspace(vec![location], &app_state, cx).await?;
+            } else {
+                open_welcome_page(app_state, cx).await?;
+            }
+        }
+        _ if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) => {
+            cx.update(|cx| show_onboarding_view(app_state.clone(), cx))?
+                .await?
+        }
+        settings::RestoreOnStartupBehavior::WelcomePage => {
+            open_welcome_page(app_state, cx).await?;
+        }
+        settings::RestoreOnStartupBehavior::None => {
+            cx.update(|cx| {
+                workspace::open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    |workspace, window, cx| {
+                        Editor::new_file(workspace, &Default::default(), window, cx)
+                    },
+                )
+            })?
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn get_last_session_workspaces(
+    app_state: &Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
+    let (last_session_id, last_session_window_stack) = cx
+        .update(|cx| {
+            let session = app_state.session.read(cx);
+
+            (
+                session.last_session_id().map(|id| id.to_string()),
+                session.last_session_window_stack(),
+            )
+        })
+        .ok()?;
+
+    let last_session_id = last_session_id?;
+    let ordered = last_session_window_stack.is_some();
+
+    let mut locations =
+        workspace::last_session_workspace_locations(&last_session_id, last_session_window_stack)
+            .filter(|locations| !locations.is_empty());
+
+    // Since last_session_window_order returns the windows ordered front-to-back
+    // we need to open the window that was frontmost last.
+    if ordered && let Some(locations) = locations.as_mut() {
+        locations.reverse();
+    }
+
+    locations
+}
+
+pub(crate) async fn open_serialized_workspace(
+    workspaces: Vec<(SerializedWorkspaceLocation, PathList)>,
+    app_state: &Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let use_system_window_tabs = cx
+        .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
+        .unwrap_or(false);
+    let mut results: Vec<Result<(), Error>> = Vec::new();
+    let mut tasks = Vec::new();
+
+    for (index, (location, paths)) in workspaces.into_iter().enumerate() {
+        match location {
+            SerializedWorkspaceLocation::Local => {
+                let app_state = app_state.clone();
+                let task = cx.spawn(async move |cx| {
+                    let open_task = cx.update(|cx| {
+                        workspace::open_paths(
+                            &paths.paths(),
                             app_state,
                             workspace::OpenOptions::default(),
                             cx,
                         )
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))
-                    });
+                    })?;
+                    open_task.await.map(|_| ())
+                });
+
+                // If we're using system window tabs and this is the first workspace,
+                // wait for it to finish so that the other windows can be added as tabs.
+                if use_system_window_tabs && index == 0 {
+                    results.push(task.await);
+                } else {
                     tasks.push(task);
                 }
             }
-        }
-
-        // Wait for all workspaces to open concurrently
-        results.extend(future::join_all(tasks).await);
-
-        // Show notifications for any errors that occurred
-        let mut error_count = 0;
-        for result in results {
-            if let Err(e) = result {
-                log::error!("Failed to restore workspace: {}", e);
-                error_count += 1;
+            SerializedWorkspaceLocation::Remote(mut connection_options) => {
+                let app_state = app_state.clone();
+                if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                    cx.update(|cx| {
+                        SshSettings::get_global(cx).fill_connection_options_from_settings(options)
+                    })?;
+                }
+                let task = cx.spawn(async move |cx| {
+                    recent_projects::open_remote_project(
+                        connection_options,
+                        paths.paths().into_iter().map(PathBuf::from).collect(),
+                        app_state,
+                        workspace::OpenOptions::default(),
+                        cx,
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))
+                });
+                tasks.push(task);
             }
         }
-
-        if error_count > 0 {
-            let message = if error_count == 1 {
-                "Failed to restore 1 workspace. Check logs for details.".to_string()
-            } else {
-                format!(
-                    "Failed to restore {} workspaces. Check logs for details.",
-                    error_count
-                )
-            };
-
-            // Try to find an active workspace to show the toast
-            let toast_shown = cx
-                .update(|cx| {
-                    if let Some(window) = cx.active_window()
-                        && let Some(workspace) = window.downcast::<Workspace>()
-                    {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                        return true;
-                    }
-                    false
-                })
-                .unwrap_or(false);
-
-            // If we couldn't show a toast (no windows opened successfully),
-            // we've already logged the errors above, so the user can check logs
-            if !toast_shown {
-                log::error!(
-                    "Failed to show notification for window restoration errors, because no workspace windows were available."
-                );
-            }
-        }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_onboarding_view(app_state, cx))?.await?;
-    } else {
-        cx.update(|cx| {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-        })?
-        .await?;
     }
 
+    // Wait for all workspaces to open concurrently
+    results.extend(future::join_all(tasks).await);
+
+    // Show notifications for any errors that occurred
+    let mut error_count = 0;
+    for result in results {
+        if let Err(e) = result {
+            log::error!("Failed to restore workspace: {}", e);
+            error_count += 1;
+        }
+    }
+
+    if error_count > 0 {
+        let message = if error_count == 1 {
+            "Failed to restore 1 workspace. Check logs for details.".to_string()
+        } else {
+            format!(
+                "Failed to restore {} workspaces. Check logs for details.",
+                error_count
+            )
+        };
+
+        // Try to find an active workspace to show the toast
+        let toast_shown = cx
+            .update(|cx| {
+                if let Some(window) = cx.active_window()
+                    && let Some(workspace) = window.downcast::<Workspace>()
+                {
+                    workspace
+                        .update(cx, |workspace, _, cx| {
+                            workspace
+                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                        })
+                        .ok();
+                    return true;
+                }
+                false
+            })
+            .unwrap_or(false);
+
+        // If we couldn't show a toast (no windows opened successfully),
+        // we've already logged the errors above, so the user can check logs
+        if !toast_shown {
+            log::error!(
+                "Failed to show notification for window restoration errors, because no workspace windows were available."
+            );
+        }
+    }
     Ok(())
 }
 

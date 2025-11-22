@@ -18,7 +18,7 @@ use ui::{
     WithScrollbar as _, prelude::*, rems_from_px,
 };
 use workspace::{
-    AppState, Workspace, WorkspaceId,
+    AppState, ItemHandle, Workspace, WorkspaceId,
     dock::DockPosition,
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
@@ -402,36 +402,34 @@ impl Item for Onboarding {
     }
 }
 
-fn go_to_welcome_page(cx: &mut App) {
+pub fn go_to_welcome_page(cx: &mut App) {
     with_active_or_new_workspace(cx, |workspace, window, cx| {
-        let Some((onboarding_id, onboarding_idx)) = workspace
-            .active_pane()
-            .read(cx)
-            .items()
-            .enumerate()
-            .find_map(|(idx, item)| {
-                let _ = item.downcast::<Onboarding>()?;
-                Some((item.item_id(), idx))
-            })
-        else {
-            return;
-        };
-
         workspace.active_pane().update(cx, |pane, cx| {
-            // Get the index here to get around the borrow checker
-            let idx = pane.items().enumerate().find_map(|(idx, item)| {
-                let _ = item.downcast::<WelcomePage>()?;
-                Some(idx)
-            });
+            let mut welcome_page_idx = None;
+            let mut onboarding_idx = None;
+            let mut onboarding_id = None;
 
-            if let Some(idx) = idx {
+            for (idx, item) in pane.items().enumerate() {
+                if item.downcast::<WelcomePage>().is_some() {
+                    welcome_page_idx = Some(idx);
+                }
+
+                if let Some(item) = item.downcast::<Onboarding>() {
+                    onboarding_id = Some(item.item_id());
+                    onboarding_idx = Some(idx);
+                }
+            }
+
+            if let Some(entity_id) = onboarding_id {
+                pane.remove_item(entity_id, false, false, window, cx);
+            }
+
+            if let Some(idx) = welcome_page_idx {
                 pane.activate_item(idx, true, true, window, cx);
             } else {
                 let item = Box::new(WelcomePage::new(window, cx));
-                pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
+                pane.add_item(item, true, true, onboarding_idx, window, cx);
             }
-
-            pane.remove_item(onboarding_id, false, false, window, cx);
         });
     });
 }
