@@ -461,7 +461,7 @@ async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
-async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
+async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
     "hardcoded-credentials",
@@ -478,6 +478,7 @@ bitflags = "2.6.0"
 blade-graphics = { version = "0.7.0" }
 blade-macros = { version = "0.3.0" }
 blade-util = { version = "0.3.0" }
+brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
@@ -606,7 +607,6 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
-ref-cast = "1.0.24"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
@@ -631,6 +631,7 @@ scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
@@ -639,7 +640,6 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
-serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
@@ -717,12 +717,14 @@ wasmtime = { version = "29", default-features = false, features = [
     "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
+wax = "0.6"
 which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
+
 
 [workspace.dependencies.windows]
 version = "0.61"
@@ -779,6 +781,7 @@ features = [
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -792,6 +795,19 @@ codegen-units = 16
 codegen-units = 16
 
 [profile.dev.package]
+# proc-macros start
+gpui_macros = { opt-level = 3 }
+derive_refineable = { opt-level = 3 }
+settings_macros = { opt-level = 3 }
+sqlez_macros = { opt-level = 3, codegen-units = 1 }
+ui_macros = { opt-level = 3 }
+util_macros = { opt-level = 3 }
+serde_derive = { opt-level = 3 }
+quote = { opt-level = 3 }
+syn = { opt-level = 3 }
+proc-macro2 = { opt-level = 3 }
+# proc-macros end
+
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 cranelift-codegen-meta = { opt-level = 3 }
@@ -833,7 +849,6 @@ semantic_version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
-sqlez_macros = { codegen-units = 1 }
 story = { codegen-units = 1 }
 supermaven_api = { codegen-units = 1 }
 telemetry_events = { codegen-units = 1 }

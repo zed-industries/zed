@@ -909,6 +909,7 @@ struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
+    needs_timeout: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -2433,7 +2434,7 @@ impl Window {
     }
 
     /// Updates the cursor style at the platform level. This method should only be called
-    /// during the prepaint phase of element drawing.
+    /// during the paint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
@@ -2444,7 +2445,7 @@ impl Window {
 
     /// Updates the cursor style for the entire window at the platform level. A cursor
     /// style using this method will have precedence over any cursor style set using
-    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// `set_cursor_style`. This method should only be called during the paint
     /// phase of element drawing.
     pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
         self.invalidator.debug_assert_paint();
@@ -3896,32 +3897,52 @@ impl Window {
         }
 
         if !match_result.pending.is_empty() {
+            currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                cx.background_executor.timer(Duration::from_secs(1)).await;
-                cx.update(move |window, cx| {
-                    let Some(currently_pending) = window
-                        .pending_input
-                        .take()
-                        .filter(|pending| pending.focus == window.focus)
-                    else {
-                        return;
-                    };
 
-                    let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                    let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+            let text_input_requires_timeout = event
+                .downcast_ref::<KeyDownEvent>()
+                .filter(|key_down| key_down.keystroke.key_char.is_some())
+                .and_then(|_| self.platform_window.take_input_handler())
+                .map_or(false, |mut input_handler| {
+                    let accepts = input_handler.accepts_text_input(self, cx);
+                    self.platform_window.set_input_handler(input_handler);
+                    accepts
+                });
 
-                    let to_replay = window
-                        .rendered_frame
-                        .dispatch_tree
-                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+            currently_pending.needs_timeout |=
+                match_result.pending_has_binding || text_input_requires_timeout;
 
-                    window.pending_input_changed(cx);
-                    window.replay_pending_input(to_replay, cx)
-                })
-                .log_err();
-            }));
+            if currently_pending.needs_timeout {
+                currently_pending.timer = Some(self.spawn(cx, async move |cx| {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.update(move |window, cx| {
+                        let Some(currently_pending) = window
+                            .pending_input
+                            .take()
+                            .filter(|pending| pending.focus == window.focus)
+                        else {
+                            return;
+                        };
+
+                        let node_id = window.focus_node_id_in_rendered_frame(window.focus);
+                        let dispatch_path =
+                            window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+                        let to_replay = window
+                            .rendered_frame
+                            .dispatch_tree
+                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+                        window.pending_input_changed(cx);
+                        window.replay_pending_input(to_replay, cx)
+                    })
+                    .log_err();
+                }));
+            } else {
+                currently_pending.timer = None;
+            }
             self.pending_input = Some(currently_pending);
             self.pending_input_changed(cx);
             cx.propagate_event = false;
