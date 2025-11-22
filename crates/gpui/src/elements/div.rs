@@ -1730,6 +1730,11 @@ impl Interactivity {
                         let clicked_state = clicked_state.borrow();
                         self.active = Some(clicked_state.element);
                     }
+                    if self.hover_style.is_some() || self.group_hover_style.is_some() {
+                        element_state
+                            .hover_state
+                            .get_or_insert_with(Default::default);
+                    }
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
                         if self.tooltip_builder.is_some() {
                             self.tooltip_id = set_tooltip_on_window(active_tooltip, window);
@@ -2150,14 +2155,46 @@ impl Interactivity {
         {
             let hitbox = hitbox.clone();
             let was_hovered = hitbox.is_hovered(window);
+            let hover_state = self.hover_style.as_ref().and_then(|_| {
+                element_state
+                    .as_ref()
+                    .and_then(|state| state.hover_state.as_ref())
+                    .cloned()
+            });
             let current_view = window.current_view();
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
+                    if let Some(hover_state) = &hover_state {
+                        hover_state.borrow_mut().element = hovered;
+                    }
                     cx.notify(current_view);
                 }
             });
         }
+
+        if let Some(group_hover) = self.group_hover_style.as_ref() {
+            if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+                let hover_state = element_state
+                    .as_ref()
+                    .and_then(|element| element.hover_state.as_ref())
+                    .cloned();
+
+                let was_group_hovered = group_hitbox_id.is_hovered(window);
+                let current_view = window.current_view();
+
+                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+                    let group_hovered = group_hitbox_id.is_hovered(window);
+                    if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
+                        if let Some(hover_state) = &hover_state {
+                            hover_state.borrow_mut().group = group_hovered;
+                        }
+                        cx.notify(current_view);
+                    }
+                });
+            }
+        }
+
         let drag_cursor_style = self.base_style.as_ref().mouse_cursor;
 
         let mut drag_listener = mem::take(&mut self.drag_listener);
@@ -2346,8 +2383,8 @@ impl Interactivity {
                         && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
 
-                    if is_hovered != *was_hovered {
-                        *was_hovered = is_hovered;
+                    if is_hovered != was_hovered.element {
+                        was_hovered.element = is_hovered;
                         drop(was_hovered);
 
                         hover_listener(&is_hovered, window, cx);
@@ -2580,22 +2617,46 @@ impl Interactivity {
             }
         }
 
-        if let Some(hitbox) = hitbox {
-            if !cx.has_active_drag() {
-                if let Some(group_hover) = self.group_hover_style.as_ref()
-                    && let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx)
-                    && group_hitbox_id.is_hovered(window)
-                {
-                    style.refine(&group_hover.style);
-                }
+        if !cx.has_active_drag() {
+            if let Some(group_hover) = self.group_hover_style.as_ref() {
+                let is_group_hovered =
+                    if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+                        group_hitbox_id.is_hovered(window)
+                    } else if let Some(element_state) = element_state.as_ref() {
+                        element_state
+                            .hover_state
+                            .as_ref()
+                            .map(|state| state.borrow().group)
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
 
-                if let Some(hover_style) = self.hover_style.as_ref()
-                    && hitbox.is_hovered(window)
-                {
-                    style.refine(hover_style);
+                if is_group_hovered {
+                    style.refine(&group_hover.style);
                 }
             }
 
+            if let Some(hover_style) = self.hover_style.as_ref() {
+                let is_hovered = if let Some(hitbox) = hitbox {
+                    hitbox.is_hovered(window)
+                } else if let Some(element_state) = element_state.as_ref() {
+                    element_state
+                        .hover_state
+                        .as_ref()
+                        .map(|state| state.borrow().element)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if is_hovered {
+                    style.refine(hover_style);
+                }
+            }
+        }
+
+        if let Some(hitbox) = hitbox {
             if let Some(drag) = cx.active_drag.take() {
                 let mut can_drop = true;
                 if let Some(can_drop_predicate) = &self.can_drop_predicate {
@@ -2654,7 +2715,7 @@ impl Interactivity {
 pub struct InteractiveElementState {
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
-    pub(crate) hover_state: Option<Rc<RefCell<bool>>>,
+    pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
@@ -2674,6 +2735,16 @@ impl ElementClickedState {
     fn is_clicked(&self) -> bool {
         self.group || self.element
     }
+}
+
+/// Whether or not the element or a group that contains it is hovered.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub struct ElementHoverState {
+    /// True if this element's group is hovered, false otherwise
+    pub group: bool,
+
+    /// True if this element is hovered, false otherwise
+    pub element: bool,
 }
 
 pub(crate) enum ActiveTooltip {
