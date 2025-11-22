@@ -250,6 +250,7 @@ impl PasswordProxy {
             .await
             .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
         make_file_executable(&askpass_script_path).await?;
+        // todo(shell): There might be no powershell on the system
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
             "powershell.exe -ExecutionPolicy Bypass -File {}",
