@@ -703,6 +703,7 @@ pub(crate) struct ShaderInstanceBase {
     pub content_mask: ContentMask<ScaledPixels>,
 }
 
+#[allow(unused)]
 impl ShaderInstanceBase {
     pub const ALIGN: usize = 8; // largest alignment is a vec2
 }
@@ -715,6 +716,7 @@ pub(crate) struct ShaderInstance {
     pub data: SmallVec<[u8; 64]>,
 }
 
+#[allow(unused)]
 impl ShaderInstance {
     /// Returns the data offset and instance size for a given instance data size and align
     pub fn size_info(instance_data_size: usize, instance_data_align: usize) -> (usize, usize) {

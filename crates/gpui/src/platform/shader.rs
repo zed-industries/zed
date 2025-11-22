@@ -1,12 +1,5 @@
 use bytemuck::{Pod, Zeroable};
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct CustomShaderGlobalParams {
-    pub viewport_size: [f32; 2],
-    pub pad: [u32; 2],
-}
-
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
 use {
     crate::ShaderInstance,
@@ -17,6 +10,13 @@ use {
         valid::{Capabilities, ModuleInfo, ValidationFlags, Validator},
     },
 };
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct CustomShaderGlobalParams {
+    pub viewport_size: [f32; 2],
+    pub pad: [u32; 2],
+}
 
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
 pub fn naga_validate_custom_shader(
