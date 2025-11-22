@@ -1,32 +1,14 @@
 mod input_excerpt;
 
-use std::fmt::Write;
-use std::ops::Range;
-use std::path::Path;
-use std::str::FromStr as _;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
-use crate::LlmApiToken;
-use crate::ZedUpdateRequiredError;
-use crate::Zeta;
-use crate::prediction::EditPrediction;
-use crate::{EditPredictionId, Event};
+use crate::{EditPredictionId, Event, ZedUpdateRequiredError, Zeta, prediction::EditPrediction};
 use anyhow::{Context as _, Result};
-use client::{Client, EditPredictionUsage};
-use cloud_llm_client::{
-    EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsResponse,
-    ZED_VERSION_HEADER_NAME,
-};
-use cloud_llm_client::{PredictEditsBody, PredictEditsGitInfo};
-use futures::AsyncReadExt as _;
-use gpui::http_client::Method;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task};
-use gpui::{SemanticVersion, SharedString, http_client};
+use cloud_llm_client::{PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToPoint as _, text_diff};
-use project::Project;
-use project::ProjectPath;
+use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use util::rel_path::RelPath;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
@@ -39,13 +21,6 @@ const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 const MAX_EVENT_TOKENS: usize = 500;
-
-pub struct PerformPredictEditsParams {
-    pub client: Arc<Client>,
-    pub llm_token: LlmApiToken,
-    pub app_version: SemanticVersion,
-    pub body: PredictEditsBody,
-}
 
 pub(crate) fn request_prediction_with_zeta1(
     zeta: &mut Zeta,
@@ -122,13 +97,36 @@ pub(crate) fn request_prediction_with_zeta1(
             body.input_excerpt
         );
 
-        let response = perform_predict_edits(PerformPredictEditsParams {
+        let http_client = client.http_client();
+
+        let response = Zeta::send_api_request::<PredictEditsResponse>(
+            |request| {
+                let uri = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
+                    predict_edits_url
+                } else {
+                    http_client
+                        .build_zed_llm_url("/predict_edits/v2", &[])?
+                        .as_str()
+                        .into()
+                };
+                Ok(request
+                    .uri(uri)
+                    .body(serde_json::to_string(&body)?.into())?)
+            },
             client,
             llm_token,
             app_version,
-            body,
-        })
+        )
         .await;
+
+        // let response = perform_predict_edits(PerformPredictEditsParams {
+        //     client,
+        //     llm_token,
+        //     app_version,
+        //     body,
+        // })
+        // .await;
+
         let (response, usage) = match response {
             Ok(response) => response,
             Err(err) => {
@@ -191,82 +189,6 @@ pub(crate) fn request_prediction_with_zeta1(
 
         edit_prediction
     })
-}
-
-pub fn perform_predict_edits(
-    params: PerformPredictEditsParams,
-) -> impl Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>> {
-    async move {
-        let PerformPredictEditsParams {
-            client,
-            llm_token,
-            app_version,
-            body,
-            ..
-        } = params;
-
-        let http_client = client.http_client();
-        let mut token = llm_token.acquire(&client).await?;
-        let mut did_retry = false;
-
-        loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-            let request_builder =
-                if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
-                    request_builder.uri(predict_edits_url)
-                } else {
-                    request_builder.uri(
-                        http_client
-                            .build_zed_llm_url("/predict_edits/v2", &[])?
-                            .as_ref(),
-                    )
-                };
-            let request = request_builder
-                .header("Content-Type", "application/json")
-                .header("Authorization", format!("Bearer {}", token))
-                .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
-                .body(serde_json::to_string(&body)?.into())?;
-
-            let mut response = http_client.send(request).await?;
-
-            if let Some(minimum_required_version) = response
-                .headers()
-                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
-            {
-                anyhow::ensure!(
-                    app_version >= minimum_required_version,
-                    ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }
-                );
-            }
-
-            if response.status().is_success() {
-                let usage = EditPredictionUsage::from_headers(response.headers()).ok();
-
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                return Ok((serde_json::from_str(&body)?, usage));
-            } else if !did_retry
-                && response
-                    .headers()
-                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-                    .is_some()
-            {
-                did_retry = true;
-                token = llm_token.refresh(&client).await?;
-            } else {
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                anyhow::bail!(
-                    "error predicting edits.\nStatus: {:?}\nBody: {}",
-                    response.status(),
-                    body
-                );
-            }
-        }
-    }
 }
 
 fn process_completion_response(
