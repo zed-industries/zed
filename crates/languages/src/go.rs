@@ -6,7 +6,7 @@ use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{CompletionItemKind, LanguageServerBinary, LanguageServerName, Position};
 
 use regex::Regex;
 use serde_json::json;
@@ -204,6 +204,72 @@ impl LspAdapter for GoLspAdapter {
                 "rangeVariableTypes": true
             }
         })))
+    }
+
+    async fn preprocess_completions(
+        &self,
+        items: &mut [lsp::CompletionItem],
+        buffer: &BufferSnapshot,
+        position: PointUtf16,
+    ) {
+        // Go back to the position the last character was written in.
+        // Otherwise, we sometimes get 'block' for the new position.
+        let position = PointUtf16::new(position.row, position.column-1);
+
+        let offset = buffer.point_utf16_to_offset(position);
+        let mut inside_type_context = false;
+
+        if let Some(layer) = buffer
+            .syntax
+            .layers_for_range(offset..offset, buffer, false)
+            .find(|layer| layer.language.name().as_ref() == "Go")
+        {
+            let mut node = layer.node().descendant_for_byte_range(offset, offset);
+
+            if node.is_none() {
+                return
+            }
+
+            while let Some(n) = node {
+                match n.kind() {
+                    "field_declaration_list"
+                    | "parameter_list"
+                    | "type_identifier"
+                    | "type_spec"
+                    | "type_arguments"
+                    | "type"
+                    | "type_parameter_list" => {
+                        inside_type_context = true;
+                        break;
+                    }
+                    "function_declaration" | "method_declaration" | "func_literal" => {
+                        inside_type_context = true;
+                        break;
+                    }
+                    "block" => {
+                        break;
+                    },
+                    _ => {}
+                }
+                node = n.parent();
+            }
+        }
+
+        for item in items {
+            let Some(ref mut completion) = item.text_edit else {
+                continue;
+            };
+
+            let new_text = match completion {
+                lsp::CompletionTextEdit::Edit(edit) => &mut edit.new_text,
+                lsp::CompletionTextEdit::InsertAndReplace(edit) => &mut edit.new_text,
+            };
+
+            if matches!(item.kind, Some(CompletionItemKind::STRUCT)) && !inside_type_context {
+                new_text.push_str("{$0}");
+                item.insert_text_format = Some(lsp::InsertTextFormat::SNIPPET);
+            }
+        }
     }
 
     async fn label_for_completion(

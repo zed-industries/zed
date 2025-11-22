@@ -254,6 +254,17 @@ impl CachedLspAdapter {
         self.adapter.diagnostic_message_to_markdown(message)
     }
 
+    pub async fn preprocess_completions(
+        &self,
+        completion_items: &mut [lsp::CompletionItem],
+        buffer: &BufferSnapshot,
+        position: PointUtf16,
+    ) {
+        self.adapter
+            .preprocess_completions(completion_items, buffer, position)
+            .await
+    }
+
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
         self.adapter.process_completions(completion_items).await
     }
@@ -336,6 +347,15 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     /// for the unnecessary diagnostics, so do not underline them.
     fn underline_diagnostic(&self, _diagnostic: &lsp::Diagnostic) -> bool {
         true
+    }
+
+    /// Pre-processes completions provided by the language server.
+    async fn preprocess_completions(
+        &self,
+        _: &mut [lsp::CompletionItem],
+        _: &BufferSnapshot,
+        _: PointUtf16,
+    ) {
     }
 
     /// Post-processes completions provided by the language server.

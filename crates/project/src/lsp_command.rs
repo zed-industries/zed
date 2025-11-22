@@ -2234,6 +2234,11 @@ impl LspCommand for GetCompletions {
             .and_then(|list| list.item_defaults.clone())
             .map(Arc::new);
 
+        let buffer_snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+        language_server_adapter
+            .preprocess_completions(&mut completions, &buffer_snapshot, self.position)
+            .await;
+
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
