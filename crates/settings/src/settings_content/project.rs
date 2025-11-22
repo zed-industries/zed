@@ -51,7 +51,6 @@ pub struct ProjectSettingsContent {
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
     /// Git-related settings.
-    #[serde(default)]
     pub git: Option<ProjectGitSettings>,
 }
 
