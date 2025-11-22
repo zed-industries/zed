@@ -1098,18 +1098,22 @@ impl Zeta {
 
             let edit_prediction_id = do_refresh(this.clone(), cx).await.log_err().flatten();
 
+            // When a prediction completes, remove it from the pending list, and cancel
+            // any pending predictions that were enqueued before it.
             this.update(cx, |this, cx| {
                 let zeta_project = this.get_or_init_zeta_project(&project, cx);
-
-                if zeta_project.pending_predictions[0].id == pending_prediction_id {
-                    zeta_project.pending_predictions.remove(0);
-                } else {
-                    let pending_predictions = mem::take(&mut zeta_project.pending_predictions);
-                    for pending_prediction in pending_predictions {
-                        this.cancel_pending_prediction(pending_prediction, cx)
+                let mut pending_predictions = mem::take(&mut zeta_project.pending_predictions);
+                for (ix, pending_prediction) in pending_predictions.iter().enumerate() {
+                    if pending_prediction.id == pending_prediction_id {
+                        pending_predictions.remove(ix);
+                        for pending_prediction in pending_predictions.drain(0..ix) {
+                            this.cancel_pending_prediction(pending_prediction, cx)
+                        }
+                        break;
                     }
                 }
-
+                this.get_or_init_zeta_project(&project, cx)
+                    .pending_predictions = pending_predictions;
                 cx.notify();
             })
             .ok();
