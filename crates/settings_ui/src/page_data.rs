@@ -2489,7 +2489,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Search on Input",
+                    title: "Search on input",
                     description: "Show search results on input by default.",
                     field: Box::new(SettingField {
                         json_path: Some("editor.search.search_on_input"),

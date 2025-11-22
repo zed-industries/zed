@@ -105,7 +105,7 @@ impl SearchOption {
             SearchOption::CaseSensitive => "Match Case Sensitivity",
             SearchOption::IncludeIgnored => "Also search files ignored by configuration",
             SearchOption::Regex => "Use Regular Expressions",
-            SearchOption::SearchOnInput => "Search on Input",
+            SearchOption::SearchOnInput => "Search on input",
             SearchOption::OneMatchPerLine => "One Match Per Line",
             SearchOption::Backwards => "Search Backwards",
         }
