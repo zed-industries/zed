@@ -1,6 +1,7 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod shader;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
@@ -45,7 +46,6 @@ use crate::{
 };
 use anyhow::Result;
 use async_task::Runnable;
-use bytemuck::{Pod, Zeroable};
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
@@ -506,10 +506,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn register_shader(
         &self,
         source: &str,
-        user_struct_name: Option<&str>,
-        user_data_size: usize,
-        user_data_align: usize,
-    ) -> Result<CustomShaderId, &'static str>;
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId>;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -914,15 +914,7 @@ impl From<TileId> for etagere::AllocId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(C)]
 pub(crate) struct CustomShaderId(pub(crate) u32);
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct CustomShaderGlobalParams {
-    viewport_size: [f32; 2],
-    pad: [u32; 2],
-}
 
 pub(crate) struct PlatformInputHandler {
     cx: AsyncWindowContext,

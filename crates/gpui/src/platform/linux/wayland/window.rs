@@ -1219,16 +1219,16 @@ impl PlatformWindow for WaylandWindow {
     fn register_shader(
         &self,
         source: &str,
-        user_struct_name: Option<&str>,
-        user_data_size: usize,
-        user_data_align: usize,
-    ) -> Result<CustomShaderId, &'static str> {
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
         let mut state = self.borrow_mut();
         state.renderer.register_custom_shader(
             source,
-            user_struct_name,
-            user_data_size,
-            user_data_align,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
         )
     }
 

@@ -1,10 +1,12 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, ContentMask, CustomShaderGlobalParams, CustomShaderId,
-    DevicePixels, MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, ShaderInstance, Shadow, Size, Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, CustomShaderId, DevicePixels,
+    MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, ShaderInstance, Shadow, Size, Surface, Underline,
+    platform::shader::{CustomShaderGlobalParams, naga_validate_custom_shader},
+    point, size,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -439,17 +441,23 @@ impl MetalRenderer {
     pub fn register_custom_shader(
         &mut self,
         source: &str,
-        _data_struct_name: Option<&str>,
-        data_size: usize,
-        data_align: usize,
-    ) -> Result<crate::CustomShaderId, &'static str> {
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<crate::CustomShaderId> {
         if let Some(id) = self.custom_shader_ids.get(source).cloned() {
             return Ok(id);
         }
 
         let id = CustomShaderId(self.custom_shaders_pipeline_states.len() as u32);
 
-        let mut module = naga::front::wgsl::parse_str(source).unwrap();
+        let (mut module, module_info, _) = naga_validate_custom_shader(
+            source,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
+        )?;
+
         let mut bindings = BTreeMap::new();
         for (_handle, global) in module.global_variables.iter_mut() {
             assert!(global.binding.is_none()); // Blade doesn't like implicit bindings, so we will assign them here instead of in WGSL
@@ -474,13 +482,6 @@ impl MetalRenderer {
                 },
             );
         }
-
-        let module_info = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all() ^ naga::valid::ValidationFlags::BINDINGS,
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .expect("error validating wgsl");
 
         let mut msl = String::new();
         naga::back::msl::Writer::new(&mut msl)
@@ -507,12 +508,12 @@ impl MetalRenderer {
                 },
                 &naga::back::msl::PipelineOptions::default(),
             )
-            .expect("error translating wgsl to msl");
+            .context("Translation of WGSL to MSL failed")?;
 
         let library = self
             .device
             .new_library_with_source(&msl, &metal::CompileOptions::new())
-            .expect("error building metal library for custom shader");
+            .map_err(|err| anyhow::anyhow!(err))?;
 
         let pipeline = build_pipeline_state(
             &self.device,
@@ -522,8 +523,11 @@ impl MetalRenderer {
             "fs",
             MTLPixelFormat::BGRA8Unorm,
         );
-        self.custom_shaders_pipeline_states
-            .push((pipeline, data_size, data_align));
+        self.custom_shaders_pipeline_states.push((
+            pipeline,
+            instance_data_size,
+            instance_data_align,
+        ));
         self.custom_shader_ids.insert(source.to_string(), id);
         Ok(id)
     }

@@ -234,11 +234,12 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
 /// To create a custom structure, derive this trait:
 ///
 /// ```rust
-/// #[derive(ShaderUniform)]
+/// #[repr(C)]
+/// #[derive(gpui::ShaderUniform, Clone, Copy)]
 /// struct MyStruct {
 ///     a_vec4_field: [f32; 4],
 ///     some_other_field: u32,
-///     an_invalid_field: [f32; 2], // ERROR! vec2 in wgsl requires an alignment of 8
+///     // an_invalid_field: [f32; 2], // ERROR! This field can't be here since its offset is 20, which is not a multiple of 8
 /// }
 /// ```
 pub unsafe trait ShaderUniform: Clone + Copy + 'static {

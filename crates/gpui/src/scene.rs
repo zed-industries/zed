@@ -717,12 +717,14 @@ pub(crate) struct ShaderInstance {
 
 impl ShaderInstance {
     /// Returns the data offset and instance size for a given instance data size and align
-    pub fn size_info(data_size: usize, data_align: usize) -> (usize, usize) {
-        let instance_align = ShaderInstanceBase::ALIGN.max(data_align);
-        let data_offset = size_of::<ShaderInstanceBase>().next_multiple_of(data_align);
-        let instance_size = (data_offset + data_size).next_multiple_of(instance_align);
+    pub fn size_info(instance_data_size: usize, instance_data_align: usize) -> (usize, usize) {
+        let instance_align = ShaderInstanceBase::ALIGN.max(instance_data_align);
+        let instance_data_offset =
+            size_of::<ShaderInstanceBase>().next_multiple_of(instance_data_align);
+        let instance_size =
+            (instance_data_offset + instance_data_size).next_multiple_of(instance_align);
 
-        (data_offset, instance_size)
+        (instance_data_offset, instance_size)
     }
 
     /// Write an array of instances to a raw buffer. The buffer *must* be large enough for the data.

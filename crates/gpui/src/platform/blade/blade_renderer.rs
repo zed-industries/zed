@@ -2,10 +2,11 @@
 #![allow(irrefutable_let_patterns)]
 
 use super::{BladeAtlas, BladeContext};
+use crate::platform::shader::CustomShaderGlobalParams;
 use crate::{
-    Background, Bounds, CustomShaderGlobalParams, CustomShaderId, DevicePixels, GpuSpecs,
-    MonochromeSprite, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene,
-    ShaderInstance, Shadow, Size, Underline, get_gamma_correction_ratios,
+    Background, Bounds, CustomShaderId, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, ShaderInstance, Shadow, Size,
+    Underline, get_gamma_correction_ratios,
 };
 use blade_graphics::{self as gpu, ShaderData};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
@@ -321,26 +322,28 @@ impl BladePipelines {
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
         source: &str,
-        data_struct_name: Option<&str>,
-        data_size: usize,
-        data_align: usize,
-    ) -> Result<CustomShaderId, &'static str> {
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
         if let Some(id) = self.custom_ids.get(source).cloned() {
             return Ok(id);
         }
 
         let id = CustomShaderId(self.custom.len() as u32);
-        let shader = gpu.try_create_shader(gpu::ShaderDesc { source })?;
+        let shader = gpu
+            .try_create_shader(gpu::ShaderDesc { source })
+            .map_err(|err| anyhow::anyhow!(err))?;
         shader.check_struct_size::<GlobalParams>();
 
-        if let Some(data_struct_name) = data_struct_name {
+        if let Some(data_struct_name) = instance_data_name {
             assert_eq!(
                 shader.get_struct_size(data_struct_name) as usize,
-                data_size.next_multiple_of(data_align)
+                instance_data_size.next_multiple_of(instance_data_align)
             );
         }
 
-        let (_, instance_size) = ShaderInstance::size_info(data_size, data_align);
+        let (_, instance_size) = ShaderInstance::size_info(instance_data_size, instance_data_align);
         assert_eq!(shader.get_struct_size("Instance") as usize, instance_size);
 
         let blend_mode = match surface_info.alpha {
@@ -369,8 +372,8 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
-            data_size,
-            data_align,
+            instance_data_size,
+            instance_data_align,
         ));
         self.custom_ids.insert(source.to_string(), id);
         Ok(id)
@@ -891,14 +894,14 @@ impl BladeRenderer {
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
                 PrimitiveBatch::Shaders(instances) => {
-                    let (pipeline, user_data_size, user_data_align) = self
+                    let (pipeline, instance_data_size, instance_data_align) = self
                         .pipelines
                         .custom
                         .get(instances[0].shader_id.0 as usize)
                         .expect("Shader not registered");
 
                     let (_, instance_size) =
-                        ShaderInstance::size_info(*user_data_size, *user_data_align);
+                        ShaderInstance::size_info(*instance_data_size, *instance_data_align);
                     let instance_buf = self
                         .instance_belt
                         .alloc((instance_size * instances.len()) as u64, &self.gpu);
@@ -906,8 +909,8 @@ impl BladeRenderer {
                         ShaderInstance::pack_instances(
                             instance_buf.data(),
                             instances,
-                            *user_data_size,
-                            *user_data_align,
+                            *instance_data_size,
+                            *instance_data_align,
                         )
                     };
 
@@ -1031,17 +1034,17 @@ impl BladeRenderer {
     pub fn register_custom_shader(
         &mut self,
         source: &str,
-        user_struct_name: Option<&str>,
-        user_data_size: usize,
-        user_data_align: usize,
-    ) -> Result<CustomShaderId, &'static str> {
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
         self.pipelines.register_custom_shader(
             &self.gpu,
             self.surface.info(),
             source,
-            user_struct_name,
-            user_data_size,
-            user_data_align,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
         )
     }
 }

@@ -21,8 +21,9 @@ use windows::{
 };
 
 use crate::{
-    platform::windows::directx_renderer::shader_resources::{
-        RawShaderBytes, ShaderModule, ShaderTarget,
+    platform::{
+        shader::{CustomShaderGlobalParams, naga_validate_custom_shader},
+        windows::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget},
     },
     *,
 };
@@ -765,12 +766,14 @@ impl DirectXRenderer {
     pub(crate) fn register_shader(
         &mut self,
         source: &str,
+        instance_data_name: Option<&str>,
         instance_data_size: usize,
         instance_data_align: usize,
-    ) -> Result<CustomShaderId, &'static str> {
+    ) -> anyhow::Result<CustomShaderId> {
         self.pipelines.register_custom_shader(
             &self.devices.as_ref().unwrap().device,
             source,
+            instance_data_name,
             instance_data_size,
             instance_data_align,
         )
@@ -915,25 +918,36 @@ impl DirectXRenderPipelines {
         &mut self,
         device: &ID3D11Device,
         source: &str,
+        instance_data_name: Option<&str>,
         instance_data_size: usize,
         instance_data_align: usize,
-    ) -> Result<CustomShaderId, &'static str> {
+    ) -> anyhow::Result<CustomShaderId> {
         if let Some(id) = self.custom_ids.get(source).copied() {
             return Ok(id);
         }
 
-        let (_, instance_size) = ShaderInstance::size_info(instance_data_size, instance_data_align);
+        let (module, module_info, instance_size) = naga_validate_custom_shader(
+            source,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
+        )?;
+        let mut hlsl = String::new();
+        naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default()).write(
+            &module,
+            &module_info,
+            None,
+        )?;
 
         let id = CustomShaderId(self.custom.len() as u32);
         self.custom.push((
             PipelineState::new_custom(
                 device,
-                source,
+                &hlsl,
                 4,
                 instance_size,
                 create_blend_state(device).unwrap(),
-            )
-            .unwrap(),
+            )?,
             instance_data_size,
             instance_data_align,
         ));
@@ -1059,35 +1073,22 @@ impl<T> PipelineState<T> {
 
     fn new_custom(
         device: &ID3D11Device,
-        source: &str,
+        hlsl: &str,
         buffer_size: usize,
-        instance_size: usize,
+        element_size: usize,
         blend_state: ID3D11BlendState,
     ) -> Result<Self> {
-        let module = naga::front::wgsl::parse_str(source)?;
-        let module_info = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all() ^ naga::valid::ValidationFlags::BINDINGS,
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap();
-
-        let mut hlsl = String::new();
-        naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default())
-            .write(&module, &module_info, None)
-            .unwrap();
-
         let vertex = {
-            let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Vertex).unwrap();
-            create_vertex_shader(device, raw_shader.as_bytes()).unwrap()
+            let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Vertex)?;
+            create_vertex_shader(device, raw_shader.as_bytes())?
         };
         let fragment = {
-            let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Fragment).unwrap();
-            create_fragment_shader(device, raw_shader.as_bytes()).unwrap()
+            let raw_shader = RawShaderBytes::new_custom(&hlsl, ShaderTarget::Fragment)?;
+            create_fragment_shader(device, raw_shader.as_bytes())?
         };
 
-        let buffer = create_buffer(device, instance_size, buffer_size).unwrap();
-        let view = create_buffer_view(device, &buffer).unwrap();
+        let buffer = create_buffer(device, element_size, buffer_size)?;
+        let view = create_buffer_view(device, &buffer)?;
 
         Ok(PipelineState {
             label: "custom",
