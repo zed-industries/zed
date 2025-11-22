@@ -104,6 +104,30 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(3,6),lsp::Position::new(3,7))),
                     message: "value moved here".to_string()
                 },
+                // intentional duplicate as we want to make sure that we do not render blocks with the same messages at the same locations
+                // rustc likes to do this at times
+                lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(3,6),lsp::Position::new(3,7))),
+                    message: "value moved here".to_string()
+                },
+                ]),
+                ..Default::default()
+            },
+            // intentional duplicate as we want to make sure that we do not render blocks with the same messages at the same locations
+            // rustc likes to do this at times
+            lsp::Diagnostic{
+                range: lsp::Range::new(lsp::Position::new(8, 6),lsp::Position::new(8, 7)),
+                severity:Some(lsp::DiagnosticSeverity::ERROR),
+                message: "use of moved value\nvalue used here after move".to_string(),
+                related_information: Some(vec![
+                    lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1,8),lsp::Position::new(1,9))),
+                        message: "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                    },
+                    lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(3,6),lsp::Position::new(3,7))),
+                        message: "value moved here".to_string()
+                    },
                 ]),
                 ..Default::default()
             }

@@ -540,25 +540,43 @@ impl ProjectDiagnosticsEditor {
             let mut blocks: Vec<DiagnosticBlock> = Vec::new();
 
             let diagnostics_toolbar_editor = Arc::new(this.clone());
+            let languages = this
+                .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
+                .ok();
+            let mut dedup_set = HashSet::default();
             for (_, group) in grouped {
                 let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
                 if group_severity.is_none_or(|s| s > max_severity) {
                     continue;
                 }
-                let languages = this
-                    .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
-                    .ok();
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(diagnostics_toolbar_editor.clone()),
-                        languages,
+                        languages.clone(),
                         cx,
                     )
                 })?;
-
-                blocks.extend(more);
+                for block in more {
+                    // Remove duplicate blocks, they add no value to the user
+                    // Especially rustc tends to emit a lot of similar looking sub diagnostic spans
+                    // which can clobber the diagnostics ui
+                    //
+                    // Note we do not use the markdown output as we may modify
+                    // it to add backlinks to the diagnostics groups which will
+                    // thus always differ due to pointing to a different
+                    // diagnostic that is at the same location though
+                    //
+                    // TODO: We might steal diagnostics blocks away that are linked to givent he above
+                    if dedup_set.insert((
+                        block.initial_range,
+                        block.severity,
+                        block.diagnostic_message,
+                    )) {
+                        blocks.push(block);
+                    }
+                }
             }
 
             let cmp_excerpts = |buffer_snapshot: &BufferSnapshot,

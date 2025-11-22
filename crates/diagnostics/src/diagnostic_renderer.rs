@@ -84,6 +84,7 @@ impl DiagnosticRenderer {
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
+                    diagnostic_message: entry.diagnostic.message.clone(),
                 });
             } else {
                 if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
@@ -98,6 +99,7 @@ impl DiagnosticRenderer {
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
+                    diagnostic_message: entry.diagnostic.message.clone(),
                 });
             }
         }
@@ -190,7 +192,19 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) markdown: Entity<Markdown>,
+    // Used solely for deduplicating purposes
+    pub(crate) diagnostic_message: String,
     pub(crate) diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
+}
+
+impl std::fmt::Debug for DiagnosticBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiagnosticBlock")
+            .field("initial_range", &self.initial_range)
+            .field("severity", &self.severity)
+            .field("markdown", &self.markdown)
+            .finish()
+    }
 }
 
 impl DiagnosticBlock {

@@ -423,7 +423,10 @@ impl Zeta {
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let prompt_for_events = {
             let events = events.clone();
-            move || prompt_for_events_impl(&events, MAX_EVENT_TOKENS)
+            move || {
+                // let _move_me = &mut cx;
+                prompt_for_events_impl(&events, MAX_EVENT_TOKENS)
+            }
         };
         let gather_task = gather_context(
             full_path_str,
