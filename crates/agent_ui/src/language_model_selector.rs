@@ -546,11 +546,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .full_width()
                         .style(ButtonStyle::Outlined)
                         .key_binding(
-                            KeyBinding::for_action_in(&OpenSettings::default(), &focus_handle, cx)
+                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenSettings::default().boxed_clone(), cx);
+                            window.dispatch_action(OpenSettings.boxed_clone(), cx);
                         }),
                 )
                 .into_any(),
