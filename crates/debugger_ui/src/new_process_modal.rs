@@ -25,9 +25,9 @@ use settings::Settings;
 use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, ContextMenu, DropdownMenu, FluentBuilder, IconWithIndicator, Indicator,
-    KeyBinding, ListItem, ListItemSpacing, ToggleButtonGroup, ToggleButtonSimple, ToggleState,
-    Tooltip, prelude::*,
+    ContextMenu, DropdownMenu, FluentBuilder, IconWithIndicator, Indicator, KeyBinding, ListItem,
+    ListItemSpacing, Switch, SwitchLabelPosition, ToggleButtonGroup, ToggleButtonSimple,
+    ToggleState, Tooltip, prelude::*,
 };
 use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
@@ -910,13 +910,12 @@ impl ConfigureMode {
                     .child(render_editor(&self.cwd, window, cx)),
             )
             .child(
-                CheckboxWithLabel::new(
-                    "debugger-stop-on-entry",
-                    Label::new("Stop on Entry")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                    self.stop_on_entry,
-                    {
+                Switch::new("debugger-stop-on-entry", self.stop_on_entry)
+                    .label("Stop on Entry")
+                    .label_position(SwitchLabelPosition::Start)
+                    .label_size(LabelSize::Default)
+                    .color(ui::SwitchColor::Accent)
+                    .on_click({
                         let this = cx.weak_entity();
                         move |state, _, cx| {
                             this.update(cx, |this, _| {
@@ -924,9 +923,7 @@ impl ConfigureMode {
                             })
                             .ok();
                         }
-                    },
-                )
-                .checkbox_position(ui::IconPosition::End),
+                    }),
             )
     }
 }
