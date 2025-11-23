@@ -422,6 +422,9 @@ pub struct LanguageSettingsContent {
     /// Whether to calculate word diff based on characters or words
     /// //todo!
     pub word_diff_mode: Option<WordDiffMode>,
+    /// Maximum number of lines to display in word diff
+    /// //todo!
+    pub word_diff_max_lines: Option<u16>,
 }
 
 #[derive(

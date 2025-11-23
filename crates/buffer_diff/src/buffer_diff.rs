@@ -22,6 +22,7 @@ use util::ResultExt;
 struct WordDiffOptions {
     algorithm: language_settings::WordDiffAlgorithm,
     mode: language_settings::WordDiffMode,
+    max_lines: u16,
 }
 
 impl WordDiffOptions {
@@ -34,6 +35,7 @@ impl WordDiffOptions {
         Self {
             algorithm: settings.word_diff_algorithm,
             mode: settings.word_diff_mode,
+            max_lines: settings.word_diff_max_lines,
         }
     }
 }
@@ -926,8 +928,13 @@ fn process_patch_hunk(
     let end = Point::new(buffer_row_range.end, 0);
     let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
 
-    let (base_word_diffs, buffer_word_diffs) = if !diff_base_byte_range.is_empty()
-        && !buffer_row_range.is_empty()
+    let largest_diff_line_count = buffer_row_range
+        .len()
+        .max(line_item_count.saturating_sub(buffer_row_range.len()));
+
+    let (base_word_diffs, buffer_word_diffs) = if (!diff_base_byte_range.is_empty()
+        && !buffer_row_range.is_empty())
+        && (word_diff_options.max_lines as usize >= largest_diff_line_count)
     {
         let base_text: String = diff_base
             .chunks_in_range(diff_base_byte_range.clone())

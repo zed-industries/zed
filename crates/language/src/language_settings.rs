@@ -163,6 +163,8 @@ pub struct LanguageSettings {
     /// Whether to calculate word diff based on characters or words
     /// //todo!
     pub word_diff_mode: WordDiffMode,
+    /// todo!
+    pub word_diff_max_lines: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -604,6 +606,7 @@ impl settings::Settings for AllLanguageSettings {
                 debuggers: settings.debuggers.unwrap(),
                 word_diff_algorithm: settings.word_diff_algorithm.unwrap(),
                 word_diff_mode: settings.word_diff_mode.unwrap(),
+                word_diff_max_lines: settings.word_diff_max_lines.unwrap(),
             }
         }
 

@@ -491,6 +491,7 @@ impl VsCodeSettings {
                 }),
             word_diff_algorithm: None,
             word_diff_mode: None,
+            word_diff_max_lines: None,
         }
     }
 

@@ -1197,6 +1197,8 @@
   "word_diff_mode": "word",
   //todo!
   "word_diff_algorithm": "myers",
+  // todo!
+  "word_diff_max_lines": 1,
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
