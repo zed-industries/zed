@@ -33,6 +33,19 @@ impl WordDiffOptions {
         language: Option<LanguageName>,
         cx: &App,
     ) -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            use settings::SettingsStore;
+
+            if !cx.has_global::<SettingsStore>() {
+                return Self {
+                    algorithm: language_settings::WordDiffAlgorithm::default(),
+                    mode: language_settings::WordDiffMode::default(),
+                    max_lines: language_settings::WordDiffMaxLines::default(),
+                };
+            }
+        }
+
         let settings = language_settings::language_settings(language, file, cx);
         Self {
             algorithm: settings.word_diff_algorithm,
@@ -2109,7 +2122,7 @@ mod tests {
         let range = diff_1.inner.compare(&empty_diff.inner, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
-        // Edit does not affect the diff.
+        // Edit affects the word diff within the hunk.
         buffer.edit_via_marked_text(
             &"
                 one
@@ -2124,7 +2137,9 @@ mod tests {
             .unindent(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        assert_eq!(None, diff_2.inner.compare(&diff_1.inner, &buffer));
+        // The word diff has changed (SIX vs SIX.5), so compare detects a change
+        let range = diff_2.inner.compare(&diff_1.inner, &buffer).unwrap();
+        assert_eq!(range.to_point(&buffer), Point::new(4, 0)..Point::new(5, 0));
 
         // Edit turns a deletion hunk into a modification.
         buffer.edit_via_marked_text(

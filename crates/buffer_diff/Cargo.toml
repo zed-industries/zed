@@ -24,8 +24,9 @@ language.workspace = true
 log.workspace = true
 pretty_assertions.workspace = true
 rope.workspace = true
-sum_tree.workspace = true
+settings.workspace = true
 similar = {workspace = true, features = ["unicode"] }
+sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
 

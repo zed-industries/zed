@@ -5,7 +5,7 @@ use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
-use settings::{self, SettingsStore};
+use settings::SettingsStore;
 use std::env;
 use std::time::{Duration, Instant};
 use util::RandomCharIter;
@@ -15,13 +15,6 @@ use util::test::sample_text;
 #[ctor::ctor]
 fn init_logger() {
     zlog::init_test();
-}
-
-// Word diff require that language settings have been initialized to work properly
-// since the multi buffer depends on that, we need to initialize the settings store in all tests now
-fn init_settings(cx: &mut TestAppContext) {
-    let settings_store = cx.update(|cx| SettingsStore::test(cx));
-    cx.set_global(settings_store);
 }
 
 #[gpui::test]
@@ -358,7 +351,6 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 
 #[gpui::test]
 async fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
-    init_settings(cx);
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -401,7 +393,6 @@ async fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
-    init_settings(cx);
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -482,7 +473,6 @@ async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
-    init_settings(cx);
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -915,7 +905,6 @@ fn test_empty_multibuffer(cx: &mut App) {
 
 #[gpui::test]
 async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
-    init_settings(cx);
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let buffer = cx.new(|cx| Buffer::local("", cx));
     let base_text = "a\nb\nc";
@@ -1246,7 +1235,6 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
 
 #[gpui::test]
 async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
-    init_settings(cx);
     let text = indoc!(
         "
         ZERO
@@ -1492,7 +1480,6 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
-    init_settings(cx);
     let text = indoc!(
         "
         one
@@ -2007,7 +1994,6 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
-    init_settings(cx);
     let base_text_1 = indoc!(
         "
         one
@@ -2680,7 +2666,6 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
 
 #[gpui::test(iterations = 50)]
 async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
-    init_settings(cx);
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
@@ -3349,7 +3334,6 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
-    init_settings(cx);
     let base_text_1 = indoc!(
         "
         bar
@@ -3430,7 +3414,6 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
-    init_settings(cx);
     let base_text_1 = "one\ntwo".to_owned();
     let text_1 = "one\n".to_owned();
 
