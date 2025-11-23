@@ -216,70 +216,121 @@ impl ThemeSelectorDelegate {
     }
 
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
-        let theme_name = ThemeName(new_theme.as_ref().name.clone().into());
-        let new_appearance = new_theme.appearance();
-        let new_theme_is_light = new_appearance.is_light();
-
+        // Update the global (in-memory) theme settings.
         SettingsStore::update_global(cx, |store, _| {
-            let mut curr_theme_settings = store.get::<ThemeSettings>(None).clone();
-
-            match (
+            override_global_theme(
+                store,
+                &new_theme,
                 &self.original_theme_settings.theme,
-                &curr_theme_settings.theme,
-            ) {
-                // Override the currently selected static theme.
-                (ThemeSelection::Static(_), ThemeSelection::Static(_)) => {
-                    curr_theme_settings.theme = ThemeSelection::Static(theme_name);
-                }
-                // If the current theme selection is dynamic, then only override the global setting
-                // for the specific mode (light or dark).
-                (
-                    ThemeSelection::Dynamic {
-                        mode: original_mode,
-                        light: original_light,
-                        dark: original_dark,
-                    },
-                    ThemeSelection::Dynamic { .. },
-                ) => {
-                    // If the the original theme mode was `System` and the new theme's appearance
-                    // matches the system appearance, we don't need to change the mode setting.
-                    let new_mode = if original_mode == &ThemeAppearanceMode::System
-                        && self.original_system_appearance == new_appearance
-                    {
-                        ThemeAppearanceMode::System
-                    } else {
-                        // Otherwise, we need to change the mode in order to see the new theme.
-                        ThemeAppearanceMode::from(new_appearance)
-                    };
-
-                    // Note that we want to retain the alternate theme selection of the original
-                    // settings (before the menu was opened), not the currently selected theme
-                    // (which likely has changed multiple times while the menu has been open).
-
-                    curr_theme_settings.theme = if new_theme_is_light {
-                        ThemeSelection::Dynamic {
-                            mode: new_mode,
-                            light: theme_name,
-                            dark: original_dark.clone(),
-                        }
-                    } else {
-                        ThemeSelection::Dynamic {
-                            mode: new_mode,
-                            light: original_light.clone(),
-                            dark: theme_name,
-                        }
-                    }
-                }
-                _ => {
-                    // The theme selection mode changed while selecting new themes (someone edited
-                    // the settings file on disk while we had the dialogue open), so just return.
-                }
-            };
-
-            store.override_global(curr_theme_settings);
+                self.original_system_appearance,
+            )
         });
 
         self.new_theme = new_theme;
+    }
+}
+
+/// Overrides the global (in-memory) theme settings.
+///
+/// Note that this does **not** update the user's `settings.json` file (see the
+/// [`ThemeSelectorDelegate::confirm`] method and [`theme::set_theme`] function).
+fn override_global_theme(
+    store: &mut SettingsStore,
+    new_theme: &Theme,
+    original_theme: &ThemeSelection,
+    system_appearance: Appearance,
+) {
+    let theme_name = ThemeName(new_theme.name.clone().into());
+    let new_appearance = new_theme.appearance();
+    let new_theme_is_light = new_appearance.is_light();
+
+    let mut curr_theme_settings = store.get::<ThemeSettings>(None).clone();
+
+    match (original_theme, &curr_theme_settings.theme) {
+        // Override the currently selected static theme.
+        (ThemeSelection::Static(_), ThemeSelection::Static(_)) => {
+            curr_theme_settings.theme = ThemeSelection::Static(theme_name);
+        }
+
+        // If the current theme selection is dynamic, then only override the global setting for the
+        // specific mode (light or dark).
+        (
+            ThemeSelection::Dynamic {
+                mode: original_mode,
+                light: original_light,
+                dark: original_dark,
+            },
+            ThemeSelection::Dynamic { .. },
+        ) => {
+            let new_mode = update_mode_if_new_appearance_is_different_from_system(
+                original_mode,
+                system_appearance,
+                new_appearance,
+            );
+
+            let updated_theme = retain_original_opposing_theme(
+                new_theme_is_light,
+                new_mode,
+                theme_name,
+                original_light,
+                original_dark,
+            );
+
+            curr_theme_settings.theme = updated_theme;
+        }
+
+        // The theme selection mode changed while selecting new themes (someone edited the settings
+        // file on disk while we had the dialogue open), so don't do anything.
+        _ => return,
+    };
+
+    store.override_global(curr_theme_settings);
+}
+
+/// Helper function for determining the new [`ThemeAppearanceMode`] for the new theme.
+///
+/// If the the original theme mode was [`System`] and the new theme's appearance matches the system
+/// appearance, we don't need to change the mode setting.
+///
+/// Otherwise, we need to change the mode in order to see the new theme.
+///
+/// [`System`]: ThemeAppearanceMode::System
+fn update_mode_if_new_appearance_is_different_from_system(
+    original_mode: &ThemeAppearanceMode,
+    system_appearance: Appearance,
+    new_appearance: Appearance,
+) -> ThemeAppearanceMode {
+    if original_mode == &ThemeAppearanceMode::System && system_appearance == new_appearance {
+        ThemeAppearanceMode::System
+    } else {
+        ThemeAppearanceMode::from(new_appearance)
+    }
+}
+
+/// Helper function for updating / displaying the [`ThemeSelection`] while using the theme selector.
+///
+/// We want to retain the alternate theme selection of the original settings (before the menu was
+/// opened), not the currently selected theme (which likely has changed multiple times while the
+/// menu has been open).
+fn retain_original_opposing_theme(
+    new_theme_is_light: bool,
+    new_mode: ThemeAppearanceMode,
+    theme_name: ThemeName,
+    original_light: &ThemeName,
+    original_dark: &ThemeName,
+) -> ThemeSelection {
+    if new_theme_is_light {
+        ThemeSelection::Dynamic {
+            mode: new_mode,
+            light: theme_name,
+            dark: original_dark.clone(),
+        }
+    } else {
+        ThemeSelection::Dynamic {
+            mode: new_mode,
+            light: original_light.clone(),
+            dark: theme_name,
+        }
     }
 }
 

@@ -73,14 +73,6 @@ impl Appearance {
             Self::Dark => false,
         }
     }
-
-    /// Returns whether the appearance is dark.
-    pub fn is_dark(&self) -> bool {
-        match self {
-            Self::Light => false,
-            Self::Dark => true,
-        }
-    }
 }
 
 impl From<WindowAppearance> for Appearance {

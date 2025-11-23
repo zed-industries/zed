@@ -339,7 +339,10 @@ pub fn set_theme(
 
             // Don't update the theme mode if it is set to system and the new theme has the same
             // appearance.
-            if !(mode == &ThemeAppearanceMode::System && theme_appearance == system_appearance) {
+            let should_update_mode =
+                !(mode == &ThemeAppearanceMode::System && theme_appearance == system_appearance);
+
+            if should_update_mode {
                 // Update the mode to the specified appearance (otherwise we might set the theme and
                 // nothing gets updated because the system specified the other mode appearance).
                 *mode = ThemeAppearanceMode::from(theme_appearance);
