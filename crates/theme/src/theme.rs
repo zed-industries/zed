@@ -73,6 +73,14 @@ impl Appearance {
             Self::Dark => false,
         }
     }
+
+    /// Returns whether the appearance is dark.
+    pub fn is_dark(&self) -> bool {
+        match self {
+            Self::Light => false,
+            Self::Dark => true,
+        }
+    }
 }
 
 impl From<WindowAppearance> for Appearance {
@@ -80,6 +88,15 @@ impl From<WindowAppearance> for Appearance {
         match value {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
+        }
+    }
+}
+
+impl From<Appearance> for ThemeAppearanceMode {
+    fn from(value: Appearance) -> Self {
+        match value {
+            Appearance::Light => Self::Light,
+            Appearance::Dark => Self::Dark,
         }
     }
 }

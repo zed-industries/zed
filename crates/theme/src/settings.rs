@@ -307,10 +307,17 @@ impl IconThemeSelection {
 /// Sets the theme for the given appearance to the theme with the specified name.
 ///
 /// The caller should make sure that the [`Appearance`] matches the theme associated with the name.
+///
+/// If the current [`ThemeAppearanceMode`] is set to [`System`] and the user's system [`Appearance`]
+/// is different than the new theme's [`Appearance`], this function will update the
+/// [`ThemeAppearanceMode`] to the new theme's appearance in order to display the new theme.
+///
+/// [`System`]: ThemeAppearanceMode::System
 pub fn set_theme(
     current: &mut SettingsContent,
     theme_name: impl Into<Arc<str>>,
     theme_appearance: Appearance,
+    system_appearance: Appearance,
 ) {
     let theme_name = ThemeName(theme_name.into());
 
@@ -329,12 +336,14 @@ pub fn set_theme(
                 Appearance::Light => *light = theme_name,
                 Appearance::Dark => *dark = theme_name,
             }
-            // Update the mode to the specified appearance (otherwise we might set the theme and
-            // nothing gets updated because the system specified the other mode appearance).
-            *mode = match theme_appearance {
-                Appearance::Light => ThemeAppearanceMode::Light,
-                Appearance::Dark => ThemeAppearanceMode::Dark,
-            };
+
+            // Don't update the theme mode if it is set to system and the new theme has the same
+            // appearance.
+            if !(mode == &ThemeAppearanceMode::System && theme_appearance == system_appearance) {
+                // Update the mode to the specified appearance (otherwise we might set the theme and
+                // nothing gets updated because the system specified the other mode appearance).
+                *mode = ThemeAppearanceMode::from(theme_appearance);
+            }
         }
     }
 }

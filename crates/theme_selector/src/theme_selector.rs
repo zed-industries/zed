@@ -10,7 +10,8 @@ use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{
-    Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry, ThemeSelection, ThemeSettings,
+    Appearance, SystemAppearance, Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry,
+    ThemeSelection, ThemeSettings,
 };
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
@@ -120,6 +121,8 @@ struct ThemeSelectorDelegate {
     ///
     /// We use this to return back to theme that was set if the user dismisses the menu.
     original_theme_settings: ThemeSettings,
+    /// The current system appearance.
+    original_system_appearance: Appearance,
     /// The currently selected new theme.
     new_theme: Arc<Theme>,
     selection_completed: bool,
@@ -137,6 +140,7 @@ impl ThemeSelectorDelegate {
     ) -> Self {
         let original_theme = cx.theme().clone();
         let original_theme_settings = ThemeSettings::get_global(cx).clone();
+        let original_system_appearance = SystemAppearance::global(cx).0;
 
         let registry = ThemeRegistry::global(cx);
         let mut themes = registry
@@ -180,6 +184,7 @@ impl ThemeSelectorDelegate {
             themes,
             matches,
             original_theme_settings,
+            original_system_appearance,
             new_theme: original_theme, // Start with the original theme.
             selected_index,
             selection_completed: false,
@@ -212,14 +217,15 @@ impl ThemeSelectorDelegate {
 
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
         let theme_name = ThemeName(new_theme.as_ref().name.clone().into());
-        let new_theme_is_light = new_theme.appearance().is_light();
+        let new_appearance = new_theme.appearance();
+        let new_theme_is_light = new_appearance.is_light();
 
         SettingsStore::update_global(cx, |store, _| {
             let mut curr_theme_settings = store.get::<ThemeSettings>(None).clone();
 
             match (
-                &curr_theme_settings.theme,
                 &self.original_theme_settings.theme,
+                &curr_theme_settings.theme,
             ) {
                 // Override the currently selected static theme.
                 (ThemeSelection::Static(_), ThemeSelection::Static(_)) => {
@@ -228,36 +234,46 @@ impl ThemeSelectorDelegate {
                 // If the current theme selection is dynamic, then only override the global setting
                 // for the specific mode (light or dark).
                 (
-                    ThemeSelection::Dynamic { .. },
                     ThemeSelection::Dynamic {
+                        mode: original_mode,
                         light: original_light,
                         dark: original_dark,
-                        ..
                     },
+                    ThemeSelection::Dynamic { .. },
                 ) => {
+                    // If the the original theme mode was `System` and the new theme's appearance
+                    // matches the system appearance, we don't need to change the mode setting.
+                    let new_mode = if original_mode == &ThemeAppearanceMode::System
+                        && self.original_system_appearance == new_appearance
+                    {
+                        ThemeAppearanceMode::System
+                    } else {
+                        // Otherwise, we need to change the mode in order to see the new theme.
+                        ThemeAppearanceMode::from(new_appearance)
+                    };
+
                     // Note that we want to retain the alternate theme selection of the original
                     // settings (before the menu was opened), not the currently selected theme
                     // (which likely has changed multiple times while the menu has been open).
 
                     curr_theme_settings.theme = if new_theme_is_light {
                         ThemeSelection::Dynamic {
-                            // Force the appearance mode to change so the new theme is shown
-                            // immediately, regardless of the system appearance setting.
-                            mode: ThemeAppearanceMode::Light,
+                            mode: new_mode,
                             light: theme_name,
                             dark: original_dark.clone(),
                         }
                     } else {
                         ThemeSelection::Dynamic {
-                            mode: ThemeAppearanceMode::Dark,
+                            mode: new_mode,
                             light: original_light.clone(),
                             dark: theme_name,
                         }
                     }
                 }
-                _ => unreachable!(
-                    "The theme selection mode somehow changed while selecting new themes"
-                ),
+                _ => {
+                    // The theme selection mode changed while selecting new themes (someone edited
+                    // the settings file on disk while we had the dialogue open), so just return.
+                }
             };
 
             store.override_global(curr_theme_settings);
@@ -286,13 +302,14 @@ impl PickerDelegate for ThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        let theme_appearance = self.new_theme.appearance;
         let theme_name: Arc<str> = self.new_theme.name.as_str().into();
+        let theme_appearance = self.new_theme.appearance;
+        let system_appearance = SystemAppearance::global(cx).0;
 
         telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme::set_theme(settings, theme_name, theme_appearance);
+            theme::set_theme(settings, theme_name, theme_appearance, system_appearance);
         });
 
         self.selector
