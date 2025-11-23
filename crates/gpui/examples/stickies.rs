@@ -1,8 +1,13 @@
 use gpui::{
-    App, Application, Bounds, Context, ElementId, Entity, FocusHandle, Focusable, Hsla, Pixels,
-    Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions, div, hsla, prelude::*,
-    px, rgb, size,
+    AnyWindowHandle, App, Application, Bounds, Context, ElementId, Entity, FocusHandle, Focusable,
+    Hsla, KeyBinding, Pixels, Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions,
+    actions, div, prelude::*, px, rgb, size,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+actions!(stickies, [NewNote, CloseNote, ZoomNote]);
+
+static STICKY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // Window setup
 // - [ ] open two stickies, one blue, one yellow
@@ -100,6 +105,7 @@ struct Sticky {
     collapsed: bool,
     zoomed: bool,
     content: SharedString,
+    window_handle: Option<AnyWindowHandle>,
     // text_area: Entity<TextArea>,
 }
 
@@ -117,13 +123,81 @@ impl Sticky {
             color,
             collapsed: false,
             zoomed: false,
-            content: SharedString::new(""), // text_area: Entity::new(),
+            content: SharedString::new(""),
+            window_handle: None,
         }
     }
 
     pub fn content(mut self, content: impl Into<SharedString>) -> Self {
         self.content = content.into();
         self
+    }
+
+    pub fn with_window_handle(mut self, handle: AnyWindowHandle) -> Self {
+        self.window_handle = Some(handle);
+        self
+    }
+
+    fn close_note(&mut self, _: &CloseNote, window: &mut Window, _cx: &mut Context<Self>) {
+        window.remove_window();
+    }
+
+    fn zoom(&mut self, _: &ZoomNote, window: &mut Window, _cx: &mut Context<Self>) {
+        window.zoom_window();
+    }
+
+    fn new_note(&mut self, _: &NewNote, window: &mut Window, cx: &mut Context<Self>) {
+        let current_bounds = window.window_bounds().get_bounds();
+        let screen_bounds = window.display(cx).map(|d| d.bounds()).unwrap_or(Bounds {
+            origin: Point::default(),
+            size: size(px(1920.), px(1080.)),
+        });
+
+        let offset = px(24.);
+        let new_size = size(px(DEFAULT_STICKY_SIZE.0), px(DEFAULT_STICKY_SIZE.1));
+
+        // Try to place new note below current one
+        let mut new_origin = Point {
+            x: current_bounds.origin.x + offset,
+            y: current_bounds.origin.y + current_bounds.size.height + offset,
+        };
+
+        // If it would go off the bottom of the screen, place it above instead
+        if new_origin.y + new_size.height > screen_bounds.bottom() {
+            new_origin.y = current_bounds.origin.y - new_size.height - offset;
+        }
+
+        let new_bounds = Bounds {
+            origin: new_origin,
+            size: new_size,
+        };
+
+        let sticky_id = STICKY_COUNT.fetch_add(1, Ordering::SeqCst) as u64;
+
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(new_bounds)),
+                titlebar: None,
+                window_background: gpui::WindowBackgroundAppearance::Transparent,
+                focus: true,
+                show: true,
+                kind: WindowKind::Normal,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| {
+                    let window_handle = window.window_handle();
+                    Sticky::new(
+                        cx,
+                        ElementId::NamedInteger("sticky".into(), sticky_id),
+                        new_bounds,
+                        StickyColor::Yellow,
+                    )
+                    .with_window_handle(window_handle.into())
+                })
+            },
+        )
+        .unwrap();
     }
 }
 
@@ -152,6 +226,8 @@ impl Render for Sticky {
                 window.focus(&focus_handle);
                 cx.notify();
             }))
+            .on_action(cx.listener(Self::close_note))
+            .on_action(cx.listener(Self::new_note))
             .child(Titlebar::new(entity, window_active))
             .child(
                 div()
@@ -202,6 +278,12 @@ impl RenderOnce for Titlebar {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
+        // Register key bindings
+        cx.bind_keys([
+            KeyBinding::new("cmd-w", CloseNote, None),
+            KeyBinding::new("cmd-n", NewNote, None),
+        ]);
+
         let offset = px(24.);
 
         let first_screen = cx.displays().first().unwrap().clone(); // if you don't have at least one display what are you doing here?
@@ -226,13 +308,17 @@ fn main() {
             size: size(px(DEFAULT_STICKY_SIZE.0), px(DEFAULT_STICKY_SIZE.1)),
         };
 
-        cx.open_window(window_options(blue_bounds, false), |_, cx| {
+        cx.open_window(window_options(blue_bounds, false), |window, cx| {
             cx.new(|cx| {
+                let window_handle = window.window_handle();
                 Sticky::new(cx, "sticky-1", blue_bounds, StickyColor::Blue)
                     .content(SharedString::new_static(BLUE_STICKY_CONTENT))
+                    .with_window_handle(window_handle.into())
             })
         })
         .unwrap();
+
+        STICKY_COUNT.store(2, Ordering::SeqCst);
 
         let yellow_bounds = Bounds {
             origin: Point {
@@ -241,10 +327,12 @@ fn main() {
             },
             size: blue_bounds.size,
         };
-        cx.open_window(window_options(yellow_bounds, true), |_, cx| {
+        cx.open_window(window_options(yellow_bounds, true), |window, cx| {
             cx.new(|cx| {
+                let window_handle = window.window_handle();
                 Sticky::new(cx, "sticky-2", yellow_bounds, StickyColor::Yellow)
                     .content(SharedString::new_static(YELLOW_STICKY_CONTENT))
+                    .with_window_handle(window_handle.into())
             })
         })
         .unwrap();
