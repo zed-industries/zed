@@ -507,6 +507,8 @@ impl NewProcessModal {
                 menu
             }),
         )
+        .style(ui::DropdownStyle::Outlined)
+        .tab_index(0)
         .attach(gpui::Corner::BottomLeft)
         .offset(gpui::Point {
             x: px(0.0),
@@ -766,14 +768,14 @@ impl ConfigureMode {
             InputField::new(window, cx, "ENV=Zed ~/bin/program --option")
                 .label("Program")
                 .tab_stop(true)
-                .tab_index(0)
+                .tab_index(1)
         });
 
         let cwd = cx.new(|cx| {
             InputField::new(window, cx, "Ex: $ZED_WORKTREE_ROOT")
                 .label("Working Directory")
                 .tab_stop(true)
-                .tab_index(1)
+                .tab_index(2)
         });
 
         cx.new(|_| Self {
@@ -875,7 +877,7 @@ impl ConfigureMode {
             .child(self.cwd.clone())
             .child(
                 Switch::new("debugger-stop-on-entry", self.stop_on_entry)
-                    .tab_index(2_isize)
+                    .tab_index(3_isize)
                     .label("Stop on Entry")
                     .label_position(SwitchLabelPosition::Start)
                     .label_size(LabelSize::Default)
