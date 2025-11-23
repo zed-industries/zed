@@ -2749,16 +2749,21 @@ impl GitPanel {
         cx.spawn_in(window, async move |git_panel, cx| {
             let buffer = load_buffer.await?;
             let template = load_template.await?;
-            let template_text = template.template.clone().unwrap_or_default();
+
             git_panel.update_in(cx, |git_panel, window, cx| {
-                git_panel.commit_template = Some(template.clone());
+                git_panel.commit_template = Some(template);
                 if buffer.read(cx).text().trim().is_empty() {
+                    let template_text = git_panel
+                        .commit_template
+                        .as_ref()
+                        .and_then(|t| t.template.as_deref())
+                        .unwrap_or_default();
                     if !template_text.is_empty() {
                         buffer.update(cx, |buffer, cx| {
                             let start = buffer.anchor_before(0);
                             let end = buffer.anchor_after(buffer.len());
                             buffer.edit([(start..end, template_text)], None, cx);
-                        })
+                        });
                     }
                 }
 

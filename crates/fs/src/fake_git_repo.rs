@@ -122,7 +122,7 @@ impl GitRepository for FakeGitRepository {
     fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
         async {
             Ok(GitCommitTemplate {
-                template: Some(String::new())
+                template: Some(String::new()),
             })
         }
         .boxed()

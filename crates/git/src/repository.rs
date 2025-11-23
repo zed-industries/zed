@@ -992,47 +992,40 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
 
-        async move {
-            let working_directory = working_directory?;
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
 
-            let mut cmd = new_smol_command(git_binary_path);
-            cmd.current_dir(&working_directory)
-                .args(["config", "--get", "commit.template"])
-                .stdout(smol::process::Stdio::piped())
-                .stderr(smol::process::Stdio::piped());
+                let output = new_smol_command(git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["config", "--get", "commit.template"])
+                    .output()
+                    .await
+                    .context("failed to run git config --get commit.template")?;
 
-            let output = cmd
-                .output()
-                .await
-                .context("failed to run git config --get commit.template")?;
-
-            if !output.status.success() {
-                return Ok(GitCommitTemplate { template: None });
-            }
-
-            let raw = String::from_utf8_lossy(&output.stdout);
-            let raw = raw.trim(); // strip newline etc
-            if raw.is_empty() {
-                return Ok(GitCommitTemplate { template: None });
-            }
-
-            let mut path = PathBuf::from(raw);
-            if path.is_relative() {
-                path = working_directory.join(path);
-            }
-
-            let contents = match smol::fs::read_to_string(&path).await {
-                Ok(contents) => contents,
-                _ => {
-                    log::warn!("failed to read commit template {}", path.display());
-                    String::new()
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || path.is_empty() {
+                    return Ok(GitCommitTemplate { template: None });
                 }
-            };
 
-            let template = (!contents.trim().is_empty()).then_some(contents);
-            Ok(GitCommitTemplate { template })
-        }
-        .boxed()
+                let path = if PathBuf::from(&path).is_relative() {
+                    working_directory.join(path)
+                } else {
+                    PathBuf::from(path)
+                };
+
+                let template = match std::fs::read_to_string(&path) {
+                    Ok(s) if !s.trim().is_empty() => Some(s),
+                    Err(_) => {
+                        log::warn!("failed to read commit template {}", path.display());
+                        None
+                    }
+                    _ => None,
+                };
+
+                Ok(GitCommitTemplate { template })
+            })
+            .boxed()
     }
 
     fn set_index_text(
