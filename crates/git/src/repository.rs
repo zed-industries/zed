@@ -1008,16 +1008,17 @@ impl GitRepository for RealGitRepository {
                     return Ok(GitCommitTemplate { template: None });
                 }
 
-                let path = if PathBuf::from(&path).is_relative() {
-                    working_directory.join(path)
-                } else {
-                    PathBuf::from(path)
-                };
+                let mut path_buf = PathBuf::from(&path);
+                if let Some(path_str) = path.strip_prefix("~/") {
+                    path_buf = paths::home_dir().join(path_str);
+                } else if path_buf.is_relative() {
+                    path_buf = working_directory.join(path_buf);
+                }
 
-                let template = match std::fs::read_to_string(&path) {
+                let template = match std::fs::read_to_string(&path_buf) {
                     Ok(s) if !s.trim().is_empty() => Some(s),
-                    Err(_) => {
-                        log::warn!("failed to read commit template {}", path.display());
+                    Err(err) => {
+                        log::warn!("failed to read commit template {}: {}", path_buf.display(), err);
                         None
                     }
                     _ => None,
