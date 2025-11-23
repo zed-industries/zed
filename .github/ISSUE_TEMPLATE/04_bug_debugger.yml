@@ -1,7 +1,7 @@
 name: Bug Report (Debugger)
 description: Zed Debugger-Related Bugs
 type: "Bug"
-labels: ["debugger"]
+labels: ["area:debugger"]
 title: "Debugger: <a short description of the Debugger bug>"
 body:
   - type: textarea
