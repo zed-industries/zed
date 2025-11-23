@@ -453,6 +453,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
             .add_request_handler(forward_mutating_project_request::<proto::StashDrop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
+            .add_request_handler(forward_mutating_project_request::<proto::RunGitHook>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)

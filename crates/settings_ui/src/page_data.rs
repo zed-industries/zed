@@ -3264,6 +3264,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Window Decorations",
+                    description: "(Linux only) whether Zed or your compositor should draw window decorations.",
+                    field: Box::new(SettingField {
+                        json_path: Some("window_decorations"),
+                        pick: |settings_content| {
+                            settings_content.workspace.window_decorations.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.window_decorations = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Pane Modifiers"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inactive Opacity",
@@ -6985,6 +7000,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.extend_comment_on_newline = value;
 
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Colorize brackets",
+            description: "Whether to colorize brackets in the editor.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).colorize_brackets"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.colorize_brackets.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.colorize_brackets = value;
                     })
                 },
             }),

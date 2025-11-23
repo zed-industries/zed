@@ -147,7 +147,20 @@ function UploadToSentry {
         return
     }
     Write-Output "Uploading zed debug symbols to sentry..."
-    sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev $CargoOutDir
+    for ($i = 1; $i -le 3; $i++) {
+        try {
+            sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev $CargoOutDir
+            break
+        }
+        catch {
+            Write-Output "Sentry upload attempt $i failed: $_"
+            if ($i -eq 3) {
+                Write-Output "All sentry upload attempts failed"
+                throw
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
 function MakeAppx {
