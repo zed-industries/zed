@@ -1018,7 +1018,11 @@ impl GitRepository for RealGitRepository {
                 let template = match std::fs::read_to_string(&path_buf) {
                     Ok(s) if !s.trim().is_empty() => Some(s),
                     Err(err) => {
-                        log::warn!("failed to read commit template {}: {}", path_buf.display(), err);
+                        log::warn!(
+                            "failed to read commit template {}: {}",
+                            path_buf.display(),
+                            err
+                        );
                         None
                     }
                     _ => None,
