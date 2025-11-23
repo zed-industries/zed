@@ -25,7 +25,7 @@ log.workspace = true
 pretty_assertions.workspace = true
 rope.workspace = true
 sum_tree.workspace = true
-similar.workspace = true
+similar = {workspace = true, features = ["unicode"] }
 text.workspace = true
 util.workspace = true
 

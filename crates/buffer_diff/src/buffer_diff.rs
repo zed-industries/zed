@@ -953,7 +953,7 @@ fn process_patch_hunk(
                 .diff_chars(&base_text, &buffer_text),
             language_settings::WordDiffMode::Word => similar::TextDiff::configure()
                 .algorithm(algo)
-                .diff_words(&base_text, &buffer_text),
+                .diff_unicode_words(&base_text, &buffer_text),
         };
 
         // todo! make sure ranges in in these vecs don't overlap and are merged
