@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use arrayvec::ArrayVec;
-use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
@@ -10,20 +9,20 @@ use cloud_llm_client::{
 };
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
     SyntaxIndex, SyntaxIndexState,
 };
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use futures::channel::{mpsc, oneshot};
 use futures::{AsyncReadExt as _, StreamExt as _};
 use gpui::http_client::{AsyncBody, Method};
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task,
-    WeakEntity, http_client, prelude::*,
+    WeakEntity, actions, http_client, prelude::*,
 };
 use language::{
     Anchor, Buffer, DiagnosticSet, File, LanguageServerId, Point, ToOffset as _, ToPoint,
@@ -35,7 +34,10 @@ use open_ai::FunctionDefinition;
 use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
+use settings::{EditPredictionProvider, update_settings_file};
 use std::collections::{VecDeque, hash_map};
+use telemetry_events::EditPredictionRating;
+use workspace::Workspace;
 
 use std::{
     env,
@@ -57,18 +59,32 @@ pub mod assemble_excerpts;
 mod license_detection;
 mod prediction;
 mod provider;
+mod rate_prediction_modal;
 pub mod retrieval_search;
 mod sweep_ai;
 pub mod udiff;
 mod xml_edits;
-mod zeta1;
+pub mod zeta1;
 
 use crate::assemble_excerpts::assemble_excerpts;
 use crate::license_detection::LicenseDetectionWatcher;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
+use crate::rate_prediction_modal::RatePredictionsModal;
 use crate::zeta1::request_prediction_with_zeta1;
 pub use provider::ZetaEditPredictionProvider;
+
+actions!(
+    edit_prediction,
+    [
+        /// Resets the edit prediction onboarding state.
+        ResetOnboarding,
+        /// Opens the rate completions modal.
+        RateCompletions,
+        /// Clears the edit prediction history.
+        ClearHistory,
+    ]
+);
 
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 6;
@@ -173,6 +189,8 @@ pub struct Zeta {
     rejected_predictions: Vec<EditPredictionRejection>,
     reject_predictions_tx: mpsc::UnboundedSender<()>,
     reject_predictions_debounce_task: Option<Task<()>>,
+    shown_predictions: VecDeque<EditPrediction>,
+    rated_predictions: HashSet<EditPredictionId>,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -238,11 +256,11 @@ pub struct ZetaContextRetrievalDebugInfo {
 #[derive(Debug)]
 pub struct ZetaEditPredictionDebugInfo {
     pub request: predict_edits_v3::PredictEditsRequest,
-    pub retrieval_time: TimeDelta,
+    pub retrieval_time: Duration,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
     pub local_prompt: Result<String, String>,
-    pub response_rx: oneshot::Receiver<(Result<open_ai::Response, String>, TimeDelta)>,
+    pub response_rx: oneshot::Receiver<(Result<open_ai::Response, String>, Duration)>,
 }
 
 #[derive(Debug)]
@@ -470,6 +488,8 @@ impl Zeta {
             rejected_predictions: Vec::new(),
             reject_predictions_debounce_task: None,
             reject_predictions_tx: reject_tx,
+            rated_predictions: Default::default(),
+            shown_predictions: Default::default(),
         }
     }
 
@@ -885,7 +905,15 @@ impl Zeta {
     fn did_show_current_prediction(&mut self, project: &Entity<Project>, _cx: &mut Context<Self>) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             if let Some(current_prediction) = project_state.current_prediction.as_mut() {
-                current_prediction.was_shown = true;
+                if !current_prediction.was_shown {
+                    current_prediction.was_shown = true;
+                    self.shown_predictions
+                        .push_front(current_prediction.prediction.clone());
+                    if self.shown_predictions.len() > 50 {
+                        let completion = self.shown_predictions.pop_back().unwrap();
+                        self.rated_predictions.remove(&completion.id);
+                    }
+                }
             }
         }
     }
@@ -1207,6 +1235,7 @@ impl Zeta {
         let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
         let diagnostic_search_range =
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
+        let buffer_snapshotted_at = Instant::now();
 
         let result = cx.background_spawn({
             let snapshot = snapshot.clone();
@@ -1321,6 +1350,7 @@ impl Zeta {
                 let mut body: Vec<u8> = Vec::new();
                 response.body_mut().read_to_end(&mut body).await?;
 
+                let response_received_at = Instant::now();
                 if !response.status().is_success() {
                     anyhow::bail!(
                         "Request failed with status: {:?}\nBody: {}",
@@ -1345,7 +1375,12 @@ impl Zeta {
                     })
                     .collect::<Vec<_>>();
 
-                anyhow::Ok((response.autocomplete_id, edits, snapshot))
+                anyhow::Ok((
+                    response.autocomplete_id,
+                    edits,
+                    snapshot,
+                    response_received_at,
+                ))
             }
         });
 
@@ -1354,7 +1389,7 @@ impl Zeta {
         let active_buffer = active_buffer.clone();
 
         cx.spawn(async move |this, cx| {
-            let (id, edits, old_snapshot) = result.await?;
+            let (id, edits, old_snapshot, response_received_at) = result.await?;
 
             if edits.is_empty() {
                 if has_events
@@ -1385,30 +1420,18 @@ impl Zeta {
                 return anyhow::Ok(None);
             }
 
-            let Some((edits, new_snapshot, preview_task)) =
-                buffer.read_with(cx, |buffer, cx| {
-                    let new_snapshot = buffer.snapshot();
-
-                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
-                        edit_prediction::interpolate_edits(&old_snapshot, &new_snapshot, &edits)?
-                            .into();
-                    let preview_task = buffer.preview_edits(edits.clone(), cx);
-
-                    Some((edits, new_snapshot, preview_task))
-                })?
-            else {
-                return anyhow::Ok(None);
-            };
-
-            let prediction = EditPrediction {
-                id: EditPredictionId(id.into()),
-                edits,
-                snapshot: new_snapshot,
-                edit_preview: preview_task.await,
-                buffer,
-            };
-
-            anyhow::Ok(Some(prediction))
+            anyhow::Ok(
+                EditPrediction::new(
+                    EditPredictionId(id.into()),
+                    &buffer,
+                    &old_snapshot,
+                    edits.into(),
+                    buffer_snapshotted_at,
+                    response_received_at,
+                    cx,
+                )
+                .await,
+            )
         })
     }
 
@@ -1508,6 +1531,7 @@ impl Zeta {
         });
         let options = self.options.clone();
         let active_snapshot = active_buffer.read(cx).snapshot();
+        let buffer_snapshotted_at = Instant::now();
         let Some(excerpt_path) = active_snapshot
             .file()
             .map(|path| -> Arc<Path> { path.full_path(cx).into() })
@@ -1592,7 +1616,7 @@ impl Zeta {
                 let cursor_offset = position.to_offset(&active_snapshot);
                 let cursor_point = cursor_offset.to_point(&active_snapshot);
 
-                let before_retrieval = chrono::Utc::now();
+                let before_retrieval = Instant::now();
 
                 let (diagnostic_groups, diagnostic_groups_truncated) =
                     Self::gather_nearby_diagnostics(
@@ -1708,7 +1732,7 @@ impl Zeta {
 
                 let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
 
-                let retrieval_time = chrono::Utc::now() - before_retrieval;
+                let retrieval_time = Instant::now() - before_retrieval;
 
                 let debug_response_tx = if let Some(debug_tx) = &debug_tx {
                     let (response_tx, response_rx) = oneshot::channel();
@@ -1736,7 +1760,7 @@ impl Zeta {
                 if cfg!(debug_assertions) && env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
                     if let Some(debug_response_tx) = debug_response_tx {
                         debug_response_tx
-                            .send((Err("Request skipped".to_string()), TimeDelta::zero()))
+                            .send((Err("Request skipped".to_string()), Duration::ZERO))
                             .ok();
                     }
                     anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
@@ -1761,7 +1785,7 @@ impl Zeta {
 
                 log::trace!("Sending edit prediction request");
 
-                let before_request = chrono::Utc::now();
+                let before_request = Instant::now();
                 let response = Self::send_raw_llm_request(
                     request,
                     client,
@@ -1773,7 +1797,8 @@ impl Zeta {
                     EvalCacheEntryKind::Prediction,
                 )
                 .await;
-                let request_time = chrono::Utc::now() - before_request;
+                let received_response_at = Instant::now();
+                let request_time = received_response_at - before_request;
 
                 log::trace!("Got edit prediction response");
 
@@ -1851,6 +1876,7 @@ impl Zeta {
                         edited_buffer,
                         edited_buffer_snapshot.clone(),
                         edits,
+                        received_response_at,
                     )),
                     usage,
                 ))
@@ -1859,17 +1885,23 @@ impl Zeta {
 
         cx.spawn({
             async move |this, cx| {
-                let Some((id, edited_buffer, edited_buffer_snapshot, edits)) =
+                let Some((id, edited_buffer, edited_buffer_snapshot, edits, received_response_at)) =
                     Self::handle_api_response(&this, request_task.await, cx)?
                 else {
                     return Ok(None);
                 };
 
                 // TODO telemetry: duration, etc
-                Ok(
-                    EditPrediction::new(id, &edited_buffer, &edited_buffer_snapshot, edits, cx)
-                        .await,
+                Ok(EditPrediction::new(
+                    id,
+                    &edited_buffer,
+                    &edited_buffer_snapshot,
+                    edits.into(),
+                    buffer_snapshotted_at,
+                    received_response_at,
+                    cx,
                 )
+                .await)
             }
         })
     }
@@ -2532,6 +2564,40 @@ impl Zeta {
             None => DataCollectionChoice::NotAnswered,
         }
     }
+
+    pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
+        self.shown_predictions.iter()
+    }
+
+    pub fn shown_completions_len(&self) -> usize {
+        self.shown_predictions.len()
+    }
+
+    pub fn is_prediction_rated(&self, id: &EditPredictionId) -> bool {
+        self.rated_predictions.contains(id)
+    }
+
+    pub fn rate_prediction(
+        &mut self,
+        completion: &EditPrediction,
+        rating: EditPredictionRating,
+        feedback: String,
+        cx: &mut Context<Self>,
+    ) {
+        todo!();
+        self.rated_predictions.insert(completion.id.clone());
+        // telemetry::event!(
+        //     "Edit Prediction Rated",
+        //     rating,
+        //     input_events = completion.input_events,
+        //     input_excerpt = completion.input_excerpt,
+        //     input_outline = completion.input_outline,
+        //     output_excerpt = completion.output_excerpt,
+        //     feedback
+        // );
+        self.client.telemetry().flush_events().detach();
+        cx.notify();
+    }
 }
 
 pub fn text_from_response(mut res: open_ai::Response) -> Option<String> {
@@ -2793,6 +2859,40 @@ impl Dismissable for ZedPredictUpsell {
 
 pub fn should_show_upsell_modal() -> bool {
     !ZedPredictUpsell::dismissed()
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
+            if cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>() {
+                RatePredictionsModal::toggle(workspace, window, cx);
+            }
+        });
+
+        // workspace.register_action(
+        //     move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
+        //         ZedPredictModal::toggle(
+        //             workspace,
+        //             workspace.user_store().clone(),
+        //             workspace.client().clone(),
+        //             window,
+        //             cx,
+        //         )
+        //     },
+        // );
+
+        workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
+            update_settings_file(workspace.app_state().fs.clone(), cx, move |settings, _| {
+                settings
+                    .project
+                    .all_languages
+                    .features
+                    .get_or_insert_default()
+                    .edit_prediction_provider = Some(EditPredictionProvider::None)
+            });
+        });
+    })
+    .detach();
 }
 
 #[cfg(test)]

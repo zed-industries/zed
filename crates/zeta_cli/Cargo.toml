@@ -53,7 +53,6 @@ terminal_view.workspace = true
 toml.workspace = true
 util.workspace = true
 watch.workspace = true
-zeta.workspace = true
 zeta2 = { workspace = true, features = ["eval-support"] }
 zlog.workspace = true
 

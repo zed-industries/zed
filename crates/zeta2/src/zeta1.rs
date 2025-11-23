@@ -168,8 +168,16 @@ pub(crate) fn request_prediction_with_zeta1(
             .ok();
         }
 
-        let edit_prediction =
-            process_completion_response(response, buffer, &snapshot, editable_range, cx).await;
+        let edit_prediction = process_completion_response(
+            response,
+            buffer,
+            &snapshot,
+            editable_range,
+            buffer_snapshotted_at,
+            received_response_at,
+            cx,
+        )
+        .await;
 
         let finished_at = Instant::now();
 
@@ -196,6 +204,8 @@ fn process_completion_response(
     buffer: Entity<Buffer>,
     snapshot: &BufferSnapshot,
     editable_range: Range<usize>,
+    buffer_snapshotted_at: Instant,
+    received_response_at: Instant,
     cx: &AsyncApp,
 ) -> Task<Result<Option<EditPrediction>>> {
     let snapshot = snapshot.clone();
@@ -214,28 +224,16 @@ fn process_completion_response(
             .await?
             .into();
 
-        let Some((edits, snapshot, edit_preview)) = buffer.read_with(cx, {
-            let edits = edits.clone();
-            move |buffer, cx| {
-                let new_snapshot = buffer.snapshot();
-                let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
-                    edit_prediction::interpolate_edits(&snapshot, &new_snapshot, &edits)?.into();
-                Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
-            }
-        })?
-        else {
-            return anyhow::Ok(None);
-        };
-
-        let edit_preview = edit_preview.await;
-
-        Ok(Some(EditPrediction {
-            id: EditPredictionId(request_id.into()),
+        Ok(EditPrediction::new(
+            EditPredictionId(request_id.into()),
+            &buffer,
+            &snapshot,
             edits,
-            edit_preview,
-            snapshot,
-            buffer,
-        }))
+            buffer_snapshotted_at,
+            received_response_at,
+            cx,
+        )
+        .await)
     })
 }
 

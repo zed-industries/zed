@@ -39,7 +39,7 @@ use workspace::{
     notifications::NotificationId,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletions;
+use zeta2::RateCompletions;
 use zeta2::{SweepFeatureFlag, Zeta2FeatureFlag};
 
 actions!(
@@ -318,7 +318,7 @@ impl Render for EditPredictionButton {
                     (false, false) => IconName::ZedPredictDisabled,
                 };
 
-                if zeta::should_show_upsell_modal() {
+                if zeta2::should_show_upsell_modal() {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {

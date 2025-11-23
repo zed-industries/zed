@@ -758,6 +758,8 @@ impl EditPreview {
 
         let mut highlighted_text = HighlightedTextBuilder::default();
 
+        let visible_range_in_preview_snapshot =
+            visible_range_in_preview_snapshot.to_offset(&self.applied_edits_snapshot);
         let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
 
         let insertion_highlight_style = HighlightStyle {
@@ -825,7 +827,19 @@ impl EditPreview {
         highlighted_text.build()
     }
 
-    fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<usize>> {
+    pub fn build_result_buffer(&self, cx: &mut App) -> Entity<Buffer> {
+        cx.new(|cx| {
+            let mut buffer = Buffer::local_normalized(
+                self.applied_edits_snapshot.as_rope().clone(),
+                self.applied_edits_snapshot.line_ending(),
+                cx,
+            );
+            buffer.set_language(self.syntax_snapshot.root_language(), cx);
+            buffer
+        })
+    }
+
+    pub fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<Point>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -842,7 +856,7 @@ impl EditPreview {
         let range = Point::new(start.row, 0)
             ..Point::new(end.row, self.applied_edits_snapshot.line_len(end.row));
 
-        Some(range.to_offset(&self.applied_edits_snapshot))
+        Some(range)
     }
 }
 

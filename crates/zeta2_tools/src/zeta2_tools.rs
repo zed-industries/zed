@@ -1,8 +1,7 @@
 mod zeta2_context_view;
 
-use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc};
+use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
-use chrono::TimeDelta;
 use client::{Client, UserStore};
 use cloud_llm_client::predict_edits_v3::{
     DeclarationScoreComponents, PredictEditsRequest, PromptFormat,
@@ -122,8 +121,8 @@ enum ActiveView {
 struct LastPrediction {
     context_editor: Entity<Editor>,
     prompt_editor: Entity<Editor>,
-    retrieval_time: TimeDelta,
-    request_time: Option<TimeDelta>,
+    retrieval_time: Duration,
+    request_time: Option<Duration>,
     buffer: WeakEntity<Buffer>,
     position: language::Anchor,
     state: LastPredictionState,
@@ -970,15 +969,15 @@ impl Zeta2Inspector {
         )
     }
 
-    fn render_duration(name: &'static str, time: Option<chrono::TimeDelta>) -> Div {
+    fn render_duration(name: &'static str, time: Option<Duration>) -> Div {
         h_flex()
             .gap_1()
             .child(Label::new(name).color(Color::Muted).size(LabelSize::Small))
             .child(match time {
-                Some(time) => Label::new(if time.num_microseconds().unwrap_or(0) >= 1000 {
-                    format!("{} ms", time.num_milliseconds())
+                Some(time) => Label::new(if time.as_micros() >= 1000 {
+                    format!("{} ms", time.as_millis())
                 } else {
-                    format!("{} µs", time.num_microseconds().unwrap_or(0))
+                    format!("{} µs", time.as_micros())
                 })
                 .size(LabelSize::Small),
                 None => Label::new("...").size(LabelSize::Small),

@@ -14,9 +14,7 @@ use settings::{
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use zeta::ZetaEditPredictionProvider;
-use zeta2::SweepFeatureFlag;
-use zeta2::Zeta2FeatureFlag;
+use zeta2::{SweepFeatureFlag, Zeta2FeatureFlag, ZetaEditPredictionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -102,10 +100,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 }
 
-fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
-    if let Some(zeta) = zeta::Zeta::global(cx) {
-        zeta.update(cx, |zeta, _| zeta.clear_history());
-    } else if let Some(zeta) = zeta2::Zeta::try_global(cx) {
+fn clear_zeta_edit_history(_: &zeta2::ClearHistory, cx: &mut App) {
+    if let Some(zeta) = zeta2::Zeta::try_global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
     }
 }
@@ -239,12 +235,7 @@ fn assign_edit_prediction_provider(
 
                 if has_model {
                     let provider = cx.new(|cx| {
-                        zeta2::ZetaEditPredictionProvider::new(
-                            project.clone(),
-                            &client,
-                            &user_store,
-                            cx,
-                        )
+                        ZetaEditPredictionProvider::new(project.clone(), &client, &user_store, cx)
                     });
                     editor.set_edit_prediction_provider(Some(provider), window, cx);
                 }

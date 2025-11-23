@@ -5,21 +5,11 @@ use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFl
 use gpui::actions;
 use language::language_settings::EditPredictionProvider;
 use project::DisableAiSettings;
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{update_settings_file, Settings, SettingsStore};
 use ui::App;
 use workspace::Workspace;
 
-use crate::{RateCompletionModal, onboarding_modal::ZedPredictModal};
-
-actions!(
-    edit_prediction,
-    [
-        /// Resets the edit prediction onboarding state.
-        ResetOnboarding,
-        /// Opens the rate completions modal.
-        RateCompletions
-    ]
-);
+use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal};
 
 pub fn init(cx: &mut App) {
     feature_gate_predict_edits_actions(cx);

@@ -433,7 +433,7 @@ async fn zeta1_context(
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<zeta::GatherContextOutput> {
+) -> Result<zeta2::zeta1::GatherContextOutput> {
     let LoadedContext {
         full_path_str,
         snapshot,
@@ -448,7 +448,7 @@ async fn zeta1_context(
 
     let prompt_for_events = move || (events, 0);
     cx.update(|cx| {
-        zeta::gather_context(
+        zeta2::zeta1::gather_context(
             full_path_str,
             &snapshot,
             clipped_cursor,
