@@ -862,7 +862,7 @@ impl<T: Item> SumTree<T> {
                     *summary = full_summary;
                     None
                 } else {
-                    let midpoint = (total_child_count + 1) / 2;
+                    let midpoint = total_child_count.div_ceil(2);
                     let mut all_trees = small_child_trees.iter().chain(child_trees.iter()).cloned();
                     let left_trees = all_trees.by_ref().take(midpoint).collect();
                     *child_trees = all_trees.collect();
@@ -911,7 +911,7 @@ impl<T: Item> SumTree<T> {
                     *summary = full_summary;
                     None
                 } else {
-                    let midpoint = (total_child_count + 1) / 2;
+                    let midpoint = total_child_count.div_ceil(2);
                     let mut all_items = small_items.iter().chain(items.iter()).cloned();
                     let left_items = all_items.by_ref().take(midpoint).collect();
                     *items = all_items.collect();
