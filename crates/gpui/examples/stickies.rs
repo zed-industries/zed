@@ -61,21 +61,24 @@ enum StickyColor {
     #[default]
     Yellow,
     Blue,
-    Green,
-    Pink,
-    Purple,
-    Gray,
+    // Green,
+    // Pink,
+    // Purple,
+    // Gray,
 }
 
 impl StickyColor {
-    fn to_hsla(&self) -> Hsla {
+    fn bg(&self) -> Hsla {
         match self {
             StickyColor::Yellow => rgb(0xFFF48F).into(),
             StickyColor::Blue => rgb(0x98F6FF).into(),
-            StickyColor::Green => hsla(120.0, 0.8, 0.7, 1.0),
-            StickyColor::Pink => hsla(330.0, 0.8, 0.7, 1.0),
-            StickyColor::Purple => hsla(270.0, 0.8, 0.7, 1.0),
-            StickyColor::Gray => hsla(0.0, 0.0, 0.7, 1.0),
+        }
+    }
+
+    fn titlebar_bg(&self) -> Hsla {
+        match self {
+            StickyColor::Yellow => rgb(0xFFE900).into(),
+            StickyColor::Blue => rgb(0x5DF3FF).into(),
         }
     }
 
@@ -85,10 +88,6 @@ impl StickyColor {
         match self {
             StickyColor::Yellow => 1,
             StickyColor::Blue => 2,
-            StickyColor::Green => 3,
-            StickyColor::Pink => 4,
-            StickyColor::Purple => 5,
-            StickyColor::Gray => 6,
         }
     }
 }
@@ -126,34 +125,18 @@ impl Sticky {
         self.content = content.into();
         self
     }
-
-    pub fn unfocus_other_windows(handle: &FocusHandle, cx: &mut Context<Sticky>) {
-        let handle = handle.clone();
-
-        cx.windows().iter_mut().for_each(|w| {
-            w.update(cx, |_v, w, cx| {
-                if let Some(focused_handle) = w.focused(cx) {
-                    if focused_handle != handle {
-                        w.blur();
-                    }
-                }
-            })
-            .expect("something bad happened");
-        });
-    }
 }
 
 impl Render for Sticky {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
-        let focused = self.focus_handle.is_focused(window);
-        dbg!(focused);
+        let window_active = window.is_window_active();
         let focus_handle = self.focus_handle.clone();
 
         div()
             .id(self.id.clone())
             .relative()
-            .bg(self.color.to_hsla())
+            .bg(self.color.bg())
             .border_1()
             .border_color(gpui::black())
             .w(self.bounds.size.width)
@@ -163,13 +146,13 @@ impl Render for Sticky {
             .line_height(px(14.))
             .pt(px(TITLEBAR_HEIGHT)) // reserve space for absolutely positioned titlebar
             .on_click(cx.listener(move |_, _, window, cx| {
-                let handle = focus_handle.clone();
-                Self::unfocus_other_windows(&handle, cx);
-                // println!("sticky clicked, focusing");
+                if !window.is_window_active() {
+                    window.activate_window();
+                }
                 window.focus(&focus_handle);
                 cx.notify();
             }))
-            .when(focused, |this| this.child(Titlebar::new(entity, cx)))
+            .child(Titlebar::new(entity, window_active))
             .child(
                 div()
                     .flex_1()
@@ -189,19 +172,22 @@ impl Focusable for Sticky {
 #[derive(IntoElement)]
 struct Titlebar {
     sticky: Entity<Sticky>,
+    window_active: bool,
 }
 
 impl Titlebar {
-    pub fn new(sticky: Entity<Sticky>, _cx: &mut Context<Sticky>) -> Self {
-        Self { sticky }
+    pub fn new(sticky: Entity<Sticky>, window_active: bool) -> Self {
+        Self {
+            sticky,
+            window_active,
+        }
     }
 }
 
 impl RenderOnce for Titlebar {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let sticky_state = self.sticky.read(cx);
         let color = sticky_state.color.clone();
-        let color = color.to_hsla().blend(gpui::black().opacity(0.2));
 
         div()
             .absolute()
@@ -210,7 +196,7 @@ impl RenderOnce for Titlebar {
             .h(px(12.))
             // todo: probably needs to get the width from `sticky_state`
             .w_full()
-            .bg(color)
+            .when(self.window_active, |this| this.bg(color.titlebar_bg()))
     }
 }
 
