@@ -1187,14 +1187,11 @@ pub(crate) async fn open_serialized_workspace(
     }
 
     if error_count > 0 {
-        let message = if error_count == 1 {
-            "Failed to restore 1 workspace. Check logs for details.".to_string()
-        } else {
-            format!(
-                "Failed to restore {} workspaces. Check logs for details.",
-                error_count
-            )
-        };
+        let message = format!(
+            "Failed to restore {} workspace{}. Check logs for details.",
+            error_count,
+            if error_count == 1 { "" } else { "s" }
+        );
 
         // Try to find an active workspace to show the toast
         let toast_shown = cx
