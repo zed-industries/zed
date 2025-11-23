@@ -1,9 +1,8 @@
 use gpui::{
-    App, Application, Bounds, Context, ElementId, Entity, Hsla, KeyBinding, Pixels, Point,
-    PromptButton, PromptLevel, SharedString, Size, Timer, Window, WindowBounds, WindowKind,
-    WindowOptions, actions, div, hsla, prelude::*, px, rems, rgb, size,
+    App, Application, Bounds, Context, ElementId, Entity, FocusHandle, Focusable, Hsla, Pixels,
+    Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions, div, hsla, prelude::*,
+    px, rgb, size,
 };
-use usvg::Text;
 
 // Window setup
 // - [ ] open two stickies, one blue, one yellow
@@ -96,6 +95,7 @@ impl StickyColor {
 
 struct Sticky {
     id: ElementId,
+    focus_handle: FocusHandle,
     bounds: Bounds<Pixels>,
     color: StickyColor,
     collapsed: bool,
@@ -105,9 +105,15 @@ struct Sticky {
 }
 
 impl Sticky {
-    pub fn new(id: impl Into<ElementId>, bounds: Bounds<Pixels>, color: StickyColor) -> Self {
+    pub fn new(
+        cx: &mut App,
+        id: impl Into<ElementId>,
+        bounds: Bounds<Pixels>,
+        color: StickyColor,
+    ) -> Self {
         Self {
             id: id.into(),
+            focus_handle: cx.focus_handle(),
             bounds,
             color,
             collapsed: false,
@@ -120,11 +126,30 @@ impl Sticky {
         self.content = content.into();
         self
     }
+
+    pub fn unfocus_other_windows(handle: &FocusHandle, cx: &mut Context<Sticky>) {
+        let handle = handle.clone();
+
+        cx.windows().iter_mut().for_each(|w| {
+            w.update(cx, |_v, w, cx| {
+                if let Some(focused_handle) = w.focused(cx) {
+                    if focused_handle != handle {
+                        w.blur();
+                    }
+                }
+            })
+            .expect("something bad happened");
+        });
+    }
 }
 
 impl Render for Sticky {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
+        let focused = self.focus_handle.is_focused(window);
+        dbg!(focused);
+        let focus_handle = self.focus_handle.clone();
+
         div()
             .id(self.id.clone())
             .relative()
@@ -137,7 +162,14 @@ impl Render for Sticky {
             .text_size(px(12.))
             .line_height(px(14.))
             .pt(px(TITLEBAR_HEIGHT)) // reserve space for absolutely positioned titlebar
-            .child(Titlebar::new(entity, cx))
+            .on_click(cx.listener(move |_, _, window, cx| {
+                let handle = focus_handle.clone();
+                Self::unfocus_other_windows(&handle, cx);
+                // println!("sticky clicked, focusing");
+                window.focus(&focus_handle);
+                cx.notify();
+            }))
+            .when(focused, |this| this.child(Titlebar::new(entity, cx)))
             .child(
                 div()
                     .flex_1()
@@ -145,6 +177,12 @@ impl Render for Sticky {
                     .px(px(14.))
                     .child(self.content.clone()),
             )
+    }
+}
+
+impl Focusable for Sticky {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -203,8 +241,8 @@ fn main() {
         };
 
         cx.open_window(window_options(blue_bounds, false), |_, cx| {
-            cx.new(|_| {
-                Sticky::new("sticky-1", blue_bounds, StickyColor::Blue)
+            cx.new(|cx| {
+                Sticky::new(cx, "sticky-1", blue_bounds, StickyColor::Blue)
                     .content(SharedString::new_static(BLUE_STICKY_CONTENT))
             })
         })
@@ -218,8 +256,8 @@ fn main() {
             size: blue_bounds.size,
         };
         cx.open_window(window_options(yellow_bounds, true), |_, cx| {
-            cx.new(|_| {
-                Sticky::new("sticky-2", yellow_bounds, StickyColor::Yellow)
+            cx.new(|cx| {
+                Sticky::new(cx, "sticky-2", yellow_bounds, StickyColor::Yellow)
                     .content(SharedString::new_static(YELLOW_STICKY_CONTENT))
             })
         })
