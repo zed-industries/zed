@@ -51,11 +51,13 @@ pub async fn init(crash_init: InitCrashHandler) {
                 unsafe { env::set_var("RUST_BACKTRACE", "1") };
                 old_hook(info);
                 // prevent the macOS crash dialog from popping up
-                std::process::exit(1);
+                if cfg!(target_os = "macos") {
+                    std::process::exit(1);
+                }
             }));
             return;
         }
-        (Some(true), _) | (None, _) => {
+        _ => {
             panic::set_hook(Box::new(panic_hook));
         }
     }
@@ -300,11 +302,18 @@ pub fn panic_hook(info: &PanicHookInfo) {
         .map(|loc| format!("{}:{}", loc.file(), loc.line()))
         .unwrap_or_default();
 
+    let current_thread = std::thread::current();
+    let thread_name = current_thread.name().unwrap_or("<unnamed>");
+
     // wait 500ms for the crash handler process to start up
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);
     for _ in 0..5 {
         if let Some(client) = CRASH_HANDLER.get() {
+            let location = info
+                .location()
+                .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+            log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
             client
                 .send_message(
                     2,

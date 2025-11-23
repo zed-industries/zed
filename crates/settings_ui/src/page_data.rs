@@ -3264,6 +3264,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Window Decorations",
+                    description: "(Linux only) whether Zed or your compositor should draw window decorations.",
+                    field: Box::new(SettingField {
+                        json_path: Some("window_decorations"),
+                        pick: |settings_content| {
+                            settings_content.workspace.window_decorations.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.window_decorations = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Pane Modifiers"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inactive Opacity",
@@ -4562,6 +4577,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .project
                                     .shell
                                     .get_or_insert_with(|| settings::Shell::default());
+                                let default_shell = if cfg!(target_os = "windows") {
+                                    "powershell.exe"
+                                } else {
+                                    "sh"
+                                };
                                 *settings_value = match value {
                                     settings::ShellDiscriminants::System => {
                                         settings::Shell::System
@@ -4570,7 +4590,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         let program = match settings_value {
                                             settings::Shell::Program(p) => p.clone(),
                                             settings::Shell::WithArguments { program, .. } => program.clone(),
-                                            _ => String::from("sh"),
+                                            _ => String::from(default_shell),
                                         };
                                         settings::Shell::Program(program)
                                     },
@@ -4580,7 +4600,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::Shell::WithArguments { program, args, title_override } => {
                                                 (program.clone(), args.clone(), title_override.clone())
                                             },
-                                            _ => (String::from("sh"), vec![], None),
+                                            _ => (String::from(default_shell), vec![], None),
                                         };
                                         settings::Shell::WithArguments {
                                             program,
@@ -6985,6 +7005,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.extend_comment_on_newline = value;
 
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Colorize brackets",
+            description: "Whether to colorize brackets in the editor.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).colorize_brackets"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.colorize_brackets.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.colorize_brackets = value;
                     })
                 },
             }),

@@ -12,7 +12,8 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-mod blink_manager;
+pub mod blink_manager;
+mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
@@ -118,11 +119,11 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, LanguageRegistry, OffsetRangeExt, OutlineItem, Point, Runnable,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    IndentSize, Language, LanguageName, LanguageRegistry, OffsetRangeExt, OutlineItem, Point,
+    Runnable, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, LspInsertMode, RewrapBehavior, WordsCompletionMode, all_language_settings,
-        language_settings,
+        self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        all_language_settings, language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -175,6 +176,7 @@ use std::{
     borrow::Cow,
     cell::{OnceCell, RefCell},
     cmp::{self, Ordering, Reverse},
+    collections::hash_map,
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
@@ -1193,6 +1195,9 @@ pub struct Editor {
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
+    accent_overrides: Vec<SharedString>,
+    fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -1883,7 +1888,11 @@ impl Editor {
         let selections = SelectionsCollection::new();
 
         let blink_manager = cx.new(|cx| {
-            let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
+            let mut blink_manager = BlinkManager::new(
+                CURSOR_BLINK_INTERVAL,
+                |cx| EditorSettings::get_global(cx).cursor_blink,
+                cx,
+            );
             if is_minimap {
                 blink_manager.disable(cx);
             }
@@ -2333,11 +2342,17 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
+            applicable_language_settings: HashMap::default(),
+            accent_overrides: Vec::new(),
+            fetched_tree_sitter_chunks: HashMap::default(),
         };
 
         if is_minimap {
             return editor;
         }
+
+        editor.applicable_language_settings = editor.fetch_applicable_language_settings(cx);
+        editor.accent_overrides = editor.fetch_accent_overrides(cx);
 
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -2378,6 +2393,7 @@ impl Editor {
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
+                                    editor.colorize_brackets(false, cx);
                                 })
                                 .ok();
                         });
@@ -8802,23 +8818,13 @@ impl Editor {
                 cx,
             ),
             EditPrediction::MoveOutside { snapshot, .. } => {
-                let file_name = snapshot
-                    .file()
-                    .map(|file| file.file_name(cx))
-                    .unwrap_or("untitled");
                 let mut element = self
-                    .render_edit_prediction_line_popover(
-                        format!("Jump to {file_name}"),
-                        Some(IconName::ZedPredict),
-                        window,
-                        cx,
-                    )
+                    .render_edit_prediction_jump_outside_popover(snapshot, window, cx)
                     .into_any();
 
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin_x = text_bounds.size.width / 2. - size.width / 2.;
-                let origin_y = text_bounds.size.height - size.height - px(30.);
-                let origin = text_bounds.origin + gpui::Point::new(origin_x, origin_y);
+                let origin_x = text_bounds.size.width - size.width - px(30.);
+                let origin = text_bounds.origin + gpui::Point::new(origin_x, px(16.));
                 element.prepaint_at(origin, window, cx);
 
                 Some((element, origin))
@@ -9381,6 +9387,67 @@ impl Editor {
                         .child(Icon::new(icon).size(IconSize::Small)),
                 )
             })
+    }
+
+    fn render_edit_prediction_jump_outside_popover(
+        &self,
+        snapshot: &BufferSnapshot,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Stateful<Div> {
+        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let has_keybind = keybind.is_some();
+
+        let file_name = snapshot
+            .file()
+            .map(|file| SharedString::new(file.file_name(cx)))
+            .unwrap_or(SharedString::new_static("untitled"));
+
+        h_flex()
+            .id("ep-jump-outside-popover")
+            .py_1()
+            .px_2()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .bg(Self::edit_prediction_line_popover_bg_color(cx))
+            .border_color(Self::edit_prediction_callout_popover_border_color(cx))
+            .shadow_xs()
+            .when(!has_keybind, |el| {
+                let status_colors = cx.theme().status();
+
+                el.bg(status_colors.error_background)
+                    .border_color(status_colors.error.opacity(0.6))
+                    .pl_2()
+                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .cursor_default()
+                    .hoverable_tooltip(move |_window, cx| {
+                        cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+                    })
+            })
+            .children(keybind)
+            .child(
+                Label::new(file_name)
+                    .size(LabelSize::Small)
+                    .buffer_font(cx)
+                    .when(!has_keybind, |el| {
+                        el.color(cx.theme().status().error.into()).strikethrough()
+                    }),
+            )
+            .when(!has_keybind, |el| {
+                el.child(
+                    h_flex().ml_1().child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(cx.theme().status().error.into()),
+                    ),
+                )
+            })
+            .child(
+                div()
+                    .mt(px(1.5))
+                    .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
+            )
     }
 
     fn edit_prediction_line_popover_bg_color(cx: &App) -> Hsla {
@@ -17100,9 +17167,6 @@ impl Editor {
 
             let multi_buffer = editor.read_with(cx, |editor, _| editor.buffer().clone())?;
 
-            let multi_buffer_snapshot =
-                multi_buffer.read_with(cx, |multi_buffer, cx| multi_buffer.snapshot(cx))?;
-
             let (locations, current_location_index) =
                 multi_buffer.update(cx, |multi_buffer, cx| {
                     let mut locations = locations
@@ -17122,6 +17186,7 @@ impl Editor {
                         })
                         .collect::<Vec<_>>();
 
+                    let multi_buffer_snapshot = multi_buffer.snapshot(cx);
                     // There is an O(n) implementation, but given this list will be
                     // small (usually <100 items), the extra O(log(n)) factor isn't
                     // worth the (surprisingly large amount of) extra complexity.
@@ -21141,13 +21206,16 @@ impl Editor {
         key: usize,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
+        merge: bool,
         cx: &mut Context<Self>,
     ) {
-        self.display_map.update(cx, |map, _| {
+        self.display_map.update(cx, |map, cx| {
             map.highlight_text(
                 HighlightKey::TypePlus(TypeId::of::<T>(), key),
                 ranges,
                 style,
+                merge,
+                cx,
             );
         });
         cx.notify();
@@ -21159,8 +21227,14 @@ impl Editor {
         style: HighlightStyle,
         cx: &mut Context<Self>,
     ) {
-        self.display_map.update(cx, |map, _| {
-            map.highlight_text(HighlightKey::Type(TypeId::of::<T>()), ranges, style)
+        self.display_map.update(cx, |map, cx| {
+            map.highlight_text(
+                HighlightKey::Type(TypeId::of::<T>()),
+                ranges,
+                style,
+                false,
+                cx,
+            )
         });
         cx.notify();
     }
@@ -21308,7 +21382,6 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
-                self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
                 if self.has_active_edit_prediction() {
@@ -21364,6 +21437,7 @@ impl Editor {
                 }
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.colorize_brackets(false, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -21401,10 +21475,16 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                for id in ids {
+                    self.fetched_tree_sitter_chunks.remove(id);
+                }
+                self.colorize_brackets(false, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+                self.refresh_selected_text_highlights(true, window, cx);
+                self.colorize_brackets(true, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
@@ -21475,7 +21555,52 @@ impl Editor {
         cx.notify();
     }
 
+    fn fetch_accent_overrides(&self, cx: &App) -> Vec<SharedString> {
+        if !self.mode.is_full() {
+            return Vec::new();
+        }
+
+        theme::ThemeSettings::get_global(cx)
+            .theme_overrides
+            .get(cx.theme().name.as_ref())
+            .map(|theme_style| &theme_style.accents)
+            .into_iter()
+            .flatten()
+            .flat_map(|accent| accent.0.clone())
+            .collect()
+    }
+
+    fn fetch_applicable_language_settings(
+        &self,
+        cx: &App,
+    ) -> HashMap<Option<LanguageName>, LanguageSettings> {
+        if !self.mode.is_full() {
+            return HashMap::default();
+        }
+
+        self.buffer().read(cx).all_buffers().into_iter().fold(
+            HashMap::default(),
+            |mut acc, buffer| {
+                let buffer = buffer.read(cx);
+                let language = buffer.language().map(|language| language.name());
+                if let hash_map::Entry::Vacant(v) = acc.entry(language.clone()) {
+                    let file = buffer.file();
+                    v.insert(language_settings(language, file, cx).into_owned());
+                }
+                acc
+            },
+        )
+    }
+
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let new_language_settings = self.fetch_applicable_language_settings(cx);
+        let language_settings_changed = new_language_settings != self.applicable_language_settings;
+        self.applicable_language_settings = new_language_settings;
+
+        let new_accent_overrides = self.fetch_accent_overrides(cx);
+        let accent_overrides_changed = new_accent_overrides != self.accent_overrides;
+        self.accent_overrides = new_accent_overrides;
+
         if self.diagnostics_enabled() {
             let new_severity = EditorSettings::get_global(cx)
                 .diagnostics_max_severity
@@ -21547,15 +21672,19 @@ impl Editor {
                     })
                 }
             }
-        }
 
-        if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
-            colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
-        }) {
-            if !inlay_splice.is_empty() {
-                self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
+            if language_settings_changed || accent_overrides_changed {
+                self.colorize_brackets(true, cx);
             }
-            self.refresh_colors_for_visible_range(None, window, cx);
+
+            if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
+                colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
+            }) {
+                if !inlay_splice.is_empty() {
+                    self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
+                }
+                self.refresh_colors_for_visible_range(None, window, cx);
+            }
         }
 
         cx.notify();
@@ -22089,13 +22218,7 @@ impl Editor {
             .pending_input_keystrokes()
             .into_iter()
             .flatten()
-            .filter_map(|keystroke| {
-                if keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
-                    keystroke.key_char.clone()
-                } else {
-                    None
-                }
-            })
+            .filter_map(|keystroke| keystroke.key_char.clone())
             .collect();
 
         if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
@@ -22668,7 +22791,7 @@ fn insert_extra_newline_tree_sitter(
         _ => return false,
     };
     let pair = {
-        let mut result: Option<BracketMatch> = None;
+        let mut result: Option<BracketMatch<usize>> = None;
 
         for pair in buffer
             .all_bracket_ranges(range.start.0..range.end.0)
