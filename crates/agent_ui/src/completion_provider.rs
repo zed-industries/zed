@@ -181,6 +181,7 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
+    editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
@@ -190,6 +191,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
 impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     pub fn new(
         source: T,
+        editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -197,6 +199,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     ) -> Self {
         Self {
             source: Arc::new(source),
+            editor,
             mention_set,
             workspace,
             history_store,
@@ -207,6 +210,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     fn completion_for_entry(
         entry: PromptContextEntry,
         source_range: Range<Anchor>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: &Entity<Workspace>,
         cx: &mut App,
@@ -227,9 +231,14 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 // inserted
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
-            PromptContextEntry::Action(action) => {
-                Self::completion_for_action(action, source_range, mention_set, workspace, cx)
-            }
+            PromptContextEntry::Action(action) => Self::completion_for_action(
+                action,
+                source_range,
+                editor,
+                mention_set,
+                workspace,
+                cx,
+            ),
         }
     }
 
@@ -238,6 +247,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
         cx: &mut App,
@@ -269,6 +279,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text_len - 1,
                 uri,
                 source,
+                editor,
                 mention_set,
                 workspace,
             )),
@@ -279,6 +290,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         rule: RulesContextEntry,
         source_range: Range<Anchor>,
         source: Arc<T>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
         cx: &mut App,
@@ -306,6 +318,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text_len - 1,
                 uri,
                 source,
+                editor,
                 mention_set,
                 workspace,
             )),
@@ -319,6 +332,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         is_directory: bool,
         source_range: Range<Anchor>,
         source: Arc<T>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
@@ -364,6 +378,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text_len - 1,
                 uri,
                 source,
+                editor,
                 mention_set,
                 workspace,
             )),
@@ -374,6 +389,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         symbol: Symbol,
         source_range: Range<Anchor>,
         source: Arc<T>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
         cx: &mut App,
@@ -425,6 +441,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text_len - 1,
                 uri,
                 source,
+                editor,
                 mention_set,
                 workspace,
             )),
@@ -435,6 +452,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         url_to_fetch: SharedString,
         source: Arc<T>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
         cx: &mut App,
@@ -463,6 +481,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text.len() - 1,
                 mention_uri,
                 source,
+                editor,
                 mention_set,
                 workspace,
             )),
@@ -472,6 +491,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     pub(crate) fn completion_for_action(
         action: PromptContextAction,
         source_range: Range<Anchor>,
+        editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: &Entity<Workspace>,
         cx: &mut App,
@@ -496,20 +516,24 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 let callback = Arc::new({
                     let source_range = source_range.clone();
                     move |_, window: &mut Window, cx: &mut App| {
+                        let editor = editor.clone();
                         let selections = selections.clone();
                         let mention_set = mention_set.clone();
                         let source_range = source_range.clone();
                         window.defer(cx, move |window, cx| {
-                            mention_set
-                                .update(cx, |store, cx| {
-                                    store.confirm_mention_for_selection(
-                                        source_range,
-                                        selections,
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .ok();
+                            if let Some(editor) = editor.upgrade() {
+                                mention_set
+                                    .update(cx, |store, cx| {
+                                        store.confirm_mention_for_selection(
+                                            source_range,
+                                            selections,
+                                            editor,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }
                         });
                         false
                     }
@@ -853,6 +877,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
             ..snapshot.anchor_after(state.source_range().end);
 
         let source = self.source.clone();
+        let editor = self.editor.clone();
         let mention_set = self.mention_set.downgrade();
         match state {
             ContextCompletion::SlashCommand(SlashCommandCompletion {
@@ -955,6 +980,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         mat.is_dir,
                                         source_range.clone(),
                                         source.clone(),
+                                        editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
                                         project.clone(),
@@ -967,6 +993,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         symbol,
                                         source_range.clone(),
                                         source.clone(),
+                                        editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
                                         cx,
@@ -978,6 +1005,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     source_range.clone(),
                                     false,
                                     source.clone(),
+                                    editor.clone(),
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
@@ -988,6 +1016,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     source_range.clone(),
                                     true,
                                     source.clone(),
+                                    editor.clone(),
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
@@ -997,6 +1026,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     user_rules,
                                     source_range.clone(),
                                     source.clone(),
+                                    editor.clone(),
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
@@ -1006,6 +1036,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     source_range.clone(),
                                     url,
                                     source.clone(),
+                                    editor.clone(),
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
@@ -1015,6 +1046,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Self::completion_for_entry(
                                         entry,
                                         source_range.clone(),
+                                        editor.clone(),
                                         mention_set.clone(),
                                         &workspace,
                                         cx,
@@ -1091,33 +1123,38 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
     content_len: usize,
     mention_uri: MentionUri,
     source: Arc<T>,
+    editor: WeakEntity<Editor>,
     mention_set: WeakEntity<MentionSet>,
     workspace: Entity<Workspace>,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
         let source = source.clone();
+        let editor = editor.clone();
         let mention_set = mention_set.clone();
         let crease_text = crease_text.clone();
         let mention_uri = mention_uri.clone();
         let workspace = workspace.clone();
         window.defer(cx, move |window, cx| {
-            mention_set
-                .clone()
-                .update(cx, |mention_set, cx| {
-                    mention_set
-                        .confirm_mention_completion(
-                            crease_text,
-                            start,
-                            content_len,
-                            mention_uri,
-                            source.supports_images(cx),
-                            &workspace,
-                            window,
-                            cx,
-                        )
-                        .detach();
-                })
-                .ok();
+            if let Some(editor) = editor.upgrade() {
+                mention_set
+                    .clone()
+                    .update(cx, |mention_set, cx| {
+                        mention_set
+                            .confirm_mention_completion(
+                                crease_text,
+                                start,
+                                content_len,
+                                mention_uri,
+                                source.supports_images(cx),
+                                editor,
+                                &workspace,
+                                window,
+                                cx,
+                            )
+                            .detach();
+                    })
+                    .ok();
+            }
         });
         false
     })
