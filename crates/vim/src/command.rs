@@ -6,7 +6,7 @@ use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
-use futures::AsyncWriteExt as _;
+use futures::{AsyncWriteExt as _, channel::oneshot};
 use gpui::{
     Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
 };
@@ -794,31 +794,33 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         cx.spawn_in(window, async move |vim, cx| {
             task.await;
             vim.update_in(cx, |vim, window, cx| {
-                vim.update_editor(cx, |_, editor, cx| {
-                    if had_range {
+                if had_range {
+                    vim.update_editor(cx, |_, editor, cx| {
                         editor.change_selections(SelectionEffects::default(), window, cx, |s| {
                             s.select_anchor_ranges([s.newest_anchor().range()]);
                         })
-                    }
-                });
+                    });
+                }
                 if matches!(vim.mode, Mode::Insert | Mode::Replace) {
                     vim.normal_before(&Default::default(), window, cx);
                 } else {
                     vim.switch_mode(Mode::Normal, true, window, cx);
                 }
-                vim.update_editor(cx, |_, editor, cx| {
-                    if let Some(first_sel) = initial_selections
-                        && let Some(tx_id) = editor
-                            .buffer()
-                            .update(cx, |multi, cx| multi.last_transaction_id(cx))
-                    {
-                        let last_sel = editor.selections.disjoint_anchors_arc();
-                        editor.modify_transaction_selection_history(tx_id, |old| {
-                            old.0 = first_sel;
-                            old.1 = Some(last_sel);
-                        });
-                    }
-                });
+                if had_range {
+                    vim.update_editor(cx, |_, editor, cx| {
+                        if let Some(first_sel) = initial_selections
+                            && let Some(tx_id) = editor
+                                .buffer()
+                                .update(cx, |multi, cx| multi.last_transaction_id(cx))
+                        {
+                            let last_sel = editor.selections.disjoint_anchors_arc();
+                            editor.modify_transaction_selection_history(tx_id, |old| {
+                                old.0 = first_sel;
+                                old.1 = Some(last_sel);
+                            });
+                        }
+                    });
+                }
             })
             .ok();
         })
@@ -1863,7 +1865,7 @@ pub fn command_interceptor(
     } else if on_matching_lines.is_some() {
         commands(cx)
             .iter()
-            .find_map(|command| command.parse(query, &range, cx))
+            .find_map(|command| command.parse(query, &None, cx))
     } else {
         None
     };
@@ -2194,14 +2196,30 @@ impl OnMatchingLines {
                 if new_selections.is_empty() {
                     return;
                 }
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.start_transaction_at(Instant::now(), window, cx);
-                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.replace_cursors_with(|_| new_selections);
-                        });
-                        window.dispatch_action(action, cx);
-                        cx.defer_in(window, move |editor, window, cx| {
+                let _ = editor.update_in(cx, |editor, window, cx| {
+                    editor.start_transaction_at(Instant::now(), window, cx);
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.replace_cursors_with(|_| new_selections);
+                    });
+                    window.dispatch_action(action, cx);
+
+                    let (tx, rx) = oneshot::channel();
+                    cx.defer_in(window, move |editor, _, cx| {
+                        if let Some(workspace) = editor.workspace() {
+                            let _ = tx.send(
+                                workspace
+                                    .update(cx, |workspace, _| workspace.wait_for_keystrokes()),
+                            );
+                        };
+                    });
+                    cx.spawn_in(window, async move |this, cx| {
+                        if let Some(task) = rx.await.ok().flatten() {
+                            // If we are dispatching keystrokes,
+                            // wait to finish before adjusting selection.
+                            // This is a workaround for a race condition with `:norm`.
+                            task.await;
+                        }
+                        let _ = this.update_in(cx, |editor, window, cx| {
                             let newest = editor
                                 .selections
                                 .newest::<Point>(&editor.display_snapshot(cx));
@@ -2214,9 +2232,10 @@ impl OnMatchingLines {
                                 },
                             );
                             editor.end_transaction_at(Instant::now(), cx);
-                        })
+                        });
                     })
-                    .ok();
+                    .detach();
+                });
             })
             .detach();
         });
@@ -3151,6 +3170,28 @@ mod test {
             the lazy dog
         "});
         // Once ctrl-v to input character literals is added there should be a test for redo
+    }
+
+    #[gpui::test]
+    async fn test_command_g_normal(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇfoo
+
+            foo
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": % g / f o o / n o r m space A b a r enter")
+            .await;
+        cx.run_until_parked();
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            foobar
+
+            foobaˇr
+        "});
     }
 
     #[gpui::test]
