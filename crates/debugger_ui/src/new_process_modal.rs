@@ -12,23 +12,22 @@ use tasks_ui::{TaskOverrides, TasksModal};
 use dap::{
     DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
 };
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, TextStyle, WeakEntity,
+    KeyContext, Render, Subscription, Task, WeakEntity,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
-use settings::Settings;
 use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
-use theme::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, FluentBuilder, IconWithIndicator, Indicator, KeyBinding, ListItem,
     ListItemSpacing, Switch, SwitchLabelPosition, ToggleButtonGroup, ToggleButtonSimple,
     ToggleState, Tooltip, prelude::*,
 };
+use ui_input::InputField;
 use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
@@ -448,7 +447,7 @@ impl NewProcessModal {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ui::DropdownMenu {
+    ) -> DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
         let active_buffer = self.task_contexts(cx).and_then(|tc| {
@@ -508,6 +507,13 @@ impl NewProcessModal {
                 menu
             }),
         )
+        .style(ui::DropdownStyle::Outlined)
+        .tab_index(0)
+        .attach(gpui::Corner::BottomLeft)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
     }
 }
 
@@ -538,44 +544,6 @@ impl Focusable for NewProcessMode {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         cx.focus_handle()
     }
-}
-
-fn render_editor(editor: &Entity<Editor>, window: &mut Window, cx: &App) -> impl IntoElement {
-    let settings = ThemeSettings::get_global(cx);
-    let theme = cx.theme();
-
-    let text_style = TextStyle {
-        color: cx.theme().colors().text,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_size: settings.buffer_font_size(cx).into(),
-        font_weight: settings.buffer_font.weight,
-        line_height: relative(settings.buffer_line_height.value()),
-        background_color: Some(theme.colors().editor_background),
-        ..Default::default()
-    };
-
-    let element = EditorElement::new(
-        editor,
-        EditorStyle {
-            background: theme.colors().editor_background,
-            local_player: theme.players().local(),
-            text: text_style,
-            ..Default::default()
-        },
-    );
-
-    div()
-        .rounded_md()
-        .p_1()
-        .border_1()
-        .border_color(theme.colors().border_variant)
-        .when(
-            editor.focus_handle(cx).contains_focused(window, cx),
-            |this| this.border_color(theme.colors().border_focused),
-        )
-        .child(element)
-        .bg(theme.colors().editor_background)
 }
 
 impl Render for NewProcessModal {
@@ -788,22 +756,26 @@ impl RenderOnce for AttachMode {
 
 #[derive(Clone)]
 pub(super) struct ConfigureMode {
-    program: Entity<Editor>,
-    cwd: Entity<Editor>,
+    program: Entity<InputField>,
+    cwd: Entity<InputField>,
     stop_on_entry: ToggleState,
     save_to_debug_json: ToggleState,
 }
 
 impl ConfigureMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
-        let program = cx.new(|cx| Editor::single_line(window, cx));
-        program.update(cx, |this, cx| {
-            this.set_placeholder_text("ENV=Zed ~/bin/program --option", window, cx);
+        let program = cx.new(|cx| {
+            InputField::new(window, cx, "ENV=Zed ~/bin/program --option")
+                .label("Program")
+                .tab_stop(true)
+                .tab_index(1)
         });
 
-        let cwd = cx.new(|cx| Editor::single_line(window, cx));
-        cwd.update(cx, |this, cx| {
-            this.set_placeholder_text("Ex: $ZED_WORKTREE_ROOT", window, cx);
+        let cwd = cx.new(|cx| {
+            InputField::new(window, cx, "Ex: $ZED_WORKTREE_ROOT")
+                .label("Working Directory")
+                .tab_stop(true)
+                .tab_index(2)
         });
 
         cx.new(|_| Self {
@@ -815,9 +787,9 @@ impl ConfigureMode {
     }
 
     fn load(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut App) {
-        self.cwd.update(cx, |editor, cx| {
-            if editor.is_empty(cx) {
-                editor.set_text(cwd.to_string_lossy(), window, cx);
+        self.cwd.update(cx, |input_field, cx| {
+            if input_field.is_empty(cx) {
+                input_field.set_text(cwd.to_string_lossy(), window, cx);
             }
         });
     }
@@ -868,49 +840,44 @@ impl ConfigureMode {
         }
     }
 
+    fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, _: &mut Context<Self>) {
+        window.focus_next();
+    }
+
+    fn on_tab_prev(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        window.focus_prev();
+    }
+
     fn render(
         &mut self,
         adapter_menu: DropdownMenu,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> impl IntoElement {
         v_flex()
+            .tab_group()
+            .track_focus(&self.program.focus_handle(cx))
+            .on_action(cx.listener(Self::on_tab))
+            .on_action(cx.listener(Self::on_tab_prev))
             .p_2()
             .w_full()
-            .gap_2()
-            .track_focus(&self.program.focus_handle(cx))
+            .gap_3()
             .child(
                 h_flex()
-                    .gap_2()
-                    .child(
-                        Label::new("Debugger")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+                    .gap_1()
+                    .child(Label::new("Debugger:").color(Color::Muted))
                     .child(adapter_menu),
             )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(
-                        Label::new("Program")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(render_editor(&self.program, window, cx)),
-            )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(
-                        Label::new("Working Directory")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(render_editor(&self.cwd, window, cx)),
-            )
+            .child(self.program.clone())
+            .child(self.cwd.clone())
             .child(
                 Switch::new("debugger-stop-on-entry", self.stop_on_entry)
+                    .tab_index(3_isize)
                     .label("Stop on Entry")
                     .label_position(SwitchLabelPosition::Start)
                     .label_size(LabelSize::Default)
