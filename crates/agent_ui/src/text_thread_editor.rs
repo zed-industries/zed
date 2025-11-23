@@ -22,11 +22,11 @@ use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem,
-    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
-    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, actions, div, img, point,
-    prelude::*, pulsating_between, size,
+    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, ClipboardItem, Empty, Entity,
+    EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement,
+    Styled, Subscription, Task, WeakEntity, actions, div, img, point, prelude::*,
+    pulsating_between, size,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -66,7 +66,7 @@ use workspace::{
 };
 use workspace::{
     Save, Toast, Workspace,
-    item::{self, FollowableItem, Item, ItemHandle},
+    item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
     searchable::{SearchEvent, SearchableItem},
@@ -280,6 +280,8 @@ impl TextThreadEditor {
             .thought_process_output_sections()
             .to_vec();
         let slash_commands = text_thread.read(cx).slash_commands().clone();
+        let focus_handle = editor.read(cx).focus_handle(cx);
+
         let mut this = Self {
             text_thread,
             slash_commands,
@@ -315,6 +317,7 @@ impl TextThreadEditor {
                         });
                     },
                     true, // Use popover styles for picker
+                    focus_handle,
                     window,
                     cx,
                 )
@@ -2588,11 +2591,11 @@ impl Item for TextThreadEditor {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

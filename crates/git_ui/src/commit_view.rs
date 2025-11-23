@@ -6,9 +6,9 @@ use editor::{
 };
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
-    WeakEntity, Window, actions,
+    Action, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -499,11 +499,11 @@ impl Item for CommitView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

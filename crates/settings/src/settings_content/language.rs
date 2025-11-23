@@ -4,20 +4,17 @@ use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::Error as _};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{ExtendingVec, merge_from};
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
-    #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
-    #[serde(default)]
     pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
@@ -59,7 +56,7 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 }
 
 /// The settings for enabling/disabling features.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
@@ -134,7 +131,7 @@ impl EditPredictionProvider {
 }
 
 /// The contents of the edit prediction settings.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
@@ -153,7 +150,7 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
@@ -246,7 +243,7 @@ pub enum SoftWrap {
 }
 
 /// The settings for a particular language.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
@@ -439,6 +436,10 @@ pub struct LanguageSettingsContent {
     //
     // Default: 1
     pub word_diff_max_lines: Option<WordDiffMaxLines>,
+    /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
+    ///
+    /// Default: false
+    pub colorize_brackets: Option<bool>,
 }
 
 #[derive(
@@ -585,7 +586,7 @@ pub enum ShowWhitespaceSetting {
     Trailing,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct WhitespaceMapContent {
     pub space: Option<char>,
@@ -617,7 +618,7 @@ pub enum RewrapBehavior {
     Anywhere,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct JsxTagAutoCloseSettingsContent {
     /// Enables or disables auto-closing of JSX tags.
@@ -625,7 +626,7 @@ pub struct JsxTagAutoCloseSettingsContent {
 }
 
 /// The settings for inlay hints.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct InlayHintSettingsContent {
     /// Global switch to toggle hints on and off.
@@ -707,7 +708,7 @@ impl InlayHintKind {
 }
 
 /// Controls how completions are processed for this language.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettingsContent {
@@ -792,7 +793,7 @@ pub enum WordsCompletionMode {
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PrettierSettingsContent {
     /// Enables or disables formatting with Prettier for a given language.
@@ -946,7 +947,7 @@ struct LanguageServerSpecifierContent {
 }
 
 /// The settings for indent guides.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct IndentGuideSettingsContent {
     /// Whether to display indent guides in the editor.
@@ -972,7 +973,7 @@ pub struct IndentGuideSettingsContent {
 }
 
 /// The task settings for a particular language.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
 pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
@@ -989,7 +990,7 @@ pub struct LanguageTaskSettingsContent {
 }
 
 /// Map from language name to settings.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
 
@@ -1045,6 +1046,9 @@ pub enum IndentGuideBackgroundColoring {
 
 #[cfg(test)]
 mod test {
+
+    use crate::{ParseStatus, fallible_options};
+
     use super::*;
 
     #[test]
@@ -1104,8 +1108,8 @@ mod test {
     #[test]
     fn test_formatter_deserialization_invalid() {
         let raw_auto = "{\"formatter\": {}}";
-        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
-        assert!(result.is_err());
+        let (_, result) = fallible_options::parse_json::<LanguageSettingsContent>(raw_auto);
+        assert!(matches!(result, ParseStatus::Failed { .. }));
     }
 
     #[test]

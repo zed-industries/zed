@@ -204,6 +204,8 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            let zeta2 = zeta2::Zeta::global(client, &user_store, cx);
+
             if let Some(project) = editor.project() {
                 let mut worktree = None;
                 if let Some(buffer) = &singleton_buffer
@@ -217,7 +219,6 @@ fn assign_edit_prediction_provider(
                     && name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
                     && cx.has_flag::<SweepFeatureFlag>()
                 {
-                    let zeta2 = zeta2::Zeta::global(client, &user_store, cx);
                     let provider = cx.new(|cx| {
                         zeta2::ZetaEditPredictionProvider::new(
                             project.clone(),
