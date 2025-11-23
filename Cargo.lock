@@ -5407,7 +5407,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smallvec",
  "smol",
  "snippet",

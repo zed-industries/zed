@@ -2543,7 +2543,7 @@ impl EditorElement {
 
         let (buffer_id, entry) = blame
             .update(cx, |blame, cx| {
-                blame.blame_for_rows(&[row_info.clone()], cx).next()
+                blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 

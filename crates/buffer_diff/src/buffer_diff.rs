@@ -3,7 +3,7 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
     File, Language, LanguageName, LanguageRegistry,
-    language_settings::{self, LanguageSettings},
+    language_settings::{self},
 };
 use rope::Rope;
 use std::{
