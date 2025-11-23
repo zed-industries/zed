@@ -296,6 +296,8 @@ actions!(
         Cut,
         /// Pastes the previously cut or copied item.
         Paste,
+        /// Downloads the selected remote file
+        DownloadFromRemote,
         /// Renames the selected file or directory.
         Rename,
         /// Opens the selected file in the editor.
@@ -1054,6 +1056,10 @@ impl ProjectPanel {
                                 "Paste",
                                 Box::new(Paste),
                             )
+                            .when(is_remote && !is_dir, |menu| {
+                                menu.separator()
+                                    .action("Download...", Box::new(DownloadFromRemote))
+                            })
                             .separator()
                             .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
                             .action(
@@ -2783,6 +2789,16 @@ impl ProjectPanel {
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
+    }
+
+    fn download_from_remote(
+        &mut self,
+        _: &DownloadFromRemote,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        println!("Download from remote not implemented yet");
+        unimplemented!();
     }
 
     fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
@@ -5549,6 +5565,7 @@ impl Render for ProjectPanel {
                 })
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
+                        .on_action(cx.listener(Self::download_from_remote))
                 })
                 .track_focus(&self.focus_handle(cx))
                 .child(
