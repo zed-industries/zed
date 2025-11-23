@@ -1648,7 +1648,7 @@ impl GitRepository for RealGitRepository {
                 .envs(env.iter())
                 .args(["commit", "--quiet", "-m"])
                 .arg(&message.to_string())
-                .arg("--cleanup=strip")
+                .arg("--cleanup=verbatim")
                 .arg("--no-verify")
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
