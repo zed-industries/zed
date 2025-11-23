@@ -31,7 +31,6 @@ use rpc::{
     RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
 };
-use semver::Version;
 use serde_json::json;
 use session::{AppSession, Session};
 use settings::SettingsStore;
