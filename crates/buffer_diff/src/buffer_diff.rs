@@ -33,11 +33,10 @@ impl WordDiffOptions {
         language: Option<LanguageName>,
         cx: &App,
     ) -> Self {
-        #[cfg(test)]
+        // This is so all multi buffer tests don't have to initialize the settings store
+        #[cfg(any(test, feature = "test-support"))]
         {
-            use settings::SettingsStore;
-
-            if !cx.has_global::<SettingsStore>() {
+            if !cx.has_global::<settings::SettingsStore>() {
                 return Self {
                     algorithm: language_settings::WordDiffAlgorithm::default(),
                     mode: language_settings::WordDiffMode::default(),

@@ -12,7 +12,7 @@ workspace = true
 path = "src/buffer_diff.rs"
 
 [features]
-test-support = []
+test-support = ["settings"]
 
 [dependencies]
 anyhow.workspace = true
@@ -24,6 +24,7 @@ language.workspace = true
 log.workspace = true
 pretty_assertions.workspace = true
 rope.workspace = true
+settings = { workspace = true, optional = true }
 similar = {workspace = true, features = ["unicode"] }
 sum_tree.workspace = true
 text.workspace = true
