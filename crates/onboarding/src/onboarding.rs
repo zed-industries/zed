@@ -420,15 +420,15 @@ pub fn go_to_welcome_page(cx: &mut App) {
                 }
             }
 
-            if let Some(entity_id) = onboarding_id {
-                pane.remove_item(entity_id, false, false, window, cx);
-            }
-
             if let Some(idx) = welcome_page_idx {
                 pane.activate_item(idx, true, true, window, cx);
             } else {
                 let item = Box::new(WelcomePage::new(window, cx));
                 pane.add_item(item, true, true, onboarding_idx, window, cx);
+            }
+
+            if let Some(entity_id) = onboarding_id {
+                pane.remove_item(entity_id, false, false, window, cx);
             }
         });
     });
