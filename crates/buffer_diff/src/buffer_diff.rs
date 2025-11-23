@@ -18,6 +18,8 @@ use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
 
+const WORD_DIFF_TIMEOUT: Duration = Duration::from_millis(30);
+
 #[derive(Copy, Clone)]
 struct WordDiffOptions {
     algorithm: language_settings::WordDiffAlgorithm,
@@ -948,9 +950,11 @@ fn process_patch_hunk(
 
         let text_diffs = match word_diff_options.mode {
             language_settings::WordDiffMode::Character => similar::TextDiff::configure()
+                .timeout(WORD_DIFF_TIMEOUT)
                 .algorithm(algo)
                 .diff_chars(&base_text, &buffer_text),
             language_settings::WordDiffMode::Word => similar::TextDiff::configure()
+                .timeout(WORD_DIFF_TIMEOUT)
                 .algorithm(algo)
                 .diff_unicode_words(&base_text, &buffer_text),
         };

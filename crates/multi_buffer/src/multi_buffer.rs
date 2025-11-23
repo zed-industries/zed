@@ -146,16 +146,6 @@ pub struct MultiBufferDiffHunk {
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
 }
 
-// - make base_word_diffs and buffer_word_diffs be Range<usize>, which are absolute multibuffer offsets
-
-// todo! Do i want this around?
-// impl MultiBufferDiffHunk {
-//     fn anchor_in_deleted_text(&self, offset_from_start_of_deletion: usize, base_text: &BufferSnapshot) -> Anchor {
-//         let diff_base_anchor = self.
-//         self.multi_buffer_range().start.with_diff_base_anchor(diff_base_anchor)
-//     }
-// }
-
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
         let kind = if self.buffer_range.start == self.buffer_range.end {
@@ -3632,7 +3622,7 @@ impl MultiBufferSnapshot {
             };
 
             let word_diffs = (!hunk.base_word_diffs.is_empty()
-                && !hunk.buffer_word_diffs.is_empty())
+                || !hunk.buffer_word_diffs.is_empty())
             .then(|| {
                 let hunk_start_offset =
                     Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
