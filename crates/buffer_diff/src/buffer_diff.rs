@@ -33,7 +33,7 @@ impl WordDiffOptions {
         language: Option<LanguageName>,
         cx: &App,
     ) -> Self {
-        #[cfg(any(test, feature = "test-support"))]
+        #[cfg(test)]
         {
             use settings::SettingsStore;
 

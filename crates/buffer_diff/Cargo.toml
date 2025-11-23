@@ -24,7 +24,6 @@ language.workspace = true
 log.workspace = true
 pretty_assertions.workspace = true
 rope.workspace = true
-settings.workspace = true
 similar = {workspace = true, features = ["unicode"] }
 sum_tree.workspace = true
 text.workspace = true
@@ -35,6 +34,7 @@ ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 zlog.workspace = true
