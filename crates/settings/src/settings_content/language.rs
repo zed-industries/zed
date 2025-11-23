@@ -424,11 +424,22 @@ pub struct LanguageSettingsContent {
     pub word_diff_mode: Option<WordDiffMode>,
     /// Maximum number of lines to display in word diff
     /// //todo!
-    pub word_diff_max_lines: Option<u16>,
+    pub word_diff_max_lines: Option<WordDiffMaxLines>,
 }
 
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default, Eq,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WordDiffAlgorithm {
@@ -439,13 +450,92 @@ pub enum WordDiffAlgorithm {
 }
 
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default, Eq,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WordDiffMode {
     #[default]
     Word,
     Character,
+}
+
+/// Maximum number of lines in a diff section (addon/deletion) before word/character diff highlighting is disabled.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WordDiffMaxLines(pub u8);
+
+impl std::fmt::Display for WordDiffMaxLines {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<u8> for WordDiffMaxLines {
+    fn from(value: u8) -> Self {
+        WordDiffMaxLines(value)
+    }
+}
+
+impl std::str::FromStr for WordDiffMaxLines {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(WordDiffMaxLines(s.parse()?))
+    }
+}
+
+impl Default for WordDiffMaxLines {
+    #[inline]
+    fn default() -> WordDiffMaxLines {
+        WordDiffMaxLines(1)
+    }
+}
+
+impl std::hash::Hash for WordDiffMaxLines {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl Eq for WordDiffMaxLines {}
+
+impl WordDiffMaxLines {
+    pub const MIN: WordDiffMaxLines = WordDiffMaxLines(0);
+    pub const MAX: WordDiffMaxLines = WordDiffMaxLines(15);
+}
+
+impl schemars::JsonSchema for WordDiffMaxLines {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "WordDiffMaxLines".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "integer",
+            "minimum": Self::MIN.0,
+            "maximum": Self::MAX.0,
+            "default": Self::default(),
+            "description": "Maximum number of lines in a diff section before word/character diff highlighting is disabled (0-15)"
+        })
+    }
+}
+
+impl merge_from::MergeFrom for WordDiffMaxLines {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }
 
 /// Controls how whitespace should be displayedin the editor.
