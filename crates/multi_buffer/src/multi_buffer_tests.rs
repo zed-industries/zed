@@ -18,7 +18,7 @@ fn init_logger() {
 }
 
 // Word diff require that language settings have been initialized to work properly
-// since the multi buffer depeneds on that, we need to initialize the settings store in all tests now
+// since the multi buffer depends on that, we need to initialize the settings store in all tests now
 fn init_settings(cx: &mut TestAppContext) {
     let settings_store = cx.update(|cx| SettingsStore::test(cx));
     cx.set_global(settings_store);
