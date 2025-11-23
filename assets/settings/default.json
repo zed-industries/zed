@@ -1193,13 +1193,6 @@
   "tab_size": 4,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
-  // Whether to calculate word diff based on characters or words.
-  //
-  // - "word": Highlights whole words that have changed
-  // - "character": Highlights only the specific characters that have changed
-  //
-  // Default: "word"
-  "word_diff_mode": "word",
   // What algorithm to use for word/character diff highlighting.
   //
   // - "myers": Fast and produces good results for most cases by minimizing edit distance.
@@ -1212,6 +1205,13 @@
   //
   // Default: "myers"
   "word_diff_algorithm": "myers",
+  // Whether to calculate word diff based on characters or words.
+  //
+  // - "word": Highlights whole words that have changed
+  // - "character": Highlights only the specific characters that have changed
+  //
+  // Default: "word"
+  "word_diff_mode": "word",
   // Maximum number of lines in a diff section before word/character diff highlighting is disabled.
   //
   // If either the deleted or added section of a diff exceeds this line count,

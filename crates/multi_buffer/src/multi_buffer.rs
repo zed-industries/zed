@@ -945,10 +945,9 @@ struct MultiBufferCursor<'a, MBD, BD> {
     cached_region: Option<MultiBufferRegion<'a, MBD, BD>>,
 }
 
-#[derive(Clone)]
-/// todo! double check this
-/// Match transformations to an item
+/// Matches transformations to an item
 /// This is essentially a more detailed version of DiffTransform
+#[derive(Clone)]
 struct MultiBufferRegion<'a, MBD, BD> {
     buffer: &'a BufferSnapshot,
     is_main_buffer: bool,
@@ -3193,7 +3192,6 @@ impl MultiBuffer {
                         }
 
                         if !hunk_buffer_range.is_empty() {
-                            // yet another todo! check if we should be overwriting word diffs
                             *end_of_current_insert =
                                 Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
                         }
@@ -3294,7 +3292,6 @@ impl MultiBuffer {
         let mut did_extend = false;
         new_transforms.update_last(
             |last_transform| {
-                // todo! double check this
                 if let DiffTransform::BufferContent {
                     summary,
                     inserted_hunk_info: inserted_hunk_anchor,
@@ -3634,23 +3631,25 @@ impl MultiBufferSnapshot {
                 range.end.row + 1
             };
 
-            // todo! We only need to get this information if word_diffs is not empty
-            // maybe we could also pass up if the hunk is expanded or not?
-            let hunk_start_offset =
-                Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
-                    .to_offset(self);
+            let word_diffs = (!hunk.base_word_diffs.is_empty()
+                && !hunk.buffer_word_diffs.is_empty())
+            .then(|| {
+                let hunk_start_offset =
+                    Anchor::in_buffer(excerpt.id, excerpt.buffer_id, hunk.buffer_range.start)
+                        .to_offset(self);
 
-            let word_diffs = hunk
-                .base_word_diffs
-                .iter()
-                .map(|diff| {
-                    MultiBufferOffset(diff.start) + hunk_start_offset
-                        ..MultiBufferOffset(diff.end) + hunk_start_offset
-                })
-                .chain(hunk.buffer_word_diffs.into_iter().map(|diff| {
-                    Anchor::range_in_buffer(excerpt.id, excerpt.buffer_id, diff).to_offset(self)
-                }))
-                .collect();
+                hunk.base_word_diffs
+                    .iter()
+                    .map(|diff| {
+                        MultiBufferOffset(diff.start) + hunk_start_offset
+                            ..MultiBufferOffset(diff.end) + hunk_start_offset
+                    })
+                    .chain(hunk.buffer_word_diffs.into_iter().map(|diff| {
+                        Anchor::range_in_buffer(excerpt.id, excerpt.buffer_id, diff).to_offset(self)
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default();
 
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),

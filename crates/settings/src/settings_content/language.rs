@@ -412,18 +412,32 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
-
-    /// What algorithm to use for word/character diff highlighting
-    ///
-    // Myers todo!
-    // Patience todo!
-    // Lcs todo!
+    // What algorithm to use for word/character diff highlighting.
+    //
+    // - "myers": Fast and produces good results for most cases by minimizing edit distance.
+    //   This is the most common algorithm, used by Git by default.
+    // - "patience": Matches unique lines first, then processes sections between them.
+    //   Often produces more intuitive diffs for code, especially when lines are reordered,
+    //   but can be slower than Myers.
+    // - "lcs": Longest Common Subsequence algorithm. Simpler and faster, but may produce
+    //   less optimal diffs.
+    //
+    // Default: "myers"
     pub word_diff_algorithm: Option<WordDiffAlgorithm>,
-    /// Whether to calculate word diff based on characters or words
-    /// //todo!
+    // Whether to calculate word diff based on characters or words.
+    //
+    // - "word": Highlights whole words that have changed
+    // - "character": Highlights only the specific characters that have changed
+    //
+    // Default: "word"
     pub word_diff_mode: Option<WordDiffMode>,
-    /// Maximum number of lines to display in word diff
-    /// //todo!
+    // Maximum number of lines in a diff section before word/character diff highlighting is disabled.
+    //
+    // If either the deleted or added section of a diff exceeds this line count,
+    // no word/character diff will be generated for that section. This improves
+    // performance for large diffs.
+    //
+    // Default: 1
     pub word_diff_max_lines: Option<WordDiffMaxLines>,
 }
 

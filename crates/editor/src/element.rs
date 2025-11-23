@@ -5596,7 +5596,6 @@ impl EditorElement {
                 }
 
                 for word_diff in word_diffs {
-                    // todo! word diff should be in multibuffer offset type already
                     let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
                     let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
 

@@ -103,8 +103,9 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
+    // Anchors representing the word diff locations in the active buffer
     pub buffer_word_diffs: Vec<Range<Anchor>>,
-    // todo! these should probably be buffer offsets
+    // Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
 }
 
@@ -113,7 +114,7 @@ pub struct DiffHunk {
 struct InternalDiffHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
-    base_word_diffs: Vec<Range<usize>>, // todo!: maybe opt: smallvec?
+    base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
@@ -614,7 +615,6 @@ impl BufferDiffInner {
                 let (start_point, (start_anchor, start_base, hunk)) = summaries.next()?;
                 let (mut end_point, (mut end_anchor, end_base, _)) = summaries.next()?;
 
-                // todo! Do we need to clone here??
                 let base_word_diffs = hunk.base_word_diffs.clone();
                 let buffer_word_diffs = hunk.buffer_word_diffs.clone();
 
@@ -701,7 +701,6 @@ impl BufferDiffInner {
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let mut cursor = self
             .hunks
-            // todo!: Find out what summaries are being iterated over
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
                 let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
                 let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
@@ -956,13 +955,11 @@ fn process_patch_hunk(
                 .diff_unicode_words(&base_text, &buffer_text),
         };
 
-        // todo! make sure ranges in in these vecs don't overlap and are merged
-        // can do so by popping the last element and merging it with the next element
         let mut base_word_diffs: Vec<Range<usize>> = Vec::default();
         let mut buffer_word_diffs: Vec<Range<usize>> = Vec::default();
 
         // Editor Element expects this to be relative to the start of the deleted hunk
-        let mut base_offset = 0; //todo! check this // bytes
+        let mut base_offset = 0;
         let mut buffer_offset = buffer_range.start.to_offset(buffer);
 
         for change in text_diffs.iter_all_changes() {
