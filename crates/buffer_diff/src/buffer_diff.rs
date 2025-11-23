@@ -88,6 +88,7 @@ struct PendingHunk {
 #[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
+    diff_base_byte_range: Range<usize>,
 }
 
 impl sum_tree::Item for InternalDiffHunk {
@@ -96,6 +97,7 @@ impl sum_tree::Item for InternalDiffHunk {
     fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
+            diff_base_byte_range: self.diff_base_byte_range.clone(),
         }
     }
 }
@@ -106,6 +108,7 @@ impl sum_tree::Item for PendingHunk {
     fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
+            diff_base_byte_range: self.diff_base_byte_range.clone(),
         }
     }
 }
@@ -116,6 +119,7 @@ impl sum_tree::Summary for DiffHunkSummary {
     fn zero(_cx: Self::Context<'_>) -> Self {
         DiffHunkSummary {
             buffer_range: Anchor::MIN..Anchor::MIN,
+            diff_base_byte_range: 0..0,
         }
     }
 
@@ -125,6 +129,15 @@ impl sum_tree::Summary for DiffHunkSummary {
             .start
             .min(&other.buffer_range.start, buffer);
         self.buffer_range.end = *self.buffer_range.end.max(&other.buffer_range.end, buffer);
+
+        self.diff_base_byte_range.start = self
+            .diff_base_byte_range
+            .start
+            .min(other.diff_base_byte_range.start);
+        self.diff_base_byte_range.end = self
+            .diff_base_byte_range
+            .end
+            .max(other.diff_base_byte_range.end);
     }
 }
 
@@ -299,6 +312,15 @@ impl BufferDiffSnapshot {
         let (old_id, old_empty) = (left.remote_id(), left.is_empty());
         let (new_id, new_empty) = (right.remote_id(), right.is_empty());
         new_id == old_id || (new_empty && old_empty)
+    }
+
+    pub fn offset_in_base_text(&self, position: Anchor, buffer: &text::BufferSnapshot) -> usize {
+        // FIXME test
+        let mut cursor = self.inner.hunks.cursor(buffer);
+        cursor.seek(&position, Bias::Right);
+        let overshoot =
+            position.to_offset(buffer) - cursor.start().buffer_range.end.to_offset(buffer);
+        cursor.start().diff_base_byte_range.start + overshoot
     }
 }
 
@@ -941,6 +963,7 @@ impl BufferDiff {
         if self.secondary_diff.is_some() {
             self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
                 buffer_range: Anchor::MIN..Anchor::MIN,
+                diff_base_byte_range: 0..0,
             });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::MIN..Anchor::MAX),
