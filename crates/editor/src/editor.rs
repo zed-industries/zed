@@ -20230,24 +20230,24 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(file_stem) = self
-            .active_excerpt(cx)
-            .and_then(|(_exerpt_id, buffer, _range)| {
-                let file = buffer.read(cx).file()?;
-                file.path().file_stem()
-            })
+        if let Some(file_stem) =
+            self.active_excerpt(cx)
+                .and_then(|(_excerpt_id, buffer, _range)| {
+                    let file = buffer.read(cx).file()?;
+                    file.path().file_stem()
+                })
         {
             cx.write_to_clipboard(ClipboardItem::new_string(file_stem.to_string()));
         }
     }
 
     pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(file_name) = self
-            .active_excerpt(cx)
-            .and_then(|(_exerpt_id, buffer, _range)| {
-                let file = buffer.read(cx).file()?;
-                Some(file.file_name(cx))
-            })
+        if let Some(file_name) =
+            self.active_excerpt(cx)
+                .and_then(|(_excerpt_id, buffer, _range)| {
+                    let file = buffer.read(cx).file()?;
+                    Some(file.file_name(cx))
+                })
         {
             cx.write_to_clipboard(ClipboardItem::new_string(file_name.to_string()));
         }
@@ -20525,7 +20525,7 @@ impl Editor {
             + 1;
         if let Some(file_location) =
             self.active_excerpt(cx)
-                .and_then(|(_exerpt_id, buffer, _range)| {
+                .and_then(|(_excerpt_id, buffer, _range)| {
                     let project = self.project()?.read(cx);
                     let file = buffer.read(cx).file()?;
                     let path = file.path().display(project.path_style(cx));
