@@ -1,11 +1,61 @@
 use gpui::{
     AnyWindowHandle, App, Application, Bounds, Context, CursorStyle, ElementId, Entity,
-    FocusHandle, Focusable, Hsla, KeyBinding, Pixels, Point, SharedString, Window, WindowBounds,
-    WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    FocusHandle, Focusable, Hsla, KeyBinding, Menu, MenuItem, Pixels, Point, SharedString,
+    SystemMenuType, Window, WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px,
+    rgb, size,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-actions!(stickies, [NewNote, CloseNote, ZoomNote, Quit]);
+actions!(
+    stickies,
+    [
+        AlignLeft,
+        AlignRight,
+        ArrangeBy,
+        Bigger,
+        Bold,
+        BringAllToFront,
+        Center,
+        ChangeColorBlue,
+        ChangeColorGray,
+        ChangeColorGreen,
+        ChangeColorPink,
+        ChangeColorPurple,
+        ChangeColorYellow,
+        CloseNote,
+        CollapseWindow,
+        Copy,
+        Cut,
+        Delete,
+        ExportText,
+        Find,
+        FindNext,
+        FindPrevious,
+        FloatOnTop,
+        HideOthers,
+        HideStickies,
+        ImportText,
+        Italic,
+        Justify,
+        MinimizeWindow,
+        NewNote,
+        PageSetup,
+        Paste,
+        Print,
+        Quit,
+        Redo,
+        SelectAll,
+        ShowAll,
+        ShowFonts,
+        Smaller,
+        SpellingAndGrammar,
+        Underline,
+        Undo,
+        WritingDirection,
+        ZoomNote,
+        ZoomWindow,
+    ]
+);
 
 static STICKY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -66,10 +116,10 @@ enum StickyColor {
     #[default]
     Yellow,
     Blue,
-    // Green,
-    // Pink,
-    // Purple,
-    // Gray,
+    Green,
+    Pink,
+    Purple,
+    Gray,
 }
 
 impl StickyColor {
@@ -77,6 +127,10 @@ impl StickyColor {
         match self {
             StickyColor::Yellow => rgb(0xFFF48F).into(),
             StickyColor::Blue => rgb(0x98F6FF).into(),
+            StickyColor::Green => rgb(0x9BFF88).into(),
+            StickyColor::Pink => rgb(0xFFB3E0).into(),
+            StickyColor::Purple => rgb(0xD0B3FF).into(),
+            StickyColor::Gray => rgb(0xD4D4D4).into(),
         }
     }
 
@@ -84,6 +138,10 @@ impl StickyColor {
         match self {
             StickyColor::Yellow => rgb(0xFFE900).into(),
             StickyColor::Blue => rgb(0x5DF3FF).into(),
+            StickyColor::Green => rgb(0x6FFF52).into(),
+            StickyColor::Pink => rgb(0xFF8FD0).into(),
+            StickyColor::Purple => rgb(0xB88FFF).into(),
+            StickyColor::Gray => rgb(0xB0B0B0).into(),
         }
     }
 
@@ -93,6 +151,10 @@ impl StickyColor {
         match self {
             StickyColor::Yellow => 1,
             StickyColor::Blue => 2,
+            StickyColor::Green => 3,
+            StickyColor::Pink => 4,
+            StickyColor::Purple => 5,
+            StickyColor::Gray => 6,
         }
     }
 }
@@ -103,7 +165,7 @@ struct Sticky {
     bounds: Bounds<Pixels>,
     color: StickyColor,
     collapsed: bool,
-    zoomed: bool,
+
     content: SharedString,
     window_handle: Option<AnyWindowHandle>,
     // text_area: Entity<TextArea>,
@@ -122,7 +184,6 @@ impl Sticky {
             bounds,
             color,
             collapsed: false,
-            zoomed: false,
             content: SharedString::new(""),
             window_handle: None,
         }
@@ -142,8 +203,13 @@ impl Sticky {
         window.remove_window();
     }
 
-    fn zoom(&mut self, _: &ZoomNote, window: &mut Window, _cx: &mut Context<Self>) {
+    fn zoom(&mut self, _: &ZoomWindow, window: &mut Window, _cx: &mut Context<Self>) {
         window.zoom_window();
+    }
+
+    fn change_color(&mut self, color: StickyColor, _window: &mut Window, cx: &mut Context<Self>) {
+        self.color = color;
+        cx.notify();
     }
 
     fn new_note(&mut self, _: &NewNote, window: &mut Window, cx: &mut Context<Self>) {
@@ -214,6 +280,25 @@ impl Render for Sticky {
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::close_note))
             .on_action(cx.listener(Self::new_note))
+            .on_action(cx.listener(Self::zoom))
+            .on_action(cx.listener(|this, _: &ChangeColorYellow, window, cx| {
+                this.change_color(StickyColor::Yellow, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ChangeColorBlue, window, cx| {
+                this.change_color(StickyColor::Blue, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ChangeColorGreen, window, cx| {
+                this.change_color(StickyColor::Green, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ChangeColorPink, window, cx| {
+                this.change_color(StickyColor::Pink, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ChangeColorPurple, window, cx| {
+                this.change_color(StickyColor::Purple, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ChangeColorGray, window, cx| {
+                this.change_color(StickyColor::Gray, window, cx)
+            }))
             .relative()
             .bg(self.color.bg())
             .border_1()
@@ -279,6 +364,93 @@ impl RenderOnce for Titlebar {
     }
 }
 
+fn setup_menus(cx: &mut App) {
+    cx.set_menus(vec![
+        Menu {
+            name: "File".into(),
+            items: vec![
+                MenuItem::action("New Note", NewNote),
+                MenuItem::action("Close", CloseNote),
+                MenuItem::separator(),
+                MenuItem::action("Import Text...", ImportText),
+                MenuItem::action("Export Text...", ExportText),
+                MenuItem::separator(),
+                MenuItem::action("Page Setup...", PageSetup),
+                MenuItem::action("Print...", Print),
+            ],
+        },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::action("Undo", Undo),
+                MenuItem::action("Redo", Redo),
+                MenuItem::separator(),
+                MenuItem::action("Cut", Cut),
+                MenuItem::action("Copy", Copy),
+                MenuItem::action("Paste", Paste),
+                MenuItem::action("Delete", Delete),
+                MenuItem::action("Select All", SelectAll),
+                MenuItem::separator(),
+                MenuItem::action("Find", Find),
+                MenuItem::action("Find Next", FindNext),
+                MenuItem::action("Find Previous", FindPrevious),
+                MenuItem::separator(),
+                MenuItem::action("Spelling and Grammar", SpellingAndGrammar),
+            ],
+        },
+        Menu {
+            name: "Font".into(),
+            items: vec![
+                MenuItem::action("Show Fonts", ShowFonts),
+                MenuItem::separator(),
+                MenuItem::action("Bold", Bold),
+                MenuItem::action("Italic", Italic),
+                MenuItem::action("Underline", Underline),
+                MenuItem::separator(),
+                MenuItem::action("Bigger", Bigger),
+                MenuItem::action("Smaller", Smaller),
+                MenuItem::separator(),
+                MenuItem::action("Align Left", AlignLeft),
+                MenuItem::action("Center", Center),
+                MenuItem::action("Justify", Justify),
+                MenuItem::action("Align Right", AlignRight),
+                MenuItem::separator(),
+                MenuItem::action("Writing Direction", WritingDirection),
+            ],
+        },
+        Menu {
+            name: "Color".into(),
+            items: vec![
+                MenuItem::action("Yellow", ChangeColorYellow),
+                MenuItem::action("Blue", ChangeColorBlue),
+                MenuItem::action("Green", ChangeColorGreen),
+                MenuItem::action("Pink", ChangeColorPink),
+                MenuItem::action("Purple", ChangeColorPurple),
+                MenuItem::action("Gray", ChangeColorGray),
+            ],
+        },
+        Menu {
+            name: "Window".into(),
+            items: vec![
+                MenuItem::action("Minimize", MinimizeWindow),
+                MenuItem::action("Zoom", ZoomWindow),
+                MenuItem::action("Float on Top", FloatOnTop),
+                MenuItem::separator(),
+                MenuItem::action("Collapse", CollapseWindow),
+                MenuItem::action("Arrange By", ArrangeBy),
+                MenuItem::separator(),
+                MenuItem::action("Bring All to Front", BringAllToFront),
+                MenuItem::separator(),
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Hide Stickies", HideStickies),
+                MenuItem::action("Hide Others", HideOthers),
+                MenuItem::action("Show All", ShowAll),
+            ],
+        },
+    ]);
+}
+
 fn main() {
     Application::new().run(|cx: &mut App| {
         let offset = px(24.);
@@ -335,11 +507,38 @@ fn main() {
         .unwrap();
 
         cx.activate(true);
+
+        // Set up menus
+        setup_menus(cx);
+
+        // Register global action handlers
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &BringAllToFront, cx| {
+            for window in cx.windows() {
+                window
+                    .update(cx, |_, window, _| window.activate_window())
+                    .ok();
+            }
+        });
+
+        // Register key bindings
         cx.bind_keys([
             KeyBinding::new("cmd-w", CloseNote, None),
             KeyBinding::new("cmd-n", NewNote, None),
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-z", Undo, None),
+            KeyBinding::new("cmd-shift-z", Redo, None),
+            KeyBinding::new("cmd-x", Cut, None),
+            KeyBinding::new("cmd-c", Copy, None),
+            KeyBinding::new("cmd-v", Paste, None),
+            KeyBinding::new("cmd-a", SelectAll, None),
+            KeyBinding::new("cmd-1", ChangeColorYellow, None),
+            KeyBinding::new("cmd-2", ChangeColorBlue, None),
+            KeyBinding::new("cmd-3", ChangeColorGreen, None),
+            KeyBinding::new("cmd-4", ChangeColorPink, None),
+            KeyBinding::new("cmd-5", ChangeColorPurple, None),
+            KeyBinding::new("cmd-6", ChangeColorGray, None),
+            KeyBinding::new("cmd-m", MinimizeWindow, None),
         ]);
     });
 }
