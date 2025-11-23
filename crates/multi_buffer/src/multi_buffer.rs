@@ -3621,8 +3621,8 @@ impl MultiBufferSnapshot {
                 hunk.base_word_diffs
                     .iter()
                     .map(|diff| {
-                        MultiBufferOffset(diff.start) + hunk_start_offset
-                            ..MultiBufferOffset(diff.end) + hunk_start_offset
+                        hunk_start_offset + diff.start
+                            ..hunk_start_offset + diff.end
                     })
                     .chain(hunk.buffer_word_diffs.into_iter().map(|diff| {
                         Anchor::range_in_buffer(excerpt.id, excerpt.buffer_id, diff).to_offset(self)
