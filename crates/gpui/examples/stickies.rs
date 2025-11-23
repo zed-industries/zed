@@ -1,11 +1,11 @@
 use gpui::{
-    AnyWindowHandle, App, Application, Bounds, Context, ElementId, Entity, FocusHandle, Focusable,
-    Hsla, KeyBinding, Pixels, Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions,
-    actions, div, prelude::*, px, rgb, size,
+    AnyWindowHandle, App, Application, Bounds, Context, CursorStyle, ElementId, Entity,
+    FocusHandle, Focusable, Hsla, KeyBinding, Pixels, Point, SharedString, Window, WindowBounds,
+    WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-actions!(stickies, [NewNote, CloseNote, ZoomNote]);
+actions!(stickies, [NewNote, CloseNote, ZoomNote, Quit]);
 
 static STICKY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -209,6 +209,11 @@ impl Render for Sticky {
 
         div()
             .id(self.id.clone())
+            .key_context("Note")
+            .track_focus(&self.focus_handle(cx))
+            .cursor(CursorStyle::IBeam)
+            .on_action(cx.listener(Self::close_note))
+            .on_action(cx.listener(Self::new_note))
             .relative()
             .bg(self.color.bg())
             .border_1()
@@ -226,8 +231,6 @@ impl Render for Sticky {
                 window.focus(&focus_handle);
                 cx.notify();
             }))
-            .on_action(cx.listener(Self::close_note))
-            .on_action(cx.listener(Self::new_note))
             .child(Titlebar::new(entity, window_active))
             .child(
                 div()
@@ -278,12 +281,6 @@ impl RenderOnce for Titlebar {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        // Register key bindings
-        cx.bind_keys([
-            KeyBinding::new("cmd-w", CloseNote, None),
-            KeyBinding::new("cmd-n", NewNote, None),
-        ]);
-
         let offset = px(24.);
 
         let first_screen = cx.displays().first().unwrap().clone(); // if you don't have at least one display what are you doing here?
@@ -338,5 +335,11 @@ fn main() {
         .unwrap();
 
         cx.activate(true);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.bind_keys([
+            KeyBinding::new("cmd-w", CloseNote, None),
+            KeyBinding::new("cmd-n", NewNote, None),
+            KeyBinding::new("cmd-q", Quit, None),
+        ]);
     });
 }
