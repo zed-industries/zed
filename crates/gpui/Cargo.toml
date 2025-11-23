@@ -291,6 +291,10 @@ name = "pattern"
 path = "examples/pattern.rs"
 
 [[example]]
+name = "stickies"
+path = "examples/stickies.rs"
+
+[[example]]
 name = "counter"
 path = "examples/counter.rs"
 

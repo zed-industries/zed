@@ -1,0 +1,230 @@
+use gpui::{
+    App, Application, Bounds, Context, ElementId, Entity, Hsla, KeyBinding, Pixels, Point,
+    PromptButton, PromptLevel, SharedString, Size, Timer, Window, WindowBounds, WindowKind,
+    WindowOptions, actions, div, hsla, prelude::*, px, rems, rgb, size,
+};
+use usvg::Text;
+
+// Window setup
+// - [ ] open two stickies, one blue, one yellow
+// - [ ] blue behind, yellow in front
+// - [ ] black border around window
+
+// Titlebar
+// - [ ] only focused window shows titlebar
+// - [ ] titlebar is darker version of content area color
+// - [ ] double-clicking the titlebar minimizes it (and shows a tiny snippet of the content)
+// - [ ] (left) - square closes app, (right) - triangle zooms, - minus icon collapses/expands sticky
+
+// Content area
+// - [ ] content area is themed by a color, one of 6 options: blue, green, yellow, pink, purple, gray
+
+// Menubar
+// - [ ] has a menubar with:
+//   - [ ] File: New, Close
+//   - [ ] Edit: Undo, Redo, Cut, Copy, Paste
+//   - [ ] Font
+//   - [ ] Color: Blue, Green, Yellow, Pink, Purple, Gray
+//   - [ ] Window
+
+pub const TITLEBAR_HEIGHT: f32 = 12.;
+
+pub const DEFAULT_STICKY_SIZE: (f32, f32) = (354., 262.);
+
+pub const YELLOW_STICKY_CONTENT: &str = r#"Make a note of it!
+
+Stickies lets you keep notes (like these) on your desktop. Use a Stickies note to jot down reminders, lists, or other information. You can also use notes to store frequently used text or graphics.
+
+• To close this note, click the close button.
+
+• To collapse this note, double click the title bar.
+
+Your current notes appear when you open Stickies.
+"#;
+
+pub const BLUE_STICKY_CONTENT: &str = r#"It’s easy to customize your notes.
+
+Make your notes stand out and get noticed.
+
+• Format text using different fonts and font sizes
+• Add emphasis with bold and italic text styles or color.
+• Include graphics ￼ .
+
+Stickies has lots of other great features, including a spell checker, import and export features, and other ways to arrange and customize your notes. Plus, you’ll find a “Make New Sticky Note” service in many applications.
+
+Look in Help to find out more about using Stickies.
+"#;
+
+struct TextArea {}
+
+#[derive(Clone, Default, Debug)]
+enum StickyColor {
+    #[default]
+    Yellow,
+    Blue,
+    Green,
+    Pink,
+    Purple,
+    Gray,
+}
+
+impl StickyColor {
+    fn to_hsla(&self) -> Hsla {
+        match self {
+            StickyColor::Yellow => rgb(0xFFF48F).into(),
+            StickyColor::Blue => rgb(0x98F6FF).into(),
+            StickyColor::Green => hsla(120.0, 0.8, 0.7, 1.0),
+            StickyColor::Pink => hsla(330.0, 0.8, 0.7, 1.0),
+            StickyColor::Purple => hsla(270.0, 0.8, 0.7, 1.0),
+            StickyColor::Gray => hsla(0.0, 0.0, 0.7, 1.0),
+        }
+    }
+
+    /// the cmd+number modifier for this color
+    /// used to bind the color changing shortcuts
+    fn cmd_number(&self) -> u8 {
+        match self {
+            StickyColor::Yellow => 1,
+            StickyColor::Blue => 2,
+            StickyColor::Green => 3,
+            StickyColor::Pink => 4,
+            StickyColor::Purple => 5,
+            StickyColor::Gray => 6,
+        }
+    }
+}
+
+struct Sticky {
+    id: ElementId,
+    bounds: Bounds<Pixels>,
+    color: StickyColor,
+    collapsed: bool,
+    zoomed: bool,
+    content: SharedString,
+    // text_area: Entity<TextArea>,
+}
+
+impl Sticky {
+    pub fn new(id: impl Into<ElementId>, bounds: Bounds<Pixels>, color: StickyColor) -> Self {
+        Self {
+            id: id.into(),
+            bounds,
+            color,
+            collapsed: false,
+            zoomed: false,
+            content: SharedString::new(""), // text_area: Entity::new(),
+        }
+    }
+
+    pub fn content(mut self, content: impl Into<SharedString>) -> Self {
+        self.content = content.into();
+        self
+    }
+}
+
+impl Render for Sticky {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let entity = cx.entity();
+        div()
+            .id(self.id.clone())
+            .relative()
+            .bg(self.color.to_hsla())
+            .border_1()
+            .border_color(gpui::black())
+            .w(self.bounds.size.width)
+            .h(self.bounds.size.height)
+            .flex_col()
+            .text_size(px(12.))
+            .line_height(px(14.))
+            .pt(px(TITLEBAR_HEIGHT)) // reserve space for absolutely positioned titlebar
+            .child(Titlebar::new(entity, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .py(px(8.))
+                    .px(px(14.))
+                    .child(self.content.clone()),
+            )
+    }
+}
+
+#[derive(IntoElement)]
+struct Titlebar {
+    sticky: Entity<Sticky>,
+}
+
+impl Titlebar {
+    pub fn new(sticky: Entity<Sticky>, _cx: &mut Context<Sticky>) -> Self {
+        Self { sticky }
+    }
+}
+
+impl RenderOnce for Titlebar {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let sticky_state = self.sticky.read(cx);
+        let color = sticky_state.color.clone();
+        let color = color.to_hsla().blend(gpui::black().opacity(0.2));
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .h(px(12.))
+            // todo: probably needs to get the width from `sticky_state`
+            .w_full()
+            .bg(color)
+    }
+}
+
+fn main() {
+    Application::new().run(|cx: &mut App| {
+        let offset = px(24.);
+
+        let first_screen = cx.displays().first().unwrap().clone(); // if you don't have at least one display what are you doing here?
+        let screen_bounds = first_screen.bounds();
+
+        let window_options = |bounds: Bounds<Pixels>, focus: bool| WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            display_id: Some(first_screen.id()),
+            titlebar: None,
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            focus,
+            show: true,
+            kind: WindowKind::Normal,
+            ..Default::default()
+        };
+
+        let blue_bounds = Bounds {
+            origin: Point {
+                x: screen_bounds.origin.x + px(16.),
+                y: screen_bounds.bottom() - px(DEFAULT_STICKY_SIZE.1) - px(16.),
+            },
+            size: size(px(DEFAULT_STICKY_SIZE.0), px(DEFAULT_STICKY_SIZE.1)),
+        };
+
+        cx.open_window(window_options(blue_bounds, false), |_, cx| {
+            cx.new(|_| {
+                Sticky::new("sticky-1", blue_bounds, StickyColor::Blue)
+                    .content(SharedString::new_static(BLUE_STICKY_CONTENT))
+            })
+        })
+        .unwrap();
+
+        let yellow_bounds = Bounds {
+            origin: Point {
+                x: blue_bounds.origin.x + offset,
+                y: blue_bounds.origin.y - offset,
+            },
+            size: blue_bounds.size,
+        };
+        cx.open_window(window_options(yellow_bounds, true), |_, cx| {
+            cx.new(|_| {
+                Sticky::new("sticky-2", yellow_bounds, StickyColor::Yellow)
+                    .content(SharedString::new_static(YELLOW_STICKY_CONTENT))
+            })
+        })
+        .unwrap();
+
+        cx.activate(true);
+    });
+}
