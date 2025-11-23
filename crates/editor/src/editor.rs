@@ -12,7 +12,7 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-mod blink_manager;
+pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
@@ -1888,7 +1888,11 @@ impl Editor {
         let selections = SelectionsCollection::new();
 
         let blink_manager = cx.new(|cx| {
-            let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
+            let mut blink_manager = BlinkManager::new(
+                CURSOR_BLINK_INTERVAL,
+                |cx| EditorSettings::get_global(cx).cursor_blink,
+                cx,
+            );
             if is_minimap {
                 blink_manager.disable(cx);
             }
