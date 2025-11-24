@@ -140,6 +140,7 @@ const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
 const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
+static NEXT_PROMPT_REQUEST_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -13194,7 +13195,7 @@ struct LspBufferSnapshot {
 /// A prompt requested by LSP server.
 #[derive(Clone, Debug)]
 pub struct LanguageServerPromptRequest {
-    pub id: u64,
+    pub id: usize,
     pub level: PromptLevel,
     pub message: String,
     pub actions: Vec<MessageActionItem>,
@@ -13210,7 +13211,7 @@ impl LanguageServerPromptRequest {
         lsp_name: String,
         response_channel: Sender<MessageActionItem>,
     ) -> Self {
-        let id = rand::random::<u64>();
+        let id = NEXT_PROMPT_REQUEST_ID.fetch_add(1, atomic::Ordering::AcqRel);
         LanguageServerPromptRequest {
             id,
             level,
