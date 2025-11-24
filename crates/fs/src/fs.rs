@@ -1853,6 +1853,20 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// Set renamed paths for a git repository.
+    /// Maps new_path -> old_path for renamed files.
+    pub fn set_renamed_paths_for_repo(&self, dot_git: &Path, renames: &[(&str, &str)]) {
+        self.with_git_state(dot_git, true, |state| {
+            state.renamed_paths.clear();
+            for (new_path, old_path) in renames {
+                state
+                    .renamed_paths
+                    .insert(repo_path(new_path), repo_path(old_path));
+            }
+        })
+        .unwrap();
+    }
+
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {

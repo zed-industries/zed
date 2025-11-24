@@ -93,8 +93,13 @@ pub struct GitStore {
     worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
-    loading_diffs:
-        HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
+    loading_diffs: HashMap<
+        (BufferId, DiffKind),
+        (
+            Option<RepoPath>,
+            Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>,
+        ),
+    >,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: Vec<Subscription>,
@@ -109,6 +114,7 @@ struct SharedDiffs {
 struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    uncommitted_diff_base_path: Option<RepoPath>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
     reparse_conflict_markers_task: Option<Task<Result<()>>>,
@@ -622,19 +628,23 @@ impl GitStore {
                 let staged_text = repo.update(cx, |repo, cx| {
                     repo.load_staged_text(buffer_id, repo_path, cx)
                 });
-                cx.spawn(async move |this, cx| {
-                    Self::open_diff_internal(
-                        this,
-                        DiffKind::Unstaged,
-                        staged_text.await.map(DiffBasesChange::SetIndex),
-                        buffer,
-                        cx,
-                    )
-                    .await
-                    .map_err(Arc::new)
-                })
-                .shared()
+                let task = cx
+                    .spawn(async move |this, cx| {
+                        Self::open_diff_internal(
+                            this,
+                            DiffKind::Unstaged,
+                            staged_text.await.map(DiffBasesChange::SetIndex),
+                            buffer,
+                            None,
+                            cx,
+                        )
+                        .await
+                        .map_err(Arc::new)
+                    })
+                    .shared();
+                (None, task)
             })
+            .1
             .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
@@ -693,46 +703,92 @@ impl GitStore {
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
 
-        if let Some(diff_state) = self.diffs.get(&buffer_id)
-            && let Some(uncommitted_diff) = diff_state
-                .read(cx)
-                .uncommitted_diff
-                .as_ref()
-                .and_then(|weak| weak.upgrade())
-        {
-            if let Some(task) =
-                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
-            {
-                return cx.background_executor().spawn(async move {
-                    task.await;
-                    Ok(uncommitted_diff)
-                });
-            }
-            return Task::ready(Ok(uncommitted_diff));
-        }
-
         let Some((repo, repo_path)) =
             self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
         else {
             return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
 
+        let status_entry = repo.read(cx).snapshot.status_for_path(&repo_path);
+        let diff_base_path = status_entry.as_ref().and_then(|s| s.old_path.clone());
+
+        // Check if we have a cached diff computed with the same diff_base_path
+        if let Some(diff_state) = self.diffs.get(&buffer_id) {
+            let cached_base_path = diff_state.read(cx).uncommitted_diff_base_path.clone();
+            let cache_valid = cached_base_path == diff_base_path;
+
+            if cache_valid {
+                if let Some(uncommitted_diff) = diff_state
+                    .read(cx)
+                    .uncommitted_diff
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+                {
+                    if let Some(task) =
+                        diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+                    {
+                        return cx.background_executor().spawn(async move {
+                            task.await;
+                            Ok(uncommitted_diff)
+                        });
+                    }
+                    return Task::ready(Ok(uncommitted_diff));
+                }
+            } else {
+                // diff_base_path changed (file renamed or un-renamed), invalidate cache
+                diff_state.update(cx, |state, _| {
+                    state.uncommitted_diff = None;
+                    state.uncommitted_diff_base_path = None;
+                });
+                // Only remove loading task if it has a different diff_base_path
+                if let Some((existing_path, _)) =
+                    self.loading_diffs.get(&(buffer_id, DiffKind::Uncommitted))
+                {
+                    if existing_path != &diff_base_path {
+                        self.loading_diffs
+                            .remove(&(buffer_id, DiffKind::Uncommitted));
+                    }
+                }
+            }
+        } else {
+            // No cached diff state, check if there's an existing loading task with different path
+            if let Some((existing_path, _)) =
+                self.loading_diffs.get(&(buffer_id, DiffKind::Uncommitted))
+            {
+                if existing_path != &diff_base_path {
+                    self.loading_diffs
+                        .remove(&(buffer_id, DiffKind::Uncommitted));
+                }
+            }
+        }
+
         let task = self
             .loading_diffs
             .entry((buffer_id, DiffKind::Uncommitted))
             .or_insert_with(|| {
                 let changes = repo.update(cx, |repo, cx| {
-                    repo.load_committed_text(buffer_id, repo_path, cx)
+                    repo.load_committed_text(buffer_id, repo_path, diff_base_path.clone(), cx)
                 });
 
+                let diff_base_path_for_task = diff_base_path.clone();
                 // todo(lw): hot foreground spawn
-                cx.spawn(async move |this, cx| {
-                    Self::open_diff_internal(this, DiffKind::Uncommitted, changes.await, buffer, cx)
+                let task = cx
+                    .spawn(async move |this, cx| {
+                        Self::open_diff_internal(
+                            this,
+                            DiffKind::Uncommitted,
+                            changes.await,
+                            buffer,
+                            diff_base_path_for_task,
+                            cx,
+                        )
                         .await
                         .map_err(Arc::new)
-                })
-                .shared()
+                    })
+                    .shared();
+                (diff_base_path, task)
             })
+            .1
             .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
@@ -743,6 +799,7 @@ impl GitStore {
         kind: DiffKind,
         texts: Result<DiffBasesChange>,
         buffer_entity: Entity<Buffer>,
+        diff_base_path: Option<RepoPath>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<BufferDiff>> {
         let diff_bases_change = match texts {
@@ -790,7 +847,8 @@ impl GitStore {
                         };
 
                         diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
-                        diff_state.uncommitted_diff = Some(diff.downgrade())
+                        diff_state.uncommitted_diff = Some(diff.downgrade());
+                        diff_state.uncommitted_diff_base_path = diff_base_path.clone();
                     }
                 }
 
@@ -1415,12 +1473,22 @@ impl GitStore {
                 {
                     let buffer = buffer.clone();
                     let diff_state = diff_state.clone();
+                    let diff_base_path = repo
+                        .read(cx)
+                        .snapshot
+                        .status_for_path(&repo_path)
+                        .and_then(|status| status.old_path);
 
                     cx.spawn(async move |_git_store, cx| {
                         async {
                             let diff_bases_change = repo
                                 .update(cx, |repo, cx| {
-                                    repo.load_committed_text(buffer_id, repo_path, cx)
+                                    repo.load_committed_text(
+                                        buffer_id,
+                                        repo_path,
+                                        diff_base_path,
+                                        cx,
+                                    )
                                 })?
                                 .await?;
 
@@ -2712,6 +2780,7 @@ impl BufferGitState {
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
+            uncommitted_diff_base_path: Default::default(),
             recalculate_diff_task: Default::default(),
             language: Default::default(),
             language_registry: Default::default(),
@@ -3439,6 +3508,13 @@ impl Repository {
                                     "start reload diff bases for repo path {}",
                                     repo_path.as_unix_str()
                                 );
+                                // Get the current old_path from repository snapshot
+                                // (not from BufferGitState which might be stale)
+                                let current_old_path = this
+                                    .snapshot
+                                    .status_for_path(&repo_path)
+                                    .and_then(|s| s.old_path);
+
                                 diff_state.update(cx, |diff_state, _| {
                                     let has_unstaged_diff = diff_state
                                         .unstaged_diff
@@ -3454,6 +3530,7 @@ impl Repository {
                                         repo_path,
                                         has_unstaged_diff.then(|| diff_state.index_text.clone()),
                                         has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                                        current_old_path.clone(),
                                     ))
                                 })
                             })
@@ -3464,8 +3541,13 @@ impl Repository {
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
                         let mut changes = Vec::new();
-                        for (buffer, repo_path, current_index_text, current_head_text) in
-                            &repo_diff_state_updates
+                        for (
+                            buffer,
+                            repo_path,
+                            current_index_text,
+                            current_head_text,
+                            current_old_path,
+                        ) in &repo_diff_state_updates
                         {
                             let index_text = if current_index_text.is_some() {
                                 backend.load_index_text(repo_path.clone()).await
@@ -3473,7 +3555,11 @@ impl Repository {
                                 None
                             };
                             let head_text = if current_head_text.is_some() {
-                                backend.load_committed_text(repo_path.clone()).await
+                                // For renamed files, load HEAD content from old path
+                                let load_path = current_old_path
+                                    .clone()
+                                    .unwrap_or_else(|| repo_path.clone());
+                                backend.load_committed_text(load_path).await
                             } else {
                                 None
                             };
@@ -5254,12 +5340,14 @@ impl Repository {
         &mut self,
         buffer_id: BufferId,
         repo_path: RepoPath,
+        diff_base_path: Option<RepoPath>,
         cx: &App,
     ) -> Task<Result<DiffBasesChange>> {
         let rx = self.send_job(None, move |state, _| async move {
             match state {
                 RepositoryState::Local { backend, .. } => {
-                    let committed_text = backend.load_committed_text(repo_path.clone()).await;
+                    let head_path = diff_base_path.as_ref().unwrap_or(&repo_path);
+                    let committed_text = backend.load_committed_text(head_path.clone()).await;
                     let staged_text = backend.load_index_text(repo_path).await;
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
@@ -5353,8 +5441,11 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
+                            let old_path = statuses.renamed_paths.get(repo_path).cloned();
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                                && cursor.item().is_some_and(|entry| entry.status == *status)
+                                && cursor
+                                    .item()
+                                    .is_some_and(|e| e.status == *status && e.old_path == old_path)
                             {
                                 continue;
                             }
@@ -5362,7 +5453,7 @@ impl Repository {
                             changed_path_statuses.push(Edit::Insert(StatusEntry {
                                 repo_path: repo_path.clone(),
                                 status: *status,
-                                old_path: statuses.renamed_paths.get(repo_path).cloned(),
+                                old_path,
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
@@ -5730,14 +5821,25 @@ async fn compute_snapshot(
         .await?;
     let stash_entries = backend.stash_entries().await?;
     let statuses_by_path = SumTree::from_iter(
-        statuses
-            .entries
-            .iter()
-            .map(|(repo_path, status)| StatusEntry {
+        statuses.entries.iter().map(|(repo_path, status)| {
+            let old_path = statuses.renamed_paths.get(repo_path).cloned().or_else(|| {
+                // Only preserve old_path from previous snapshot if the current status
+                // still indicates this is a renamed file. Without this check, stale
+                // old_path values persist after unstaging renamed files.
+                if status.is_renamed() {
+                    prev_snapshot
+                        .status_for_path(repo_path)
+                        .and_then(|prev| prev.old_path)
+                } else {
+                    None
+                }
+            });
+            StatusEntry {
                 repo_path: repo_path.clone(),
                 status: *status,
-                old_path: statuses.renamed_paths.get(repo_path).cloned(),
-            }),
+                old_path,
+            }
+        }),
         (),
     );
     let (merge_details, merge_heads_changed) =

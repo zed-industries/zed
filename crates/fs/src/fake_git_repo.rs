@@ -52,6 +52,8 @@ pub struct FakeGitRepositoryState {
     pub branches: HashSet<String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
+    /// Maps new_path -> old_path for renamed files
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
 }
 
 impl FakeGitRepositoryState {
@@ -68,6 +70,7 @@ impl FakeGitRepositoryState {
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
+            renamed_paths: Default::default(),
         }
     }
 }
@@ -359,7 +362,7 @@ impl GitRepository for FakeGitRepository {
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             anyhow::Ok(GitStatus {
                 entries: entries.into(),
-                renamed_paths: HashMap::default(),
+                renamed_paths: state.renamed_paths.clone(),
             })
         });
         Task::ready(match result {

@@ -168,6 +168,17 @@ impl FileStatus {
             || self.is_deleted()
             || self.is_untracked()
             || self.is_conflicted()
+            || self.is_renamed()
+    }
+
+    pub fn is_renamed(self) -> bool {
+        match self {
+            FileStatus::Tracked(tracked) => matches!(
+                (tracked.index_status, tracked.worktree_status),
+                (StatusCode::Renamed, _) | (_, StatusCode::Renamed)
+            ),
+            _ => false,
+        }
     }
 
     pub fn is_modified(self) -> bool {
