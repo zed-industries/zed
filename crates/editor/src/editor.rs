@@ -22063,11 +22063,10 @@ impl Editor {
             });
 
             if let Some(position_map) = self.last_position_map.clone() {
-                let points = window.mouse_position();
                 EditorElement::mouse_moved(
                     self,
                     &MouseMoveEvent {
-                        position: points,
+                        position: window.mouse_position(),
                         pressed_button: None,
                         modifiers: window.modifiers(),
                     },
