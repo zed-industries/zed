@@ -54,12 +54,14 @@ pub struct TextArea {
 
 #[derive(Clone, Debug)]
 struct LineLayout {
-    // The range of text in the content string that this line represents
+    // The range of text in the content string that this logical line represents
     text_range: Range<usize>,
-    // The wrapped line for rendering
+    // The wrapped line for rendering (may contain multiple visual lines)
     wrapped_line: Option<WrappedLine>,
-    // Y position of this line
+    // Y position of the first visual line
     y_offset: Pixels,
+    // Number of visual lines this logical line occupies (1 if not wrapped)
+    visual_line_count: usize,
 }
 
 impl TextArea {
@@ -252,59 +254,108 @@ impl TextArea {
     }
 
     fn find_line_start(&self, offset: usize) -> usize {
-        self.content[..offset]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0)
+        // Find the start of the current logical line (after a newline)
+        let bytes = self.content.as_bytes();
+        for i in (0..offset.min(bytes.len())).rev() {
+            if bytes[i] == b'\n' {
+                return i + 1;
+            }
+        }
+        0
     }
 
     fn find_line_end(&self, offset: usize) -> usize {
-        self.content[offset..]
-            .find('\n')
-            .map(|i| offset + i)
-            .unwrap_or(self.content.len())
+        // Find the end of the current logical line (before a newline)
+        let bytes = self.content.as_bytes();
+        for i in offset..bytes.len() {
+            if bytes[i] == b'\n' {
+                return i;
+            }
+        }
+        self.content.len()
     }
 
     fn move_vertically(&self, offset: usize, direction: i32) -> Option<usize> {
-        let (line_idx, x_pixels) = self.find_line_and_x_offset(offset);
-        let target_line_idx = (line_idx as i32 + direction).max(0) as usize;
+        // Find current visual line and x position
+        let (visual_line_idx, x_pixels) = self.find_visual_line_and_x_offset(offset);
 
-        if target_line_idx >= self.line_layouts.len() {
-            return None;
+        // Calculate target visual line
+        let target_visual_line_idx = (visual_line_idx as i32 + direction).max(0) as usize;
+
+        // Find which LineLayout contains this visual line
+        let mut current_visual_line = 0;
+        for layout in &self.line_layouts {
+            let visual_lines_in_layout = layout.visual_line_count;
+
+            if target_visual_line_idx < current_visual_line + visual_lines_in_layout {
+                // Target is within this layout
+                let visual_line_within_layout = target_visual_line_idx - current_visual_line;
+
+                if layout.text_range.is_empty() {
+                    return Some(layout.text_range.start);
+                }
+
+                if let Some(wrapped) = &layout.wrapped_line {
+                    // Calculate y position within the wrapped line (which visual line we're on)
+                    let y_within_wrapped =
+                        self.style.line_height * visual_line_within_layout as f32;
+                    let point = point(px(x_pixels), y_within_wrapped);
+
+                    let closest_idx = wrapped
+                        .closest_index_for_position(point, self.style.line_height)
+                        .unwrap_or_else(|closest| closest);
+
+                    return Some(layout.text_range.start + closest_idx.min(wrapped.text.len()));
+                }
+
+                return Some(layout.text_range.start);
+            }
+
+            current_visual_line += visual_lines_in_layout;
         }
 
-        let target_line = &self.line_layouts[target_line_idx];
-
-        // Use the wrapped line if available to find the closest position
-        if let Some(wrapped) = &target_line.wrapped_line {
-            // Create a point at the x position and use closest_index_for_position
-            let point = point(px(x_pixels), px(0.));
-            let closest_idx = wrapped
-                .closest_index_for_position(point, self.style.line_height)
-                .unwrap_or_else(|closest| closest);
-            return Some(target_line.text_range.start + closest_idx);
+        // Past the end
+        if direction > 0 {
+            Some(self.content.len())
+        } else {
+            None
         }
-
-        // Fallback to simple offset
-        Some(target_line.text_range.start)
     }
 
-    fn find_line_and_x_offset(&self, offset: usize) -> (usize, f32) {
-        for (idx, line) in self.line_layouts.iter().enumerate() {
-            if line.text_range.contains(&offset) {
-                // Use wrapped line to get accurate x position
+    fn find_visual_line_and_x_offset(&self, offset: usize) -> (usize, f32) {
+        // Handle empty content
+        if self.line_layouts.is_empty() {
+            return (0, 0.0);
+        }
+
+        let mut visual_line_idx = 0;
+
+        for line in &self.line_layouts {
+            if line.text_range.is_empty() {
+                if offset == line.text_range.start {
+                    return (visual_line_idx, 0.0);
+                }
+                visual_line_idx += 1;
+            } else if offset >= line.text_range.start && offset <= line.text_range.end {
+                // Found the line containing the offset
                 if let Some(wrapped) = &line.wrapped_line {
-                    let local_offset = offset - line.text_range.start;
+                    let local_offset = (offset - line.text_range.start).min(wrapped.text.len());
                     if let Some(position) =
                         wrapped.position_for_index(local_offset, self.style.line_height)
                     {
-                        return (idx, position.x.into());
+                        // The y component tells us which visual line within this wrapped line
+                        let visual_line_within =
+                            (position.y / self.style.line_height).floor() as usize;
+                        return (visual_line_idx + visual_line_within, position.x.into());
                     }
                 }
-                return (idx, 0.0);
+                return (visual_line_idx, 0.0);
             }
+            visual_line_idx += line.visual_line_count;
         }
-        (0, 0.0)
+
+        // If offset is beyond all lines, return last visual line
+        (visual_line_idx.saturating_sub(1), 0.0)
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
@@ -312,17 +363,27 @@ impl TextArea {
             return 0;
         }
 
-        // Find the line at this y position
+        // Find the line layout and visual line at this y position
         for line in &self.line_layouts {
-            if position.y >= line.y_offset && position.y < line.y_offset + self.style.line_height {
+            let line_height_total = self.style.line_height * line.visual_line_count as f32;
+
+            if position.y >= line.y_offset && position.y < line.y_offset + line_height_total {
+                // Handle empty lines
+                if line.text_range.is_empty() {
+                    return line.text_range.start;
+                }
+
                 // Use wrapped line for accurate position
                 if let Some(wrapped) = &line.wrapped_line {
-                    // Calculate relative position within the line
-                    let relative_point = point(position.x, px(0.));
+                    // Calculate relative position within the wrapped line
+                    let relative_y = position.y - line.y_offset;
+                    let relative_point = point(position.x, relative_y);
+
                     let local_idx = wrapped
                         .closest_index_for_position(relative_point, self.style.line_height)
                         .unwrap_or_else(|closest| closest);
-                    return line.text_range.start + local_idx;
+
+                    return line.text_range.start + local_idx.min(wrapped.text.len());
                 }
                 return line.text_range.start;
             }
@@ -336,52 +397,103 @@ impl TextArea {
         let font_size = self.style.font_size;
         let line_height = self.style.line_height;
 
+        // Handle completely empty content
         if self.content.is_empty() {
+            self.line_layouts.push(LineLayout {
+                text_range: 0..0,
+                wrapped_line: None,
+                y_offset: px(0.),
+                visual_line_count: 1,
+            });
+            self.needs_layout = false;
             return;
         }
 
         self.wrap_width = Some(width);
         let mut y_offset = px(0.);
-
-        // Use text system to shape text with proper wrapping
         let text_style = window.text_style();
-        let text = SharedString::from(self.content.clone());
 
-        // Create a single run for the entire text
-        let run = TextRun {
-            len: self.content.len(),
-            font: text_style.font(),
-            color: self.style.text_color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
+        // Split content into logical lines by newlines
+        let mut current_pos = 0;
 
-        // Shape the text with wrapping
-        let shaped_lines = window
-            .text_system()
-            .shape_text(text, font_size, &[run], Some(width), None)
-            .unwrap_or_default();
+        while current_pos < self.content.len() {
+            // Find the end of the current logical line
+            let line_end = self.content[current_pos..]
+                .find('\n')
+                .map(|pos| current_pos + pos)
+                .unwrap_or(self.content.len());
 
-        // Convert wrapped lines to our LineLayout format
-        let mut byte_offset = 0;
-        for wrapped in shaped_lines {
-            let line_len = wrapped.text.len();
-            let text_range = byte_offset..(byte_offset + line_len);
+            let line_text = &self.content[current_pos..line_end];
 
-            self.line_layouts.push(LineLayout {
-                text_range: text_range.clone(),
-                wrapped_line: Some(wrapped),
-                y_offset,
-            });
+            if line_text.is_empty() {
+                // Empty line
+                let layout = LineLayout {
+                    text_range: current_pos..current_pos,
+                    wrapped_line: None,
+                    y_offset,
+                    visual_line_count: 1,
+                };
+                self.line_layouts.push(layout);
+                y_offset += line_height;
+            } else {
+                // Use shape_text with wrapping for non-empty lines
+                let run = TextRun {
+                    len: line_text.len(),
+                    font: text_style.font(),
+                    color: self.style.text_color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
 
-            y_offset += line_height;
-            byte_offset += line_len;
+                // Shape with wrapping
+                let wrapped_lines = window
+                    .text_system()
+                    .shape_text(
+                        SharedString::from(line_text.to_string()),
+                        font_size,
+                        &[run],
+                        Some(width),
+                        None,
+                    )
+                    .unwrap_or_default();
 
-            // Skip newline if present
-            if byte_offset < self.content.len() && self.content.as_bytes()[byte_offset] == b'\n' {
-                byte_offset += 1;
+                // Process each WrappedLine (should be just one per logical line)
+                for (_wrap_idx, wrapped) in wrapped_lines.into_iter().enumerate() {
+                    let visual_line_count = wrapped.wrap_boundaries().len() + 1;
+                    let line_height_total = line_height * visual_line_count as f32;
+
+                    // Store the single LineLayout with the full WrappedLine
+                    let layout = LineLayout {
+                        text_range: current_pos..line_end,
+                        wrapped_line: Some(wrapped),
+                        y_offset,
+                        visual_line_count,
+                    };
+
+                    self.line_layouts.push(layout);
+
+                    // Advance y_offset by the total height of all visual lines
+                    y_offset += line_height_total;
+                }
             }
+
+            // Move to next logical line
+            current_pos = if line_end < self.content.len() {
+                line_end + 1 // Skip the newline
+            } else {
+                self.content.len()
+            };
+        }
+
+        // Handle case where content ends with a newline (need empty line at end)
+        if !self.content.is_empty() && self.content.ends_with('\n') {
+            self.line_layouts.push(LineLayout {
+                text_range: self.content.len()..self.content.len(),
+                wrapped_line: None,
+                y_offset,
+                visual_line_count: 1,
+            });
         }
 
         self.needs_layout = false;
@@ -426,18 +538,39 @@ impl TextArea {
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
-        self.content
+        // Move by grapheme clusters for proper Unicode support
+        let mut indices: Vec<_> = self
+            .content
             .grapheme_indices(true)
-            .rev()
-            .find_map(|(idx, _)| (idx < offset).then_some(idx))
-            .unwrap_or(0)
+            .map(|(i, _)| i)
+            .collect();
+        indices.push(self.content.len()); // Add end position
+
+        // Find the position just before the current offset
+        for i in (0..indices.len()).rev() {
+            if indices[i] < offset {
+                return indices[i];
+            }
+        }
+        0
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
-        self.content
+        // Move by grapheme clusters for proper Unicode support
+        let mut indices: Vec<_> = self
+            .content
             .grapheme_indices(true)
-            .find_map(|(idx, _)| (idx > offset).then_some(idx))
-            .unwrap_or(self.content.len())
+            .map(|(i, _)| i)
+            .collect();
+        indices.push(self.content.len()); // Add end position
+
+        // Find the position just after the current offset
+        for i in 0..indices.len() {
+            if indices[i] > offset {
+                return indices[i];
+            }
+        }
+        self.content.len()
     }
 }
 
@@ -543,27 +676,62 @@ impl EntityInputHandler for TextArea {
 
         // Find the line containing the range start
         for line in &self.line_layouts {
-            if line.text_range.contains(&range.start) {
-                if let Some(wrapped) = &line.wrapped_line {
-                    let local_start = range.start - line.text_range.start;
-                    let local_end = (range.end - line.text_range.start).min(line.text_range.len());
-
-                    let x_start = wrapped
-                        .position_for_index(local_start, self.style.line_height)
-                        .map(|p| p.x)
-                        .unwrap_or(px(0.));
-                    let x_end = wrapped
-                        .position_for_index(local_end, self.style.line_height)
-                        .map(|p| p.x)
-                        .unwrap_or(px(0.));
-
+            // Handle empty lines
+            if line.text_range.is_empty() {
+                if range.start == line.text_range.start {
                     return Some(Bounds::from_corners(
-                        point(bounds.left() + x_start, bounds.top() + line.y_offset),
+                        point(bounds.left(), bounds.top() + line.y_offset),
                         point(
-                            bounds.left() + x_end,
+                            bounds.left() + px(4.), // Small width for empty line
                             bounds.top() + line.y_offset + self.style.line_height,
                         ),
                     ));
+                }
+            } else if line.text_range.contains(&range.start) {
+                if let Some(wrapped) = &line.wrapped_line {
+                    let local_start = range.start - line.text_range.start;
+                    let local_end = (range.end - line.text_range.start).min(wrapped.text.len());
+
+                    let start_pos = wrapped
+                        .position_for_index(local_start, self.style.line_height)
+                        .unwrap_or(point(px(0.), px(0.)));
+                    let end_pos = wrapped
+                        .position_for_index(local_end, self.style.line_height)
+                        .unwrap_or_else(|| {
+                            let last_line_y =
+                                self.style.line_height * (line.visual_line_count - 1) as f32;
+                            point(wrapped.width(), last_line_y)
+                        });
+
+                    // Calculate which visual lines are involved
+                    let start_visual_line = (start_pos.y / self.style.line_height).floor() as usize;
+                    let end_visual_line = (end_pos.y / self.style.line_height).floor() as usize;
+
+                    if start_visual_line == end_visual_line {
+                        // Range is within a single visual line
+                        return Some(Bounds::from_corners(
+                            point(
+                                bounds.left() + start_pos.x,
+                                bounds.top() + line.y_offset + start_pos.y,
+                            ),
+                            point(
+                                bounds.left() + end_pos.x,
+                                bounds.top() + line.y_offset + start_pos.y + self.style.line_height,
+                            ),
+                        ));
+                    } else {
+                        // Range spans multiple visual lines - return bounds of first line segment
+                        return Some(Bounds::from_corners(
+                            point(
+                                bounds.left() + start_pos.x,
+                                bounds.top() + line.y_offset + start_pos.y,
+                            ),
+                            point(
+                                bounds.left() + wrapped.width(),
+                                bounds.top() + line.y_offset + start_pos.y + self.style.line_height,
+                            ),
+                        ));
+                    }
                 }
             }
         }
@@ -700,34 +868,144 @@ impl Element for TextAreaElement {
 
         // Draw selection
         if !selected_range.is_empty() {
-            for line in &line_layouts {
+            println!("Drawing selection: range={:?}", selected_range);
+            for (line_idx, line) in line_layouts.iter().enumerate() {
                 let line_start = line.text_range.start;
                 let line_end = line.text_range.end;
 
-                if selected_range.end > line_start && selected_range.start < line_end {
-                    if let Some(wrapped) = &line.wrapped_line {
+                // Check if selection intersects this line
+                if selected_range.end > line_start
+                    && (line.text_range.is_empty() || selected_range.start < line_end)
+                {
+                    println!(
+                        "  Selection intersects line {}: line_range={:?}, visual_lines={}",
+                        line_idx, line.text_range, line.visual_line_count
+                    );
+                    // Handle empty lines
+                    if line.text_range.is_empty() {
+                        // For empty lines, draw selection if it spans across this line
+                        if selected_range.start <= line_start && selected_range.end > line_start {
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() + line.y_offset),
+                                    point(
+                                        bounds.left() + px(4.), // Small width for empty line selection
+                                        bounds.top() + line.y_offset + self.style.line_height,
+                                    ),
+                                ),
+                                rgba(0x3311ff30),
+                            ));
+                        }
+                    } else if let Some(wrapped) = &line.wrapped_line {
                         let sel_start = selected_range.start.max(line_start) - line_start;
                         let sel_end = selected_range.end.min(line_end) - line_start;
 
-                        let x_start = wrapped
+                        // Get full position info including which visual line
+                        let start_pos = wrapped
                             .position_for_index(sel_start, self.style.line_height)
-                            .map(|p| p.x)
-                            .unwrap_or(px(0.));
-                        let x_end = wrapped
+                            .unwrap_or(point(px(0.), px(0.)));
+                        let end_pos = wrapped
                             .position_for_index(sel_end, self.style.line_height)
-                            .map(|p| p.x)
-                            .unwrap_or(px(0.));
+                            .unwrap_or_else(|| {
+                                // If we can't get position, put at end of last visual line
+                                let last_line_y =
+                                    self.style.line_height * (line.visual_line_count - 1) as f32;
+                                point(wrapped.width(), last_line_y)
+                            });
 
-                        window.paint_quad(fill(
-                            Bounds::from_corners(
-                                point(bounds.left() + x_start, bounds.top() + line.y_offset),
-                                point(
-                                    bounds.left() + x_end,
-                                    bounds.top() + line.y_offset + self.style.line_height,
+                        // Calculate which visual lines are involved
+                        let start_visual_line =
+                            (start_pos.y / self.style.line_height).floor() as usize;
+                        let end_visual_line = (end_pos.y / self.style.line_height).floor() as usize;
+
+                        println!(
+                            "    Selection in wrapped line: start_pos={:?}, end_pos={:?}",
+                            start_pos, end_pos
+                        );
+                        println!(
+                            "    Visual lines involved: {} to {}",
+                            start_visual_line, end_visual_line
+                        );
+
+                        if start_visual_line == end_visual_line {
+                            // Selection is within a single visual line
+                            println!("    Drawing single-line selection");
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    point(
+                                        bounds.left() + start_pos.x,
+                                        bounds.top() + line.y_offset + start_pos.y,
+                                    ),
+                                    point(
+                                        bounds.left() + end_pos.x,
+                                        bounds.top()
+                                            + line.y_offset
+                                            + start_pos.y
+                                            + self.style.line_height,
+                                    ),
                                 ),
-                            ),
-                            rgba(0x3311ff30),
-                        ));
+                                rgba(0x3311ff30),
+                            ));
+                        } else {
+                            // Selection spans multiple visual lines
+                            println!("    Drawing multi-line selection");
+                            // Draw first line (partial)
+                            println!("      First line: from x={:?} to end", start_pos.x);
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    point(
+                                        bounds.left() + start_pos.x,
+                                        bounds.top() + line.y_offset + start_pos.y,
+                                    ),
+                                    point(
+                                        bounds.left() + wrapped.width(),
+                                        bounds.top()
+                                            + line.y_offset
+                                            + start_pos.y
+                                            + self.style.line_height,
+                                    ),
+                                ),
+                                rgba(0x3311ff30),
+                            ));
+
+                            // Draw middle lines (full width)
+                            println!(
+                                "      Middle lines: {} full-width lines",
+                                end_visual_line - start_visual_line - 1
+                            );
+                            for visual_line in (start_visual_line + 1)..end_visual_line {
+                                let y = self.style.line_height * visual_line as f32;
+                                window.paint_quad(fill(
+                                    Bounds::from_corners(
+                                        point(bounds.left(), bounds.top() + line.y_offset + y),
+                                        point(
+                                            bounds.left() + wrapped.width(),
+                                            bounds.top()
+                                                + line.y_offset
+                                                + y
+                                                + self.style.line_height,
+                                        ),
+                                    ),
+                                    rgba(0x3311ff30),
+                                ));
+                            }
+
+                            // Draw last line (partial)
+                            println!("      Last line: from start to x={:?}", end_pos.x);
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() + line.y_offset + end_pos.y),
+                                    point(
+                                        bounds.left() + end_pos.x,
+                                        bounds.top()
+                                            + line.y_offset
+                                            + end_pos.y
+                                            + self.style.line_height,
+                                    ),
+                                ),
+                                rgba(0x3311ff30),
+                            ));
+                        }
                     }
                 }
             }
@@ -756,9 +1034,11 @@ impl Element for TextAreaElement {
             // Draw each line using the pre-wrapped lines
             for line_layout in &line_layouts {
                 if let Some(wrapped) = &line_layout.wrapped_line {
+                    let paint_pos = point(bounds.left(), bounds.top() + line_layout.y_offset);
+                    // WrappedLine::paint handles all wrap boundaries internally
                     wrapped
                         .paint(
-                            point(bounds.left(), bounds.top() + line_layout.y_offset),
+                            paint_pos,
                             self.style.line_height,
                             gpui::TextAlign::Left,
                             Some(bounds),
@@ -766,38 +1046,59 @@ impl Element for TextAreaElement {
                             cx,
                         )
                         .unwrap();
+                } else {
+                    println!("    Empty line - no paint needed");
                 }
             }
         }
+        println!("Finished painting text content\n");
 
         // Draw cursor
         if focus_handle.is_focused(window) && selected_range.is_empty() {
             let cursor_offset = selected_range.start;
+            println!("Drawing cursor at offset: {}", cursor_offset);
 
             // Find the line containing the cursor
             for line in &line_layouts {
-                if line.text_range.contains(&cursor_offset)
-                    || (cursor_offset == line.text_range.end && cursor_offset == content.len())
-                {
-                    if let Some(wrapped) = &line.wrapped_line {
-                        let local_offset = cursor_offset - line.text_range.start;
-                        let x_offset = wrapped
-                            .position_for_index(local_offset, self.style.line_height)
-                            .map(|p| p.x)
-                            .unwrap_or(px(0.));
+                let is_cursor_in_line = if line.text_range.is_empty() {
+                    // For empty lines, check if cursor is at this position
+                    cursor_offset == line.text_range.start
+                } else {
+                    line.text_range.contains(&cursor_offset)
+                        || (cursor_offset == line.text_range.end && cursor_offset == content.len())
+                };
 
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                point(bounds.left() + x_offset, bounds.top() + line.y_offset),
-                                size(px(2.), self.style.line_height),
+                if is_cursor_in_line {
+                    let cursor_position = if let Some(wrapped) = &line.wrapped_line {
+                        let local_offset = cursor_offset.saturating_sub(line.text_range.start);
+                        wrapped
+                            .position_for_index(local_offset, self.style.line_height)
+                            .unwrap_or(point(px(0.), px(0.)))
+                    } else {
+                        // Empty line - cursor at start
+                        point(px(0.), px(0.))
+                    };
+
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(
+                                bounds.left() + cursor_position.x,
+                                bounds.top() + line.y_offset + cursor_position.y,
                             ),
-                            gpui::blue(),
-                        ));
-                        break;
-                    }
+                            size(px(2.), self.style.line_height),
+                        ),
+                        gpui::blue(),
+                    ));
+                    println!(
+                        "  Drew cursor at x={:?}, y={:?}",
+                        cursor_position.x,
+                        line.y_offset + cursor_position.y
+                    );
+                    break;
                 }
             }
         }
+        println!("=== PAINT END ===\n");
     }
 }
 
