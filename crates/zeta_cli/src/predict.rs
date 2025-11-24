@@ -267,20 +267,7 @@ pub async fn perform_predict(
     let mut result = Arc::into_inner(result).unwrap().into_inner().unwrap();
 
     result.diff = prediction
-        .map(|prediction| {
-            let old_text = prediction.snapshot.text();
-            let new_text = prediction
-                .buffer
-                .update(cx, |buffer, cx| {
-                    let branch = buffer.branch(cx);
-                    branch.update(cx, |branch, cx| {
-                        branch.edit(prediction.edits.iter().cloned(), None, cx);
-                        branch.text()
-                    })
-                })
-                .unwrap();
-            language::unified_diff(&old_text, &new_text)
-        })
+        .and_then(|prediction| prediction.edit_preview.as_unified_diff(&prediction.edits))
         .unwrap_or_default();
 
     anyhow::Ok(result)

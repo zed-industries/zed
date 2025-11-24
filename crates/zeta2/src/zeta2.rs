@@ -19,10 +19,10 @@ use edit_prediction_context::{
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use futures::channel::{mpsc, oneshot};
 use futures::{AsyncReadExt as _, StreamExt as _};
-use gpui::http_client::{AsyncBody, Method};
 use gpui::{
-    App, AsyncApp, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task,
-    WeakEntity, actions, http_client, prelude::*,
+    App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
+    http_client::{self, AsyncBody, Method},
+    prelude::*,
 };
 use language::{
     Anchor, Buffer, DiagnosticSet, File, LanguageServerId, Point, ToOffset as _, ToPoint,
@@ -68,6 +68,7 @@ use crate::assemble_excerpts::assemble_excerpts;
 use crate::license_detection::LicenseDetectionWatcher;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
+use crate::prediction::EditPredictionInputs;
 use crate::rate_prediction_modal::RatePredictionsModal;
 use crate::zeta1::request_prediction_with_zeta1;
 pub use provider::ZetaEditPredictionProvider;
@@ -1235,6 +1236,11 @@ impl Zeta {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
         let buffer_snapshotted_at = Instant::now();
 
+        let input_events = events
+            .iter()
+            .filter_map(|ev| ev.to_request_event(cx))
+            .collect();
+
         let result = cx.background_spawn({
             let snapshot = snapshot.clone();
             let diagnostic_search_range = diagnostic_search_range.clone();
@@ -1331,6 +1337,23 @@ impl Zeta {
                 serde_json::to_writer(writer, &request_body)?;
                 let body: AsyncBody = buf.into();
 
+                let inputs = EditPredictionInputs {
+                    events: input_events,
+                    included_files: vec![cloud_llm_client::predict_edits_v3::IncludedFile {
+                        path: full_path.clone(),
+                        max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
+                        excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
+                            start_line: cloud_llm_client::predict_edits_v3::Line(0),
+                            text: request_body.file_contents.into(),
+                        }],
+                    }],
+                    cursor_point: cloud_llm_client::predict_edits_v3::Point {
+                        column: cursor_point.column,
+                        line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
+                    },
+                    cursor_path: full_path.clone(),
+                };
+
                 const SWEEP_API_URL: &str =
                     "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
@@ -1378,6 +1401,7 @@ impl Zeta {
                     edits,
                     snapshot,
                     response_received_at,
+                    inputs,
                 ))
             }
         });
@@ -1387,7 +1411,7 @@ impl Zeta {
         let active_buffer = active_buffer.clone();
 
         cx.spawn(async move |this, cx| {
-            let (id, edits, old_snapshot, response_received_at) = result.await?;
+            let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;
 
             if edits.is_empty() {
                 if has_events
@@ -1426,6 +1450,7 @@ impl Zeta {
                     edits.into(),
                     buffer_snapshotted_at,
                     response_received_at,
+                    inputs,
                     cx,
                 )
                 .await,
@@ -1558,14 +1583,16 @@ impl Zeta {
 
         let diagnostics = active_snapshot.diagnostic_sets().clone();
 
-        let parent_abs_path =
-            project::File::from_dyn(active_buffer.read(cx).file()).and_then(|f| {
-                let mut path = f.worktree.read(cx).absolutize(&f.path);
-                if path.pop() { Some(path) } else { None }
-            });
+        let file = active_buffer.read(cx).file();
+        let parent_abs_path = project::File::from_dyn(file).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
 
         // TODO data collection
-        let can_collect_data = cx.is_staff();
+        let can_collect_data = file
+            .as_ref()
+            .map_or(false, |file| self.can_collect_file(project, file, cx));
 
         let empty_context_files = HashMap::default();
         let context_files = project_state
@@ -1730,6 +1757,18 @@ impl Zeta {
 
                 let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
 
+                let inputs = {
+                    // todo! use inputs instead of request in debug info
+                    let cloud_request = cloud_request.clone();
+
+                    EditPredictionInputs {
+                        included_files: cloud_request.included_files,
+                        events: cloud_request.events,
+                        cursor_point: cloud_request.cursor_point,
+                        cursor_path: cloud_request.excerpt_path,
+                    }
+                };
+
                 let retrieval_time = Instant::now() - before_retrieval;
 
                 let debug_response_tx = if let Some(debug_tx) = &debug_tx {
@@ -1875,6 +1914,7 @@ impl Zeta {
                 anyhow::Ok((
                     Some((
                         request_id,
+                        inputs,
                         edited_buffer,
                         edited_buffer_snapshot.clone(),
                         edits,
@@ -1887,8 +1927,14 @@ impl Zeta {
 
         cx.spawn({
             async move |this, cx| {
-                let Some((id, edited_buffer, edited_buffer_snapshot, edits, received_response_at)) =
-                    Self::handle_api_response(&this, request_task.await, cx)?
+                let Some((
+                    id,
+                    inputs,
+                    edited_buffer,
+                    edited_buffer_snapshot,
+                    edits,
+                    received_response_at,
+                )) = Self::handle_api_response(&this, request_task.await, cx)?
                 else {
                     return Ok(None);
                 };
@@ -1901,6 +1947,7 @@ impl Zeta {
                     edits.into(),
                     buffer_snapshotted_at,
                     received_response_at,
+                    inputs,
                     cx,
                 )
                 .await)
@@ -2581,22 +2628,19 @@ impl Zeta {
 
     pub fn rate_prediction(
         &mut self,
-        completion: &EditPrediction,
+        prediction: &EditPrediction,
         rating: EditPredictionRating,
         feedback: String,
         cx: &mut Context<Self>,
     ) {
-        todo!();
-        self.rated_predictions.insert(completion.id.clone());
-        // telemetry::event!(
-        //     "Edit Prediction Rated",
-        //     rating,
-        //     input_events = completion.input_events,
-        //     input_excerpt = completion.input_excerpt,
-        //     input_outline = completion.input_outline,
-        //     output_excerpt = completion.output_excerpt,
-        //     feedback
-        // );
+        self.rated_predictions.insert(prediction.id.clone());
+        telemetry::event!(
+            "Edit Prediction Rated",
+            rating,
+            inputs = prediction.inputs,
+            output = prediction.edit_preview.as_unified_diff(&prediction.edits),
+            feedback
+        );
         self.client.telemetry().flush_events().detach();
         cx.notify();
     }

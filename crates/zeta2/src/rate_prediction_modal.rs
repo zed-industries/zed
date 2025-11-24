@@ -427,12 +427,8 @@ impl RatePredictionsModal {
                         .bg(cx.theme().colors().editor_background)
                         .overflow_scroll()
                         .child(if let Some(active_prediction) = &self.active_prediction {
-                            "todo!".into()
-                            // format!(
-                            //     "{}\n{}",
-                            //     active_prediction.prediction.input_events,
-                            //     active_prediction.prediction.input_excerpt
-                            // )
+                            serde_json::to_string_pretty(&active_prediction.prediction.inputs)
+                                .unwrap()
                         } else {
                             "No active completion".to_string()
                         }),

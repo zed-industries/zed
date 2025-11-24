@@ -1,11 +1,13 @@
 use std::{
     ops::Range,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
+use serde::Serialize;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(pub SharedString);
@@ -32,6 +34,15 @@ pub struct EditPrediction {
     pub buffer: Entity<Buffer>,
     pub buffer_snapshotted_at: Instant,
     pub response_received_at: Instant,
+    pub inputs: EditPredictionInputs,
+}
+
+#[derive(Clone, Serialize)]
+pub struct EditPredictionInputs {
+    pub events: Vec<cloud_llm_client::predict_edits_v3::Event>,
+    pub included_files: Vec<cloud_llm_client::predict_edits_v3::IncludedFile>,
+    pub cursor_point: cloud_llm_client::predict_edits_v3::Point,
+    pub cursor_path: Arc<Path>,
 }
 
 impl EditPrediction {
@@ -42,6 +53,7 @@ impl EditPrediction {
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         buffer_snapshotted_at: Instant,
         response_received_at: Instant,
+        inputs: EditPredictionInputs,
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         let (edits, snapshot, edit_preview_task) = edited_buffer
@@ -61,6 +73,7 @@ impl EditPrediction {
             edits,
             snapshot,
             edit_preview,
+            inputs,
             buffer: edited_buffer.clone(),
             buffer_snapshotted_at,
             response_received_at,
@@ -161,6 +174,15 @@ mod tests {
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
+            inputs: EditPredictionInputs {
+                events: vec![],
+                included_files: vec![],
+                cursor_point: cloud_llm_client::predict_edits_v3::Point {
+                    line: cloud_llm_client::predict_edits_v3::Line(0),
+                    column: 0,
+                },
+                cursor_path: Path::new("path.txt").into(),
+            },
             buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),
         };

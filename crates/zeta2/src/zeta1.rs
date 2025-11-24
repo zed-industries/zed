@@ -2,12 +2,17 @@ mod input_excerpt;
 
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
-use crate::{EditPredictionId, Event, ZedUpdateRequiredError, Zeta, prediction::EditPrediction};
+use crate::{
+    EditPredictionId, Event, ZedUpdateRequiredError, Zeta,
+    prediction::{EditPrediction, EditPredictionInputs},
+};
 use anyhow::{Context as _, Result};
 use cloud_llm_client::{PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use input_excerpt::excerpt_for_cursor_position;
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToPoint as _, text_diff};
+use language::{
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _, text_diff,
+};
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use util::rel_path::RelPath;
@@ -75,6 +80,7 @@ pub(crate) fn request_prediction_with_zeta1(
     cx.spawn(async move |this, cx| {
         let GatherContextOutput {
             mut body,
+            context_range,
             editable_range,
             included_events_count,
         } = gather_task.await?;
@@ -118,6 +124,30 @@ pub(crate) fn request_prediction_with_zeta1(
             app_version,
         )
         .await;
+
+        let inputs = EditPredictionInputs {
+            events: cx
+                .update(|cx| {
+                    included_events
+                        .into_iter()
+                        .filter_map(|ev| ev.to_request_event(cx))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            included_files: vec![cloud_llm_client::predict_edits_v3::IncludedFile {
+                path: full_path.clone(),
+                max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
+                excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
+                    start_line: cloud_llm_client::predict_edits_v3::Line(context_range.start.row),
+                    text: body.input_excerpt.into(),
+                }],
+            }],
+            cursor_point: cloud_llm_client::predict_edits_v3::Point {
+                column: cursor_point.column,
+                line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
+            },
+            cursor_path: full_path,
+        };
 
         // let response = perform_predict_edits(PerformPredictEditsParams {
         //     client,
@@ -173,6 +203,7 @@ pub(crate) fn request_prediction_with_zeta1(
             buffer,
             &snapshot,
             editable_range,
+            inputs,
             buffer_snapshotted_at,
             received_response_at,
             cx,
@@ -204,6 +235,7 @@ fn process_completion_response(
     buffer: Entity<Buffer>,
     snapshot: &BufferSnapshot,
     editable_range: Range<usize>,
+    inputs: EditPredictionInputs,
     buffer_snapshotted_at: Instant,
     received_response_at: Instant,
     cx: &AsyncApp,
@@ -231,6 +263,7 @@ fn process_completion_response(
             edits,
             buffer_snapshotted_at,
             received_response_at,
+            inputs,
             cx,
         )
         .await)
@@ -368,6 +401,7 @@ fn git_info_for_file(
 
 pub struct GatherContextOutput {
     pub body: PredictEditsBody,
+    pub context_range: Range<Point>,
     pub editable_range: Range<usize>,
     pub included_events_count: usize,
 }
@@ -404,6 +438,7 @@ pub fn gather_context(
 
             Ok(GatherContextOutput {
                 body,
+                context_range: input_excerpt.context_range,
                 editable_range,
                 included_events_count,
             })

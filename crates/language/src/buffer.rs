@@ -13,6 +13,7 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
+    unified_diff,
 };
 pub use crate::{
     Grammar, Language, LanguageRegistry,
@@ -745,6 +746,33 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
+    pub fn as_unified_diff(&self, edits: &[(Range<Anchor>, impl AsRef<str>)]) -> Option<String> {
+        let (first, _) = edits.first()?;
+        let (last, _) = edits.last()?;
+
+        let start = first.start.to_point(&self.old_snapshot);
+        let old_end = last.end.to_point(&self.old_snapshot);
+        let new_end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+
+        let start = Point::new(start.row.saturating_sub(3), 0);
+        let old_end = Point::new(old_end.row + 3, 0).min(self.old_snapshot.max_point());
+        let new_end = Point::new(new_end.row + 3, 0).min(self.applied_edits_snapshot.max_point());
+
+        Some(unified_diff(
+            &self
+                .old_snapshot
+                .text_for_range(start..old_end)
+                .collect::<String>(),
+            &self
+                .applied_edits_snapshot
+                .text_for_range(start..new_end)
+                .collect::<String>(),
+        ))
+    }
+
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
