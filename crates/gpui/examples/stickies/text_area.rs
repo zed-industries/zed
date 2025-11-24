@@ -99,7 +99,22 @@ impl TextArea {
         );
 
         if self.selected_range.is_empty() {
-            let new_pos = self.previous_boundary(self.cursor_offset());
+            let mut new_pos = self.previous_boundary(self.cursor_offset());
+
+            // Check if we landed on a newline and skip it
+            // new_pos is already a byte position from previous_boundary
+            if new_pos < self.content.len() {
+                if let Some(ch) = self.content[new_pos..].chars().next() {
+                    if ch == '\n' {
+                        println!(
+                            "LEFT: Position {} is a newline, skipping to previous",
+                            new_pos
+                        );
+                        new_pos = self.previous_boundary(new_pos);
+                    }
+                }
+            }
+
             println!("LEFT: Moving to previous boundary: {}", new_pos);
             self.move_to(new_pos, cx);
         } else {
@@ -122,7 +137,19 @@ impl TextArea {
         );
 
         if self.selected_range.is_empty() {
-            let new_pos = self.next_boundary(self.selected_range.end);
+            let mut new_pos = self.next_boundary(self.selected_range.end);
+
+            // Check if we landed on a newline and skip it
+            // new_pos is already a byte position from next_boundary
+            if new_pos < self.content.len() {
+                if let Some(ch) = self.content[new_pos..].chars().next() {
+                    if ch == '\n' {
+                        println!("RIGHT: Position {} is a newline, skipping to next", new_pos);
+                        new_pos = self.next_boundary(new_pos);
+                    }
+                }
+            }
+
             println!("RIGHT: Moving to next boundary: {}", new_pos);
             self.move_to(new_pos, cx);
         } else {
