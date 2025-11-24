@@ -4091,7 +4091,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory, if we can find it.
+3. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
