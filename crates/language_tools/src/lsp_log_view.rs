@@ -5,6 +5,7 @@ use gpui::{
     App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
     Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
+use itertools::Itertools as _;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
     LanguageServer, LanguageServerName, LanguageServerSelector, MessageType, SetTraceParams,
@@ -351,12 +352,8 @@ impl LspLogView {
                 .status
                 .workspace_folders
                 .iter()
-                .filter_map(|uri| {
-                    uri.to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned())
-                })
-                .collect::<Vec<_>>()
+                .filter_map(|uri| uri.to_file_path().ok())
+                .map(|path| path.to_string_lossy().into_owned())
                 .join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
@@ -968,7 +965,7 @@ impl Render for LspLogToolbarItemView {
                         for (server_id, name, worktree_root, active_entry_kind) in
                             available_language_servers.iter()
                         {
-                            let label = format!("{} ({})", name, worktree_root);
+                            let label = format!("{name} ({worktree_root})");
                             let server_id = *server_id;
                             let active_entry_kind = *active_entry_kind;
                             menu = menu.entry(
