@@ -20037,43 +20037,27 @@ impl Editor {
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
 
-            let beginning_anchor = buffer.anchor_before(Point::new(0, 0));
             let start_anchor = buffer.anchor_before(&range.start);
             let end_anchor = buffer.anchor_before(&range.end);
 
-            struct Offsets {
-                start: isize,
-                end: isize,
-            }
+            let range_is_point = range.start == range.end;
 
-            let mut delta = Offsets { start: 0, end: 0 };
+            let start_offset =
+                buffer_diff_snapshot.base_text_offset(start_anchor, Bias::Left, &buffer);
 
-            for hunk in
-                buffer_diff_snapshot.hunks_intersecting_range(beginning_anchor..end_anchor, buffer)
-            {
-                let initial_size = hunk.diff_base_byte_range.end as isize
-                    - hunk.diff_base_byte_range.start as isize;
-
-                let buffer_range = hunk.buffer_range.to_offset(&buffer);
-                let changed_size =
-                    (cmp::min(buffer_range.end, range.end) as isize) - buffer_range.start as isize;
-
-                if hunk.buffer_range.start.cmp(&start_anchor, buffer).is_le() {
-                    delta.start += initial_size;
-                    delta.start -= changed_size;
-                }
-
-                delta.end += initial_size;
-                delta.end -= changed_size;
-            }
+            let end_offset = if range_is_point {
+                start_offset
+            } else {
+                buffer_diff_snapshot.base_text_offset(end_anchor, Bias::Right, &buffer)
+            };
 
             let start_row_in_base_buffer = buffer_diff_snapshot
                 .base_text()
-                .offset_to_point((range.start as isize + delta.start) as usize)
+                .offset_to_point(start_offset)
                 .row;
             let end_row_in_base_buffer = buffer_diff_snapshot
                 .base_text()
-                .offset_to_point((range.end as isize + delta.end) as usize)
+                .offset_to_point(end_offset)
                 .row;
 
             Some((
