@@ -192,7 +192,12 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Grok2Vision => true,
+            Self::Grok2Vision
+            | Self::Grok4
+            | Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning
+            | Self::Grok41FastNonReasoning
+            | Self::Grok41FastReasoning => true,
             Self::Custom {
                 supports_images: Some(support),
                 ..
