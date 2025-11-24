@@ -1003,19 +1003,21 @@ pub mod test {
         pub active: bool,
         pub focus_handle: FocusHandle,
         pub size: Pixels,
+        pub activation_priority: u32,
     }
     actions!(test_only, [ToggleTestPanel]);
 
     impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
-        pub fn new(position: DockPosition, cx: &mut App) -> Self {
+        pub fn new(position: DockPosition, activation_priority: u32, cx: &mut App) -> Self {
             Self {
                 position,
                 zoomed: false,
                 active: false,
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
+                activation_priority,
             }
         }
     }
@@ -1081,7 +1083,7 @@ pub mod test {
         }
 
         fn activation_priority(&self) -> u32 {
-            100
+            self.activation_priority
         }
     }
 
