@@ -989,7 +989,7 @@ mod tests {
                     MessageContent::Image(language_model::LanguageModelImage::empty()),
                 ],
                 cache: true,
-            reasoning_details: None,
+                reasoning_details: None,
             }],
             thread_id: None,
             prompt_id: None,

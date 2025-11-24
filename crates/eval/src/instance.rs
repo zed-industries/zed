@@ -553,7 +553,7 @@ impl ExampleInstance {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
                     cache: false,
-            reasoning_details: None,
+                    reasoning_details: None,
                 }],
                 temperature: None,
                 tools: Vec::new(),
@@ -1367,7 +1367,7 @@ impl ThreadDialog {
                 role: Role::Assistant,
                 content,
                 cache: false,
-            reasoning_details: None,
+                reasoning_details: None,
             })
         } else {
             None
