@@ -334,7 +334,7 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
             .arg("-s")
             .arg(&source.path)
             .output()?;
-        String::from_utf8_lossy(&fallback.stdout.clone()).to_string()
+        String::from_utf8_lossy(&fallback.stdout).to_string()
     };
 
     source.path = Path::new(result.trim()).to_owned();
