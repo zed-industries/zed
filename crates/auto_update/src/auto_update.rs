@@ -1332,7 +1332,7 @@ mod tests {
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
-        let fetched_sha = "b".to_string();
+        let fetched_sha = "1.0.0+b".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
