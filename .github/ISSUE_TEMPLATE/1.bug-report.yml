@@ -48,7 +48,7 @@ body:
       required: false
   - type: textarea
     attributes:
-      label: If applicable, provide details about your model provider.
+      label: If applicable, provide details about your model provider
       placeholder: |
         - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc.)
         - Model Name: (Claude Sonnet 4.5, Gemini 3 Pro, GPT-5)

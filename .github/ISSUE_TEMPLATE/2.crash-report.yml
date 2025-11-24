@@ -36,7 +36,7 @@ body:
       required: true
   - type: textarea
     attributes:
-      label: If applicable, attach your Zed log file to this issue.
+      label: If applicable, attach your Zed log file to this issue
       description: |
         Open the command palette in Zed, then type `zed: open log` to see the last 1000 lines. Or type `zed: reveal log in file manager` in the command palette to reveal the log file itself.
       value: |
