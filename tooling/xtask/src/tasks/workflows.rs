@@ -7,6 +7,7 @@ mod after_release;
 mod cherry_pick;
 mod compare_perf;
 mod danger;
+mod extension_release;
 mod extension_tests;
 mod nix_build;
 mod release_nightly;
@@ -41,6 +42,10 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("run_agent_evals.yml", run_agent_evals::run_agent_evals()),
         ("after_release.yml", after_release::after_release()),
         ("extension_tests.yml", extension_tests::extension_tests()),
+        (
+            "extension_release.yml",
+            extension_release::extension_release(),
+        ),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
