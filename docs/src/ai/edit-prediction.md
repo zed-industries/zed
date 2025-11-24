@@ -157,7 +157,7 @@ You might want this in order to have just one (alternative) keybinding to use fo
   },
 ```
 
-If you are using [Vim mode](../vim-mode.md), then additional bindings are needed after the above to return `tab` to its original behavior:
+If you are using [Vim mode](../vim.md), then additional bindings are needed after the above to return `tab` to its original behavior:
 
 ```json [keymap]
   {
