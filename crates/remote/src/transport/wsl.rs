@@ -251,11 +251,13 @@ impl WslRemoteConnection {
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
-                .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
+                .context("Failed to create directory when uploading file")?;
         }
 
         let t0 = Instant::now();
-        let src_stat = fs::metadata(&src_path).await?;
+        let src_stat = fs::metadata(&src_path)
+            .await
+            .with_context(|| format!("source path does not exist: {}", src_path.display()))?;
         let size = src_stat.len();
         log::info!(
             "uploading remote server to WSL {:?} ({}kb)",
