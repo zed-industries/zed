@@ -7,7 +7,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
-use git2::{BranchType, ObjectType, Repository as Git2Repository};
+use git2::{BranchType, Repository as Git2Repository};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
