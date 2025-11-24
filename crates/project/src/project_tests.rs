@@ -20,7 +20,7 @@ use git::{
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, FutureExt, SemanticVersion, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
@@ -10346,7 +10346,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 }
 

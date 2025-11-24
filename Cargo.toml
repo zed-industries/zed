@@ -147,7 +147,6 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
-    "crates/semantic_version",
     "crates/session",
     "crates/settings",
     "crates/settings_json",
@@ -381,7 +380,6 @@ rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_json = { path = "crates/settings_json" }
@@ -629,7 +627,7 @@ rustls-platform-verifier = "0.5.0"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
-semver = "1.0"
+semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
@@ -845,7 +843,6 @@ refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
 rich_text = { codegen-units = 1 }
-semantic_version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }

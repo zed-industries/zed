@@ -103,6 +103,7 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
+ "semver",
  "smallvec",
  "ui",
  "util",
@@ -373,6 +374,7 @@ dependencies = [
  "rules_library",
  "schemars",
  "search",
+ "semver",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -1341,6 +1343,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "release_channel",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -2926,6 +2929,7 @@ dependencies = [
  "postage",
  "release_channel",
  "rpc",
+ "semver",
  "settings",
  "text",
  "time",
@@ -3086,6 +3090,7 @@ dependencies = [
  "rayon",
  "release_channel",
  "serde",
+ "serde_json",
  "tempfile",
  "util",
  "windows 0.61.3",
@@ -3123,6 +3128,7 @@ dependencies = [
  "release_channel",
  "rpc",
  "rustls-pki-types",
+ "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -3407,7 +3413,6 @@ dependencies = [
  "scrypt",
  "sea-orm",
  "sea-orm-macros",
- "semantic_version",
  "semver",
  "serde",
  "serde_json",
@@ -4770,6 +4775,7 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-json",
  "ui",
+ "ui_input",
  "unindent",
  "util",
  "workspace",
@@ -5386,6 +5392,7 @@ dependencies = [
  "rope",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -5848,7 +5855,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "proto",
- "semantic_version",
+ "semver",
  "serde",
  "serde_json",
  "task",
@@ -5914,7 +5921,7 @@ dependencies = [
  "release_channel",
  "remote",
  "reqwest_client",
- "semantic_version",
+ "semver",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -5953,7 +5960,7 @@ dependencies = [
  "picker",
  "project",
  "release_channel",
- "semantic_version",
+ "semver",
  "serde",
  "settings",
  "smallvec",
@@ -7326,7 +7333,7 @@ dependencies = [
  "resvg",
  "schemars",
  "seahash",
- "semantic_version",
+ "semver",
  "serde",
  "serde_json",
  "slotmap",
@@ -8906,6 +8913,7 @@ dependencies = [
  "project",
  "release_channel",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -8971,6 +8979,7 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
+ "semver",
  "serde_json",
  "settings",
  "theme",
@@ -9486,6 +9495,7 @@ dependencies = [
  "postage",
  "release_channel",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "smol",
@@ -13125,6 +13135,7 @@ dependencies = [
  "picker",
  "project",
  "release_channel",
+ "semver",
  "serde_json",
  "settings",
  "theme",
@@ -13775,6 +13786,7 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -13945,6 +13957,7 @@ name = "release_channel"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "semver",
 ]
 
 [[package]]
@@ -13965,6 +13978,7 @@ dependencies = [
  "release_channel",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -14029,6 +14043,7 @@ dependencies = [
  "reqwest_client",
  "rpc",
  "rust-embed",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -15149,14 +15164,6 @@ name = "self_cell"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f7d95a54511e0c7be3f51e8867aa8cf35148d7b9445d44de2f943e2b206e749"
-
-[[package]]
-name = "semantic_version"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
-]
 
 [[package]]
 name = "semver"
@@ -16882,6 +16889,7 @@ dependencies = [
  "human_bytes",
  "pciid-parser",
  "release_channel",
+ "semver",
  "serde",
  "sysinfo 0.37.2",
 ]
@@ -17029,7 +17037,7 @@ dependencies = [
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
- "semantic_version",
+ "semver",
  "serde",
  "serde_json",
 ]
@@ -17136,7 +17144,6 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
- "smol",
  "task",
  "terminal",
  "theme",
@@ -18800,6 +18807,7 @@ dependencies = [
  "release_channel",
  "schemars",
  "search",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -21263,6 +21271,7 @@ dependencies = [
  "reqwest_client",
  "rope",
  "search",
+ "semver",
  "serde",
  "serde_json",
  "session",
@@ -21660,6 +21669,7 @@ dependencies = [
  "release_channel",
  "reqwest_client",
  "rpc",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -21706,6 +21716,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
+ "semver",
  "serde",
  "serde_json",
  "settings",

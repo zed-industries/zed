@@ -1273,6 +1273,28 @@ impl AcpThreadView {
         };
 
         cx.spawn_in(window, async move |this, cx| {
+            // Check if there are any edits from prompts before the one being regenerated.
+            //
+            // If there are, we keep/accept them since we're not regenerating the prompt that created them.
+            //
+            // If editing the prompt that generated the edits, they are auto-rejected
+            // through the `rewind` function in the `acp_thread`.
+            let has_earlier_edits = thread.read_with(cx, |thread, _| {
+                thread
+                    .entries()
+                    .iter()
+                    .take(entry_ix)
+                    .any(|entry| entry.diffs().next().is_some())
+            })?;
+
+            if has_earlier_edits {
+                thread.update(cx, |thread, cx| {
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.keep_all_edits(None, cx);
+                    });
+                })?;
+            }
+
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
@@ -4775,7 +4797,7 @@ impl AcpThreadView {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(markdown, cx);
                 buffer.set_language(Some(markdown_language), cx);
-                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer.set_capability(language::Capability::ReadWrite, cx);
             })?;
 
             workspace.update_in(cx, |workspace, window, cx| {
@@ -6086,7 +6108,7 @@ pub(crate) mod tests {
     use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
-    use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
+    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
@@ -6603,7 +6625,7 @@ pub(crate) mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
             prompt_store::init(cx)
         });
     }
