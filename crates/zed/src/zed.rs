@@ -53,7 +53,7 @@ use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_remote_project;
-use release_channel::{AppCommitSha, ReleaseChannel};
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
@@ -1168,7 +1168,9 @@ fn initialize_pane(
 }
 
 fn about(_: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    use std::fmt::Write;
     let release_channel = ReleaseChannel::global(cx).display_name();
+    let full_version = AppVersion::global(cx);
     let version = env!("CARGO_PKG_VERSION");
     let debug = if cfg!(debug_assertions) {
         "(debug)"
@@ -1176,7 +1178,16 @@ fn about(_: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         ""
     };
     let message = format!("{release_channel} {version} {debug}");
-    let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
+
+    let mut detail = AppCommitSha::try_global(cx)
+        .map(|sha| sha.full())
+        .unwrap_or_default();
+    if !detail.is_empty() {
+        detail.push('\n');
+    }
+    _ = write!(&mut detail, "\n{full_version}");
+
+    let detail = Some(detail);
 
     let prompt = window.prompt(
         PromptLevel::Info,
@@ -2235,12 +2246,13 @@ mod tests {
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
     use gpui::{
-        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
-        TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
+        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, TestAppContext, UpdateGlobal,
+        VisualTestContext, WindowHandle, actions,
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath};
+    use semver::Version;
     use serde_json::json;
     use settings::{SettingsStore, watch_config_file};
     use std::{
@@ -4777,7 +4789,7 @@ mod tests {
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             editor::init(cx);
             collab_ui::init(&app_state, cx);

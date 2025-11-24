@@ -6,9 +6,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
-use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
-use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use gpui::{App, AppContext as _, AsyncApp, Task};
+use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
+use semver::Version;
 use smol::{fs, process};
 use std::{
     ffi::OsStr,
@@ -62,13 +63,8 @@ impl WslRemoteConnection {
             connection_options.distro_name,
             connection_options.user
         );
-        let (release_channel, version, commit) = cx.update(|cx| {
-            (
-                ReleaseChannel::global(cx),
-                AppVersion::global(cx),
-                AppCommitSha::try_global(cx),
-            )
-        })?;
+        let (release_channel, version) =
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
 
         let mut this = Self {
             connection_options,
@@ -94,7 +90,7 @@ impl WslRemoteConnection {
             .context("failed detecting platform")?;
         log::info!("Remote platform discovered: {:?}", this.platform);
         this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await
                 .context("failed ensuring server binary")?,
         );
@@ -157,15 +153,10 @@ impl WslRemoteConnection {
         &self,
         delegate: &Arc<dyn RemoteClientDelegate>,
         release_channel: ReleaseChannel,
-        version: SemanticVersion,
-        commit: Option<AppCommitSha>,
+        version: Version,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
-            ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.full()).unwrap_or_default();
-                format!("{}-{}", version, commit)
-            }
             ReleaseChannel::Dev => "build".to_string(),
             _ => version.to_string(),
         };
