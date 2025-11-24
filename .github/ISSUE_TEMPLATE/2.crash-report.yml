@@ -8,7 +8,7 @@ body:
       description: A step-by-step description of how to reproduce the crash from a **clean Zed install**. **Be verbose**. **Issues with insufficient detail may be summarily closed**.
       placeholder: |
         1. Start Zed
-        2. Peform an action
+        2. Perform an action
         3. Zed crashes
     validations:
       required: true
