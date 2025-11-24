@@ -82,6 +82,10 @@ impl TextArea {
         }
     }
 
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
     pub fn set_content(&mut self, content: &str, cx: &mut Context<Self>) {
         self.content = content.to_string();
         self.selected_range = 0..0;
@@ -1234,10 +1238,9 @@ impl Element for TextAreaElement {
                 underline: None,
                 strikethrough: None,
             };
-            let line =
-                window
-                    .text_system()
-                    .shape_line(placeholder, font_size, &[run], None);
+            let line = window
+                .text_system()
+                .shape_line(placeholder, font_size, &[run], None);
             line.paint(bounds.origin, self.style.line_height, window, cx)
                 .unwrap();
         } else {

@@ -1,7 +1,7 @@
 use gpui::{
-    AnyWindowHandle, App, Bounds, Context, CursorStyle, ElementId, Entity, FocusHandle, Focusable,
-    Hsla, Pixels, Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions, div,
-    prelude::*, px, rgb, size,
+    AnyWindowHandle, App, Bounds, ClickEvent, Context, CursorStyle, ElementId, Entity, FocusHandle,
+    Focusable, Hsla, Pixels, Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions,
+    div, prelude::*, px, rgb, size,
 };
 use std::sync::atomic::Ordering;
 
@@ -64,7 +64,7 @@ pub struct Sticky {
     focus_handle: FocusHandle,
     bounds: Bounds<Pixels>,
     color: StickyColor,
-    // collapsed: bool,
+    collapsed: bool,
     content: SharedString,
     window_handle: Option<AnyWindowHandle>,
     text_area: Entity<TextArea>,
@@ -83,7 +83,7 @@ impl Sticky {
             focus_handle: cx.focus_handle(),
             bounds,
             color,
-            // collapsed: false,
+            collapsed: false,
             content: SharedString::new(""),
             window_handle: None,
             text_area,
@@ -97,6 +97,15 @@ impl Sticky {
             area.set_content(&self.content, cx);
         });
         self
+    }
+
+    pub fn collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.collapsed = !self.collapsed;
+        cx.notify();
     }
 
     pub fn with_window_handle(mut self, handle: AnyWindowHandle) -> Self {
@@ -229,8 +238,13 @@ impl Render for Sticky {
                 window.focus(&text_area_handle);
                 cx.notify();
             }))
-            .child(Titlebar::new(entity, window_active))
-            .child(self.text_area.clone())
+            .when(self.collapsed, |this| {
+                this.h(px(TITLEBAR_HEIGHT)).overflow_hidden()
+            })
+            .when(!self.collapsed, |this| {
+                this.child(Titlebar::new(entity, window_active))
+                    .child(self.text_area.clone())
+            })
     }
 }
 
@@ -257,8 +271,17 @@ impl Titlebar {
 
 impl RenderOnce for Titlebar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = self.sticky.clone();
         let sticky_state = self.sticky.read(cx);
+        let note_preview = sticky_state.text_area.read(cx).content().clone();
+        let note_preview = if note_preview.len() > 45 {
+            format!("{}...", &note_preview[..45])
+        } else {
+            note_preview.to_string()
+        };
+        let note_preview = SharedString::new(note_preview);
         let color = sticky_state.color.clone();
+        let collapsed = sticky_state.collapsed;
 
         div()
             .id("titlebar")
@@ -271,6 +294,25 @@ impl RenderOnce for Titlebar {
             .top(-px(1.0))
             .h(px(TITLEBAR_HEIGHT) + px(2.0))
             .w_full()
+            .text_size(px(10.))
+            .on_click(move |click: &ClickEvent, window, cx| {
+                if click.click_count() < 2 {
+                    return;
+                }
+
+                let state = state.clone();
+
+                state.update(cx, |state, cx| {
+                    state.toggle_collapsed(cx);
+                });
+            })
+            // .on_click(|event, window, cx: &mut App| {
+            //     match event {
+            //         ClickEvent::Mouse(),
+            //         _ => {},
+            //     }
+            // })
             .when(self.window_active, |this| this.bg(color.titlebar_bg()))
+            .when(!collapsed, |this| this.child(note_preview))
     }
 }
