@@ -21655,6 +21655,7 @@ dependencies = [
  "language_model",
  "log",
  "lsp",
+ "markdown",
  "menu",
  "open_ai",
  "postage",

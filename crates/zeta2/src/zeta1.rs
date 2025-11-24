@@ -139,7 +139,10 @@ pub(crate) fn request_prediction_with_zeta1(
                 max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
                 excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
                     start_line: cloud_llm_client::predict_edits_v3::Line(context_range.start.row),
-                    text: body.input_excerpt.into(),
+                    text: snapshot
+                        .text_for_range(context_range)
+                        .collect::<String>()
+                        .into(),
                 }],
             }],
             cursor_point: cloud_llm_client::predict_edits_v3::Point {

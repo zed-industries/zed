@@ -1,11 +1,18 @@
 use crate::{EditPrediction, EditPredictionRating, Zeta};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use cloud_zeta2_prompt::write_codeblock;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, actions, prelude::*,
+    App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
+    Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
 };
-use language::{Point, language_settings};
+use language::{LanguageRegistry, Point, language_settings};
+use markdown::{Markdown, MarkdownStyle};
+use settings::Settings as _;
+use std::fmt::Write;
+use std::sync::Arc;
 use std::time::Duration;
+use theme::ThemeSettings;
 use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
@@ -29,6 +36,7 @@ actions!(
 
 pub struct RatePredictionsModal {
     zeta: Entity<Zeta>,
+    language_registry: Arc<LanguageRegistry>,
     active_prediction: Option<ActivePrediction>,
     selected_index: usize,
     diff_editor: Entity<Editor>,
@@ -40,6 +48,7 @@ pub struct RatePredictionsModal {
 struct ActivePrediction {
     prediction: EditPrediction,
     feedback_editor: Entity<Editor>,
+    formatted_inputs: Entity<Markdown>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -60,19 +69,26 @@ impl RatePredictionView {
 impl RatePredictionsModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         if let Some(zeta) = Zeta::try_global(cx) {
+            let language_registry = workspace.app_state().languages.clone();
             workspace.toggle_modal(window, cx, |window, cx| {
-                RatePredictionsModal::new(zeta, window, cx)
+                RatePredictionsModal::new(zeta, language_registry, window, cx)
             });
 
             telemetry::event!("Rate Prediction Modal Open", source = "Edit Prediction");
         }
     }
 
-    pub fn new(zeta: Entity<Zeta>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        language_registry: Arc<LanguageRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
 
         Self {
             zeta,
+            language_registry,
             selected_index: 0,
             focus_handle: cx.focus_handle(),
             active_prediction: None,
@@ -336,6 +352,40 @@ impl RatePredictionsModal {
                 });
             });
 
+            let mut formatted_inputs = String::new();
+
+            write!(&mut formatted_inputs, "## Events\n\n").unwrap();
+
+            for event in &prediction.inputs.events {
+                write!(&mut formatted_inputs, "```diff\n{event}```\n\n").unwrap();
+            }
+
+            write!(&mut formatted_inputs, "## Included files\n\n").unwrap();
+
+            for included_file in &prediction.inputs.included_files {
+                let cursor_insertions = &[(prediction.inputs.cursor_point, "<|CURSOR|>")];
+
+                write!(
+                    &mut formatted_inputs,
+                    "### {}\n\n",
+                    included_file.path.display()
+                )
+                .unwrap();
+
+                write_codeblock(
+                    &included_file.path,
+                    &included_file.excerpts,
+                    if included_file.path == prediction.inputs.cursor_path {
+                        cursor_insertions
+                    } else {
+                        &[]
+                    },
+                    included_file.max_row,
+                    false,
+                    &mut formatted_inputs,
+                );
+            }
+
             self.active_prediction = Some(ActivePrediction {
                 prediction,
                 feedback_editor: cx.new(|cx| {
@@ -355,6 +405,14 @@ impl RatePredictionsModal {
                         cx.focus_self(window);
                     }
                     editor
+                }),
+                formatted_inputs: cx.new(|cx| {
+                    Markdown::new(
+                        formatted_inputs.into(),
+                        Some(self.language_registry.clone()),
+                        None,
+                        cx,
+                    )
                 }),
             });
         } else {
@@ -412,7 +470,14 @@ impl RatePredictionsModal {
         )
     }
 
-    fn render_raw_input(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
+    fn render_raw_input(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Stateful<Div>> {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let buffer_font_size = theme_settings.buffer_font_size(cx);
+
         Some(
             v_flex()
                 .size_full()
@@ -427,17 +492,71 @@ impl RatePredictionsModal {
                         .bg(cx.theme().colors().editor_background)
                         .overflow_scroll()
                         .child(if let Some(active_prediction) = &self.active_prediction {
-                            serde_json::to_string_pretty(&active_prediction.prediction.inputs)
-                                .unwrap()
+                            markdown::MarkdownElement::new(
+                                active_prediction.formatted_inputs.clone(),
+                                MarkdownStyle {
+                                    base_text_style: window.text_style(),
+                                    syntax: cx.theme().syntax().clone(),
+                                    code_block: StyleRefinement {
+                                        text: Some(TextStyleRefinement {
+                                            font_family: Some(
+                                                theme_settings.buffer_font.family.clone(),
+                                            ),
+                                            font_size: Some(buffer_font_size.into()),
+                                            ..Default::default()
+                                        }),
+                                        padding: EdgesRefinement {
+                                            top: Some(DefiniteLength::Absolute(
+                                                AbsoluteLength::Pixels(px(8.)),
+                                            )),
+                                            left: Some(DefiniteLength::Absolute(
+                                                AbsoluteLength::Pixels(px(8.)),
+                                            )),
+                                            right: Some(DefiniteLength::Absolute(
+                                                AbsoluteLength::Pixels(px(8.)),
+                                            )),
+                                            bottom: Some(DefiniteLength::Absolute(
+                                                AbsoluteLength::Pixels(px(8.)),
+                                            )),
+                                        },
+                                        margin: EdgesRefinement {
+                                            top: Some(Length::Definite(px(8.).into())),
+                                            left: Some(Length::Definite(px(0.).into())),
+                                            right: Some(Length::Definite(px(0.).into())),
+                                            bottom: Some(Length::Definite(px(12.).into())),
+                                        },
+                                        border_style: Some(BorderStyle::Solid),
+                                        border_widths: EdgesRefinement {
+                                            top: Some(AbsoluteLength::Pixels(px(1.))),
+                                            left: Some(AbsoluteLength::Pixels(px(1.))),
+                                            right: Some(AbsoluteLength::Pixels(px(1.))),
+                                            bottom: Some(AbsoluteLength::Pixels(px(1.))),
+                                        },
+                                        border_color: Some(cx.theme().colors().border_variant),
+                                        background: Some(
+                                            cx.theme().colors().editor_background.into(),
+                                        ),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                },
+                            )
+                            .into_any_element()
                         } else {
-                            "No active completion".to_string()
+                            div()
+                                .child("No active completion".to_string())
+                                .into_any_element()
                         }),
                 )
                 .id("raw-input-view"),
         )
     }
 
-    fn render_active_completion(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_active_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let active_prediction = self.active_prediction.as_ref()?;
         let completion_id = active_prediction.prediction.id.clone();
         let focus_handle = &self.focus_handle(cx);
@@ -470,7 +589,7 @@ impl RatePredictionsModal {
                                 RatePredictionView::SuggestedEdits => {
                                     self.render_suggested_edits(cx)
                                 }
-                                RatePredictionView::RawInput => self.render_raw_input(cx),
+                                RatePredictionView::RawInput => self.render_raw_input(window, cx),
                             },
                             |this, element| this.child(element),
                         ),
@@ -741,7 +860,7 @@ impl Render for RatePredictionsModal {
                             ),
                     ),
             )
-            .children(self.render_active_completion(cx))
+            .children(self.render_active_completion(window, cx))
             .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
     }
 }
