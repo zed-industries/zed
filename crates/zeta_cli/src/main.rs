@@ -128,8 +128,6 @@ pub struct PredictArguments {
 
 #[derive(Clone, Debug, Args)]
 pub struct PredictionOptions {
-    #[arg(long)]
-    use_expected_context: bool,
     #[clap(flatten)]
     zeta2: Zeta2Args,
     #[clap(long)]
