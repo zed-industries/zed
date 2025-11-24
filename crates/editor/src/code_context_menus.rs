@@ -15,10 +15,10 @@ use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 use project::{CompletionDisplayOptions, CompletionSource};
-use semantic_version::SemanticVersion;
 use task::DebugScenario;
 use task::TaskContext;
 
+use semver::Version as SemanticVersion;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -1171,7 +1171,6 @@ impl CompletionsMenu {
         enum MatchTier<'a> {
             SemverMatch {
                 sort_semver: Reverse<SemanticVersion>,
-                sort_score: Reverse<OrderedFloat<f64>>,
             },
             WordStartMatch {
                 sort_exact: Reverse<i32>,
@@ -1201,17 +1200,14 @@ impl CompletionsMenu {
             let completion = &completions[string_match.candidate_id];
             let (sort_kind, sort_label) = completion.sort_key();
 
-            let parsed_semver = parse_semver_label(sort_label);
+            if let Ok(semver) = SemanticVersion::parse(sort_label) {
+                return MatchTier::SemverMatch {
+                    sort_semver: Reverse(semver),
+                };
+            }
 
             let score = string_match.score;
             let sort_score = Reverse(OrderedFloat(score));
-
-            if let Some(semver) = parsed_semver {
-                return MatchTier::SemverMatch {
-                    sort_semver: Reverse(semver),
-                    sort_score,
-                };
-            }
 
             // Snippets do their own first-letter matching logic elsewhere.
             let is_snippet = completion.is_snippet_kind();
@@ -1309,18 +1305,6 @@ impl CompletionsMenu {
         cx.notify();
         self.scroll_handle_aside.set_offset(offset);
     }
-}
-
-fn parse_semver_label(label: &str) -> Option<SemanticVersion> {
-    let trimmed = label.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let trimmed = trimmed
-        .strip_prefix('v')
-        .or_else(|| trimmed.strip_prefix('V'))
-        .unwrap_or(trimmed);
-    trimmed.parse().ok()
 }
 
 #[derive(Clone)]

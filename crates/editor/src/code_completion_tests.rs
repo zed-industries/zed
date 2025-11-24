@@ -242,10 +242,11 @@ async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
     let completions = vec![
-        CompletionBuilder::new("10.4.22", None, None, None), // 0.8 fuzzy score
-        CompletionBuilder::new("10.4.2", None, None, None),  // 0.7 fuzzy score
-        CompletionBuilder::new("10.4.20", None, None, None), // 0.7 fuzzy score
-        CompletionBuilder::new("10.4.21", None, None, None), // 0.7 fuzzy score
+        CompletionBuilder::new("10.4.22", None, None, None),
+        CompletionBuilder::new("10.4.2", None, None, None),
+        CompletionBuilder::new("10.4.20", None, None, None),
+        CompletionBuilder::new("10.4.21", None, None, None),
+        CompletionBuilder::new("10.4.12", None, None, None),
     ];
 
     let matches = filter_and_sort_matches("2", &completions, SnippetSortOrder::default(), cx).await;
@@ -253,7 +254,8 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
     assert_eq!(matches[0].string, "10.4.22");
     assert_eq!(matches[1].string, "10.4.21");
     assert_eq!(matches[2].string, "10.4.20");
-    assert_eq!(matches[3].string, "10.4.2");
+    assert_eq!(matches[3].string, "10.4.12");
+    assert_eq!(matches[4].string, "10.4.2");
 }
 
 async fn test_for_each_prefix<F>(
