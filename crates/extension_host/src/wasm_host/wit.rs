@@ -110,7 +110,7 @@ impl Extension {
     pub async fn instantiate_async(
         executor: &BackgroundExecutor,
         store: &mut Store<WasmState>,
-        release_channel: ReleaseChannel,
+        _release_channel: ReleaseChannel,
         version: Version,
         component: &Component,
     ) -> Result<Self> {
