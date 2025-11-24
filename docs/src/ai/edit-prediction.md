@@ -119,12 +119,12 @@ To maintain the use of the modifier key for accepting predictions when there is 
 If you want to use `tab` to always accept edit predictions, you can use the following keybinding:
 
 ```json [keymap]
-  {
-    "context": "Editor && edit_prediction_conflict && showing_completions",
-    "bindings": {
-      "tab": "editor::AcceptEditPrediction"
-    }
+{
+  "context": "Editor && edit_prediction_conflict && showing_completions",
+  "bindings": {
+    "tab": "editor::AcceptEditPrediction"
   }
+}
 ```
 
 This will make `tab` work to accept edit predictions _even when_ you're also seeing language server completions.
