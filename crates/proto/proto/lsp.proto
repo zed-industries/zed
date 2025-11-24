@@ -618,7 +618,6 @@ message RegisteredForBuffer {
 message LanguageServerBinaryInfo {
     string path = 1;
     repeated string arguments = 2;
-    map<string, string> env = 3;
 }
 
 message ServerMetadataUpdated {

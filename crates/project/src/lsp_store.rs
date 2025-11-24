@@ -3543,12 +3543,6 @@ fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<
                             .iter()
                             .map(|arg| arg.to_string_lossy().into_owned())
                             .collect(),
-                        env: server
-                            .binary()
-                            .env
-                            .clone()
-                            .map(|env| env.into_iter().collect())
-                            .unwrap_or_default(),
                     }),
                     configuration: serde_json::to_string(server.configuration()).ok(),
                     workspace_folders: server
@@ -3724,7 +3718,7 @@ pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<ProgressToken>,
+    pub progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
     pub binary: Option<LanguageServerBinaryInfo>,
     pub configuration: Option<Value>,

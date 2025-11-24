@@ -12,7 +12,7 @@ use lsp::{
     TraceValue, notification::SetTrace,
 };
 use project::{
-    Project,
+    LanguageServerStatus, Project,
     lsp_store::{
         LanguageServerBinaryInfo,
         log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
@@ -339,17 +339,28 @@ impl LspLogView {
 * Capabilities: {CAPABILITIES}
 
 * Configuration: {CONFIGURATION}",
-            NAME = info.name,
+            NAME = info.status.name,
             ID = info.id,
-            BINARY = info.binary.as_ref().map_or_else(
+            BINARY = info.status.binary.as_ref().map_or_else(
                 || "Unknown".to_string(),
                 |binary| serde_json::to_string_pretty(binary)
                     .unwrap_or_else(|e| format!("Failed to serialize binary info: {e:#}"))
             ),
-            WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
+            WORKSPACE_FOLDERS = info
+                .status
+                .workspace_folders
+                .iter()
+                .filter_map(|uri| {
+                    uri.to_file_path()
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned())
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
             CONFIGURATION = info
+                .status
                 .configuration
                 .map(|configuration| serde_json::to_string_pretty(&configuration))
                 .transpose()
@@ -636,24 +647,12 @@ impl LspLogView {
                     .or_else(move || {
                         let capabilities =
                             lsp_store.lsp_server_capabilities.get(&server_id)?.clone();
-                        let language_server_status =
-                            lsp_store.language_server_statuses.get(&server_id)?;
+                        let status = lsp_store.language_server_statuses.get(&server_id)?.clone();
 
                         Some(ServerInfo {
                             id: server_id,
                             capabilities,
-                            name: language_server_status.name.clone(),
-                            binary: language_server_status.binary.clone(),
-                            configuration: language_server_status.configuration.clone(),
-                            workspace_folders: language_server_status
-                                .workspace_folders
-                                .iter()
-                                .filter_map(|uri| {
-                                    uri.to_file_path()
-                                        .ok()
-                                        .map(|path| path.to_string_lossy().into_owned())
-                                })
-                                .collect::<Vec<_>>(),
+                            status,
                         })
                     })
             })
@@ -1326,10 +1325,7 @@ impl LspLogToolbarItemView {
 struct ServerInfo {
     id: LanguageServerId,
     capabilities: lsp::ServerCapabilities,
-    binary: Option<LanguageServerBinaryInfo>,
-    name: LanguageServerName,
-    workspace_folders: Vec<String>,
-    configuration: Option<serde_json::Value>,
+    status: LanguageServerStatus,
 }
 
 impl ServerInfo {
@@ -1337,27 +1333,25 @@ impl ServerInfo {
         Self {
             id: server.server_id(),
             capabilities: server.capabilities(),
-            binary: Some(LanguageServerBinaryInfo {
-                path: server.binary().path.to_string_lossy().into_owned(),
-                arguments: server
-                    .binary()
-                    .arguments
-                    .iter()
-                    .map(|arg| arg.to_string_lossy().into_owned())
-                    .collect(),
-                env: server.binary().env.clone(),
-            }),
-            name: server.name(),
-            workspace_folders: server
-                .workspace_folders()
-                .into_iter()
-                .filter_map(|path| {
-                    path.to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned())
-                })
-                .collect::<Vec<_>>(),
-            configuration: Some(server.configuration().clone()),
+            status: LanguageServerStatus {
+                name: server.name(),
+                pending_work: Default::default(),
+                has_pending_diagnostic_updates: false,
+                progress_tokens: Default::default(),
+                worktree: None,
+                binary: Some(LanguageServerBinaryInfo {
+                    path: server.binary().path.to_string_lossy().into_owned(),
+                    arguments: server
+                        .binary()
+                        .arguments
+                        .iter()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect(),
+                    env: server.binary().env.clone(),
+                }),
+                configuration: Some(server.configuration().clone()),
+                workspace_folders: server.workspace_folders(),
+            },
         }
     }
 }
