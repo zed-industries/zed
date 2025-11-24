@@ -23,6 +23,142 @@ This opens the current directory in Zed.
 
 During setup, you have the option to import key settings from VS Code. Zed imports the following settings:
 
+## Settings Imported from VS Code
+
+The following VS Code settings are automatically imported when you use **Import Settings from VS Code**:
+
+### Editor
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `editor.fontFamily` | `buffer_font_family` |
+| `editor.fontSize` | `buffer_font_size` |
+| `editor.fontWeight` | `buffer_font_weight` |
+| `editor.tabSize` | `tab_size` |
+| `editor.insertSpaces` | `hard_tabs` (inverted) |
+| `editor.wordWrap` | `soft_wrap` |
+| `editor.wordWrapColumn` | `preferred_line_length` |
+| `editor.cursorStyle` | `cursor_shape` |
+| `editor.cursorBlinking` | `cursor_blink` |
+| `editor.renderLineHighlight` | `current_line_highlight` |
+| `editor.lineNumbers` | `gutter.line_numbers`, `relative_line_numbers` |
+| `editor.showFoldingControls` | `gutter.folds` |
+| `editor.minimap.enabled` | `minimap.show` |
+| `editor.minimap.autohide` | `minimap.show` |
+| `editor.minimap.showSlider` | `minimap.thumb` |
+| `editor.minimap.maxColumn` | `minimap.max_width_columns` |
+| `editor.stickyScroll.enabled` | `sticky_scroll.enabled` |
+| `editor.scrollbar.horizontal` | `scrollbar.axes.horizontal` |
+| `editor.scrollbar.vertical` | `scrollbar.axes.vertical` |
+| `editor.mouseWheelScrollSensitivity` | `scroll_sensitivity` |
+| `editor.fastScrollSensitivity` | `fast_scroll_sensitivity` |
+| `editor.cursorSurroundingLines` | `vertical_scroll_margin` |
+| `editor.hover.enabled` | `hover_popover_enabled` |
+| `editor.hover.delay` | `hover_popover_delay` |
+| `editor.parameterHints.enabled` | `auto_signature_help` |
+| `editor.multiCursorModifier` | `multi_cursor_modifier` |
+| `editor.selectionHighlight` | `selection_highlight` |
+| `editor.roundedSelection` | `rounded_selection` |
+| `editor.find.seedSearchStringFromSelection` | `seed_search_query_from_cursor` |
+| `editor.rulers` | `wrap_guides` |
+| `editor.renderWhitespace` | `show_whitespaces` |
+| `editor.guides.indentation` | `indent_guides.enabled` |
+| `editor.linkedEditing` | `linked_edits` |
+| `editor.autoSurround` | `use_auto_surround` |
+| `editor.formatOnSave` | `format_on_save` |
+| `editor.formatOnPaste` | `auto_indent_on_paste` |
+| `editor.formatOnType` | `use_on_type_format` |
+| `editor.trimAutoWhitespace` | `remove_trailing_whitespace_on_save` |
+| `editor.suggestOnTriggerCharacters` | `show_completions_on_input` |
+| `editor.suggest.showWords` | `completions.words` |
+| `editor.inlineSuggest.enabled` | `show_edit_predictions` |
+
+### Files & Workspace
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `files.autoSave` | `autosave` |
+| `files.autoSaveDelay` | `autosave.milliseconds` |
+| `files.insertFinalNewline` | `ensure_final_newline_on_save` |
+| `files.associations` | `file_types` |
+| `files.watcherExclude` | `file_scan_exclusions` |
+| `files.watcherInclude` | `file_scan_inclusions` |
+| `files.simpleDialog.enable` | `use_system_path_prompts` |
+| `search.smartCase` | `use_smartcase_search` |
+| `search.useIgnoreFiles` | `search.include_ignored` |
+
+### Terminal
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `terminal.integrated.fontFamily` | `terminal.font_family` |
+| `terminal.integrated.fontSize` | `terminal.font_size` |
+| `terminal.integrated.lineHeight` | `terminal.line_height` |
+| `terminal.integrated.cursorStyle` | `terminal.cursor_shape` |
+| `terminal.integrated.cursorBlinking` | `terminal.blinking` |
+| `terminal.integrated.copyOnSelection` | `terminal.copy_on_select` |
+| `terminal.integrated.scrollback` | `terminal.max_scroll_history_lines` |
+| `terminal.integrated.macOptionIsMeta` | `terminal.option_as_meta` |
+| `terminal.integrated.{platform}Exec` | `terminal.shell` |
+| `terminal.integrated.env.{platform}` | `terminal.env` |
+
+### Tabs & Panels
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `workbench.editor.showTabs` | `tab_bar.show` |
+| `workbench.editor.showIcons` | `tabs.file_icons` |
+| `workbench.editor.tabActionLocation` | `tabs.close_position` |
+| `workbench.editor.tabActionCloseVisibility` | `tabs.show_close_button` |
+| `workbench.editor.focusRecentEditorAfterClose` | `tabs.activate_on_close` |
+| `workbench.editor.enablePreview` | `preview_tabs.enabled` |
+| `workbench.editor.enablePreviewFromQuickOpen` | `preview_tabs.enable_preview_from_file_finder` |
+| `workbench.editor.enablePreviewFromCodeNavigation` | `preview_tabs.enable_preview_from_code_navigation` |
+| `workbench.editor.editorActionsLocation` | `tab_bar.show_tab_bar_buttons` |
+| `workbench.editor.limit.enabled` / `value` | `max_tabs` |
+| `workbench.editor.restoreViewState` | `restore_on_file_reopen` |
+| `workbench.statusBar.visible` | `status_bar.show` |
+
+### Project Panel (File Explorer)
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `explorer.compactFolders` | `project_panel.auto_fold_dirs` |
+| `explorer.autoReveal` | `project_panel.auto_reveal_entries` |
+| `explorer.excludeGitIgnore` | `project_panel.hide_gitignore` |
+| `problems.decorations.enabled` | `project_panel.show_diagnostics` |
+| `explorer.decorations.badges` | `project_panel.git_status` |
+
+### Git
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `git.enabled` | `git_panel.button` |
+| `git.defaultBranchName` | `git_panel.fallback_branch_name` |
+| `git.decorations.enabled` | `git.inline_blame`, `project_panel.git_status` |
+| `git.blame.editorDecoration.enabled` | `git.inline_blame.enabled` |
+
+### Window & Behavior
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `window.confirmBeforeClose` | `confirm_quit` |
+| `window.nativeTabs` | `use_system_window_tabs` |
+| `window.closeWhenEmpty` | `when_closing_with_no_tabs` |
+| `accessibility.dimUnfocused.enabled` / `opacity` | `active_pane_modifiers.inactive_opacity` |
+
+### Other
+
+| VS Code Setting | Zed Setting |
+| --- | --- |
+| `http.proxy` | `proxy` |
+| `npm.packageManager` | `node.npm_path` |
+| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics` |
+| `outline.icons` | `outline_panel.file_icons`, `outline_panel.folder_icons` |
+| `chat.agent.enabled` | `agent.enabled` |
+| `mcp` | `context_servers` |
+
+
 Zed doesn’t import extensions or keybindings, but this is the fastest way to get a familiar feel while trying something new. If you skip that step during setup, you can still import settings manually later via the command palette:
 
 `Cmd+Shift+P → Zed: Import VS Code Settings`
