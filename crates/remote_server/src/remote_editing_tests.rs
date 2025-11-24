@@ -11,7 +11,7 @@ use prompt_store::ProjectContext;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
+use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
@@ -1499,6 +1499,14 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        editor::init(cx);
+    });
+
     use editor::Editor;
     use gpui::VisualContext;
     let text_2 = "
@@ -1838,6 +1846,7 @@ async fn test_remote_external_agent_server(
                 &json!({
                     "agent_servers": {
                         "foo": {
+                            "type": "custom",
                             "command": "foo-cli",
                             "args": ["--flag"],
                             "env": {
@@ -1901,10 +1910,10 @@ pub async fn init_test(
 ) -> (Entity<Project>, Entity<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     init_logger();
 

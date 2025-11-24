@@ -133,7 +133,6 @@ snippet_provider.workspace = true
 snippets_ui.workspace = true
 supermaven.workspace = true
 svg_preview.workspace = true
-sweep_ai.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
 task.workspace = true
@@ -187,6 +186,7 @@ itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true

@@ -17,6 +17,7 @@ eval-support = []
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
+brotli.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
@@ -31,9 +32,12 @@ indoc.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true
+lsp.workspace = true
 open_ai.workspace = true
+pretty_assertions.workspace = true
 project.workspace = true
 release_channel.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
@@ -43,7 +47,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
-pretty_assertions.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

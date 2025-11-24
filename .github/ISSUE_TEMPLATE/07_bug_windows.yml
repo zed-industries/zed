@@ -1,7 +1,7 @@
 name: Bug Report (Windows)
 description: Zed Windows Related Bugs
 type: "Bug"
-labels: ["windows"]
+labels: ["platform:windows"]
 title: "Windows: <a short description of the Windows bug>"
 body:
   - type: textarea
