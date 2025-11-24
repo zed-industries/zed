@@ -1167,28 +1167,13 @@ impl CompletionsMenu {
     ) -> Vec<StringMatch> {
         let mut matches = matches;
 
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        struct MaybeSemver(Option<SemanticVersion>);
-
-        impl PartialOrd for MaybeSemver {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        impl Ord for MaybeSemver {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                match (&self.0, &other.0) {
-                    (Some(a), Some(b)) => a.cmp(b),
-                    _ => std::cmp::Ordering::Equal,
-                }
-            }
-        }
-
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
+            SemverMatch {
+                sort_semver: Reverse<SemanticVersion>,
+                sort_score: Reverse<OrderedFloat<f64>>,
+            },
             WordStartMatch {
-                sort_semver: Reverse<MaybeSemver>,
                 sort_exact: Reverse<i32>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
@@ -1216,10 +1201,17 @@ impl CompletionsMenu {
             let completion = &completions[string_match.candidate_id];
             let (sort_kind, sort_label) = completion.sort_key();
 
-            let sort_semver = Reverse(MaybeSemver(parse_semver_label(sort_label)));
+            let parsed_semver = parse_semver_label(sort_label);
 
             let score = string_match.score;
             let sort_score = Reverse(OrderedFloat(score));
+
+            if let Some(semver) = parsed_semver {
+                return MatchTier::SemverMatch {
+                    sort_semver: Reverse(semver),
+                    sort_score,
+                };
+            }
 
             // Snippets do their own first-letter matching logic elsewhere.
             let is_snippet = completion.is_snippet_kind();
@@ -1259,7 +1251,6 @@ impl CompletionsMenu {
                 });
 
                 MatchTier::WordStartMatch {
-                    sort_semver,
                     sort_exact,
                     sort_snippet,
                     sort_score,
