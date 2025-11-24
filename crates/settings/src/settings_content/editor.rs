@@ -4,14 +4,13 @@ use std::num;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
     DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
 };
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -254,7 +253,7 @@ impl RelativeLineNumbers {
 }
 
 // Toolbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
@@ -281,7 +280,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
@@ -317,7 +316,7 @@ pub struct ScrollbarContent {
 }
 
 /// Sticky scroll related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct StickyScrollContent {
     /// Whether sticky scroll is enabled.
@@ -327,7 +326,7 @@ pub struct StickyScrollContent {
 }
 
 /// Minimap related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
@@ -362,7 +361,7 @@ pub struct MinimapContent {
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
@@ -377,7 +376,7 @@ pub struct ScrollbarAxesContent {
 }
 
 /// Gutter related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
@@ -754,7 +753,7 @@ pub enum SnippetSortOrder {
 }
 
 /// Default options for buffer and project search items.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
@@ -771,7 +770,7 @@ pub struct SearchSettingsContent {
     pub center_on_match: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct JupyterContent {
@@ -787,7 +786,7 @@ pub struct JupyterContent {
 }
 
 /// Whether to allow drag and drop text selection in buffer.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct DragAndDropSelectionContent {
     /// When true, enables drag and drop text selection in buffer.
