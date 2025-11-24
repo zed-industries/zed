@@ -19,7 +19,7 @@ use project::project_settings::ProjectSettings;
 use util::command::new_smol_command;
 
 use proto::CrashReport;
-use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
+use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
 use remote::RemoteClient;
 use remote::{
     json_log::LogRecord,
@@ -396,10 +396,11 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
         settings::init(cx);
+        let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
             env!("ZED_PKG_VERSION"),
             option_env!("ZED_BUILD_ID"),
-            option_env!("ZED_COMMIT_SHA"),
+            app_commit_sha,
         );
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
