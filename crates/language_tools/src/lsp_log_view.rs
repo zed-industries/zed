@@ -13,10 +13,7 @@ use lsp::{
 };
 use project::{
     LanguageServerStatus, Project,
-    lsp_store::{
-        LanguageServerBinaryInfo,
-        log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
-    },
+    lsp_store::log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
     search::SearchQuery,
 };
 use proto::toggle_lsp_logs::LogType;
@@ -1335,16 +1332,7 @@ impl ServerInfo {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: None,
-                binary: Some(LanguageServerBinaryInfo {
-                    path: server.binary().path.to_string_lossy().into_owned(),
-                    arguments: server
-                        .binary()
-                        .arguments
-                        .iter()
-                        .map(|arg| arg.to_string_lossy().into_owned())
-                        .collect(),
-                    env: server.binary().env.clone(),
-                }),
+                binary: Some(server.binary().clone()),
                 configuration: Some(server.configuration().clone()),
                 workspace_folders: server.workspace_folders(),
             },
