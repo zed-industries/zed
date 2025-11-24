@@ -1441,7 +1441,7 @@
     "default_height": 320,
     // What working directory to use when launching the terminal.
     // May take 4 values:
-    // 1. Use the current file's project directory.  Will Fallback to the
+    // 1. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
     // 2. Use the first project in this workspace's directory
