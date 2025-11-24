@@ -954,7 +954,12 @@ impl Vim {
     }
 
     fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
-        editor.set_cursor_shape(CursorShape::Bar, cx);
+        editor.set_cursor_shape(
+            EditorSettings::get_global(cx)
+                .cursor_shape
+                .unwrap_or_default(),
+            cx,
+        );
         editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);
         editor.set_input_enabled(true);

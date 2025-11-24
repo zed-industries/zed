@@ -3025,6 +3025,10 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn cursor_shape(&self) -> CursorShape {
+        self.cursor_shape
+    }
+
     pub fn set_current_line_highlight(
         &mut self,
         current_line_highlight: Option<CurrentLineHighlight>,
