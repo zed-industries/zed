@@ -60,8 +60,11 @@ body:
     attributes:
       label: Zed version and system specs
       description: |
-        Open the command palette in Zed, then type “zed: copy system specs into clipboard”
+        Open the command palette in Zed, then type “zed: copy system specs into clipboard”. **Skipping this/failure to provide complete information will result in the issue being closed**.
       placeholder: |
-        Please paste the results of “zed: copy system specs into clipboard” here. **Skipping this/failure to provide complete information will result in the issue being closed.**
+        Zed: v0.215.0 (Zed Nightly bfe141ea79aa4984028934067ba75c48d99136ae)
+        OS: macOS 15.1
+        Memory: 36 GiB
+        Architecture: aarch64
     validations:
       required: true
