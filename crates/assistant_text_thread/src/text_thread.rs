@@ -16,6 +16,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
     Task,
 };
+use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
@@ -1853,14 +1854,17 @@ impl TextThread {
                         }
 
                         if ensure_trailing_newline
-                            && buffer.contains_str_at(command_range_end, "\n")
+                            && buffer
+                                .chars_at(command_range_end)
+                                .next()
+                                .is_some_and(|c| c == '\n')
                         {
-                            let newline_offset = insert_position.saturating_sub(1);
-                            if buffer.contains_str_at(newline_offset, "\n")
+                            if let Some((prev_char, '\n')) =
+                                buffer.reversed_chars_at(insert_position).next_tuple()
                                 && last_section_range.is_none_or(|last_section_range| {
                                     !last_section_range
                                         .to_offset(buffer)
-                                        .contains(&newline_offset)
+                                        .contains(&(insert_position - prev_char.len_utf8()))
                                 })
                             {
                                 deletions.push((command_range_end..command_range_end + 1, ""));

@@ -3137,12 +3137,9 @@ impl ToOffset for Point {
 
 impl ToOffset for usize {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        assert!(
-            *self <= snapshot.len(),
-            "offset {} is out of range, snapshot length is {}",
-            self,
-            snapshot.len()
-        );
+        if cfg!(debug_assertions) {
+            snapshot.as_rope().assert_char_boundary(*self);
+        }
         *self
     }
 }
