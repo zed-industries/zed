@@ -3730,20 +3730,13 @@ pub enum LspStoreEvent {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct LanguageServerBinaryInfo {
-    pub path: String,
-    pub arguments: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     pub progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
-    pub binary: Option<LanguageServerBinaryInfo>,
+    pub binary: Option<LanguageServerBinary>,
     pub configuration: Option<Value>,
     pub workspace_folders: BTreeSet<Uri>,
 }
@@ -11187,16 +11180,7 @@ impl LspStore {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: Some(key.worktree_id),
-                binary: Some(LanguageServerBinaryInfo {
-                    path: language_server.binary().path.to_string_lossy().into_owned(),
-                    arguments: language_server
-                        .binary()
-                        .arguments
-                        .iter()
-                        .map(|arg| arg.to_string_lossy().into_owned())
-                        .collect(),
-                    env: language_server.binary().env.clone(),
-                }),
+                binary: Some(language_server.binary().clone()),
                 configuration: Some(language_server.configuration().clone()),
                 workspace_folders: language_server.workspace_folders(),
             },

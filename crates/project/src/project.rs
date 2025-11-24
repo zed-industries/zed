@@ -37,7 +37,7 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
 use crate::{
     git_store::GitStore,
-    lsp_store::{LanguageServerBinaryInfo, SymbolLocation, log_store::LogKind},
+    lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
@@ -87,7 +87,8 @@ use language::{
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
-    LanguageServerId, LanguageServerName, LanguageServerSelector, MessageActionItem,
+    LanguageServerBinary, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    MessageActionItem,
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
@@ -111,6 +112,7 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
+    ffi::OsString,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -3125,12 +3127,15 @@ impl Project {
                                 .get_mut(language_server_id)
                             {
                                 if let Some(binary) = &update.binary {
-                                    language_server_status.binary =
-                                        Some(LanguageServerBinaryInfo {
-                                            path: binary.path.clone(),
-                                            arguments: binary.arguments.clone(),
-                                            env: None,
-                                        });
+                                    language_server_status.binary = Some(LanguageServerBinary {
+                                        path: PathBuf::from(&binary.path),
+                                        arguments: binary
+                                            .arguments
+                                            .iter()
+                                            .map(OsString::from)
+                                            .collect(),
+                                        env: None,
+                                    });
                                 }
 
                                 language_server_status.configuration = update
