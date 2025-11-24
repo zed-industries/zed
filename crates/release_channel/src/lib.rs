@@ -80,12 +80,25 @@ pub struct AppVersion;
 
 impl AppVersion {
     /// Load the app version from env.
-    pub fn load(pkg_version: &str) -> Version {
-        if let Ok(from_env) = env::var("ZED_APP_VERSION") {
+    pub fn load(
+        pkg_version: &str,
+        build_id: Option<&str>,
+        commit_sha: Option<AppCommitSha>,
+    ) -> Version {
+        let mut version: Version = if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {
             pkg_version.parse().expect("invalid version in Cargo.toml")
+        };
+        if let Some(build_id) = build_id {
+            version.pre =
+                semver::Prerelease::new(&build_id.to_string()).expect("Invalid build identifier");
         }
+        if let Some(sha) = commit_sha {
+            version.build = semver::BuildMetadata::new(&sha.0).expect("Invalid build metadata");
+        }
+
+        version
     }
 
     /// Returns the global version number.

@@ -51,7 +51,8 @@ use thiserror::Error;
 pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
     ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
     ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-        option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+        let commit_sha = option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha");
+        let build_identifier = option_env!("ZED_BUILD_ID").unwrap_or(0);
     }
 });
 
