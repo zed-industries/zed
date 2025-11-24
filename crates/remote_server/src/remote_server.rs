@@ -73,8 +73,12 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
                 ReleaseChannel::Nightly | ReleaseChannel::Dev => {
                     let commit_sha =
                         option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name());
-                    let build_id = option_env!("ZED_BUILD_ID").unwrap_or(0);
-                    println!("{}+{}", build_id, commit_sha);
+                    let build_id = option_env!("ZED_BUILD_ID");
+                    if let Some(build_id) = build_id {
+                        println!("{}+{}", build_id, commit_sha)
+                    } else {
+                        println!("{commit_sha}");
+                    }
                 }
             };
             Ok(())

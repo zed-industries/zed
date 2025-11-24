@@ -48,11 +48,16 @@ use std::{
 };
 use thiserror::Error;
 
-pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
-    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION").to_owned(),
     ReleaseChannel::Nightly | ReleaseChannel::Dev => {
         let commit_sha = option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha");
-        let build_identifier = option_env!("ZED_BUILD_ID").unwrap_or(0);
+        let build_identifier = option_env!("ZED_BUILD_ID");
+        if let Some(build_id) = build_identifier {
+            format!("{build_id}+{commit_sha}")
+        } else {
+            commit_sha.to_owned()
+        }
     }
 });
 
@@ -391,7 +396,11 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
+        let app_version = AppVersion::load(
+            env!("ZED_PKG_VERSION"),
+            option_env!("ZED_BUILD_ID"),
+            option_env!("ZED_COMMIT_SHA"),
+        );
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
