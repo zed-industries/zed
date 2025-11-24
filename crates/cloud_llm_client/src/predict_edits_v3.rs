@@ -80,6 +80,8 @@ pub enum PromptFormat {
     Minimal,
     /// One-sentence instructions + FIM-like template
     MinimalQwen,
+    /// No instructions, Qwen chat + Seed-Coder 1120 FIM-like template
+    SeedCoder1120,
 }
 
 impl PromptFormat {
@@ -108,6 +110,7 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::OldTextNewText => write!(f, "Old Text / New Text"),
             PromptFormat::Minimal => write!(f, "Minimal"),
             PromptFormat::MinimalQwen => write!(f, "Minimal + Qwen FIM"),
+            PromptFormat::SeedCoder1120 => write!(f, "Seed-Coder 1120"),
         }
     }
 }

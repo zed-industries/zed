@@ -1562,6 +1562,8 @@ impl Zeta {
                 }
 
                 let (prompt, _) = prompt_result?;
+                let generation_params =
+                    cloud_zeta2_prompt::generation_params(cloud_request.prompt_format);
                 let request = open_ai::Request {
                     model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
@@ -1569,8 +1571,8 @@ impl Zeta {
                     }],
                     stream: false,
                     max_completion_tokens: None,
-                    stop: Default::default(),
-                    temperature: 0.7,
+                    stop: generation_params.stop.unwrap_or_default(),
+                    temperature: generation_params.temperature.unwrap_or(0.7),
                     tool_choice: None,
                     parallel_tool_calls: None,
                     tools: vec![],
@@ -1636,7 +1638,9 @@ impl Zeta {
                         // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
                     }
-                    PromptFormat::Minimal | PromptFormat::MinimalQwen => {
+                    PromptFormat::Minimal
+                    | PromptFormat::MinimalQwen
+                    | PromptFormat::SeedCoder1120 => {
                         if output_text.contains("--- a/\n+++ b/\nNo edits") {
                             let edits = vec![];
                             (&active_snapshot, edits)
