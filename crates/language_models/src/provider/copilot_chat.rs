@@ -359,6 +359,7 @@ pub fn map_to_language_model_completion_events(
         id: String,
         name: String,
         arguments: String,
+        thought_signature: Option<String>,
     }
 
     struct State {
@@ -416,6 +417,11 @@ pub fn map_to_language_model_completion_events(
                                 if let Some(arguments) = function.arguments.clone() {
                                     entry.arguments.push_str(&arguments);
                                 }
+
+                                if let Some(thought_signature) = function.thought_signature.clone()
+                                {
+                                    entry.thought_signature = Some(thought_signature);
+                                }
                             }
                         }
 
@@ -456,7 +462,7 @@ pub fn map_to_language_model_completion_events(
                                                 is_input_complete: true,
                                                 input,
                                                 raw_input: tool_call.arguments,
-                                                thought_signature: None,
+                                                thought_signature: tool_call.thought_signature,
                                             },
                                         )),
                                         Err(error) => Ok(
@@ -548,6 +554,7 @@ impl CopilotResponsesEventMapper {
                     call_id,
                     name,
                     arguments,
+                    thought_signature,
                     ..
                 } => {
                     let mut events = Vec::new();
@@ -559,7 +566,7 @@ impl CopilotResponsesEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: arguments.clone(),
-                                thought_signature: None,
+                                thought_signature,
                             },
                         ))),
                         Err(error) => {
@@ -774,6 +781,7 @@ fn into_copilot_chat(
                                 function: copilot::copilot_chat::FunctionContent {
                                     name: tool_use.name.to_string(),
                                     arguments: serde_json::to_string(&tool_use.input)?,
+                                    thought_signature: tool_use.thought_signature.clone(),
                                 },
                             },
                         });
@@ -948,6 +956,7 @@ fn into_copilot_responses(
                             name: tool_use.name.to_string(),
                             arguments: tool_use.raw_input.clone(),
                             status: None,
+                            thought_signature: tool_use.thought_signature.clone(),
                         });
                     }
                 }
@@ -1120,6 +1129,7 @@ mod tests {
                 name: "do_it".into(),
                 arguments: "{\"x\":1}".into(),
                 status: None,
+                thought_signature: None,
             },
         }];
 
@@ -1145,6 +1155,7 @@ mod tests {
                 name: "do_it".into(),
                 arguments: "{not json}".into(),
                 status: None,
+                thought_signature: None,
             },
         }];
 
@@ -1248,6 +1259,7 @@ mod tests {
                     name: "do_it".into(),
                     arguments: "{}".into(),
                     status: None,
+                    thought_signature: None,
                 },
             },
             responses::StreamEvent::Completed {

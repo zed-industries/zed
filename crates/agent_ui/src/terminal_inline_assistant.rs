@@ -277,6 +277,7 @@ impl TerminalInlineAssistant {
                 role: Role::User,
                 content: vec![],
                 cache: false,
+                reasoning_details: None,
             };
 
             context_load_task
