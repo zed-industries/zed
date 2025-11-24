@@ -247,15 +247,38 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         CompletionBuilder::new("10.4.20", None, None, None),
         CompletionBuilder::new("10.4.21", None, None, None),
         CompletionBuilder::new("10.4.12", None, None, None),
+        // Pre-release versions
+        CompletionBuilder::new("10.4.22-alpha", None, None, None),
+        CompletionBuilder::new("10.4.22-alpha.1", None, None, None),
+        CompletionBuilder::new("10.4.22-alpha.2", None, None, None),
+        CompletionBuilder::new("10.4.22-beta", None, None, None),
+        CompletionBuilder::new("10.4.22-beta.1", None, None, None),
+        CompletionBuilder::new("10.4.22-rc.1", None, None, None),
+        CompletionBuilder::new("10.4.20-beta.1", None, None, None),
+        // Build metadata versions
+        CompletionBuilder::new("10.4.21+build.123", None, None, None),
+        CompletionBuilder::new("10.4.21+build.456", None, None, None),
+        CompletionBuilder::new("10.4.20+20210327", None, None, None),
     ];
 
     let matches = filter_and_sort_matches("2", &completions, SnippetSortOrder::default(), cx).await;
 
+    // Within pre-releases: rc.1 > beta.1 > beta > alpha.2 > alpha.1 > alpha
     assert_eq!(matches[0].string, "10.4.22");
-    assert_eq!(matches[1].string, "10.4.21");
-    assert_eq!(matches[2].string, "10.4.20");
-    assert_eq!(matches[3].string, "10.4.12");
-    assert_eq!(matches[4].string, "10.4.2");
+    assert_eq!(matches[1].string, "10.4.22-rc.1");
+    assert_eq!(matches[2].string, "10.4.22-beta.1");
+    assert_eq!(matches[3].string, "10.4.22-beta");
+    assert_eq!(matches[4].string, "10.4.22-alpha.2");
+    assert_eq!(matches[5].string, "10.4.22-alpha.1");
+    assert_eq!(matches[6].string, "10.4.22-alpha");
+    assert_eq!(matches[7].string, "10.4.21+build.456");
+    assert_eq!(matches[8].string, "10.4.21+build.123");
+    assert_eq!(matches[9].string, "10.4.21");
+    assert_eq!(matches[10].string, "10.4.20+20210327");
+    assert_eq!(matches[11].string, "10.4.20");
+    assert_eq!(matches[12].string, "10.4.20-beta.1");
+    assert_eq!(matches[13].string, "10.4.12");
+    assert_eq!(matches[14].string, "10.4.2");
 }
 
 async fn test_for_each_prefix<F>(
