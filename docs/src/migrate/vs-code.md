@@ -11,6 +11,7 @@ Zed is available on macOS, Windows, and Linux.
 
 For macOS, you can download it from zed.dev/download, or install via Homebrew:
 `brew install zed-editor/zed/zed`
+
 For most Linux users, the easiest way to install Zed is through our installation script:
 `curl -f https://zed.dev/install.sh | sh`
 
@@ -21,7 +22,10 @@ This opens the current directory in Zed.
 ## Import Settings from VS Code
 
 During setup, you have the option to import key settings from VS Code. Zed imports the following settings:
-[add]
+- **Editor:** Font family, font size, line height, tab size, word wrap, and preferred theme.
+- **Files:** Auto-save behavior, file exclusions, and file associations.
+- **Terminal:** Font family, font size, line height, and cursor blinking.
+- **Vim Mode:** Keybindings and system clipboard settings (if you use the Vim extension).
 
 Zed doesn’t import extensions or keybindings, but this is the fastest way to get a familiar feel while trying something new. If you skip that step during setup, you can still import settings manually later via the command palette:
 
@@ -76,29 +80,29 @@ Here’s a quick reference guide for how our keybindings compare to what you’r
 | Find symbols (file-wide) | `Cmd + Shift + O` |
 | Toggle left dock | `Cmd + B` |
 | Toggle bottom dock | `Cmd + J` |
-| Open terminal | `Ctrl + `` |
+| Open terminal | `Ctrl + ` ` |
 | Open file tree explorer | `Cmd + Shift + E` |
 | Close current buffer | `Cmd + W` |
 | Close whole project | `Cmd + Shift + W` |
-| Refactor: rename symbol | `Fn + F2` |
+| Refactor: rename symbol | `F2` |
 | Change theme | `Cmd + K, then T` |
 | Wrap text | `Opt + Z` |
 | Navigate open tabs | `Cmd + Opt + Arrow` |
-| Syntactic fold / unfold | `Cmd + Opt + {` or `Cmd + Opt + }` |
+| Syntactic fold / unfold | `Cmd + Opt + {` or `}` |
+| Move lines up/down | `Opt + Up/Down` |
 
 
 ### Different Keybindings (Zed <> VS Code)
 | Action | VS Code | Zed |
 | --- | --- | --- |
-| Open recent project | `Ctrl + R` | `Opt + Cmd + O` |
-| Move lines up/down | `Opt + Up/Down` | `Cmd + Ctrl + Up/Down` |
+| Open recent project | `Ctrl + R` | `Cmd + Opt + O` |
 | Split panes | `Cmd + \` | `Cmd + K, then Arrow Keys` |
+| Expand/Shrink Selection | `Shift + Alt + Right/Left` | `Ctrl + Shift + Right/Left` |
 
 ### Unique to Zed
 | Action | Shortcut | Notes |
 | --- | --- | --- |
-| Toggle right dock | `Ctrl + R` |  |
-| Syntactic selection| `Opt + Up/Down` | Selects code by structure (e.g., inside braces). |
+| Toggle right dock | `Cmd + R` or `Cmd + Alt + B` |  |
 
 ### Customize Keybindings
 
@@ -108,22 +112,14 @@ To edit your keybindings:
 
 This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
 
-Zed also supports chords (multi-key sequences) like `Ctrl+K Ctrl+C`, just like VS Code.
-
-## Differences in User Interfaces
-
-### No Workspace
-VS Code uses a dedicated Workspace concept, with multi-root folders, `.code-workspace` files, and a clear distinction between “a window” and “a workspace.”
-Zed simplifies this model.
-
-In Zed:
-- There is no workspace file format. Opening a folder is your project context.
+Zed also supports chords (multi-key sequences) like `Cmd+K Cmd+C`, just like
+ workspace file format. Opening a folder is your project context.
 
 - Zed does not support multi-root workspaces. You can only open one folder at a time in a window.
 
 - Most project-level behavior is scoped to the folder you open. Search, Git integration, tasks, and environment detection all treat the opened directory as the project root.
 
-- Per-project settings are optional. You can add a .zed/settings.json file inside a project to override global settings, but Zed does not use .code-workspace files and won’t import them.
+- Per-project settings are optional. You can add a `.zed/settings.json` file inside a project to override global settings, but Zed does not use `.code-workspace` files and won’t import them.
 
 - You can start from a single file or an empty window. Zed doesn’t require you to open a folder to begin editing.
 
@@ -139,8 +135,8 @@ Zed takes a different approach:
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
 - The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are your primary navigation tools. The File Finder searches across the entire workspace instantly; files, symbols, commands, even teammates if you're collaborating.
 - Instead of a persistent sidebar, Zed encourages you to:
-  - Fuzzy-find files by name (⌘P)
-  - Jump directly to symbols (⌘⇧O)
+  - Fuzzy-find files by name (`Cmd+P`)
+  - Jump directly to symbols (`Cmd+Shift+O`)
   - Use split panes and tabs for context, rather than keeping a large file tree open (though you can do this with the Project Panel if you prefer).
 
 The UI is intentionally minimal. Panels slide in only when needed, then get out of your way. The focus is on flowing between code instead of managing panes.
@@ -176,7 +172,7 @@ If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You c
 #### Configuring GitHub Copilot
 You should be able to sign-in to GitHub Copilot by clicking on the Zeta icon in the status bar and following the setup instructions.
 You can also add this to your settings:
-```
+```json
 {
   "features": {
     "edit_prediction_provider": "copilot"
@@ -199,19 +195,25 @@ Zed exposes advanced settings for power users who want to fine-tune their enviro
 Here are a few useful tweaks:
 
 **Format on Save:**
-`"format_on_save": true`
-
-**Diagnostics Filtering:**
-`"diagnostics_max_severity": "warning"`
-
-**Enable direnv support:**
-`"load_direnv": true`
-
-**Custom Tasks**: Define build or run commands with:
-
-```"tasks": {
-  "build": "cargo build"
-}
+```json
+"format_on_save": "on"
 ```
 
-You can find and edit these in the Settings Editor.
+**Enable direnv support:**
+```json
+"load_direnv": "shell_hook"
+```
+
+**Custom Tasks**: Define build or run commands in your `tasks.json` (accessed via command palette: `zed: open tasks`):
+
+```json
+[
+  {
+    "label": "build",
+    "command": "cargo build"
+  }
+]
+```
+
+**Bring over custom snippets**
+Copy your VS Code snippet JSON directly into Zed's snippets folder (`zed: configure snippets`).
