@@ -333,6 +333,13 @@ pub fn build_prompt(
     Ok((prompt, section_labels))
 }
 
+pub fn generation_params(prompt_format: PromptFormat) -> GenerationParams {
+    match prompt_format {
+        PromptFormat::SeedCoder1120 => SeedCoder1120Prompt::generation_params(),
+        _ => GenerationParams::default(),
+    }
+}
+
 pub fn write_codeblock<'a>(
     path: &Path,
     excerpts: impl IntoIterator<Item = &'a Excerpt>,
@@ -909,8 +916,19 @@ struct PromptData {
     included_files: Vec<IncludedFile>,
 }
 
+#[derive(Default)]
+pub struct GenerationParams {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Option<Vec<String>>,
+}
+
 trait PromptFormatter {
     fn render(&self, data: &PromptData) -> String;
+
+    fn generation_params() -> GenerationParams {
+        return GenerationParams::default();
+    }
 }
 
 struct MinimalQwenPrompt;
@@ -988,6 +1006,14 @@ impl PromptFormatter for SeedCoder1120Prompt {
             edit_history = edit_history,
             context = context
         )
+    }
+
+    fn generation_params() -> GenerationParams {
+        GenerationParams {
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            stop: Some(vec!["<[end_of_sentence]>".into()]),
+        }
     }
 }
 
