@@ -1214,14 +1214,9 @@ impl CompletionsMenu {
 
         matches.sort_by_cached_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
-
-            let sort_text = match &completion.source {
-                CompletionSource::Lsp { lsp_completion, .. } => lsp_completion.sort_text.as_deref(),
-                CompletionSource::Dap { sort_text } => Some(sort_text.as_str()),
-                _ => None,
-            };
-
             let (sort_kind, sort_label) = completion.sort_key();
+
+            let sort_semver = Reverse(MaybeSemver(parse_semver_label(sort_label)));
 
             let score = string_match.score;
             let sort_score = Reverse(OrderedFloat(score));
@@ -1241,6 +1236,14 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
+                let sort_text = match &completion.source {
+                    CompletionSource::Lsp { lsp_completion, .. } => {
+                        lsp_completion.sort_text.as_deref()
+                    }
+                    CompletionSource::Dap { sort_text } => Some(sort_text.as_str()),
+                    _ => None,
+                };
+
                 let sort_snippet = match snippet_sort_order {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
@@ -1254,7 +1257,6 @@ impl CompletionsMenu {
                 } else {
                     0
                 });
-                let sort_semver = Reverse(MaybeSemver(parse_semver_label(sort_label)));
 
                 MatchTier::WordStartMatch {
                     sort_semver,
