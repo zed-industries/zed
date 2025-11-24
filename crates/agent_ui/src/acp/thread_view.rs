@@ -1273,6 +1273,28 @@ impl AcpThreadView {
         };
 
         cx.spawn_in(window, async move |this, cx| {
+            // Check if there are any edits from prompts before the one being regenerated.
+            //
+            // If there are, we keep/accept them since we're not regenerating the prompt that created them.
+            //
+            // If editing the prompt that generated the edits, they are auto-rejected
+            // through the `rewind` function in the `acp_thread`.
+            let has_earlier_edits = thread.read_with(cx, |thread, _| {
+                thread
+                    .entries()
+                    .iter()
+                    .take(entry_ix)
+                    .any(|entry| entry.diffs().next().is_some())
+            })?;
+
+            if has_earlier_edits {
+                thread.update(cx, |thread, cx| {
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.keep_all_edits(None, cx);
+                    });
+                })?;
+            }
+
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
