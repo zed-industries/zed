@@ -4693,6 +4693,34 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 
+## Git Hosting Providers
+
+- Description: Register self-hosted GitHub, GitLab, or Bitbucket instances so commit hashes, issue references, and permalinks resolve to the right host.
+- Setting: `git_hosting_providers`
+- Default: `[]`
+
+**Options**
+
+Each entry accepts:
+
+- `provider`: One of `github`, `gitlab`, or `bitbucket`
+- `name`: Display name for the instance
+- `base_url`: Base URL, e.g. `https://git.example.corp`
+
+You can define these in user or project settings; project settings are merged on top of user settings.
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "github",
+      "name": "BigCorp GitHub",
+      "base_url": "https://git.example.corp"
+    }
+  ]
+}
+```
+
 ## Outline Panel
 
 - Description: Customize outline Panel
