@@ -1244,9 +1244,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
-            let global_snippets_dir = paths::snippets_dir().to_owned();
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let (remote_proto, path_style) =
                 remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
