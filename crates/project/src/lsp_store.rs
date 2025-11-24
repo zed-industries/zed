@@ -93,6 +93,7 @@ use rpc::{
     proto::{LspRequestId, LspRequestMessage as _},
 };
 use serde::Serialize;
+use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use smol::channel::Sender;
@@ -3557,6 +3558,21 @@ fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<
             message: proto::update_language_server::Variant::MetadataUpdated(
                 proto::ServerMetadataUpdated {
                     capabilities: Some(capabilities),
+                    binary: Some(proto::LanguageServerBinaryInfo {
+                        path: server.binary().path.to_string_lossy().into_owned(),
+                        arguments: server
+                            .binary()
+                            .arguments
+                            .iter()
+                            .map(|arg| arg.to_string_lossy().into_owned())
+                            .collect(),
+                    }),
+                    configuration: serde_json::to_string(server.configuration()).ok(),
+                    workspace_folders: server
+                        .workspace_folders()
+                        .iter()
+                        .map(|uri| uri.to_string())
+                        .collect(),
                 },
             ),
         });
@@ -3714,12 +3730,22 @@ pub enum LspStoreEvent {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct LanguageServerBinaryInfo {
+    pub path: String,
+    pub arguments: Vec<String>,
+    pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<ProgressToken>,
+    pub progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
+    pub binary: Option<LanguageServerBinaryInfo>,
+    pub configuration: Option<Value>,
+    pub workspace_folders: BTreeSet<Uri>,
 }
 
 #[derive(Clone, Debug)]
@@ -8130,6 +8156,9 @@ impl LspStore {
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
                         worktree,
+                        binary: None,
+                        configuration: None,
+                        workspace_folders: BTreeSet::new(),
                     },
                 )
             })
@@ -9139,6 +9168,9 @@ impl LspStore {
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                     worktree: server.worktree_id.map(WorktreeId::from_proto),
+                    binary: None,
+                    configuration: None,
+                    workspace_folders: BTreeSet::new(),
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -11155,6 +11187,18 @@ impl LspStore {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: Some(key.worktree_id),
+                binary: Some(LanguageServerBinaryInfo {
+                    path: language_server.binary().path.to_string_lossy().into_owned(),
+                    arguments: language_server
+                        .binary()
+                        .arguments
+                        .iter()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect(),
+                    env: language_server.binary().env.clone(),
+                }),
+                configuration: Some(language_server.configuration().clone()),
+                workspace_folders: language_server.workspace_folders(),
             },
         );
 
