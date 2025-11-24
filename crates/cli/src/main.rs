@@ -323,8 +323,20 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
         .arg("-s")
         .arg(&source.path)
         .output()?;
+    let result = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    } else {
+        let fallback = command
+            .arg("--distribution")
+            .arg(distro_name)
+            .arg("--")
+            .arg("realpath")
+            .arg("-s")
+            .arg(&source.path)
+            .output()?;
+        String::from_utf8_lossy(&fallback.stdout.clone()).to_string()
+    };
 
-    let result = String::from_utf8_lossy(&output.stdout);
     source.path = Path::new(result.trim()).to_owned();
 
     Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
