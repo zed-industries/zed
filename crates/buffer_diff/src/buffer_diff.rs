@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
+use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -315,12 +315,24 @@ impl BufferDiffSnapshot {
     }
 
     pub fn offset_in_base_text(&self, position: Anchor, buffer: &text::BufferSnapshot) -> usize {
-        // FIXME test
         let mut cursor = self.inner.hunks.cursor(buffer);
-        cursor.seek(&position, Bias::Right);
-        let overshoot =
-            position.to_offset(buffer) - cursor.start().buffer_range.end.to_offset(buffer);
-        cursor.start().diff_base_byte_range.start + overshoot
+        cursor.seek(&position, Bias::Left);
+        if cursor.item().is_none() {
+            cursor.prev();
+        }
+        let Some(item) = cursor.item() else {
+            return position.to_offset(buffer);
+        };
+        if position.cmp(&item.buffer_range.start, buffer).is_lt() {
+            cursor.prev();
+        }
+        if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
+            let overshoot =
+                position.to_offset(buffer) - cursor.end().buffer_range.end.to_offset(buffer);
+            cursor.end().diff_base_byte_range.end + overshoot
+        } else {
+            cursor.end().diff_base_byte_range.end
+        }
     }
 }
 
@@ -2224,6 +2236,79 @@ mod tests {
                 assert_eq!(expected_hunk.secondary_status, found_hunk.secondary_status);
             }
             hunks = found_hunks;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_offset_in_base_text(cx: &mut TestAppContext) {
+        let base_text = "
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+        "
+        .unindent();
+        let buffer_text = "
+            one
+            TWO
+            three
+            TEN
+            six
+            eight
+        "
+        .unindent();
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let buffer_snapshot = buffer.snapshot();
+        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
+        let expected_results = [
+            // Unchanged region
+            (Point::new(0, 0), 0),
+            (Point::new(0, 1), 1),
+            (Point::new(0, 2), 2),
+            (Point::new(0, 3), 3),
+            // Added region
+            (Point::new(1, 0), 8),
+            (Point::new(1, 1), 8),
+            (Point::new(1, 2), 8),
+            (Point::new(1, 3), 8),
+            // Unchanged region
+            (Point::new(2, 0), 8),
+            (Point::new(2, 1), 9),
+            (Point::new(2, 2), 10),
+            (Point::new(2, 3), 11),
+            (Point::new(2, 4), 12),
+            (Point::new(2, 5), 13),
+            // Added region
+            (Point::new(3, 0), 24),
+            (Point::new(3, 1), 24),
+            (Point::new(3, 2), 24),
+            (Point::new(3, 3), 24),
+            // Unchanged region
+            (Point::new(4, 0), 24),
+            (Point::new(4, 1), 25),
+            (Point::new(4, 2), 26),
+            (Point::new(4, 3), 27),
+            // Unchanged region (after deletion)
+            (Point::new(5, 0), 34),
+            (Point::new(5, 1), 35),
+            (Point::new(5, 2), 36),
+            (Point::new(5, 3), 37),
+            (Point::new(5, 4), 38),
+            (Point::new(5, 5), 39),
+            // EOF
+            (Point::new(6, 0), 45),
+        ];
+        for (point, expected) in expected_results {
+            assert_eq!(
+                diff.offset_in_base_text(buffer_snapshot.anchor_before(point), &buffer_snapshot),
+                expected,
+                "{point:?}"
+            );
         }
     }
 }

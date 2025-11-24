@@ -3168,10 +3168,27 @@ impl ToOffset for PointUtf16 {
     }
 }
 
+impl ToOffset for OffsetUtf16 {
+    #[inline]
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.offset_utf16_to_offset(*self)
+    }
+}
+
 impl ToOffset for Unclipped<PointUtf16> {
     #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.unclipped_point_utf16_to_offset(*self)
+    }
+}
+
+impl<K, V> ToOffset for DimensionPair<K, V>
+where
+    K: ToOffset,
+{
+    #[inline]
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        self.key.to_offset(snapshot)
     }
 }
 

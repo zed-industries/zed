@@ -2552,24 +2552,8 @@ impl ReferenceMultibuffer {
                             .find(|e| e.id == region.excerpt_id.unwrap())
                             .map(|e| e.buffer.clone())
                         {
-                            // FIXME
+                            // FIXME wrong in the presence of FilteredInsertedHunk
                             let buffer_row = buffer_row.unwrap();
-                            // dbg!("--------------");
-                            // let mut buffer_row = buffer_row.unwrap();
-                            // if dbg!(ix) + line.len() + 1 == dbg!(region.range.end)
-                            //     && let Some(filtered_region) =
-                            //         dbg!(filtered_regions.iter().find(|filtered_region| {
-                            //             filtered_region.range.start == region.range.end
-                            //         }))
-                            // {
-                            //     let buffer_end = filtered_region.buffer_range.as_ref().unwrap().end;
-                            //     buffer_row = dbg!(buffer_end.row);
-                            //     if buffer_end.column > 0 {
-                            //         dbg!(buffer_row);
-                            //         buffer_row += dbg!(1);
-                            //         dbg!(buffer_row);
-                            //     }
-                            // }
                             let needs_expand_up = is_excerpt_start && is_start && buffer_row > 0;
                             let needs_expand_down = is_excerpt_end
                                 && is_end
@@ -2941,17 +2925,6 @@ async fn test_random_multibuffer_impl(
                     (start_ix..end_ix, anchor_range)
                 });
 
-                multibuffer.update(cx, |multibuffer, cx| {
-                    let id = buffer_handle.read(cx).remote_id();
-                    if multibuffer.diff_for(id).is_none() {
-                        let base_text = base_texts.get(&id).unwrap();
-                        let diff = cx
-                            .new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
-                        reference.add_diff(diff.clone(), cx);
-                        multibuffer.add_diff(diff, cx)
-                    }
-                });
-
                 let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer
                         .insert_excerpts_after(
@@ -2969,6 +2942,17 @@ async fn test_random_multibuffer_impl(
                     excerpt_id,
                     (buffer_handle.clone(), anchor_range),
                 );
+
+                multibuffer.update(cx, |multibuffer, cx| {
+                    let id = buffer_handle.read(cx).remote_id();
+                    if multibuffer.diff_for(id).is_none() {
+                        let base_text = base_texts.get(&id).unwrap();
+                        let diff = cx
+                            .new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
+                        reference.add_diff(diff.clone(), cx);
+                        multibuffer.add_diff(diff, cx)
+                    }
+                });
             }
         }
 
@@ -2987,17 +2971,6 @@ async fn test_random_multibuffer_impl(
 
         let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
             cx.update(|cx| reference.expected_content(None, true, cx));
-        log::info!(
-            "\nunfiltered:\n{}\ntransforms:\n{}\nexcerpts:\n{}",
-            format_diff(
-                &unfiltered_text,
-                &unfiltered_row_infos,
-                &unfiltered_boundary_rows,
-                None,
-            ),
-            format_transforms(&snapshot),
-            format_excerpts(&snapshot),
-        );
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
 
         let (expected_text, expected_row_infos, expected_boundary_rows) =
@@ -3030,9 +3003,21 @@ async fn test_random_multibuffer_impl(
             "line count: {}",
             actual_text.split('\n').count()
         );
-        pretty_assertions::assert_eq!(actual_diff, expected_diff,);
-        pretty_assertions::assert_eq!(actual_text, expected_text);
+        pretty_assertions::assert_eq!(
+            actual_diff,
+            expected_diff,
+            "\nunfiltered:\n{}\ntransforms:\n{}\nexcerpts:\n{}",
+            format_diff(
+                &unfiltered_text,
+                &unfiltered_row_infos,
+                &unfiltered_boundary_rows,
+                None,
+            ),
+            format_transforms(&snapshot),
+            format_excerpts(&snapshot),
+        );
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
+        pretty_assertions::assert_eq!(actual_text, expected_text);
 
         for _ in 0..5 {
             let start_row = rng.random_range(0..=expected_row_infos.len());
@@ -3047,22 +3032,21 @@ async fn test_random_multibuffer_impl(
             );
         }
 
-        // FIXME
-        // assert_eq!(
-        //     snapshot.widest_line_number(),
-        //     expected_row_infos
-        //         .into_iter()
-        //         .filter_map(|info| {
-        //             if info.diff_status.is_some_and(|status| status.is_deleted()) {
-        //                 None
-        //             } else {
-        //                 info.buffer_row
-        //             }
-        //         })
-        //         .max()
-        //         .unwrap()
-        //         + 1,
-        // );
+        assert_eq!(
+            snapshot.widest_line_number(),
+            expected_row_infos
+                .into_iter()
+                .filter_map(|info| {
+                    if info.diff_status.is_some_and(|status| status.is_deleted()) {
+                        None
+                    } else {
+                        info.buffer_row
+                    }
+                })
+                .max()
+                .unwrap()
+                + 1,
+        );
         let reference_ranges = cx.update(|cx| {
             reference
                 .excerpts
@@ -3168,7 +3152,7 @@ async fn test_random_multibuffer_impl(
         let edits = subscription.consume().into_inner();
 
         log::info!(
-            "applying subscription edits to old text: {:?}: {:?}",
+            "applying subscription edits to old text: {:?}: {:#?}",
             old_snapshot.text(),
             edits,
         );
@@ -3183,7 +3167,7 @@ async fn test_random_multibuffer_impl(
                 &new_text,
             );
         }
-        assert_eq!(text.to_string(), snapshot.text());
+        pretty_assertions::assert_eq!(text.to_string(), snapshot.text());
     }
 }
 
@@ -3755,7 +3739,7 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
         &mut snapshot,
         &mut subscription,
         cx,
-        indoc!(
+        indoc! {
             "
               one
             - two
@@ -3763,8 +3747,72 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             - five
               six
             "
-        ),
+        },
     );
+}
+
+#[gpui::test]
+async fn test_base_text_line_numbers(cx: &mut TestAppContext) {
+    let base_text = indoc! {"
+        one
+        two
+        three
+        four
+        five
+        six
+    "};
+    let buffer_text = indoc! {"
+        two
+        THREE
+        five
+        six
+        SEVEN
+    "};
+    let multibuffer = cx.update(|cx| MultiBuffer::build_simple(buffer_text, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        let buffer = multibuffer.all_buffers().into_iter().next().unwrap();
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_diff(diff, cx);
+    });
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {"
+            - one
+              two
+            - three
+            - four
+            + THREE
+              five
+              six
+            + SEVEN
+        "},
+    );
+    let base_text_rows = snapshot
+        .row_infos(MultiBufferRow(0))
+        .map(|row_info| row_info.base_text_row)
+        .collect::<Vec<_>>();
+    pretty_assertions::assert_eq!(
+        base_text_rows,
+        vec![
+            Some(0),
+            Some(1),
+            Some(2),
+            Some(3),
+            None,
+            Some(4),
+            Some(5),
+            None,
+            Some(6),
+        ]
+    )
 }
 
 #[track_caller]

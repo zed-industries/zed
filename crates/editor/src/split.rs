@@ -87,12 +87,14 @@ impl SplittableEditor {
             // FIXME set readonly here too?
         });
         let secondary = cx.new(|cx| {
-            Editor::for_multibuffer(
+            let mut editor = Editor::for_multibuffer(
                 follower,
                 Some(workspace.read(cx).project().clone()),
                 window,
                 cx,
-            )
+            );
+            editor.set_show_base_text_line_numbers(true, cx);
+            editor
         });
         let secondary_pane = cx.new(|cx| {
             let mut pane = Pane::new(
