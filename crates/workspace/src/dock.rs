@@ -560,7 +560,16 @@ impl Dock {
             .binary_search_by_key(&panel.read(cx).activation_priority(), |entry| {
                 entry.panel.activation_priority(cx)
             }) {
-            Ok(ix) => ix,
+            Ok(ix) => {
+                if cfg!(debug_assertions) {
+                    panic!(
+                        "Panels `{}` and `{}` have the same activation priority. Each panel must have a unique priority so the status bar order is deterministic.",
+                        T::panel_key(),
+                        self.panel_entries[ix].panel.panel_key()
+                    );
+                }
+                ix
+            }
             Err(ix) => ix,
         };
         if let Some(active_index) = self.active_panel_index.as_mut()
