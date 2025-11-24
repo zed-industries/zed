@@ -632,13 +632,15 @@ impl AutoUpdater {
         fetched_version: String,
         status: AutoUpdateStatus,
     ) -> Result<Option<VersionCheckType>> {
-        let parsed_fetched_version = fetched_version.parse::<Version>()?;
+        let parsed_fetched_version = fetched_version.parse::<Version>();
 
         if let AutoUpdateStatus::Updated { version, .. } = status {
             match version {
                 VersionCheckType::Sha(cached_version) => {
-                    let should_download =
-                        parsed_fetched_version.build.as_str() != cached_version.full();
+                    let should_download = parsed_fetched_version
+                        .as_ref()
+                        .ok()
+                        .is_none_or(|version| version.build.as_str() != cached_version.full());
                     let newer_version = should_download
                         .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
                     return Ok(newer_version);
@@ -646,7 +648,7 @@ impl AutoUpdater {
                 VersionCheckType::Semantic(cached_version) => {
                     return Self::check_if_fetched_version_is_newer_non_nightly(
                         cached_version,
-                        parsed_fetched_version,
+                        parsed_fetched_version?,
                     );
                 }
             }
@@ -657,7 +659,12 @@ impl AutoUpdater {
                 let should_download = app_commit_sha
                     .ok()
                     .flatten()
-                    .map(|sha| parsed_fetched_version.build.as_str() != sha)
+                    .map(|sha| {
+                        parsed_fetched_version
+                            .as_ref()
+                            .ok()
+                            .is_none_or(|version| version.build.as_str() != sha)
+                    })
                     .unwrap_or(true);
                 let newer_version = should_download
                     .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
@@ -665,7 +672,7 @@ impl AutoUpdater {
             }
             _ => Self::check_if_fetched_version_is_newer_non_nightly(
                 installed_version,
-                parsed_fetched_version,
+                parsed_fetched_version?,
             ),
         }
     }
