@@ -94,22 +94,28 @@ pub const TITLEBAR_HEIGHT: f32 = 12.;
 
 pub const DEFAULT_STICKY_SIZE: (f32, f32) = (354., 262.);
 
-pub const YELLOW_STICKY_CONTENT: &str = r#"Line 1: Short.
-Line 2: This is a medium length line.
-Line 3: This is a very long line that should definitely wrap when displayed in the text area because it contains many words and will exceed the available width.
+pub const YELLOW_STICKY_CONTENT: &str = r#"Make a note of it!
 
-Line 5: After empty line.
-Line 6: Another short one.
+Stickies lets you keep notes (like these) on your desktop. Use a Stickies note to jot down reminders, lists, or other information. You can also use notes to store frequently used text or graphics.
+
+• To close this note, click the close button.
+
+• To collapse this note, double click the title bar.
+
+Your current notes appear when you open Stickies.
 "#;
 
-pub const BLUE_STICKY_CONTENT: &str = r#"Test content for debugging:
-The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog again.
-Another line with many words that should wrap properly when the width is constrained by the text area bounds.
-CCC
-DDD
+pub const BLUE_STICKY_CONTENT: &str = r#"It’s easy to customize your notes.
 
-FFF
-Short words here and there for testing word wrap at various positions in the line.
+Make your notes stand out and get noticed.
+
+• Format text using different fonts and font sizes
+• Add emphasis with bold and italic text styles or color.
+• Include graphics ￼ .
+
+Stickies has lots of other great features, including a spell checker, import and export features, and other ways to arrange and customize your notes. Plus, you’ll find a “Make New Sticky Note” service in many applications.
+
+Look in Help to find out more about using Stickies.
 "#;
 
 fn setup_menus(cx: &mut App) {
