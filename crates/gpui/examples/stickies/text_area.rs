@@ -92,54 +92,159 @@ impl TextArea {
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
+        let before_pos = self.cursor_offset();
+        println!(
+            "LEFT: Before position: {}, selected_range: {:?}",
+            before_pos, self.selected_range
+        );
+
         if self.selected_range.is_empty() {
-            self.move_to(self.previous_boundary(self.cursor_offset()), cx);
+            let new_pos = self.previous_boundary(self.cursor_offset());
+            println!("LEFT: Moving to previous boundary: {}", new_pos);
+            self.move_to(new_pos, cx);
         } else {
+            println!(
+                "LEFT: Moving to selection start: {}",
+                self.selected_range.start
+            );
             self.move_to(self.selected_range.start, cx)
         }
+
+        let after_pos = self.cursor_offset();
+        println!("LEFT: After position: {}", after_pos);
     }
 
     fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
+        let before_pos = self.cursor_offset();
+        println!(
+            "RIGHT: Before position: {}, selected_range: {:?}",
+            before_pos, self.selected_range
+        );
+
         if self.selected_range.is_empty() {
-            self.move_to(self.next_boundary(self.selected_range.end), cx);
+            let new_pos = self.next_boundary(self.selected_range.end);
+            println!("RIGHT: Moving to next boundary: {}", new_pos);
+            self.move_to(new_pos, cx);
         } else {
+            println!(
+                "RIGHT: Moving to selection end: {}",
+                self.selected_range.end
+            );
             self.move_to(self.selected_range.end, cx)
         }
+
+        let after_pos = self.cursor_offset();
+        println!("RIGHT: After position: {}", after_pos);
     }
 
     fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
         let cursor_pos = self.cursor_offset();
+        println!(
+            "UP: Before position: {}, selected_range: {:?}",
+            cursor_pos, self.selected_range
+        );
+        println!(
+            "UP: Attempting to move vertically by -1 from position {}",
+            cursor_pos
+        );
+
         if let Some(new_pos) = self.move_vertically(cursor_pos, -1) {
+            println!("UP: move_vertically returned new position: {}", new_pos);
             self.move_to(new_pos, cx);
+            let after_pos = self.cursor_offset();
+            println!("UP: After position: {}", after_pos);
+        } else {
+            println!("UP: move_vertically returned None, no movement");
         }
     }
 
     fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
         let cursor_pos = self.cursor_offset();
+        println!(
+            "DOWN: Before position: {}, selected_range: {:?}",
+            cursor_pos, self.selected_range
+        );
+        println!(
+            "DOWN: Attempting to move vertically by 1 from position {}",
+            cursor_pos
+        );
+
         if let Some(new_pos) = self.move_vertically(cursor_pos, 1) {
+            println!("DOWN: move_vertically returned new position: {}", new_pos);
             self.move_to(new_pos, cx);
+            let after_pos = self.cursor_offset();
+            println!("DOWN: After position: {}", after_pos);
+        } else {
+            println!("DOWN: move_vertically returned None, no movement");
         }
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+        let before_pos = self.cursor_offset();
+        let new_pos = self.previous_boundary(before_pos);
+        println!(
+            "SELECT_LEFT: Before position: {}, moving to: {}, selected_range before: {:?}",
+            before_pos, new_pos, self.selected_range
+        );
+        self.select_to(new_pos, cx);
+        println!(
+            "SELECT_LEFT: After selected_range: {:?}",
+            self.selected_range
+        );
     }
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        let before_pos = self.cursor_offset();
+        let new_pos = self.next_boundary(before_pos);
+        println!(
+            "SELECT_RIGHT: Before position: {}, moving to: {}, selected_range before: {:?}",
+            before_pos, new_pos, self.selected_range
+        );
+        self.select_to(new_pos, cx);
+        println!(
+            "SELECT_RIGHT: After selected_range: {:?}",
+            self.selected_range
+        );
     }
 
     fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
         let cursor_pos = self.cursor_offset();
+        println!(
+            "SELECT_UP: Before position: {}, selected_range: {:?}",
+            cursor_pos, self.selected_range
+        );
+
         if let Some(new_pos) = self.move_vertically(cursor_pos, -1) {
+            println!(
+                "SELECT_UP: move_vertically returned new position: {}",
+                new_pos
+            );
             self.select_to(new_pos, cx);
+            println!("SELECT_UP: After selected_range: {:?}", self.selected_range);
+        } else {
+            println!("SELECT_UP: move_vertically returned None, no selection change");
         }
     }
 
     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
         let cursor_pos = self.cursor_offset();
+        println!(
+            "SELECT_DOWN: Before position: {}, selected_range: {:?}",
+            cursor_pos, self.selected_range
+        );
+
         if let Some(new_pos) = self.move_vertically(cursor_pos, 1) {
+            println!(
+                "SELECT_DOWN: move_vertically returned new position: {}",
+                new_pos
+            );
             self.select_to(new_pos, cx);
+            println!(
+                "SELECT_DOWN: After selected_range: {:?}",
+                self.selected_range
+            );
+        } else {
+            println!("SELECT_DOWN: move_vertically returned None, no selection change");
         }
     }
 
@@ -281,20 +386,50 @@ impl TextArea {
     fn move_vertically(&self, offset: usize, direction: i32) -> Option<usize> {
         // Find current visual line and x position
         let (visual_line_idx, x_pixels) = self.find_visual_line_and_x_offset(offset);
+        println!(
+            "  move_vertically: current offset: {}, visual_line_idx: {}, x_pixels: {}",
+            offset, visual_line_idx, x_pixels
+        );
 
         // Calculate target visual line
         let target_visual_line_idx = (visual_line_idx as i32 + direction).max(0) as usize;
+        println!(
+            "  move_vertically: target_visual_line_idx: {} (direction: {})",
+            target_visual_line_idx, direction
+        );
 
         // Find which LineLayout contains this visual line
         let mut current_visual_line = 0;
-        for layout in &self.line_layouts {
+        for (idx, layout) in self.line_layouts.iter().enumerate() {
             let visual_lines_in_layout = layout.visual_line_count;
+
+            println!(
+                "    Checking layout[{}] range: {:?}, current_visual_line: {}, visual_lines_in_layout: {}",
+                idx, layout.text_range, current_visual_line, visual_lines_in_layout
+            );
+            println!(
+                "    target_visual_line_idx ({}) < current_visual_line ({}) + visual_lines_in_layout ({}) = {} < {} = {}",
+                target_visual_line_idx,
+                current_visual_line,
+                visual_lines_in_layout,
+                target_visual_line_idx,
+                current_visual_line + visual_lines_in_layout,
+                target_visual_line_idx < current_visual_line + visual_lines_in_layout
+            );
 
             if target_visual_line_idx < current_visual_line + visual_lines_in_layout {
                 // Target is within this layout
                 let visual_line_within_layout = target_visual_line_idx - current_visual_line;
+                println!(
+                    "    FOUND! Target is within this layout, visual_line_within_layout: {}",
+                    visual_line_within_layout
+                );
 
                 if layout.text_range.is_empty() {
+                    println!(
+                        "  move_vertically: Found target at layout[{}] with empty text range, returning: {}",
+                        idx, layout.text_range.start
+                    );
                     return Some(layout.text_range.start);
                 }
 
@@ -308,57 +443,102 @@ impl TextArea {
                         .closest_index_for_position(point, self.style.line_height)
                         .unwrap_or_else(|closest| closest);
 
-                    return Some(layout.text_range.start + closest_idx.min(wrapped.text.len()));
+                    let result = layout.text_range.start + closest_idx.min(wrapped.text.len());
+                    println!(
+                        "  move_vertically: Found target at layout[{}] with wrapped line, closest_idx: {}, returning: {}",
+                        idx, closest_idx, result
+                    );
+                    return Some(result);
                 }
 
+                println!(
+                    "  move_vertically: Found target at layout[{}] with no wrapped line, returning layout start: {}",
+                    idx, layout.text_range.start
+                );
                 return Some(layout.text_range.start);
             }
 
             current_visual_line += visual_lines_in_layout;
+            println!(
+                "    Incrementing current_visual_line to: {}",
+                current_visual_line
+            );
         }
 
         // Past the end
         if direction > 0 {
+            println!(
+                "  move_vertically: past end, returning content length: {}",
+                self.content.len()
+            );
             Some(self.content.len())
         } else {
+            println!("  move_vertically: past beginning, returning None");
             None
         }
     }
 
     fn find_visual_line_and_x_offset(&self, offset: usize) -> (usize, f32) {
+        println!(
+            "  find_visual_line_and_x_offset: looking for offset {}",
+            offset
+        );
+
         // Handle empty content
         if self.line_layouts.is_empty() {
+            println!("  find_visual_line_and_x_offset: empty layouts, returning (0, 0.0)");
             return (0, 0.0);
         }
 
         let mut visual_line_idx = 0;
 
         for line in &self.line_layouts {
+            println!(
+                "    checking line with range {:?}, visual_line_idx: {}",
+                line.text_range, visual_line_idx
+            );
             if line.text_range.is_empty() {
                 if offset == line.text_range.start {
+                    println!(
+                        "    found at empty line, returning ({}, 0.0)",
+                        visual_line_idx
+                    );
                     return (visual_line_idx, 0.0);
                 }
-                visual_line_idx += 1;
+                // Don't increment here - let the increment at the end of the loop handle it
             } else if offset >= line.text_range.start && offset <= line.text_range.end {
                 // Found the line containing the offset
+                println!("    found line containing offset!");
                 if let Some(wrapped) = &line.wrapped_line {
                     let local_offset = (offset - line.text_range.start).min(wrapped.text.len());
+                    println!("    has wrapped line, local_offset: {}", local_offset);
                     if let Some(position) =
                         wrapped.position_for_index(local_offset, self.style.line_height)
                     {
                         // The y component tells us which visual line within this wrapped line
                         let visual_line_within =
                             (position.y / self.style.line_height).floor() as usize;
-                        return (visual_line_idx + visual_line_within, position.x.into());
+                        let result = (visual_line_idx + visual_line_within, position.x.into());
+                        println!(
+                            "    wrapped position: {:?}, visual_line_within: {}, returning {:?}",
+                            position, visual_line_within, result
+                        );
+                        return result;
                     }
                 }
+                println!("    no wrapped line, returning ({}, 0.0)", visual_line_idx);
                 return (visual_line_idx, 0.0);
             }
             visual_line_idx += line.visual_line_count;
         }
 
         // If offset is beyond all lines, return last visual line
-        (visual_line_idx.saturating_sub(1), 0.0)
+        let result = (visual_line_idx.saturating_sub(1), 0.0);
+        println!(
+            "  find_visual_line_and_x_offset: offset beyond all lines, returning {:?}",
+            result
+        );
+        result
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
