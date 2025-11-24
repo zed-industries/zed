@@ -14,7 +14,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use futures::{FutureExt, stream::FuturesUnordered};
+use futures::stream::FuturesUnordered;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -29,7 +29,7 @@ use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
     git_store::{
-        self, Repository,
+        self, Repository, StatusEntry,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
@@ -97,7 +97,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::deploy_at(workspace, None, window, cx)
+        Self::deploy_at(workspace, None, window, cx);
     }
 
     fn deploy_branch_diff(
@@ -139,7 +139,7 @@ impl ProjectDiff {
         entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
+    ) -> Entity<ProjectDiff> {
         telemetry::event!(
             "Git Diff Opened",
             source = if entry.is_some() {
@@ -171,7 +171,8 @@ impl ProjectDiff {
             project_diff.update(cx, |project_diff, cx| {
                 project_diff.move_to_entry(entry, window, cx);
             })
-        }
+        };
+        project_diff
     }
 
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
@@ -277,12 +278,14 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, window, cx| match event {
                 BranchDiffEvent::FileListChanged => {
-                    if this.number_of_paths(cx) < 100 {
-                        this._task = window.spawn(cx, {
-                            let this = cx.weak_entity();
-                            async |cx| Self::refresh(this, cx).await
-                        })
-                    }
+                    // TODO this does not account for size of paths
+                    // maybe a quick fs metadata could get us info on that?
+                    // would make number of paths async but thats fine here
+                    let entries = this.first_n_entries(cx, 100);
+                    this._task = window.spawn(cx, {
+                        let this = cx.weak_entity();
+                        async |cx| Self::refresh(this, entries, cx).await
+                    })
                 }
             },
         );
@@ -310,9 +313,18 @@ impl ProjectDiff {
         })
         .detach();
 
+        // let entries = cx.read_entity(&cx.entity(), |project_diff, cx| {
+        //     project_diff.first_n_entries(cx, 100)
+        // });
+
         let task = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::refresh(this, cx).await
+            async |cx| {
+                let entries = this
+                    .read_with(cx, |project_diff, cx| project_diff.first_n_entries(cx, 100))
+                    .unwrap();
+                Self::refresh(this, entries, cx).await
+            }
         });
 
         Self {
@@ -479,10 +491,11 @@ impl ProjectDiff {
         cx: &mut Context<Self>,
     ) {
         let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
-            this._task = window.spawn(cx, {
-                let this = cx.weak_entity();
-                async |cx| Self::refresh(this, cx).await
-            })
+            // TODO fix this
+            // this._task = window.spawn(cx, {
+            // let this = cx.weak_entity();
+            // async |cx| Self::refresh(this, cx).await
+            // })
         });
         self.buffer_diff_subscriptions
             .insert(path_key.path.clone(), (diff.clone(), subscription));
@@ -558,64 +571,21 @@ impl ProjectDiff {
         }
     }
 
-    pub async fn old_refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-        let mut path_keys = Vec::new();
-        let buffers_to_load = this.update(cx, |this, cx| {
-            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
-                (branch_diff.repo().cloned(), load_buffers)
-            });
-            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
-
-            if let Some(repo) = repo {
-                let repo = repo.read(cx);
-
-                path_keys = Vec::with_capacity(buffers_to_load.len());
-                for entry in buffers_to_load.iter() {
-                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                    let path_key =
-                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
-                    previous_paths.remove(&path_key);
-                    path_keys.push(path_key)
-                }
-            }
-
-            this.multibuffer.update(cx, |multibuffer, cx| {
-                for path in previous_paths {
-                    this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path, cx);
-                }
-            });
-            buffers_to_load
-        })?;
-
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
-            if let Some((buffer, diff)) = entry.load.await.log_err() {
-                cx.update(|window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
-                    })
-                    .ok();
-                })?;
-            }
-        }
-        this.update(cx, |this, cx| {
-            this.pending_scroll.take();
-            cx.notify();
-        })?;
-
-        Ok(())
-    }
-
-    pub fn number_of_paths(&self, cx: &App) -> usize {
+    pub fn first_n_entries(&self, cx: &App, n: usize) -> Vec<StatusEntry> {
         let Some(ref repo) = self.branch_diff.read(cx).repo else {
-            return 0;
+            return Vec::new();
         };
-        repo.read(cx).cached_status().count()
+        repo.read(cx).cached_status().take(n).collect()
     }
 
-    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+    pub async fn refresh_one(
+        this: WeakEntity<Self>,
+        repo_path: RepoPath,
+        status: FileStatus,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
         use git_store::branch_diff::BranchDiff;
+
         let Some(this) = this.upgrade() else {
             return Ok(());
         };
@@ -627,8 +597,90 @@ impl ProjectDiff {
         };
         let project = cx.read_entity(&branch_diff, |bd, _| bd.project.clone())?;
 
-        let cached_status: Vec<git_store::StatusEntry> =
-            cx.read_entity(&repo, |repo: &Repository, _| repo.cached_status().collect())?;
+        let mut previous_paths =
+            cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
+
+        let tree_diff_status = cx.read_entity(&branch_diff, |branch_diff, _| {
+            branch_diff
+                .tree_diff
+                .as_ref()
+                .and_then(|t| t.entries.get(&repo_path))
+                .cloned()
+        })?;
+
+        let Some(status) = cx.read_entity(&branch_diff, |bd, _| {
+            bd.merge_statuses(Some(status), tree_diff_status.as_ref())
+        })?
+        else {
+            return Ok(());
+        };
+        if !status.has_changes() {
+            return Ok(());
+        }
+
+        let Some(project_path) = cx.read_entity(&repo, |repo, cx| {
+            repo.repo_path_to_project_path(&repo_path, cx)
+        })?
+        else {
+            return Ok(());
+        };
+
+        let sort_prefix =
+            cx.read_entity(&repo, |repo, cx| sort_prefix(repo, &repo_path, status, cx))?;
+
+        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.into_arc());
+        previous_paths.remove(&path_key);
+
+        let repo = repo.clone();
+        let Some((buffer, diff)) = BranchDiff::load_buffer(
+            tree_diff_status,
+            project_path,
+            repo,
+            project.downgrade(),
+            &mut cx.to_app(),
+        )
+        .await
+        .log_err() else {
+            return Ok(());
+        };
+
+        cx.update(|window, cx| {
+            this.update(cx, |this, cx| {
+                this.register_buffer(path_key, status, buffer, diff, window, cx)
+            });
+        })?;
+
+        // TODO LL clear multibuff on open?
+        // // remove anything not part of the diff in the multibuffer
+        // this.update(cx, |this, cx| {
+        //     multibuffer.update(cx, |multibuffer, cx| {
+        //         for path in previous_paths {
+        //             this.buffer_diff_subscriptions.remove(&path.path);
+        //             multibuffer.remove_excerpts_for_path(path, cx);
+        //         }
+        //     });
+        // })?;
+
+        Ok(())
+    }
+
+    pub async fn refresh(
+        this: WeakEntity<Self>,
+        cached_status: Vec<StatusEntry>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        dbg!("refreshing all");
+        use git_store::branch_diff::BranchDiff;
+        let Some(this) = this.upgrade() else {
+            return Ok(());
+        };
+        let multibuffer = cx.read_entity(&this, |this, _| this.multibuffer.clone())?;
+        let branch_diff = cx.read_entity(&this, |pd, _| pd.branch_diff.clone())?;
+
+        let Some(repo) = cx.read_entity(&branch_diff, |bd, _| bd.repo.clone())? else {
+            return Ok(());
+        };
+        let project = cx.read_entity(&branch_diff, |bd, _| bd.project.clone())?;
 
         let mut previous_paths =
             cx.read_entity(&multibuffer, |mb, _| mb.paths().collect::<HashSet<_>>())?;
@@ -674,10 +726,18 @@ impl ProjectDiff {
             previous_paths.remove(&path_key);
 
             let repo = repo.clone();
-            let task = project.update(cx, move |_, cx| {
-                BranchDiff::load_buffer(tree_diff_status, project_path, repo, cx)
-                    .map(move |res| (res, path_key, entry.status))
-            })?;
+            let project = project.downgrade();
+            let task = cx.spawn(async move |cx| {
+                let res = BranchDiff::load_buffer(
+                    tree_diff_status,
+                    project_path,
+                    repo,
+                    project,
+                    &mut cx.to_app(),
+                )
+                .await;
+                (res, path_key, entry.status)
+            });
 
             tasks.push(task)
         }

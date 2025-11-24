@@ -233,6 +233,9 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Spawn the future returned by the given function.
     /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
+    ///
+    /// # Example
+    /// `cx.spawn(async move |some_weak_entity, cx| ...)`
     #[track_caller]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where

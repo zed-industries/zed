@@ -310,6 +310,11 @@ impl AsyncWindowContext {
             .update(self, |_, window, cx| read(cx.global(), window, cx))
     }
 
+    /// Returns an `AsyncApp` by cloning the one used by Self
+    pub fn to_app(&self) -> AsyncApp {
+        self.app.clone()
+    }
+
     /// A convenience method for [`App::update_global`](BorrowAppContext::update_global).
     /// for updating the global state of the specified type.
     pub fn update_global<G, R>(

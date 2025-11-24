@@ -283,7 +283,11 @@ impl BranchDiff {
                 else {
                     continue;
                 };
-                let task = Self::load_buffer(branch_diff, project_path, repo.clone(), cx);
+
+                let repo = repo.clone();
+                let task = cx.spawn(async move |project, cx| {
+                    Self::load_buffer(branch_diff, project_path, repo.clone(), project, cx).await
+                });
 
                 output.push(DiffBuffer {
                     repo_path: item.repo_path.clone(),
@@ -303,8 +307,11 @@ impl BranchDiff {
                 let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
                     continue;
                 };
-                let task =
-                    Self::load_buffer(Some(branch_diff.clone()), project_path, repo.clone(), cx);
+                let repo = repo.clone();
+                let branch_diff2 = Some(branch_diff.clone());
+                let task = cx.spawn(async move |project, cx| {
+                    Self::load_buffer(branch_diff2, project_path, repo, project, cx).await
+                });
 
                 let file_status = diff_status_to_file_status(branch_diff);
 
@@ -318,42 +325,40 @@ impl BranchDiff {
         output
     }
 
-    pub fn load_buffer(
+    pub async fn load_buffer(
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
-        cx: &Context<'_, Project>,
-    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
-        let task = cx.spawn(async move |project, cx| {
-            let buffer = project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                .await?;
+        project: WeakEntity<Project>,
+        cx: &mut gpui::AsyncApp, // making this generic over AppContext hangs the compiler
+    ) -> Result<(Entity<Buffer>, Entity<BufferDiff>)> {
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .await?;
 
-            let languages = project.update(cx, |project, _cx| project.languages().clone())?;
+        let languages = project.update(cx, |project, _cx| project.languages().clone())?;
 
-            let changes = if let Some(entry) = branch_diff {
-                let oid = match entry {
-                    git::status::TreeDiffStatus::Added { .. } => None,
-                    git::status::TreeDiffStatus::Modified { old, .. }
-                    | git::status::TreeDiffStatus::Deleted { old } => Some(old),
-                };
-                project
-                    .update(cx, |project, cx| {
-                        project.git_store().update(cx, |git_store, cx| {
-                            git_store.open_diff_since(oid, buffer.clone(), repo, languages, cx)
-                        })
-                    })?
-                    .await?
-            } else {
-                project
-                    .update(cx, |project, cx| {
-                        project.open_uncommitted_diff(buffer.clone(), cx)
-                    })?
-                    .await?
+        let changes = if let Some(entry) = branch_diff {
+            let oid = match entry {
+                git::status::TreeDiffStatus::Added { .. } => None,
+                git::status::TreeDiffStatus::Modified { old, .. }
+                | git::status::TreeDiffStatus::Deleted { old } => Some(old),
             };
-            Ok((buffer, changes))
-        });
-        task
+            project
+                .update(cx, |project, cx| {
+                    project.git_store().update(cx, |git_store, cx| {
+                        git_store.open_diff_since(oid, buffer.clone(), repo, languages, cx)
+                    })
+                })?
+                .await?
+        } else {
+            project
+                .update(cx, |project, cx| {
+                    project.open_uncommitted_diff(buffer.clone(), cx)
+                })?
+                .await?
+        };
+        Ok((buffer, changes))
     }
 }
 

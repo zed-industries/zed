@@ -30,10 +30,11 @@ use git::{
     TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    Action, AppContext, AsyncApp, AsyncWindowContext, ClickEvent, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -311,6 +312,9 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
+    /// On clicking an entry in a the git_panel this will
+    /// trigger loading it
+    open_diff_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -471,6 +475,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                open_diff_task: None,
             };
 
             this.schedule_update(window, cx);
@@ -750,11 +755,25 @@ impl GitPanel {
 
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
-            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
+            let entry = self
+                .entries
+                .get(self.selected_entry?)?
+                .status_entry()?
+                .clone();
             let workspace = self.workspace.upgrade()?;
-            let git_repo = self.active_repository.as_ref()?;
+            let git_repo = self.active_repository.as_ref()?.clone();
+            let focus_handle = self.focus_handle.clone();
 
-            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+            // let panel = panel.upgrade().unwrap(); // TODO FIXME
+            // cx.read_entity(&panel, |panel, cx| {
+            //     panel
+            // })
+            // .unwrap(); // TODO FIXME
+
+            // how do we get the projectdiff here?
+
+            let project_diff = if let Some(project_diff) =
+                workspace.read(cx).active_item_as::<ProjectDiff>(cx)
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
                 && Some(&entry.repo_path)
                     == git_repo
@@ -764,16 +783,20 @@ impl GitPanel {
             {
                 project_diff.focus_handle(cx).focus(window);
                 project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
-                return None;
-            };
-
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                project_diff
+            } else {
+                workspace.update(cx, |workspace, cx| {
+                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx)
                 })
-                .ok();
-            self.focus_handle.focus(window);
+            };
+            focus_handle.focus(window); // TODO: should we focus before the file is loaded or wait for that?
 
+            let project_diff = project_diff.downgrade();
+            self.open_diff_task = Some(cx.spawn_in(window, async move |_, cx| {
+                ProjectDiff::refresh_one(project_diff, entry.repo_path, entry.status, cx)
+                    .await
+                    .unwrap(); // TODO FIXME
+            }));
             Some(())
         });
     }
@@ -807,11 +830,7 @@ impl GitPanel {
                     .notify_async_err(&mut cx)
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
-                    // active_editor.update(cx, |editor, _cx| editor.load_diff())?;
                     if let Some(diff_task) =
-                        // this needs to become load the diff
-                        // this just waits for the load_diff_task to be completed
-                        // later we will make all files load for small diffs
                         active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())?
                     {
                         diff_task.await;
