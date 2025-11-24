@@ -45,18 +45,18 @@ impl StickyColor {
         }
     }
 
-    /// the cmd+number modifier for this color
-    /// used to bind the color changing shortcuts
-    fn cmd_number(&self) -> u8 {
-        match self {
-            StickyColor::Yellow => 1,
-            StickyColor::Blue => 2,
-            StickyColor::Green => 3,
-            StickyColor::Pink => 4,
-            StickyColor::Purple => 5,
-            StickyColor::Gray => 6,
-        }
-    }
+    // the cmd+number modifier for this color
+    // used to bind the color changing shortcuts
+    // fn cmd_number(&self) -> u8 {
+    //     match self {
+    //         StickyColor::Yellow => 1,
+    //         StickyColor::Blue => 2,
+    //         StickyColor::Green => 3,
+    //         StickyColor::Pink => 4,
+    //         StickyColor::Purple => 5,
+    //         StickyColor::Gray => 6,
+    //     }
+    // }
 }
 
 pub struct Sticky {
@@ -64,8 +64,7 @@ pub struct Sticky {
     focus_handle: FocusHandle,
     bounds: Bounds<Pixels>,
     color: StickyColor,
-    collapsed: bool,
-
+    // collapsed: bool,
     content: SharedString,
     window_handle: Option<AnyWindowHandle>,
     text_area: Entity<TextArea>,
@@ -84,7 +83,7 @@ impl Sticky {
             focus_handle: cx.focus_handle(),
             bounds,
             color,
-            collapsed: false,
+            // collapsed: false,
             content: SharedString::new(""),
             window_handle: None,
             text_area,
@@ -184,7 +183,6 @@ impl Render for Sticky {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
         let window_active = window.is_window_active();
-        let focus_handle = self.focus_handle.clone();
 
         div()
             .id(self.id.clone())
