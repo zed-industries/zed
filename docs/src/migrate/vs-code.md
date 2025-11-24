@@ -1,6 +1,6 @@
 # How to Migrate from VS Code to Zed
 
-This guide is for developers who’ve spent serious time in VS Code and want to try Zed without starting from scratch.
+This guide is for developers who spent serious time in VS Code and want to try Zed without starting from scratch.
 
 If you’re here, you might be looking for a faster editor. Or something less cluttered. Or you’re curious about built-in collaboration. Whatever brought you here, this guide helps you move over your habits, shortcuts, and settings.
 
@@ -23,11 +23,11 @@ This opens the current directory in Zed.
 
 During setup, you have the option to import key settings from VS Code. Zed imports the following settings:
 
-## Settings Imported from VS Code
+### Settings Imported from VS Code
 
 The following VS Code settings are automatically imported when you use **Import Settings from VS Code**:
 
-### Editor
+**Editor**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -73,7 +73,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.suggest.showWords` | `completions.words` |
 | `editor.inlineSuggest.enabled` | `show_edit_predictions` |
 
-### Files & Workspace
+**Files & Workspace**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -87,7 +87,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `search.smartCase` | `use_smartcase_search` |
 | `search.useIgnoreFiles` | `search.include_ignored` |
 
-### Terminal
+**Terminal**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -102,7 +102,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `terminal.integrated.{platform}Exec` | `terminal.shell` |
 | `terminal.integrated.env.{platform}` | `terminal.env` |
 
-### Tabs & Panels
+**Tabs & Panels**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -119,7 +119,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `workbench.editor.restoreViewState` | `restore_on_file_reopen` |
 | `workbench.statusBar.visible` | `status_bar.show` |
 
-### Project Panel (File Explorer)
+**Project Panel (File Explorer)**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -129,7 +129,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `problems.decorations.enabled` | `project_panel.show_diagnostics` |
 | `explorer.decorations.badges` | `project_panel.git_status` |
 
-### Git
+**Git**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -138,7 +138,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `git.decorations.enabled` | `git.inline_blame`, `project_panel.git_status` |
 | `git.blame.editorDecoration.enabled` | `git.inline_blame.enabled` |
 
-### Window & Behavior
+**Window & Behavior**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -147,7 +147,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `window.closeWhenEmpty` | `when_closing_with_no_tabs` |
 | `accessibility.dimUnfocused.enabled` / `opacity` | `active_pane_modifiers.inactive_opacity` |
 
-### Other
+**Other**
 
 | VS Code Setting | Zed Setting |
 | --- | --- |
@@ -158,12 +158,11 @@ The following VS Code settings are automatically imported when you use **Import 
 | `chat.agent.enabled` | `agent.enabled` |
 | `mcp` | `context_servers` |
 
-
 Zed doesn’t import extensions or keybindings, but this is the fastest way to get a familiar feel while trying something new. If you skip that step during setup, you can still import settings manually later via the command palette:
 
 `Cmd+Shift+P → Zed: Import VS Code Settings`
 
-## Set Up Your Editor Preferences
+## Set Up Editor Preferences
 
 You can also configure settings manually in the Settings Editor.
 
@@ -237,7 +236,7 @@ Here’s a quick reference guide for how our keybindings compare to what you’r
 | Toggle right dock | `Cmd + R` or `Cmd + Alt + B` |  |
 | Syntactic selection| `Opt + Up/Down` | Selects code by structure (e.g., inside braces). |
 
-### Customize Keybindings
+### How to Customize Keybindings
 
 To edit your keybindings:
 - Open the command palette (`Cmd+Shift+P`)
