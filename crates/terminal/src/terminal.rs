@@ -1838,6 +1838,11 @@ impl Terminal {
                 point,
                 &mut self.hyperlink_regex_searches,
             );
+            drop(term_lock);
+
+            if self.mouse_down_hyperlink.is_some() {
+                return;
+            }
         }
 
         if self.mouse_mode(e.modifiers.shift) {
@@ -2452,59 +2457,11 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{
-        Context, Entity, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-        MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Styled, TestAppContext, Window,
-        bounds, div, point, size, smol_timeout,
+        Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+        TestAppContext, bounds, point, size, smol_timeout,
     };
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
-
-    struct TerminalTestWrapper {
-        terminal: Entity<Terminal>,
-        terminal_region: Bounds<Pixels>,
-    }
-
-    impl TerminalTestWrapper {
-        fn new(terminal: Entity<Terminal>) -> Self {
-            Self {
-                terminal,
-                terminal_region: bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
-            }
-        }
-    }
-
-    impl Render for TerminalTestWrapper {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let region = self.terminal_region;
-
-            div()
-                .size_full()
-                .on_mouse_down(MouseButton::Left, {
-                    let terminal = self.terminal.clone();
-                    cx.listener(move |_this, event: &MouseDownEvent, _window, cx| {
-                        terminal.update(cx, |terminal, cx| {
-                            terminal.mouse_down(event, cx);
-                        });
-                    })
-                })
-                .on_mouse_up(MouseButton::Left, {
-                    let terminal = self.terminal.clone();
-                    cx.listener(move |_this, event: &MouseUpEvent, _window, cx| {
-                        terminal.update(cx, |terminal, cx| {
-                            terminal.mouse_up(event, cx);
-                        });
-                    })
-                })
-                .on_mouse_move({
-                    let terminal = self.terminal.clone();
-                    cx.listener(move |_this, event: &MouseMoveEvent, _window, cx| {
-                        terminal.update(cx, |terminal, cx| {
-                            terminal.mouse_drag(event, region, cx);
-                        });
-                    })
-                })
-        }
-    }
 
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
@@ -2960,8 +2917,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_hyperlink_ctrl_click_same_position(cx: &mut TestAppContext) {
-        use gpui::VisualTestContext;
-
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -2977,12 +2932,9 @@ mod tests {
             terminal.write_output(b"Visit https://zed.dev/ for more\r\n", cx);
         });
 
-        let window = cx.add_window(|_window, _cx| TerminalTestWrapper::new(terminal.clone()));
-        let _wrapper = window.root(cx).unwrap();
-
         cx.run_until_parked();
 
-        terminal.update(cx, |terminal, _cx| {
+        terminal.update(cx, |terminal, cx| {
             let term_lock = terminal.term.lock();
             terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
             drop(term_lock);
@@ -2993,17 +2945,26 @@ mod tests {
                 bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
             );
             terminal.last_content.terminal_bounds = terminal_bounds;
-        });
+            terminal.events.clear();
 
-        let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
-        let click_position = point(px(80.0), px(10.0));
+            let click_position = point(px(80.0), px(10.0));
+            let mouse_down = MouseDownEvent {
+                button: MouseButton::Left,
+                position: click_position,
+                modifiers: Modifiers::control(),
+                click_count: 1,
+                first_mouse: true,
+            };
+            terminal.mouse_down(&mouse_down, cx);
 
-        visual_cx.simulate_mouse_down(click_position, MouseButton::Left, Modifiers::control());
-        visual_cx.simulate_mouse_up(click_position, MouseButton::Left, Modifiers::control());
+            let mouse_up = MouseUpEvent {
+                button: MouseButton::Left,
+                position: click_position,
+                modifiers: Modifiers::control(),
+                click_count: 1,
+            };
+            terminal.mouse_up(&mouse_up, &*cx);
 
-        cx.run_until_parked();
-
-        terminal.update(&mut visual_cx, |terminal, _cx| {
             assert!(
                 terminal
                     .events
@@ -3016,8 +2977,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_hyperlink_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
-        use gpui::VisualTestContext;
-
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -3036,12 +2995,9 @@ mod tests {
             );
         });
 
-        let window = cx.add_window(|_window, _cx| TerminalTestWrapper::new(terminal.clone()));
-        let _wrapper = window.root(cx).unwrap();
-
         cx.run_until_parked();
 
-        terminal.update(cx, |terminal, _cx| {
+        terminal.update(cx, |terminal, cx| {
             let term_lock = terminal.term.lock();
             terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
             drop(term_lock);
@@ -3052,17 +3008,35 @@ mod tests {
                 bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
             );
             terminal.last_content.terminal_bounds = terminal_bounds;
-        });
+            terminal.events.clear();
 
-        let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
-        let down_position = point(px(80.0), px(10.0));
-        let up_position = point(px(10.0), px(50.0));
+            let down_position = point(px(80.0), px(10.0));
+            let up_position = point(px(10.0), px(50.0));
 
-        visual_cx.simulate_mouse_down(down_position, MouseButton::Left, Modifiers::control());
-        visual_cx.simulate_mouse_move(up_position, Some(MouseButton::Left), Modifiers::control());
-        visual_cx.simulate_mouse_up(up_position, MouseButton::Left, Modifiers::control());
+            let mouse_down = MouseDownEvent {
+                button: MouseButton::Left,
+                position: down_position,
+                modifiers: Modifiers::control(),
+                click_count: 1,
+                first_mouse: true,
+            };
+            terminal.mouse_down(&mouse_down, cx);
 
-        terminal.update(&mut visual_cx, |terminal, _cx| {
+            let drag_event = MouseMoveEvent {
+                position: up_position,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::control(),
+            };
+            terminal.mouse_drag(&drag_event, terminal_bounds.bounds, cx);
+
+            let mouse_up = MouseUpEvent {
+                button: MouseButton::Left,
+                position: up_position,
+                modifiers: Modifiers::control(),
+                click_count: 1,
+            };
+            terminal.mouse_up(&mouse_up, &*cx);
+
             assert!(
                 !terminal
                     .events
@@ -3075,8 +3049,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_hyperlink_ctrl_click_drag_within_bounds(cx: &mut TestAppContext) {
-        use gpui::VisualTestContext;
-
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -3092,12 +3064,9 @@ mod tests {
             terminal.write_output(b"Visit https://zed.dev/ for more\r\n", cx);
         });
 
-        let window = cx.add_window(|_window, _cx| TerminalTestWrapper::new(terminal.clone()));
-        let _wrapper = window.root(cx).unwrap();
-
         cx.run_until_parked();
 
-        terminal.update(cx, |terminal, _cx| {
+        terminal.update(cx, |terminal, cx| {
             let term_lock = terminal.term.lock();
             terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
             drop(term_lock);
@@ -3108,19 +3077,35 @@ mod tests {
                 bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
             );
             terminal.last_content.terminal_bounds = terminal_bounds;
-        });
+            terminal.events.clear();
 
-        let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
-        let down_position = point(px(70.0), px(10.0));
-        let up_position = point(px(130.0), px(10.0));
+            let down_position = point(px(70.0), px(10.0));
+            let up_position = point(px(130.0), px(10.0));
 
-        visual_cx.simulate_mouse_down(down_position, MouseButton::Left, Modifiers::control());
-        visual_cx.simulate_mouse_move(up_position, Some(MouseButton::Left), Modifiers::control());
-        visual_cx.simulate_mouse_up(up_position, MouseButton::Left, Modifiers::control());
+            let mouse_down = MouseDownEvent {
+                button: MouseButton::Left,
+                position: down_position,
+                modifiers: Modifiers::control(),
+                click_count: 1,
+                first_mouse: true,
+            };
+            terminal.mouse_down(&mouse_down, cx);
 
-        cx.run_until_parked();
+            let drag_event = MouseMoveEvent {
+                position: up_position,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::control(),
+            };
+            terminal.mouse_drag(&drag_event, terminal_bounds.bounds, cx);
 
-        terminal.update(&mut visual_cx, |terminal, _cx| {
+            let mouse_up = MouseUpEvent {
+                button: MouseButton::Left,
+                position: up_position,
+                modifiers: Modifiers::control(),
+                click_count: 1,
+            };
+            terminal.mouse_up(&mouse_up, &*cx);
+
             assert!(
                 terminal
                     .events
