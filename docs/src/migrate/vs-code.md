@@ -22,18 +22,14 @@ This opens the current directory in Zed.
 ## Import Settings from VS Code
 
 During setup, you have the option to import key settings from VS Code. Zed imports the following settings:
-- **Editor:** Font family, font size, line height, tab size, word wrap, and preferred theme.
-- **Files:** Auto-save behavior, file exclusions, and file associations.
-- **Terminal:** Font family, font size, line height, and cursor blinking.
-- **Vim Mode:** Keybindings and system clipboard settings (if you use the Vim extension).
 
 Zed doesn’t import extensions or keybindings, but this is the fastest way to get a familiar feel while trying something new. If you skip that step during setup, you can still import settings manually later via the command palette:
 
-`Cmd+Shift+P → Zed: Import Settings from VS Code`
+`Cmd+Shift+P → Zed: Import VS Code Settings`
 
 ## Set Up Your Editor Preferences
 
-You can also configure your settings manually in the Settings Editor.
+You can also configure settings manually in the Settings Editor.
 
 To edit your settings:
 1. `Cmd+,` to open the Settings Editor.
@@ -54,7 +50,7 @@ Zed also supports per-project settings. You can find these in the Settings Edito
 
 ## Open or Create a Project
 
-After setup, press `Cmd+O` (or `Ctrl+O` on Linux) to open a folder. This becomes your workspace in Zed. There's no support for multi-root workspaces or `.code-workspace` files like in VS Code. Zed keeps it simple: one folder, one workspace.
+After setup, press `Cmd+O` (`Ctrl+O` on Linux) to open a folder. This becomes your workspace in Zed. There's no support for multi-root workspaces or `.code-workspace` files like in VS Code. Zed keeps it simple: one folder, one workspace.
 
 To start a new project, create a directory using your terminal or file manager, then open it in Zed. The editor will treat that folder as the root of your project.
 
@@ -80,29 +76,30 @@ Here’s a quick reference guide for how our keybindings compare to what you’r
 | Find symbols (file-wide) | `Cmd + Shift + O` |
 | Toggle left dock | `Cmd + B` |
 | Toggle bottom dock | `Cmd + J` |
-| Open terminal | `Ctrl + ` ` |
+| Open terminal | `Ctrl + ~` |
 | Open file tree explorer | `Cmd + Shift + E` |
 | Close current buffer | `Cmd + W` |
 | Close whole project | `Cmd + Shift + W` |
 | Refactor: rename symbol | `F2` |
-| Change theme | `Cmd + K, then T` |
+| Change theme | `Cmd + K, Cmd + T` |
 | Wrap text | `Opt + Z` |
 | Navigate open tabs | `Cmd + Opt + Arrow` |
 | Syntactic fold / unfold | `Cmd + Opt + {` or `}` |
-| Move lines up/down | `Opt + Up/Down` |
 
 
 ### Different Keybindings (Zed <> VS Code)
 | Action | VS Code | Zed |
 | --- | --- | --- |
 | Open recent project | `Ctrl + R` | `Cmd + Opt + O` |
-| Split panes | `Cmd + \` | `Cmd + K, then Arrow Keys` |
-| Expand/Shrink Selection | `Shift + Alt + Right/Left` | `Ctrl + Shift + Right/Left` |
+| Move lines up/down | `Opt + Up/Down` | `Cmd + Ctrl + Up/Down` |
+| Split panes | `Cmd + \` | `Cmd + K, Arrow Keys` |
+| Expand Selection | `Shift + Alt + Right` | `Opt + Up` |
 
 ### Unique to Zed
 | Action | Shortcut | Notes |
 | --- | --- | --- |
 | Toggle right dock | `Cmd + R` or `Cmd + Alt + B` |  |
+| Syntactic selection| `Opt + Up/Down` | Selects code by structure (e.g., inside braces). |
 
 ### Customize Keybindings
 
@@ -112,8 +109,16 @@ To edit your keybindings:
 
 This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
 
-Zed also supports chords (multi-key sequences) like `Cmd+K Cmd+C`, just like
- workspace file format. Opening a folder is your project context.
+Zed also supports chords (multi-key sequences) like `Cmd+K Cmd+C`, like VS Code does.
+
+## Differences in User Interfaces
+
+### No Workspace
+VS Code uses a dedicated Workspace concept, with multi-root folders, `.code-workspace` files, and a clear distinction between “a window” and “a workspace.”
+Zed simplifies this model.
+
+In Zed:
+- There is no workspace file format. Opening a folder is your project context.
 
 - Zed does not support multi-root workspaces. You can only open one folder at a time in a window.
 
