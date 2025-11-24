@@ -344,7 +344,7 @@ impl LspLogView {
             BINARY = info.binary.as_ref().map_or_else(
                 || "Unknown".to_string(),
                 |binary| serde_json::to_string_pretty(binary)
-                    .unwrap_or_else(|e| format!("Failed to serialize binary info: {e}"))
+                    .unwrap_or_else(|e| format!("Failed to serialize binary info: {e:#}"))
             ),
             WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
