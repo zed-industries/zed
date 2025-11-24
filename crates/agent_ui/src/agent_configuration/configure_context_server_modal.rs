@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -224,11 +221,12 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         Some((id, cmd)) => {
             let args = serde_json::to_string(&cmd.args).unwrap();
             let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
-            (id.0.to_string(), cmd.path, args, env)
+            let cmd_path = serde_json::to_string(&cmd.path).unwrap();
+            (id.0.to_string(), cmd_path, args, env)
         }
         None => (
             "some-mcp-server".to_string(),
-            PathBuf::new(),
+            "".to_string(),
             "[]".to_string(),
             "{}".to_string(),
         ),
@@ -239,14 +237,13 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
-    "command": "{}",
+    "command": {command},
     /// The arguments to pass to the MCP server
     "args": {args},
     /// The environment variables to set
     "env": {env}
   }}
-}}"#,
-        command.display()
+}}"#
     )
 }
 
