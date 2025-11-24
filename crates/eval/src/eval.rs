@@ -25,7 +25,7 @@ use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, Sele
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::project_settings::ProjectSettings;
 use prompt_store::PromptBuilder;
-use release_channel::AppVersion;
+use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::cell::RefCell;
