@@ -7,6 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod text_area;
 mod ui;
 
+use text_area::{
+    Backspace as TextAreaBackspace, Delete as TextAreaDelete, Down, End as TextAreaEnd, Enter,
+    Home as TextAreaHome, Left, Right, SelectDown, SelectLeft, SelectRight, SelectUp, Up,
+};
 use ui::{Sticky, StickyColor};
 
 actions!(
@@ -229,7 +233,7 @@ fn main() {
             cx.new(|cx| {
                 let window_handle = window.window_handle();
                 Sticky::new(cx, "sticky-1", blue_bounds, StickyColor::Blue)
-                    .content(SharedString::new_static(BLUE_STICKY_CONTENT))
+                    .content(SharedString::new_static(BLUE_STICKY_CONTENT), cx)
                     .with_window_handle(window_handle.into())
             })
         })
@@ -248,7 +252,7 @@ fn main() {
             cx.new(|cx| {
                 let window_handle = window.window_handle();
                 Sticky::new(cx, "sticky-2", yellow_bounds, StickyColor::Yellow)
-                    .content(SharedString::new_static(YELLOW_STICKY_CONTENT))
+                    .content(SharedString::new_static(YELLOW_STICKY_CONTENT), cx)
                     .with_window_handle(window_handle.into())
             })
         })
@@ -287,6 +291,20 @@ fn main() {
             KeyBinding::new("cmd-5", ChangeColorPurple, None),
             KeyBinding::new("cmd-6", ChangeColorGray, None),
             KeyBinding::new("cmd-m", MinimizeWindow, None),
+            // Text area key bindings
+            KeyBinding::new("backspace", TextAreaBackspace, None),
+            KeyBinding::new("delete", TextAreaDelete, None),
+            KeyBinding::new("left", Left, None),
+            KeyBinding::new("right", Right, None),
+            KeyBinding::new("up", Up, None),
+            KeyBinding::new("down", Down, None),
+            KeyBinding::new("shift-left", SelectLeft, None),
+            KeyBinding::new("shift-right", SelectRight, None),
+            KeyBinding::new("shift-up", SelectUp, None),
+            KeyBinding::new("shift-down", SelectDown, None),
+            KeyBinding::new("home", TextAreaHome, None),
+            KeyBinding::new("end", TextAreaEnd, None),
+            KeyBinding::new("enter", Enter, None),
         ]);
     });
 }

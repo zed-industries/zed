@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use crate::{
     ChangeColorBlue, ChangeColorGray, ChangeColorGreen, ChangeColorPink, ChangeColorPurple,
     ChangeColorYellow, CloseNote, DEFAULT_STICKY_SIZE, NewNote, STICKY_COUNT, TITLEBAR_HEIGHT,
-    ZoomWindow,
+    ZoomWindow, text_area::TextArea,
 };
 
 #[derive(Clone, Default, Debug)]
@@ -68,7 +68,7 @@ pub struct Sticky {
 
     content: SharedString,
     window_handle: Option<AnyWindowHandle>,
-    // text_area: Entity<TextArea>,
+    text_area: Entity<TextArea>,
 }
 
 impl Sticky {
@@ -78,6 +78,7 @@ impl Sticky {
         bounds: Bounds<Pixels>,
         color: StickyColor,
     ) -> Self {
+        let text_area = cx.new(|cx| TextArea::new(cx));
         Self {
             id: id.into(),
             focus_handle: cx.focus_handle(),
@@ -86,11 +87,16 @@ impl Sticky {
             collapsed: false,
             content: SharedString::new(""),
             window_handle: None,
+            text_area,
         }
     }
 
-    pub fn content(mut self, content: impl Into<SharedString>) -> Self {
+    pub fn content(mut self, content: impl Into<SharedString>, cx: &mut App) -> Self {
         self.content = content.into();
+        // Set initial content in the text area
+        self.text_area.update(cx, |area, cx| {
+            area.set_content(&self.content, cx);
+        });
         self
     }
 
@@ -228,7 +234,7 @@ impl Render for Sticky {
                     .flex_1()
                     .py(px(8.))
                     .px(px(14.))
-                    .child(self.content.clone()),
+                    .child(self.text_area.clone()),
             )
     }
 }
