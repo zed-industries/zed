@@ -234,7 +234,7 @@ fn main() {
                 let window_handle = window.window_handle();
                 Sticky::new(cx, "sticky-1", blue_bounds, StickyColor::Blue)
                     .content(SharedString::new_static(BLUE_STICKY_CONTENT), cx)
-                    .with_window_handle(window_handle.into())
+                    .with_window_handle(window_handle)
             })
         })
         .unwrap();
@@ -253,7 +253,7 @@ fn main() {
                 let window_handle = window.window_handle();
                 Sticky::new(cx, "sticky-2", yellow_bounds, StickyColor::Yellow)
                     .content(SharedString::new_static(YELLOW_STICKY_CONTENT), cx)
-                    .with_window_handle(window_handle.into())
+                    .with_window_handle(window_handle)
             })
         })
         .unwrap();

@@ -1237,7 +1237,7 @@ impl Element for TextAreaElement {
             let line =
                 window
                     .text_system()
-                    .shape_line(placeholder.clone(), font_size, &[run], None);
+                    .shape_line(placeholder, font_size, &[run], None);
             line.paint(bounds.origin, self.style.line_height, window, cx)
                 .unwrap();
         } else {

@@ -164,7 +164,7 @@ impl Sticky {
                         new_bounds,
                         StickyColor::Yellow,
                     )
-                    .with_window_handle(window_handle.into())
+                    .with_window_handle(window_handle)
                 });
                 // Focus the TextArea directly instead of the Sticky container
                 let text_area_handle = note.read(cx).text_area.read(cx).focus_handle(cx);
