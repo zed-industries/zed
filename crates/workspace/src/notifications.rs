@@ -777,7 +777,13 @@ pub mod simple_message_notification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             NotificationFrame::new()
                 .with_title(self.title.clone())
-                .with_content((self.build_content)(window, cx))
+                .with_content(
+                    div()
+                        .id("message-notification-content")
+                        .max_h(vh(0.8, window))
+                        .overflow_y_scroll()
+                        .child((self.build_content)(window, cx)),
+                )
                 .show_close_button(self.show_close_button)
                 .show_suppress_button(self.show_suppress_button)
                 .on_close(cx.listener(|_, suppress, _, cx| {
