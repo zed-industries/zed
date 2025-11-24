@@ -776,7 +776,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
-    clip_at_line_ends: bool,
+    pub clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
@@ -1183,8 +1183,10 @@ impl DisplaySnapshot {
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         let mut clipped = self.block_snapshot.clip_point(point.0, bias);
+        println!("  clipped={clipped:?}");
         if self.clip_at_line_ends {
-            clipped = self.clip_at_line_end(DisplayPoint(clipped)).0
+            clipped = self.clip_at_line_end(DisplayPoint(clipped)).0;
+            println!("  clipped(E)={clipped:?}");
         }
         DisplayPoint(clipped)
     }
@@ -1196,6 +1198,11 @@ impl DisplaySnapshot {
     pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
         let mut point = self.display_point_to_point(display_point, Bias::Left);
 
+        println!(
+            "  point.column={}, buffer_line_len={}",
+            point.column,
+            self.buffer_snapshot().line_len(MultiBufferRow(point.row))
+        );
         if point.column != self.buffer_snapshot().line_len(MultiBufferRow(point.row)) {
             return display_point;
         }

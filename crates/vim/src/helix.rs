@@ -263,7 +263,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match motion {
-            Motion::EndOfLine { .. } => {
+            Motion::EndOfLine { display_lines } => {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
                 // not after it. We need special handling it.
                 self.update_editor(cx, |_, editor, cx| {
@@ -271,21 +271,38 @@ impl Vim {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
+                            let mut cursor = if selection.is_empty() || selection.reversed {
                                 selection.head()
                             } else {
                                 movement::left(map, selection.head())
                             };
+                            println!(">>>");
+                            println!("  clip_at_line_ends={}", map.clip_at_line_ends);
+                            println!("  cursor={cursor:?}");
 
-                            let (point, _goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
+                            let times = times.unwrap_or(1);
+                            if times > 1 {
+                                cursor =
+                                    map.start_of_relative_buffer_row(cursor, times as isize - 1);
+                            }
+                            let point = if display_lines {
+                                map.clip_point(
+                                    DisplayPoint::new(cursor.row(), map.line_len(cursor.row())),
+                                    Bias::Left,
                                 )
-                                .unwrap_or((cursor, goal));
+                            } else {
+                                let nnn = map.next_line_boundary(cursor.to_point(map));
+                                println!("  nnn={nnn:?}");
+                                map.clip_point(
+                                    map.next_line_boundary(cursor.to_point(map)).1,
+                                    Bias::Left,
+                                )
+                            };
+                            // let (point, _goal) = motion
+                            //     .move_point(map, cursor, goal, times, &text_layout_details)
+                            //     .unwrap_or((cursor, goal));
+                            println!("  point={point:?}");
+                            println!("<<<");
 
                             // Move left by one character to position on the last character
                             let adjusted_point = movement::saturating_left(map, point);
