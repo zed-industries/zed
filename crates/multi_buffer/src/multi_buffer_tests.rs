@@ -4166,6 +4166,8 @@ fn test_excerpts_containment_functions(cx: &mut App) {
     assert_eq!(excerpts[1].id, excerpt_2_id);
 
     // This range represent an selection with end-point just inside excerpt_2
+    // Today we only expand the first excerpt, but another interpretation that
+    // we could consider is expanding both here
     let excerpts: Vec<_> = snapshot.excerpts_for_range(p10..p20).collect();
     assert_eq!(excerpts.len(), 1);
     assert_eq!(excerpts[0].id, excerpt_1_id);
