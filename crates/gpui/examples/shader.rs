@@ -96,7 +96,7 @@ impl Render for ShaderExample {
                 )
                 .child(shader_element(FragmentShader::new(
                     "return vec4<f32>((input.position.xy - input.origin) / input.size, 0.0, 1.0);"
-                )).size_40())
+                )).size_40().cursor_crosshair())
             },
         )
     }

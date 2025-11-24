@@ -258,6 +258,11 @@ fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> 
             let expanded = crate::styles::position_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
+        "gpui_macros::size_style_methods" | "size_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::size_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
         "gpui_macros::overflow_style_methods" | "overflow_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::overflow_style_methods(TokenStream::from(tokens));

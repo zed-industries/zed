@@ -129,6 +129,12 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
     styles::position_style_methods(input)
 }
 
+/// Generates methods for size styles.
+#[proc_macro]
+pub fn size_style_methods(input: TokenStream) -> TokenStream {
+    styles::size_style_methods(input)
+}
+
 /// Generates methods for overflow styles.
 #[proc_macro]
 pub fn overflow_style_methods(input: TokenStream) -> TokenStream {

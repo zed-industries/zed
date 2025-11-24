@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::{
-    App, Bounds, Element, ElementId, GlobalElementId, Hitbox, InspectorElementId,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, StyleRefinement, Styled,
-    Window,
+    App, Bounds, CursorStyle, Element, ElementId, GlobalElementId, Hitbox, InspectorElementId,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, StyleRefinement, Window,
 };
 
 /// Fragment shader which can be rendered using `shader_element` or `shader_element_with_data`.
@@ -43,10 +42,30 @@ pub struct ShaderElement<T: ShaderUniform> {
     interactivity: Interactivity,
 }
 
-impl<T: ShaderUniform> Styled for ShaderElement<T> {
+impl<T: ShaderUniform> ShaderElement<T> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
+
+    gpui::visibility_style_methods!({
+        visibility: pub
+    });
+
+    gpui::margin_style_methods!({
+        visibility: pub
+    });
+
+    gpui::position_style_methods!({
+        visibility: pub
+    });
+
+    gpui::size_style_methods!({
+        visibility: pub
+    });
+
+    gpui::cursor_style_methods!({
+        visibility: pub
+    });
 }
 
 impl<T: ShaderUniform> InteractiveElement for ShaderElement<T> {
