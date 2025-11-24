@@ -6086,7 +6086,7 @@ pub(crate) mod tests {
     use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
-    use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
+    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
@@ -6603,7 +6603,7 @@ pub(crate) mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
             prompt_store::init(cx)
         });
     }
