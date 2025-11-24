@@ -2951,7 +2951,7 @@ mod tests {
             let mouse_down = MouseDownEvent {
                 button: MouseButton::Left,
                 position: click_position,
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
                 click_count: 1,
                 first_mouse: true,
             };
@@ -2960,7 +2960,7 @@ mod tests {
             let mouse_up = MouseUpEvent {
                 button: MouseButton::Left,
                 position: click_position,
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
                 click_count: 1,
             };
             terminal.mouse_up(&mouse_up, &*cx);
@@ -3016,7 +3016,7 @@ mod tests {
             let mouse_down = MouseDownEvent {
                 button: MouseButton::Left,
                 position: down_position,
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
                 click_count: 1,
                 first_mouse: true,
             };
@@ -3025,14 +3025,14 @@ mod tests {
             let drag_event = MouseMoveEvent {
                 position: up_position,
                 pressed_button: Some(MouseButton::Left),
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
             };
             terminal.mouse_drag(&drag_event, terminal_bounds.bounds, cx);
 
             let mouse_up = MouseUpEvent {
                 button: MouseButton::Left,
                 position: up_position,
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
                 click_count: 1,
             };
             terminal.mouse_up(&mouse_up, &*cx);
@@ -3085,7 +3085,7 @@ mod tests {
             let mouse_down = MouseDownEvent {
                 button: MouseButton::Left,
                 position: down_position,
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
                 click_count: 1,
                 first_mouse: true,
             };
@@ -3094,14 +3094,14 @@ mod tests {
             let drag_event = MouseMoveEvent {
                 position: up_position,
                 pressed_button: Some(MouseButton::Left),
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
             };
             terminal.mouse_drag(&drag_event, terminal_bounds.bounds, cx);
 
             let mouse_up = MouseUpEvent {
                 button: MouseButton::Left,
                 position: up_position,
-                modifiers: Modifiers::control(),
+                modifiers: Modifiers::secondary_key(),
                 click_count: 1,
             };
             terminal.mouse_up(&mouse_up, &*cx);
