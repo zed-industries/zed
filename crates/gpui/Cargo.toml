@@ -295,10 +295,6 @@ name = "stickies"
 path = "examples/stickies/main.rs"
 
 [[example]]
-name = "counter"
-path = "examples/counter.rs"
-
-[[example]]
 name = "set_menus"
 path = "examples/set_menus.rs"
 
