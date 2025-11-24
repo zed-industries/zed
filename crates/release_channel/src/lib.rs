@@ -91,8 +91,7 @@ impl AppVersion {
             pkg_version.parse().expect("invalid version in Cargo.toml")
         };
         if let Some(build_id) = build_id {
-            version.pre =
-                semver::Prerelease::new(&build_id.to_string()).expect("Invalid build identifier");
+            version.pre = semver::Prerelease::new(&build_id).expect("Invalid build identifier");
         }
         if let Some(sha) = commit_sha {
             version.build = semver::BuildMetadata::new(&sha.0).expect("Invalid build metadata");
