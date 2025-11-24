@@ -47,10 +47,45 @@
   left: (identifier) @function
   right: [(function_expression) (arrow_function)])
 
-; Special identifiers
+; Parameters
 
-((identifier) @type
- (#match? @type "^[A-Z]"))
+(required_parameter
+  (identifier) @variable.parameter)
+
+(required_parameter
+  (_
+    ([
+      (identifier)
+      (shorthand_property_identifier_pattern)
+    ]) @variable.parameter))
+
+(optional_parameter
+  (identifier) @variable.parameter)
+
+(optional_parameter
+  (_
+    ([
+      (identifier)
+      (shorthand_property_identifier_pattern)
+    ]) @variable.parameter))
+
+(catch_clause
+  parameter: (identifier) @variable.parameter)
+
+(index_signature
+  name: (identifier) @variable.parameter)
+
+(arrow_function
+  parameter: (identifier) @variable.parameter)
+
+; Special identifiers
+;
+(class_declaration
+  (type_identifier) @type.class)
+
+(extends_clause
+  value: (identifier) @type.class)
+
 (type_identifier) @type
 (predefined_type) @type.builtin
 
