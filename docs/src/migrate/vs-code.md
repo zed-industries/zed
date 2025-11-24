@@ -166,41 +166,52 @@ Unlike VS Code, Zed doesn’t require an extension to collaborate. It’s built 
 - Create a channel and [invite your collaborators](https://zed.dev/docs/collaboration#inviting-a-collaborator) to join.
 - [Share your screen or your codebase](https://zed.dev/docs/collaboration#share-a-project) directly.
 
-Once connected, you’ll see each other's cursors, selections, and edits in real time. Voice chat is included, so you can talk as you work. There’s no need for separate tools or third-party logins.
-You can choose to share individual buffers or your entire workspace. Zed’s collaboration is designed for everything from quick pair programming to longer team sessions.
+Once connected, you’ll see each other's cursors, selections, and edits in real time. Voice chat is included, so you can talk as you work. There’s no need for separate tools or third-party logins. Zed’s collaboration is designed for everything from quick pair programming to longer team sessions.
 
 Learn how [Zed uses Zed](https://zed.dev/blog/zed-is-our-office) to plan work and collaborate.
 
 ### Using AI in Zed
 If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You can also explore other agents through Zed Pro, or bring your own keys and connect without authentication. Zed is designed to enable many options for using AI, including disabling it entirely.
-Configuring GitHub Copilot
-You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
+
+#### Configuring GitHub Copilot
+You should be able to sign-in to GitHub Copilot by clicking on the Zeta icon in the status bar and following the setup instructions.
 You can also add this to your settings:
+```
 {
   "features": {
     "edit_prediction_provider": "copilot"
   }
 }
-To invoke completions, just start typing. Zed will offer suggestions inline. You can accept with Tab.
-Additional AI Options
+```
+
+To invoke completions, just start typing. Zed will offer suggestions inline for you to accept.
+
+#### Additional AI Options
 To use other AI models in Zed, you have several options:
 
-Use Zed’s hosted models, with higher rate limits. Requires authentication and subscription to Zed Pro.
-Bring your own API keys, no authentication needed
-Use external agents like Claude Code
+- Use Zed’s hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/accounts.html) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
+- Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
+- Use [external agents like Claude Code](https://zed.dev/docs/ai/external-agents.html).
 
 ### Advanced Config and Productivity Tweaks
 Zed exposes advanced settings for power users who want to fine-tune their environment.
-Here are a few useful tweaks:
-Format on Save:
-"format_on_save": true
-Diagnostics Filtering:
-"diagnostics_max_severity": "warning"
-Enable direnv support:
-"load_direnv": true
-Custom Tasks: Define build or run commands with:
 
-"tasks": {
+Here are a few useful tweaks:
+
+**Format on Save:**
+`"format_on_save": true`
+
+**Diagnostics Filtering:**
+`"diagnostics_max_severity": "warning"`
+
+**Enable direnv support:**
+`"load_direnv": true`
+
+**Custom Tasks**: Define build or run commands with:
+
+```"tasks": {
   "build": "cargo build"
 }
-You can find and edit these in your global or project settings.json file.
+```
+
+You can find and edit these in the Settings Editor.
