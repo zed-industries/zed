@@ -1226,24 +1226,24 @@ mod tests {
             workspace.read_with(cx, |workspace, _| workspace.notification_ids().len())
         };
 
-        let show_notification =
-            |lsp_name: &str, workspace: &Entity<Workspace>, cx: &mut TestAppContext| {
-                workspace.update(cx, |workspace, cx| {
-                    let lsp_name = lsp_name.to_string();
-                    let request = LanguageServerPromptRequest::test(
-                        gpui::PromptLevel::Warning,
-                        "Test notification".to_string(),
-                        vec![], // Empty actions triggers auto-dismiss
-                        lsp_name,
-                    );
-                    let notification_id =
-                        NotificationId::composite::<LanguageServerPrompt>(request.id as usize);
+        let show_notification = |lsp_name: &str,
+                                 workspace: &Entity<Workspace>,
+                                 cx: &mut TestAppContext| {
+            workspace.update(cx, |workspace, cx| {
+                let lsp_name = lsp_name.to_string();
+                let request = LanguageServerPromptRequest::test(
+                    gpui::PromptLevel::Warning,
+                    "Test notification".to_string(),
+                    vec![], // Empty actions triggers auto-dismiss
+                    lsp_name,
+                );
+                let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
 
-                    workspace.show_notification(notification_id, cx, |cx| {
-                        cx.new(|cx| LanguageServerPrompt::new(request, cx))
-                    });
-                })
-            };
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| LanguageServerPrompt::new(request, cx))
+                });
+            })
+        };
 
         show_notification(lsp_name, &workspace, cx);
         assert_eq!(count_notifications(&workspace, cx), 1);
