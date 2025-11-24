@@ -229,13 +229,7 @@ impl Render for Sticky {
                 cx.notify();
             }))
             .child(Titlebar::new(entity, window_active))
-            .child(
-                div()
-                    .flex_1()
-                    .py(px(8.))
-                    .px(px(14.))
-                    .child(self.text_area.clone()),
-            )
+            .child(self.text_area.clone())
     }
 }
 

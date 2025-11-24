@@ -116,8 +116,6 @@ Stickies has lots of other great features, including a spell checker, import and
 Look in Help to find out more about using Stickies.
 "#;
 
-struct TextArea {}
-
 fn setup_menus(cx: &mut App) {
     cx.set_menus(vec![
         Menu {

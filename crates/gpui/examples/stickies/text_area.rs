@@ -4,8 +4,8 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Style, TextRun,
-    TextStyleRefinement, UTF16Selection, Window, actions, div, fill, point, prelude::*, px,
-    relative, rgba, size,
+    TextStyleRefinement, UTF16Selection, Window, WrappedLine, actions, div, fill, point,
+    prelude::*, px, relative, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -50,27 +50,21 @@ pub struct TextArea {
 
     // Interaction state
     is_selecting: bool,
-
-    // Approximate character width (calculated from font size)
-    char_width: Pixels,
 }
 
 #[derive(Clone, Debug)]
 struct LineLayout {
     // The range of text in the content string that this line represents
     text_range: Range<usize>,
-    // The shaped line for rendering
-    shaped_line: Option<gpui::ShapedLine>,
+    // The wrapped line for rendering
+    wrapped_line: Option<WrappedLine>,
     // Y position of this line
     y_offset: Pixels,
-    // Whether this is a wrapped line (continuation of previous)
-    is_wrapped: bool,
 }
 
 impl TextArea {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let style = TextAreaStyle::default();
-        let char_width = style.font_size * 0.6; // Approximate character width
         Self {
             style,
             focus_handle: cx.focus_handle(),
@@ -83,7 +77,6 @@ impl TextArea {
             wrap_width: None,
             needs_layout: true,
             is_selecting: false,
-            char_width,
         }
     }
 
@@ -273,7 +266,7 @@ impl TextArea {
     }
 
     fn move_vertically(&self, offset: usize, direction: i32) -> Option<usize> {
-        let (line_idx, x_in_line) = self.find_line_and_x_offset(offset);
+        let (line_idx, x_pixels) = self.find_line_and_x_offset(offset);
         let target_line_idx = (line_idx as i32 + direction).max(0) as usize;
 
         if target_line_idx >= self.line_layouts.len() {
@@ -281,30 +274,34 @@ impl TextArea {
         }
 
         let target_line = &self.line_layouts[target_line_idx];
-        let line_text = &self.content[target_line.text_range.clone()];
 
-        // Find the closest character position in the target line
-        let mut best_offset = target_line.text_range.start;
-        let mut best_distance = f32::MAX;
-        let mut current_x = 0.0;
-
-        for (idx, _) in line_text.grapheme_indices(true) {
-            let distance = (current_x - x_in_line).abs();
-            if distance < best_distance {
-                best_distance = distance;
-                best_offset = target_line.text_range.start + idx;
-            }
-            current_x += f32::from(self.char_width); // Use calculated character width
+        // Use the wrapped line if available to find the closest position
+        if let Some(wrapped) = &target_line.wrapped_line {
+            // Create a point at the x position and use closest_index_for_position
+            let point = point(px(x_pixels), px(0.));
+            let closest_idx = wrapped
+                .closest_index_for_position(point, self.style.line_height)
+                .unwrap_or_else(|closest| closest);
+            return Some(target_line.text_range.start + closest_idx);
         }
 
-        Some(best_offset)
+        // Fallback to simple offset
+        Some(target_line.text_range.start)
     }
 
     fn find_line_and_x_offset(&self, offset: usize) -> (usize, f32) {
         for (idx, line) in self.line_layouts.iter().enumerate() {
             if line.text_range.contains(&offset) {
-                let x_offset = (offset - line.text_range.start) as f32 * f32::from(self.char_width);
-                return (idx, x_offset);
+                // Use wrapped line to get accurate x position
+                if let Some(wrapped) = &line.wrapped_line {
+                    let local_offset = offset - line.text_range.start;
+                    if let Some(position) =
+                        wrapped.position_for_index(local_offset, self.style.line_height)
+                    {
+                        return (idx, position.x.into());
+                    }
+                }
+                return (idx, 0.0);
             }
         }
         (0, 0.0)
@@ -318,99 +315,72 @@ impl TextArea {
         // Find the line at this y position
         for line in &self.line_layouts {
             if position.y >= line.y_offset && position.y < line.y_offset + self.style.line_height {
-                // Approximate character position within the line
-                let char_index =
-                    ((position.x / self.char_width).floor() as usize).min(line.text_range.len());
-                return line.text_range.start + char_index;
+                // Use wrapped line for accurate position
+                if let Some(wrapped) = &line.wrapped_line {
+                    // Calculate relative position within the line
+                    let relative_point = point(position.x, px(0.));
+                    let local_idx = wrapped
+                        .closest_index_for_position(relative_point, self.style.line_height)
+                        .unwrap_or_else(|closest| closest);
+                    return line.text_range.start + local_idx;
+                }
+                return line.text_range.start;
             }
         }
 
         self.content.len()
     }
 
-    fn update_line_layouts(&mut self, width: Pixels, _window: &mut Window) {
+    fn update_line_layouts(&mut self, width: Pixels, window: &mut Window) {
         self.line_layouts.clear();
-        let _font_size = self.style.font_size;
+        let font_size = self.style.font_size;
         let line_height = self.style.line_height;
 
         if self.content.is_empty() {
             return;
         }
 
+        self.wrap_width = Some(width);
         let mut y_offset = px(0.);
-        let mut current_pos = 0;
 
-        // Split content by newlines while preserving byte positions
-        while current_pos <= self.content.len() {
-            let line_end = if current_pos < self.content.len() {
-                // Find next newline or end of string
-                self.content[current_pos..]
-                    .find('\n')
-                    .map(|i| current_pos + i)
-                    .unwrap_or(self.content.len())
-            } else {
-                // Handle empty line at end after newline
-                current_pos
-            };
+        // Use text system to shape text with proper wrapping
+        let text_style = window.text_style();
+        let text = SharedString::from(self.content.clone());
 
-            // Only process non-empty ranges or if we're at a newline boundary
-            if current_pos < self.content.len()
-                || (current_pos == self.content.len()
-                    && current_pos > 0
-                    && self.content.chars().last() == Some('\n'))
-            {
-                // For now, simple wrapping - count grapheme clusters for better UTF-8 handling
-                let line_text = &self.content[current_pos..line_end];
-                let grapheme_count = line_text.graphemes(true).count();
-                let chars_per_line = (width / self.char_width).floor() as usize;
+        // Create a single run for the entire text
+        let run = TextRun {
+            len: self.content.len(),
+            font: text_style.font(),
+            color: self.style.text_color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
 
-                if chars_per_line > 0 && grapheme_count > chars_per_line {
-                    // Split into wrapped lines using grapheme boundaries
-                    let mut graphemes = line_text.grapheme_indices(true);
-                    let mut chunk_start = 0;
-                    let mut grapheme_counter = 0;
+        // Shape the text with wrapping
+        let shaped_lines = window
+            .text_system()
+            .shape_text(text, font_size, &[run], Some(width), None)
+            .unwrap_or_default();
 
-                    for (byte_idx, _) in graphemes.by_ref() {
-                        grapheme_counter += 1;
-                        if grapheme_counter >= chars_per_line {
-                            self.line_layouts.push(LineLayout {
-                                text_range: (current_pos + chunk_start)..(current_pos + byte_idx),
-                                shaped_line: None,
-                                y_offset,
-                                is_wrapped: chunk_start > 0,
-                            });
-                            y_offset += line_height;
-                            chunk_start = byte_idx;
-                            grapheme_counter = 0;
-                        }
-                    }
-                    // Add remaining chunk if any
-                    if chunk_start < line_text.len() {
-                        self.line_layouts.push(LineLayout {
-                            text_range: (current_pos + chunk_start)..line_end,
-                            shaped_line: None,
-                            y_offset,
-                            is_wrapped: chunk_start > 0,
-                        });
-                        y_offset += line_height;
-                    }
-                } else if current_pos < line_end || current_pos == 0 {
-                    // Regular line or empty first line
-                    self.line_layouts.push(LineLayout {
-                        text_range: current_pos..line_end,
-                        shaped_line: None,
-                        y_offset,
-                        is_wrapped: false,
-                    });
-                    y_offset += line_height;
-                }
-            }
+        // Convert wrapped lines to our LineLayout format
+        let mut byte_offset = 0;
+        for wrapped in shaped_lines {
+            let line_len = wrapped.text.len();
+            let text_range = byte_offset..(byte_offset + line_len);
 
-            // Move past the newline if there is one
-            if line_end < self.content.len() {
-                current_pos = line_end + 1;
-            } else {
-                break;
+            self.line_layouts.push(LineLayout {
+                text_range: text_range.clone(),
+                wrapped_line: Some(wrapped),
+                y_offset,
+            });
+
+            y_offset += line_height;
+            byte_offset += line_len;
+
+            // Skip newline if present
+            if byte_offset < self.content.len() && self.content.as_bytes()[byte_offset] == b'\n' {
+                byte_offset += 1;
             }
         }
 
@@ -574,18 +544,27 @@ impl EntityInputHandler for TextArea {
         // Find the line containing the range start
         for line in &self.line_layouts {
             if line.text_range.contains(&range.start) {
-                let x_start =
-                    (range.start - line.text_range.start) as f32 * f32::from(self.char_width);
-                let x_end = ((range.end - line.text_range.start).min(line.text_range.len())) as f32
-                    * f32::from(self.char_width);
+                if let Some(wrapped) = &line.wrapped_line {
+                    let local_start = range.start - line.text_range.start;
+                    let local_end = (range.end - line.text_range.start).min(line.text_range.len());
 
-                return Some(Bounds::from_corners(
-                    point(bounds.left() + px(x_start), bounds.top() + line.y_offset),
-                    point(
-                        bounds.left() + px(x_end),
-                        bounds.top() + line.y_offset + self.style.line_height,
-                    ),
-                ));
+                    let x_start = wrapped
+                        .position_for_index(local_start, self.style.line_height)
+                        .map(|p| p.x)
+                        .unwrap_or(px(0.));
+                    let x_end = wrapped
+                        .position_for_index(local_end, self.style.line_height)
+                        .map(|p| p.x)
+                        .unwrap_or(px(0.));
+
+                    return Some(Bounds::from_corners(
+                        point(bounds.left() + x_start, bounds.top() + line.y_offset),
+                        point(
+                            bounds.left() + x_end,
+                            bounds.top() + line.y_offset + self.style.line_height,
+                        ),
+                    ));
+                }
             }
         }
         None
@@ -701,7 +680,7 @@ impl Element for TextAreaElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (focus_handle, content, selected_range, placeholder, line_layouts, char_width) = {
+        let (focus_handle, content, selected_range, placeholder, line_layouts) = {
             let area_state = self.area.read(cx);
             (
                 area_state.focus_handle.clone(),
@@ -709,7 +688,6 @@ impl Element for TextAreaElement {
                 area_state.selected_range.clone(),
                 area_state.placeholder.clone(),
                 area_state.line_layouts.clone(),
-                area_state.char_width,
             )
         };
 
@@ -727,22 +705,30 @@ impl Element for TextAreaElement {
                 let line_end = line.text_range.end;
 
                 if selected_range.end > line_start && selected_range.start < line_end {
-                    let sel_start = selected_range.start.max(line_start) - line_start;
-                    let sel_end = selected_range.end.min(line_end) - line_start;
+                    if let Some(wrapped) = &line.wrapped_line {
+                        let sel_start = selected_range.start.max(line_start) - line_start;
+                        let sel_end = selected_range.end.min(line_end) - line_start;
 
-                    let x_start = sel_start as f32 * f32::from(char_width);
-                    let x_end = sel_end as f32 * f32::from(char_width);
+                        let x_start = wrapped
+                            .position_for_index(sel_start, self.style.line_height)
+                            .map(|p| p.x)
+                            .unwrap_or(px(0.));
+                        let x_end = wrapped
+                            .position_for_index(sel_end, self.style.line_height)
+                            .map(|p| p.x)
+                            .unwrap_or(px(0.));
 
-                    window.paint_quad(fill(
-                        Bounds::from_corners(
-                            point(bounds.left() + px(x_start), bounds.top() + line.y_offset),
-                            point(
-                                bounds.left() + px(x_end),
-                                bounds.top() + line.y_offset + self.style.line_height,
+                        window.paint_quad(fill(
+                            Bounds::from_corners(
+                                point(bounds.left() + x_start, bounds.top() + line.y_offset),
+                                point(
+                                    bounds.left() + x_end,
+                                    bounds.top() + line.y_offset + self.style.line_height,
+                                ),
                             ),
-                        ),
-                        rgba(0x3311ff30),
-                    ));
+                            rgba(0x3311ff30),
+                        ));
+                    }
                 }
             }
         }
@@ -767,36 +753,19 @@ impl Element for TextAreaElement {
             line.paint(bounds.origin, self.style.line_height, window, cx)
                 .unwrap();
         } else {
-            // Draw each line
+            // Draw each line using the pre-wrapped lines
             for line_layout in &line_layouts {
-                if line_layout.text_range.start <= content.len()
-                    && line_layout.text_range.end <= content.len()
-                {
-                    let line_text = &content[line_layout.text_range.clone()];
-                    if !line_text.is_empty() {
-                        let run = TextRun {
-                            len: line_text.len(),
-                            font: style.font(),
-                            color: style.color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        };
-                        let shaped = window.text_system().shape_line(
-                            SharedString::from(line_text.to_string()),
-                            font_size,
-                            &[run],
-                            None,
-                        );
-                        shaped
-                            .paint(
-                                point(bounds.left(), bounds.top() + line_layout.y_offset),
-                                self.style.line_height,
-                                window,
-                                cx,
-                            )
-                            .unwrap();
-                    }
+                if let Some(wrapped) = &line_layout.wrapped_line {
+                    wrapped
+                        .paint(
+                            point(bounds.left(), bounds.top() + line_layout.y_offset),
+                            self.style.line_height,
+                            gpui::TextAlign::Left,
+                            Some(bounds),
+                            window,
+                            cx,
+                        )
+                        .unwrap();
                 }
             }
         }
@@ -810,17 +779,22 @@ impl Element for TextAreaElement {
                 if line.text_range.contains(&cursor_offset)
                     || (cursor_offset == line.text_range.end && cursor_offset == content.len())
                 {
-                    let x_offset =
-                        (cursor_offset - line.text_range.start) as f32 * f32::from(char_width);
+                    if let Some(wrapped) = &line.wrapped_line {
+                        let local_offset = cursor_offset - line.text_range.start;
+                        let x_offset = wrapped
+                            .position_for_index(local_offset, self.style.line_height)
+                            .map(|p| p.x)
+                            .unwrap_or(px(0.));
 
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            point(bounds.left() + px(x_offset), bounds.top() + line.y_offset),
-                            size(px(2.), self.style.line_height),
-                        ),
-                        gpui::blue(),
-                    ));
-                    break;
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(bounds.left() + x_offset, bounds.top() + line.y_offset),
+                                size(px(2.), self.style.line_height),
+                            ),
+                            gpui::blue(),
+                        ));
+                        break;
+                    }
                 }
             }
         }
