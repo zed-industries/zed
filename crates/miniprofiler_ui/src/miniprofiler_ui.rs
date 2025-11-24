@@ -5,16 +5,16 @@ use std::{
 };
 
 use gpui::{
-    App, AppContext, Context, Entity, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
-    ScrollHandle, SerializedTaskTiming, StatefulInteractiveElement, Styled, Task, TaskTiming,
-    TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, div, prelude::FluentBuilder, px,
-    relative, size,
+    App, AppContext, ClipboardItem, Context, Entity, Hsla, InteractiveElement, IntoElement,
+    ParentElement, Render, ScrollHandle, SerializedTaskTiming, SharedString,
+    StatefulInteractiveElement, Styled, Task, TaskTiming, TitlebarOptions, WindowBounds,
+    WindowHandle, WindowOptions, div, prelude::FluentBuilder, px, relative, size,
 };
 use util::ResultExt;
 use workspace::{
     Workspace,
     ui::{
-        ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, ToggleState,
+        ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, ToggleState, Tooltip,
         WithScrollbar, h_flex, v_flex,
     },
 };
@@ -184,12 +184,12 @@ impl ProfilerWindow {
             .1;
         let location = location.rsplit_once("\\").unwrap_or(("", location)).1;
 
-        let label = format!(
+        let label = SharedString::from(format!(
             "{}:{}:{}",
             location,
             item.location.line(),
             item.location.column()
-        );
+        ));
 
         h_flex()
             .gap_2()
@@ -197,10 +197,15 @@ impl ProfilerWindow {
             .h(px(32.0))
             .child(
                 div()
+                    .id(label.clone())
                     .w(px(200.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .child(div().text_ellipsis().child(label)),
+                    .child(div().text_ellipsis().child(label.clone()))
+                    .tooltip(Tooltip::text(label.clone()))
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(label.to_string()))
+                    }),
             )
             .child(
                 div()

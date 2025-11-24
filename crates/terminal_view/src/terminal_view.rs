@@ -7,7 +7,7 @@ mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll};
+use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
     Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
@@ -51,7 +51,6 @@ use workspace::{
 
 use serde::Deserialize;
 use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
-use smol::Timer;
 use zed_actions::assistant::InlineAssist;
 
 use std::{
@@ -126,12 +125,10 @@ pub struct TerminalView {
     has_bell: bool,
     context_menu: Option<(Entity<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
-    blink_state: bool,
+    blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
     blinking_terminal_enabled: bool,
     cwd_serialized: bool,
-    blinking_paused: bool,
-    blink_epoch: usize,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -237,6 +234,25 @@ impl TerminalView {
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
+        let blink_manager = cx.new(|cx| {
+            BlinkManager::new(
+                CURSOR_BLINK_INTERVAL,
+                |cx| {
+                    !matches!(
+                        TerminalSettings::get_global(cx).blinking,
+                        TerminalBlink::Off
+                    )
+                },
+                cx,
+            )
+        });
+
+        let _subscriptions = vec![
+            focus_in,
+            focus_out,
+            cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+            cx.observe_global::<SettingsStore>(Self::settings_changed),
+        ];
         Self {
             terminal,
             workspace: workspace_handle,
@@ -245,10 +261,8 @@ impl TerminalView {
             focus_handle,
             context_menu: None,
             cursor_shape,
-            blink_state: true,
+            blink_manager,
             blinking_terminal_enabled: false,
-            blinking_paused: false,
-            blink_epoch: 0,
             hover: None,
             hover_tooltip_update: Task::ready(()),
             mode: TerminalMode::Standalone,
@@ -259,11 +273,7 @@ impl TerminalView {
             scroll_handle,
             cwd_serialized: false,
             ime_state: None,
-            _subscriptions: vec![
-                focus_in,
-                focus_out,
-                cx.observe_global::<SettingsStore>(Self::settings_changed),
-            ],
+            _subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
     }
@@ -424,6 +434,11 @@ impl TerminalView {
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
+        let should_blink = match settings.blinking {
+            TerminalBlink::Off => false,
+            TerminalBlink::On => true,
+            TerminalBlink::TerminalControlled => self.blinking_terminal_enabled,
+        };
         let new_cursor_shape = settings.cursor_shape;
         let old_cursor_shape = self.cursor_shape;
         if old_cursor_shape != new_cursor_shape {
@@ -432,6 +447,15 @@ impl TerminalView {
                 term.set_cursor_shape(self.cursor_shape);
             });
         }
+
+        self.blink_manager.update(
+            cx,
+            if should_blink {
+                BlinkManager::enable
+            } else {
+                BlinkManager::disable
+            },
+        );
 
         if breadcrumb_visibility_changed {
             cx.emit(ItemEvent::UpdateBreadcrumbs);
@@ -610,9 +634,8 @@ impl TerminalView {
     }
 
     pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
-        //Don't blink the cursor when not focused, blinking is disabled, or paused
+        // Always show cursor when not focused or in special modes
         if !focused
-            || self.blinking_paused
             || self
                 .terminal
                 .read(cx)
@@ -623,45 +646,17 @@ impl TerminalView {
             return true;
         }
 
+        // When focused, check blinking settings and blink manager state
         match TerminalSettings::get_global(cx).blinking {
-            //If the user requested to never blink, don't blink it.
             TerminalBlink::Off => true,
-            //If the terminal is controlling it, check terminal mode
-            TerminalBlink::TerminalControlled => {
-                !self.blinking_terminal_enabled || self.blink_state
+            TerminalBlink::On | TerminalBlink::TerminalControlled => {
+                self.blink_manager.read(cx).visible()
             }
-            TerminalBlink::On => self.blink_state,
         }
     }
 
-    fn blink_cursors(&mut self, epoch: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if epoch == self.blink_epoch && !self.blinking_paused {
-            self.blink_state = !self.blink_state;
-            cx.notify();
-
-            let epoch = self.next_blink_epoch();
-            cx.spawn_in(window, async move |this, cx| {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                this.update_in(cx, |this, window, cx| this.blink_cursors(epoch, window, cx))
-                    .ok();
-            })
-            .detach();
-        }
-    }
-
-    pub fn pause_cursor_blinking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.blink_state = true;
-        cx.notify();
-
-        let epoch = self.next_blink_epoch();
-        cx.spawn_in(window, async move |this, cx| {
-            Timer::after(CURSOR_BLINK_INTERVAL).await;
-            this.update_in(cx, |this, window, cx| {
-                this.resume_cursor_blinking(epoch, window, cx)
-            })
-            .ok();
-        })
-        .detach();
+    pub fn pause_cursor_blinking(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.blink_manager.update(cx, BlinkManager::pause_blinking);
     }
 
     pub fn terminal(&self) -> &Entity<Terminal> {
@@ -683,23 +678,6 @@ impl TerminalView {
         self.block_below_cursor = None;
         self.scroll_top = Pixels::ZERO;
         cx.notify();
-    }
-
-    fn next_blink_epoch(&mut self) -> usize {
-        self.blink_epoch += 1;
-        self.blink_epoch
-    }
-
-    fn resume_cursor_blinking(
-        &mut self,
-        epoch: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if epoch == self.blink_epoch {
-            self.blinking_paused = false;
-            self.blink_cursors(epoch, window, cx);
-        }
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -893,11 +871,21 @@ fn subscribe_for_terminal_events(
                 }
 
                 Event::BlinkChanged(blinking) => {
+                    terminal_view.blinking_terminal_enabled = *blinking;
+
+                    // If in terminal-controlled mode and focused, update blink manager
                     if matches!(
                         TerminalSettings::get_global(cx).blinking,
                         TerminalBlink::TerminalControlled
-                    ) {
-                        terminal_view.blinking_terminal_enabled = *blinking;
+                    ) && terminal_view.focus_handle.is_focused(window)
+                    {
+                        terminal_view.blink_manager.update(cx, |manager, cx| {
+                            if *blinking {
+                                manager.enable(cx);
+                            } else {
+                                manager.disable(cx);
+                            }
+                        });
                     }
                 }
 
@@ -1023,12 +1011,23 @@ impl TerminalView {
             terminal.set_cursor_shape(self.cursor_shape);
             terminal.focus_in();
         });
-        self.blink_cursors(self.blink_epoch, window, cx);
+
+        let should_blink = match TerminalSettings::get_global(cx).blinking {
+            TerminalBlink::Off => false,
+            TerminalBlink::On => true,
+            TerminalBlink::TerminalControlled => self.blinking_terminal_enabled,
+        };
+
+        if should_blink {
+            self.blink_manager.update(cx, BlinkManager::enable);
+        }
+
         window.invalidate_character_coordinates();
         cx.notify();
     }
 
-    fn focus_out(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn focus_out(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.blink_manager.update(cx, BlinkManager::disable);
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
             terminal.set_cursor_shape(CursorShape::Hollow);

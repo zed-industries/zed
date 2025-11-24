@@ -9,8 +9,7 @@ use crate::{
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
-    hash,
+    PlatformWindow, Result, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -47,6 +46,7 @@ use objc::{
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
+use semver::Version;
 use std::{
     cell::Cell,
     convert::TryInto,
@@ -389,7 +389,7 @@ impl MacPlatform {
                                     ns_string(key_to_native(keystroke.key()).as_ref()),
                                 )
                                 .autorelease();
-                            if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
+                            if Self::os_version() >= Version::new(12, 0, 0) {
                                 let _: () = msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
                             }
                             item.setKeyEquivalentModifierMask_(mask);
@@ -452,15 +452,15 @@ impl MacPlatform {
         }
     }
 
-    fn os_version() -> SemanticVersion {
+    fn os_version() -> Version {
         let version = unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             process_info.operatingSystemVersion()
         };
-        SemanticVersion::new(
-            version.majorVersion as usize,
-            version.minorVersion as usize,
-            version.patchVersion as usize,
+        Version::new(
+            version.majorVersion,
+            version.minorVersion,
+            version.patchVersion,
         )
     }
 }
@@ -668,7 +668,7 @@ impl Platform for MacPlatform {
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
-        if Self::os_version() < SemanticVersion::new(12, 0, 0) {
+        if Self::os_version() < Version::new(12, 0, 0) {
             return Task::ready(Err(anyhow!(
                 "macOS 12.0 or later is required to register URL schemes"
             )));
@@ -812,7 +812,7 @@ impl Platform for MacPlatform {
                                     // to break that use-case than breaking `a.sql`.
                                     if chunks.len() == 3
                                         && chunks[1].starts_with(chunks[2])
-                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                        && Self::os_version() >= Version::new(15, 0, 0)
                                     {
                                         let new_filename = OsStr::from_bytes(
                                             &filename.as_bytes()

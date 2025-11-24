@@ -18,7 +18,7 @@ use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
-use semantic_version::SemanticVersion;
+use semver::Version;
 use since_v0_7_0 as latest;
 use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 use wasmtime::{
@@ -54,16 +54,13 @@ fn wasi_view(state: &mut WasmState) -> &mut WasmState {
 }
 
 /// Returns whether the given Wasm API version is supported by the Wasm host.
-pub fn is_supported_wasm_api_version(
-    release_channel: ReleaseChannel,
-    version: SemanticVersion,
-) -> bool {
+pub fn is_supported_wasm_api_version(release_channel: ReleaseChannel, version: Version) -> bool {
     wasm_api_version_range(release_channel).contains(&version)
 }
 
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
-pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
+pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<Version> {
     // Note: The release channel can be used to stage a new version of the extension API.
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
@@ -113,8 +110,8 @@ impl Extension {
     pub async fn instantiate_async(
         executor: &BackgroundExecutor,
         store: &mut Store<WasmState>,
-        _release_channel: ReleaseChannel,
-        version: SemanticVersion,
+        release_channel: ReleaseChannel,
+        version: Version,
         component: &Component,
     ) -> Result<Self> {
         // TODO: Enable v0.7.0 when extensions are updated to support virtual documents

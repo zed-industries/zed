@@ -1,7 +1,7 @@
 name: Bug Report (Git)
 description: Zed Git Related Bugs
 type: "Bug"
-labels: ["git"]
+labels: ["area:integrations/git"]
 title: "Git: <a short description of the Git bug>"
 body:
   - type: textarea

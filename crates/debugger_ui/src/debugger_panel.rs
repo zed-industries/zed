@@ -651,6 +651,17 @@ impl DebugPanel {
                 .tooltip(Tooltip::text("Open Debug Adapter Logs"))
         };
 
+        let close_bottom_panel_button = {
+            h_flex().pl_0p5().gap_1().child(Divider::vertical()).child(
+                IconButton::new("debug-close-panel", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(workspace::ToggleBottomDock.boxed_clone(), cx)
+                    })
+                    .tooltip(Tooltip::text("Close Panel")),
+            )
+        };
+
         Some(
             div.w_full()
                 .py_1()
@@ -658,7 +669,7 @@ impl DebugPanel {
                 .justify_between()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
-                .when(is_side, |this| this.gap_1())
+                .when(is_side, |this| this.gap_1().h(Tab::container_height(cx)))
                 .child(
                     h_flex()
                         .justify_between()
@@ -957,6 +968,7 @@ impl DebugPanel {
                                         .child(edit_debug_json_button())
                                         .child(documentation_button())
                                         .child(logs_button())
+                                        .child(close_bottom_panel_button)
                                 }),
                         ),
                 ),
@@ -1692,7 +1704,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
                                 .icon(IconName::Plus)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::Start)
                                 .on_click(|_, window, cx| {
@@ -1702,8 +1714,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new("edit-debug-settings", "Edit debug.json")
                                 .icon(IconName::Code)
-                                .icon_size(IconSize::XSmall)
-                                .color(Color::Muted)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::Start)
                                 .on_click(|_, window, cx| {
@@ -1716,8 +1727,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new("open-debugger-docs", "Debugger Docs")
                                 .icon(IconName::Book)
-                                .color(Color::Muted)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::Start)
                                 .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
@@ -1728,8 +1738,7 @@ impl Render for DebugPanel {
                                 "Debugger Extensions",
                             )
                             .icon(IconName::Blocks)
-                            .color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::Start)
                             .on_click(|_, window, cx| {
@@ -1745,6 +1754,15 @@ impl Render for DebugPanel {
                                 );
                             }),
                         );
+
+                    let has_breakpoints = self
+                        .project
+                        .read(cx)
+                        .breakpoint_store()
+                        .read(cx)
+                        .all_source_breakpoints(cx)
+                        .values()
+                        .any(|breakpoints| !breakpoints.is_empty());
 
                     let breakpoint_list = v_flex()
                         .group("base-breakpoint-list")
@@ -1769,7 +1787,18 @@ impl Render for DebugPanel {
                                     ),
                                 ),
                         )
-                        .child(self.breakpoint_list.clone());
+                        .when(has_breakpoints, |this| {
+                            this.child(self.breakpoint_list.clone())
+                        })
+                        .when(!has_breakpoints, |this| {
+                            this.child(
+                                v_flex().size_full().items_center().justify_center().child(
+                                    Label::new("No Breakpoints Set")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                        });
 
                     this.child(
                         v_flex()

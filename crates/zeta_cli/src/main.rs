@@ -230,6 +230,7 @@ enum PromptFormat {
     OldTextNewText,
     Minimal,
     MinimalQwen,
+    SeedCoder1120,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -242,6 +243,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
             Self::Minimal => predict_edits_v3::PromptFormat::Minimal,
             Self::MinimalQwen => predict_edits_v3::PromptFormat::MinimalQwen,
+            Self::SeedCoder1120 => predict_edits_v3::PromptFormat::SeedCoder1120,
         }
     }
 }

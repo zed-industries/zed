@@ -531,3 +531,13 @@ message GitCreateWorktree {
     string directory = 4;
     optional string commit = 5;
 }
+
+message RunGitHook {
+    enum GitHook {
+        PRE_COMMIT = 0;
+    }
+
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    GitHook hook = 3;
+}

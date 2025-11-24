@@ -27,8 +27,8 @@ use cloud_llm_client::{
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    SharedString, Subscription, Task, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SharedString, Subscription,
+    Task, actions,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
@@ -38,6 +38,7 @@ use language::{
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
+use semver::Version;
 use settings::WorktreeId;
 use std::collections::hash_map;
 use std::mem;
@@ -608,7 +609,7 @@ impl Zeta {
                 if let Some(minimum_required_version) = response
                     .headers()
                     .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                    .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                    .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
                 {
                     anyhow::ensure!(
                         app_version >= minimum_required_version,
@@ -683,7 +684,7 @@ impl Zeta {
             if let Some(minimum_required_version) = response
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
                 && app_version < minimum_required_version
             {
                 return Err(anyhow!(ZedUpdateRequiredError {
@@ -752,7 +753,7 @@ impl Zeta {
             if let Some(minimum_required_version) = response
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
                 && app_version < minimum_required_version
             {
                 return Err(anyhow!(ZedUpdateRequiredError {
@@ -1115,7 +1116,7 @@ impl Zeta {
 pub struct PerformPredictEditsParams {
     pub client: Arc<Client>,
     pub llm_token: LlmApiToken,
-    pub app_version: SemanticVersion,
+    pub app_version: Version,
     pub body: PredictEditsBody,
 }
 
@@ -1124,7 +1125,7 @@ pub struct PerformPredictEditsParams {
     "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
 )]
 pub struct ZedUpdateRequiredError {
-    minimum_version: SemanticVersion,
+    minimum_version: Version,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {

@@ -146,6 +146,20 @@ Zed currently supports links to the hosted versions of
 [SourceHut](https://sr.ht) and
 [Codeberg](https://codeberg.org).
 
+For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "gitlab",
+      "name": "Corp GitLab",
+      "base_url": "https://git.example.corp"
+    }
+  ]
+}
+```
+
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),

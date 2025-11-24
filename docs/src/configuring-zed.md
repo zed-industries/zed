@@ -4071,7 +4071,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Will Fallback to the first project directory strategy if unsuccessful
+1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4081,7 +4081,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Will fallback to using this platform's home directory.
+2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4091,7 +4091,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory (if we can find it)
+3. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4692,6 +4692,34 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+
+## Git Hosting Providers
+
+- Description: Register self-hosted GitHub, GitLab, or Bitbucket instances so commit hashes, issue references, and permalinks resolve to the right host.
+- Setting: `git_hosting_providers`
+- Default: `[]`
+
+**Options**
+
+Each entry accepts:
+
+- `provider`: One of `github`, `gitlab`, or `bitbucket`
+- `name`: Display name for the instance
+- `base_url`: Base URL, e.g. `https://git.example.corp`
+
+You can define these in user or project settings; project settings are merged on top of user settings.
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "github",
+      "name": "BigCorp GitHub",
+      "base_url": "https://git.example.corp"
+    }
+  ]
+}
+```
 
 ## Outline Panel
 

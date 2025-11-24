@@ -941,7 +941,7 @@ pub mod tests {
     use crate::{ExcerptRange, scroll::Autoscroll};
     use collections::HashSet;
     use futures::{StreamExt, future};
-    use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};
@@ -4062,7 +4062,7 @@ let c = 3;"#
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
             crate::init(cx);
         });
 

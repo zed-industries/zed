@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-This script analyzes all the highlight.scm files in our embedded languages and extensions.
+This script analyzes all the highlights.scm files in our embedded languages and extensions.
 It counts the number of unique instances of @{name} and the languages in which they are used.
 
 This is useful to help avoid accidentally introducing new tags when appropriate ones already exist when adding new languages.
 
 Flags:
--v, --verbose: Include a detailed list of languages for each tag found in the highlight.scm files.
+-v, --verbose: Include a detailed list of languages for each tag found in the highlights.scm files.
 """
 
+import argparse
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
-import argparse
-import re
 
 pattern = re.compile(r'@(?!_)[a-zA-Z_.]+')
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Analyze highlight.scm files for unique instances and their languages.')
+    parser = argparse.ArgumentParser(description='Analyze highlights.scm files for unique instances and their languages.')
     parser.add_argument('-v', '--verbose', action='store_true', help='Include a list of languages for each tag.')
     return parser.parse_args()
 

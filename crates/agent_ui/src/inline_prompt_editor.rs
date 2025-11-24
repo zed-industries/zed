@@ -1,8 +1,8 @@
 use agent::HistoryStore;
-use collections::VecDeque;
+use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
-use editor::display_map::EditorMargins;
+use editor::display_map::{CreaseId, EditorMargins};
 use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
@@ -226,9 +226,10 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn assign_completion_provider(&mut self, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, _cx| {
+        self.editor.update(cx, |editor, cx| {
             editor.set_completion_provider(Some(Rc::new(PromptCompletionProvider::new(
                 PromptEditorCompletionProviderDelegate,
+                cx.weak_entity(),
                 self.mention_set.clone(),
                 self.history_store.clone(),
                 self.prompt_store.clone(),
@@ -253,18 +254,35 @@ impl<T: 'static> PromptEditor<T> {
             extract_message_creases(editor, &self.mention_set, window, cx)
         });
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
+        let mut creases = vec![];
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
-            insert_message_creases(&mut editor, &existing_creases, window, cx);
+            creases = insert_message_creases(&mut editor, &existing_creases, window, cx);
 
             if focus {
                 window.focus(&editor.focus_handle(cx));
             }
             editor
         });
+
+        self.mention_set.update(cx, |mention_set, _cx| {
+            debug_assert_eq!(
+                creases.len(),
+                mention_set.creases().len(),
+                "Missing creases"
+            );
+
+            let mentions = mention_set
+                .clear()
+                .zip(creases)
+                .map(|((_, value), id)| (id, value))
+                .collect::<HashMap<_, _>>();
+            mention_set.set_mentions(mentions);
+        });
+
         self.assign_completion_provider(cx);
         self.subscribe_to_editor(window, cx);
     }
@@ -304,13 +322,18 @@ impl<T: 'static> PromptEditor<T> {
 
     fn handle_prompt_editor_events(
         &mut self,
-        _: &Entity<Editor>,
+        editor: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
+                let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+
+                self.mention_set
+                    .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
+
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
                         let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
@@ -321,7 +344,7 @@ impl<T: 'static> PromptEditor<T> {
                             .log_edit_event("inline assist", is_via_ssh);
                     });
                 }
-                let prompt = self.editor.read(cx).text(cx);
+                let prompt = snapshot.text();
                 if self
                     .prompt_history_ix
                     .is_none_or(|ix| self.prompt_history[ix] != prompt)
@@ -848,16 +871,8 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
 
-        let mention_set = cx.new(|cx| {
-            MentionSet::new(
-                prompt_editor.clone(),
-                project,
-                history_store.clone(),
-                prompt_store.clone(),
-                window,
-                cx,
-            )
-        });
+        let mention_set =
+            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
@@ -999,16 +1014,8 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
 
-        let mention_set = cx.new(|cx| {
-            MentionSet::new(
-                prompt_editor.clone(),
-                project,
-                history_store.clone(),
-                prompt_store.clone(),
-                window,
-                cx,
-            )
-        });
+        let mention_set =
+            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
@@ -1203,7 +1210,7 @@ fn insert_message_creases(
     message_creases: &[MessageCrease],
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
-) {
+) -> Vec<CreaseId> {
     let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
     let creases = message_creases
         .iter()
@@ -1218,6 +1225,7 @@ fn insert_message_creases(
             )
         })
         .collect::<Vec<_>>();
-    editor.insert_creases(creases.clone(), cx);
+    let ids = editor.insert_creases(creases.clone(), cx);
     editor.fold_creases(creases, false, window, cx);
+    ids
 }

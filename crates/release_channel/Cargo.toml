@@ -10,3 +10,4 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
+semver.workspace = true

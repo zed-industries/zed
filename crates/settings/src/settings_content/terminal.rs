@@ -222,10 +222,11 @@ pub enum Shell {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
-    /// Use the current file's project directory.  Will Fallback to the
+    /// Use the current file's project directory. Fallback to the
     /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
-    /// Use the first project in this workspace's directory.
+    /// Use the first project in this workspace's directory. Fallback to using
+    /// this platform's home directory.
     FirstProjectDirectory,
     /// Always use this platform's home directory (if it can be found).
     AlwaysHome,

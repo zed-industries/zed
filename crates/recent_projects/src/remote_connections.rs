@@ -11,8 +11,7 @@ use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter, Focusable, FontFeatures,
-    ParentElement as _, PromptLevel, Render, SemanticVersion, SharedString, Task,
-    TextStyleRefinement, WeakEntity,
+    ParentElement as _, PromptLevel, Render, SharedString, Task, TextStyleRefinement, WeakEntity,
 };
 
 use language::{CursorShape, Point};
@@ -22,6 +21,7 @@ use remote::{
     ConnectionIdentifier, RemoteClient, RemoteConnection, RemoteConnectionOptions, RemotePlatform,
     SshConnectionOptions,
 };
+use semver::Version;
 pub use settings::SshConnection;
 use settings::{ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
@@ -480,14 +480,14 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
         let this = self.clone();
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
                 release_channel,
-                version,
+                version.clone(),
                 platform.os,
                 platform.arch,
                 move |status, cx| this.set_status(Some(status), cx),
@@ -498,6 +498,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
                 format!(
                     "Downloading remote server binary (version: {}, os: {}, arch: {})",
                     version
+                        .as_ref()
                         .map(|v| format!("{}", v))
                         .unwrap_or("unknown".to_string()),
                     platform.os,
@@ -511,7 +512,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Option<String>>> {
         cx.spawn(async move |cx| {

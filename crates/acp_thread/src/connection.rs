@@ -197,6 +197,11 @@ pub trait AgentModelSelector: 'static {
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
         None
     }
+
+    /// Returns whether the model picker should render a footer.
+    fn should_render_footer(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
