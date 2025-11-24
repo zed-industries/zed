@@ -22,16 +22,17 @@ use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use fs::Fs;
+use futures::FutureExt as _;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
-    px, retain_all,
+    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
+    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
+    actions, image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -655,105 +656,111 @@ fn initialize_panels(
         );
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
-        let (
-            project_panel,
-            outline_panel,
-            terminal_panel,
-            git_panel,
-            channels_panel,
-            notification_panel,
-            debug_panel,
-        ) = futures::try_join!(
-            project_panel,
-            outline_panel,
-            git_panel,
-            terminal_panel,
-            channels_panel,
-            notification_panel,
-            debug_panel,
-        )?;
-
-        workspace_handle.update_in(cx, |workspace, window, cx| {
-            workspace.add_panel(project_panel, window, cx);
-            workspace.add_panel(outline_panel, window, cx);
-            workspace.add_panel(terminal_panel, window, cx);
-            workspace.add_panel(git_panel, window, cx);
-            workspace.add_panel(channels_panel, window, cx);
-            workspace.add_panel(notification_panel, window, cx);
-            workspace.add_panel(debug_panel, window, cx);
-        })?;
-
-        fn setup_or_teardown_agent_panel(
-            workspace: &mut Workspace,
-            prompt_builder: Arc<PromptBuilder>,
-            window: &mut Window,
-            cx: &mut Context<Workspace>,
-        ) -> Task<anyhow::Result<()>> {
-            let disable_ai = SettingsStore::global(cx)
-                .get::<DisableAiSettings>(None)
-                .disable_ai
-                || cfg!(test);
-            let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
-            match (disable_ai, existing_panel) {
-                (false, None) => cx.spawn_in(window, async move |workspace, cx| {
-                    let panel =
-                        agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
-                            .await?;
-                    workspace.update_in(cx, |workspace, window, cx| {
-                        let disable_ai = SettingsStore::global(cx)
-                            .get::<DisableAiSettings>(None)
-                            .disable_ai;
-                        let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
-                        if !disable_ai && !have_panel {
-                            workspace.add_panel(panel, window, cx);
-                        }
+        async fn add_panel_when_ready(
+            panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
+            workspace_handle: WeakEntity<Workspace>,
+            mut cx: gpui::AsyncWindowContext,
+        ) {
+            if let Some(panel) = panel_task.await.context("failed to load panel").log_err()
+            {
+                workspace_handle
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        workspace.add_panel(panel, window, cx);
                     })
-                }),
-                (true, Some(existing_panel)) => {
-                    workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
-                    Task::ready(Ok(()))
-                }
-                _ => Task::ready(Ok(())),
+                    .log_err();
             }
         }
 
-        workspace_handle
-            .update_in(cx, |workspace, window, cx| {
-                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
-            })?
-            .await?;
-
-        workspace_handle.update_in(cx, |workspace, window, cx| {
-            cx.observe_global_in::<SettingsStore>(window, {
-                let prompt_builder = prompt_builder.clone();
-                move |workspace, window, cx| {
-                    setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
-                        .detach_and_log_err(cx);
-                }
-            })
-            .detach();
-
-            // Register the actions that are shared between `assistant` and `assistant2`.
-            //
-            // We need to do this here instead of within the individual `init`
-            // functions so that we only register the actions once.
-            //
-            // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if !cfg!(test) {
-                <dyn AgentPanelDelegate>::set_global(
-                    Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
-                    cx,
-                );
-
-                workspace
-                    .register_action(agent_ui::AgentPanel::toggle_focus)
-                    .register_action(agent_ui::InlineAssistant::inline_assist);
-            }
-        })?;
+        futures::join!(
+            add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
+            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err())
+        );
 
         anyhow::Ok(())
     })
     .detach();
+}
+
+async fn initialize_agent_panel(
+    workspace_handle: WeakEntity<Workspace>,
+    prompt_builder: Arc<PromptBuilder>,
+    mut cx: AsyncWindowContext,
+) -> anyhow::Result<()> {
+    fn setup_or_teardown_agent_panel(
+        workspace: &mut Workspace,
+        prompt_builder: Arc<PromptBuilder>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let disable_ai = SettingsStore::global(cx)
+            .get::<DisableAiSettings>(None)
+            .disable_ai
+            || cfg!(test);
+        let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
+        match (disable_ai, existing_panel) {
+            (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+                let panel =
+                    agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
+                        .await?;
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let disable_ai = SettingsStore::global(cx)
+                        .get::<DisableAiSettings>(None)
+                        .disable_ai;
+                    let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
+                    if !disable_ai && !have_panel {
+                        workspace.add_panel(panel, window, cx);
+                    }
+                })
+            }),
+            (true, Some(existing_panel)) => {
+                workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
+                Task::ready(Ok(()))
+            }
+            _ => Task::ready(Ok(())),
+        }
+    }
+
+    workspace_handle
+        .update_in(&mut cx, |workspace, window, cx| {
+            setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+        })?
+        .await?;
+
+    workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+        cx.observe_global_in::<SettingsStore>(window, {
+            let prompt_builder = prompt_builder.clone();
+            move |workspace, window, cx| {
+                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+                    .detach_and_log_err(cx);
+            }
+        })
+        .detach();
+
+        // Register the actions that are shared between `assistant` and `assistant2`.
+        //
+        // We need to do this here instead of within the individual `init`
+        // functions so that we only register the actions once.
+        //
+        // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
+        if !cfg!(test) {
+            <dyn AgentPanelDelegate>::set_global(
+                Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
+                cx,
+            );
+
+            workspace
+                .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::InlineAssistant::inline_assist);
+        }
+    })?;
+
+    anyhow::Ok(())
 }
 
 fn register_actions(
