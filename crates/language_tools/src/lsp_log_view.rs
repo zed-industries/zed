@@ -5,6 +5,7 @@ use gpui::{
     App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
     Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
+use itertools::Itertools as _;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
     LanguageServer, LanguageServerName, LanguageServerSelector, MessageType, SetTraceParams,
@@ -12,10 +13,7 @@ use lsp::{
 };
 use project::{
     LanguageServerStatus, Project,
-    lsp_store::{
-        LanguageServerBinaryInfo,
-        log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
-    },
+    lsp_store::log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
     search::SearchQuery,
 };
 use proto::toggle_lsp_logs::LogType;
@@ -351,12 +349,8 @@ impl LspLogView {
                 .status
                 .workspace_folders
                 .iter()
-                .filter_map(|uri| {
-                    uri.to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned())
-                })
-                .collect::<Vec<_>>()
+                .filter_map(|uri| uri.to_file_path().ok())
+                .map(|path| path.to_string_lossy().into_owned())
                 .join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
@@ -968,7 +962,7 @@ impl Render for LspLogToolbarItemView {
                         for (server_id, name, worktree_root, active_entry_kind) in
                             available_language_servers.iter()
                         {
-                            let label = format!("{} ({})", name, worktree_root);
+                            let label = format!("{name} ({worktree_root})");
                             let server_id = *server_id;
                             let active_entry_kind = *active_entry_kind;
                             menu = menu.entry(
@@ -1338,16 +1332,7 @@ impl ServerInfo {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: None,
-                binary: Some(LanguageServerBinaryInfo {
-                    path: server.binary().path.to_string_lossy().into_owned(),
-                    arguments: server
-                        .binary()
-                        .arguments
-                        .iter()
-                        .map(|arg| arg.to_string_lossy().into_owned())
-                        .collect(),
-                    env: server.binary().env.clone(),
-                }),
+                binary: Some(server.binary().clone()),
                 configuration: Some(server.configuration().clone()),
                 workspace_folders: server.workspace_folders(),
             },
