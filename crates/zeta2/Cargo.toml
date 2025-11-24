@@ -46,6 +46,7 @@ project.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 regex.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

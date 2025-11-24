@@ -393,7 +393,7 @@ impl Model {
         }
     }
 
-    pub fn beta_headers(&self) -> String {
+    pub fn beta_headers(&self) -> Option<String> {
         let mut headers = vec![];
 
         match self {
@@ -415,7 +415,11 @@ impl Model {
             _ => {}
         }
 
-        headers.join(",")
+        if headers.is_empty() {
+            None
+        } else {
+            Some(headers.join(","))
+        }
     }
 
     pub fn tool_model_id(&self) -> &str {
@@ -431,56 +435,12 @@ impl Model {
     }
 }
 
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: Request,
-    beta_headers: String,
-) -> Result<Response, AnthropicError> {
-    let uri = format!("{api_url}/v1/messages");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key.trim())
-        .header("Content-Type", "application/json");
-
-    let serialized_request =
-        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
-    let request = request_builder
-        .body(AsyncBody::from(serialized_request))
-        .map_err(AnthropicError::BuildRequestBody)?;
-
-    let mut response = client
-        .send(request)
-        .await
-        .map_err(AnthropicError::HttpSend)?;
-    let status_code = response.status();
-    let mut body = String::new();
-    response
-        .body_mut()
-        .read_to_string(&mut body)
-        .await
-        .map_err(AnthropicError::ReadResponse)?;
-
-    if status_code.is_success() {
-        Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
-    } else {
-        Err(AnthropicError::HttpResponseError {
-            status_code,
-            message: body,
-        })
-    }
-}
-
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
-    beta_headers: String,
+    beta_headers: Option<String>,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
     stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
         .await
@@ -578,7 +538,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_url: &str,
     api_key: &str,
     request: Request,
-    beta_headers: String,
+    beta_headers: Option<String>,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -592,13 +552,17 @@ pub async fn stream_completion_with_rate_limit_info(
     };
     let uri = format!("{api_url}/v1/messages");
 
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
+
+    if let Some(beta_headers) = beta_headers {
+        request_builder = request_builder.header("Anthropic-Beta", beta_headers);
+    }
+
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
     let request = request_builder

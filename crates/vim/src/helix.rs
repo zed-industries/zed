@@ -263,6 +263,31 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match motion {
+            Motion::EndOfLine { .. } => {
+                // In Helix mode, EndOfLine should position cursor ON the last character,
+                // not after it. We therefore need special handling for it.
+                self.update_editor(cx, |_, editor, cx| {
+                    let text_layout_details = editor.text_layout_details(window);
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let goal = selection.goal;
+                            let cursor = if selection.is_empty() || selection.reversed {
+                                selection.head()
+                            } else {
+                                movement::left(map, selection.head())
+                            };
+
+                            let (point, _goal) = motion
+                                .move_point(map, cursor, goal, times, &text_layout_details)
+                                .unwrap_or((cursor, goal));
+
+                            // Move left by one character to position on the last character
+                            let adjusted_point = movement::saturating_left(map, point);
+                            selection.collapse_to(adjusted_point, SelectionGoal::None)
+                        })
+                    });
+                });
+            }
             Motion::NextWordStart { ignore_punctuation } => {
                 self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
@@ -1491,6 +1516,61 @@ mod test {
             ˇ
             "},
             Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_g_l_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Test g l moves to last character, not after it
+        cx.set_state("hello ˇworld!", Mode::HelixNormal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("hello worldˇ!", Mode::HelixNormal);
+
+        // Test with Chinese characters, test if work with UTF-8?
+        cx.set_state("ˇ你好世界", Mode::HelixNormal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("你好世ˇ界", Mode::HelixNormal);
+
+        // Test with end of line
+        cx.set_state("endˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("enˇd", Mode::HelixNormal);
+
+        // Test with empty line
+        cx.set_state(
+            indoc! {"
+                hello
+                ˇ
+                world"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g l");
+        cx.assert_state(
+            indoc! {"
+                hello
+                ˇ
+                world"},
+            Mode::HelixNormal,
+        );
+
+        // Test with multiple lines
+        cx.set_state(
+            indoc! {"
+                ˇfirst line
+                second line
+                third line"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g l");
+        cx.assert_state(
+            indoc! {"
+                first linˇe
+                second line
+                third line"},
+            Mode::HelixNormal,
         );
     }
 }

@@ -120,6 +120,11 @@ impl InputField {
         self.editor().read(cx).text(cx)
     }
 
+    pub fn clear(&self, window: &mut Window, cx: &mut App) {
+        self.editor()
+            .update(cx, |editor, cx| editor.clear(window, cx))
+    }
+
     pub fn set_text(&self, text: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
         self.editor()
             .update(cx, |editor, cx| editor.set_text(text, window, cx))
@@ -127,7 +132,8 @@ impl InputField {
 }
 
 impl Render for InputField {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = self.editor.clone();
         let settings = ThemeSettings::get_global(cx);
         let theme_color = cx.theme().colors();
 
@@ -206,6 +212,10 @@ impl Render for InputField {
                     .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)
+                    .when(
+                        editor.focus_handle(cx).contains_focused(window, cx),
+                        |this| this.border_color(theme_color.border_focused),
+                    )
                     .when_some(self.start_icon, |this, icon| {
                         this.gap_1()
                             .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))

@@ -33,23 +33,21 @@ use lsp::DiagnosticSeverity;
 use open_ai::FunctionDefinition;
 use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
+use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{EditPredictionProvider, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use telemetry_events::EditPredictionRating;
 use workspace::Workspace;
 
-use std::{
-    env,
-    fmt::Write,
-    mem,
-    ops::Range,
-    path::Path,
-    rc::Rc,
-    str::FromStr as _,
-    sync::{Arc, LazyLock},
-    time::{Duration, Instant},
-};
+use std::fmt::Write as _;
+use std::ops::Range;
+use std::path::Path;
+use std::rc::Rc;
+use std::str::FromStr as _;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+use std::{env, mem};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
 use util::{LogErrorFuture, RangeExt as _, ResultExt as _, TryFutureExt};
@@ -1767,6 +1765,8 @@ impl Zeta {
                 }
 
                 let (prompt, _) = prompt_result?;
+                let generation_params =
+                    cloud_zeta2_prompt::generation_params(cloud_request.prompt_format);
                 let request = open_ai::Request {
                     model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                     messages: vec![open_ai::RequestMessage::User {
@@ -1774,8 +1774,8 @@ impl Zeta {
                     }],
                     stream: false,
                     max_completion_tokens: None,
-                    stop: Default::default(),
-                    temperature: 0.7,
+                    stop: generation_params.stop.unwrap_or_default(),
+                    temperature: generation_params.temperature.unwrap_or(0.7),
                     tool_choice: None,
                     parallel_tool_calls: None,
                     tools: vec![],
@@ -1842,7 +1842,9 @@ impl Zeta {
                         // TODO: Implement parsing of multi-file diffs
                         crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
                     }
-                    PromptFormat::Minimal | PromptFormat::MinimalQwen => {
+                    PromptFormat::Minimal
+                    | PromptFormat::MinimalQwen
+                    | PromptFormat::SeedCoder1120 => {
                         if output_text.contains("--- a/\n+++ b/\nNo edits") {
                             let edits = vec![];
                             (&active_snapshot, edits)
@@ -1910,7 +1912,7 @@ impl Zeta {
         request: open_ai::Request,
         client: Arc<Client>,
         llm_token: LlmApiToken,
-        app_version: SemanticVersion,
+        app_version: Version,
         #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
         #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
@@ -2012,7 +2014,7 @@ impl Zeta {
         build: impl Fn(http_client::http::request::Builder) -> Result<http_client::Request<AsyncBody>>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
-        app_version: SemanticVersion,
+        app_version: Version,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
     where
         Res: DeserializeOwned,
@@ -2036,7 +2038,7 @@ impl Zeta {
             if let Some(minimum_required_version) = response
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
             {
                 anyhow::ensure!(
                     app_version >= minimum_required_version,
@@ -2637,7 +2639,7 @@ pub fn text_from_response(mut res: open_ai::Response) -> Option<String> {
     "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
 )]
 pub struct ZedUpdateRequiredError {
-    minimum_version: SemanticVersion,
+    minimum_version: Version,
 }
 
 fn make_syntax_context_cloud_request(

@@ -175,6 +175,16 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // What draws Zed's window decorations (titlebar):
+  // 1. Client application (Zed) draws its own window decorations
+  //    "client"
+  // 2. Display server draws the window decorations. Not supported by GNOME Wayland.
+  //    "server"
+  //
+  // This requires restarting Zed for changes to take effect.
+  //
+  // Default: "client"
+  "window_decorations": "client",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -1431,7 +1441,7 @@
     "default_height": 320,
     // What working directory to use when launching the terminal.
     // May take 4 values:
-    // 1. Use the current file's project directory.  Will Fallback to the
+    // 1. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
     // 2. Use the first project in this workspace's directory

@@ -23,7 +23,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::MultiBufferOffset;
 use project::{
-    Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
+    File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
 use rpc::proto::{self, update_view};
@@ -645,18 +645,20 @@ impl Item for Editor {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        let file_path = self
-            .buffer()
+        self.buffer()
             .read(cx)
-            .as_singleton()?
-            .read(cx)
-            .file()
-            .and_then(|f| f.as_local())?
-            .abs_path(cx);
-
-        let file_path = file_path.compact().to_string_lossy().into_owned();
-
-        Some(file_path.into())
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| File::from_dyn(Some(file)))
+            .map(|file| {
+                file.worktree
+                    .read(cx)
+                    .absolutize(&file.path)
+                    .compact()
+                    .to_string_lossy()
+                    .into_owned()
+                    .into()
+            })
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
