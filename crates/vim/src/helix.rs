@@ -265,7 +265,7 @@ impl Vim {
         match motion {
             Motion::EndOfLine { .. } => {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
-                // not after it. We need special handling it.
+                // not after it. We therefore need special handling for it.
                 self.update_editor(cx, |_, editor, cx| {
                     let text_layout_details = editor.text_layout_details(window);
                     editor.change_selections(Default::default(), window, cx, |s| {
@@ -278,13 +278,7 @@ impl Vim {
                             };
 
                             let (point, _goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
+                                .move_point(map, cursor, goal, times, &text_layout_details)
                                 .unwrap_or((cursor, goal));
 
                             // Move left by one character to position on the last character
