@@ -3,11 +3,13 @@ mod input_excerpt;
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, Event, ZedUpdateRequiredError, Zeta,
+    EditPredictionId, ZedUpdateRequiredError, Zeta,
     prediction::{EditPrediction, EditPredictionInputs},
 };
 use anyhow::{Context as _, Result};
-use cloud_llm_client::{PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse};
+use cloud_llm_client::{
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, predict_edits_v3::Event,
+};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
@@ -15,7 +17,6 @@ use language::{
 };
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
-use util::rel_path::RelPath;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
@@ -76,7 +77,6 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
-    let project = project.clone();
     cx.spawn(async move |this, cx| {
         let GatherContextOutput {
             mut body,
@@ -89,9 +89,7 @@ pub(crate) fn request_prediction_with_zeta1(
         let included_events = &events[events.len() - included_events_count..events.len()];
         body.can_collect_data = can_collect_file
             && this
-                .read_with(cx, |this, cx| {
-                    this.can_collect_events(&project, included_events, cx)
-                })
+                .read_with(cx, |this, _| this.can_collect_events(included_events))
                 .unwrap_or(false);
         if body.can_collect_data {
             body.git_info = git_info;
@@ -126,14 +124,7 @@ pub(crate) fn request_prediction_with_zeta1(
         .await;
 
         let inputs = EditPredictionInputs {
-            events: cx
-                .update(|cx| {
-                    included_events
-                        .into_iter()
-                        .filter_map(|ev| ev.to_request_event(cx))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            events: included_events.into(),
             included_files: vec![cloud_llm_client::predict_edits_v3::IncludedFile {
                 path: full_path.clone(),
                 max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
@@ -449,10 +440,10 @@ pub fn gather_context(
     })
 }
 
-fn prompt_for_events_impl(events: &[Event], mut remaining_tokens: usize) -> (String, usize) {
+fn prompt_for_events_impl(events: &[Arc<Event>], mut remaining_tokens: usize) -> (String, usize) {
     let mut result = String::new();
     for (ix, event) in events.iter().rev().enumerate() {
-        let event_string = format_event(&event);
+        let event_string = format_event(event.as_ref());
         let event_tokens = guess_token_count(event_string.len());
         if event_tokens > remaining_tokens {
             return (result, ix);
@@ -470,30 +461,29 @@ fn prompt_for_events_impl(events: &[Event], mut remaining_tokens: usize) -> (Str
 pub fn format_event(event: &Event) -> String {
     match event {
         Event::BufferChange {
-            old_snapshot,
-            new_snapshot,
+            path,
+            old_path,
+            diff,
             ..
         } => {
             let mut prompt = String::new();
 
-            let old_path = old_snapshot
-                .file()
-                .map(|f| f.path().as_ref())
-                .unwrap_or(RelPath::unix("untitled").unwrap());
-            let new_path = new_snapshot
-                .file()
-                .map(|f| f.path().as_ref())
-                .unwrap_or(RelPath::unix("untitled").unwrap());
-            if old_path != new_path {
-                writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
+            if old_path != path {
+                writeln!(
+                    prompt,
+                    "User renamed {} to {}\n",
+                    old_path.display(),
+                    path.display()
+                )
+                .unwrap();
             }
 
-            let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
             if !diff.is_empty() {
                 write!(
                     prompt,
-                    "User edited {:?}:\n```diff\n{}\n```",
-                    new_path, diff
+                    "User edited {}:\n```diff\n{}\n```",
+                    path.display(),
+                    diff
                 )
                 .unwrap();
             }

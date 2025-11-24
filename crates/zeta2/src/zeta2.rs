@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
+use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat, Signature};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
@@ -273,7 +273,8 @@ pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ZetaProject {
     syntax_index: Option<Entity<SyntaxIndex>>,
-    events: VecDeque<Event>,
+    events: VecDeque<Arc<cloud_llm_client::predict_edits_v3::Event>>,
+    last_event: Option<LastEvent>,
     recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
@@ -286,6 +287,20 @@ struct ZetaProject {
     refresh_context_timestamp: Option<Instant>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     _subscription: gpui::Subscription,
+}
+
+impl ZetaProject {
+    pub fn events(&self, cx: &App) -> Vec<Arc<cloud_llm_client::predict_edits_v3::Event>> {
+        self.events
+            .iter()
+            .cloned()
+            .chain(
+                self.last_event
+                    .as_ref()
+                    .and_then(|event| event.finalize(&self.license_detection_watchers, cx)),
+            )
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -366,59 +381,54 @@ struct RegisteredBuffer {
     _subscriptions: [gpui::Subscription; 2],
 }
 
-#[derive(Clone)]
-pub enum Event {
-    BufferChange {
-        old_snapshot: BufferSnapshot,
-        new_snapshot: BufferSnapshot,
-        end_edit_anchor: Option<Anchor>,
-        timestamp: Instant,
-    },
+struct LastEvent {
+    old_snapshot: BufferSnapshot,
+    new_snapshot: BufferSnapshot,
+    end_edit_anchor: Option<Anchor>,
 }
 
-impl Event {
-    pub fn to_request_event(&self, cx: &App) -> Option<predict_edits_v3::Event> {
-        match self {
-            Event::BufferChange {
-                old_snapshot,
-                new_snapshot,
-                ..
-            } => {
-                let path = new_snapshot.file().map(|f| f.full_path(cx));
+impl LastEvent {
+    pub fn finalize(
+        &self,
+        license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
+        cx: &App,
+    ) -> Option<Arc<predict_edits_v3::Event>> {
+        let path = buffer_path_with_id_fallback(&self.new_snapshot, cx);
+        let old_path = buffer_path_with_id_fallback(&self.old_snapshot, cx);
 
-                let old_path = old_snapshot.file().and_then(|f| {
-                    let old_path = f.full_path(cx);
-                    if Some(&old_path) != path.as_ref() {
-                        Some(old_path)
-                    } else {
-                        None
-                    }
-                });
+        let file = self.new_snapshot.file();
+        let old_file = self.old_snapshot.file();
 
-                // TODO [zeta2] move to bg?
-                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
+        let in_open_source_repo = [file, old_file].iter().all(|file| {
+            file.is_some_and(|file| {
+                license_detection_watchers
+                    .get(&file.worktree_id(cx))
+                    .is_some_and(|watcher| watcher.is_project_open_source())
+            })
+        });
 
-                if path == old_path && diff.is_empty() {
-                    None
-                } else {
-                    Some(predict_edits_v3::Event::BufferChange {
-                        old_path,
-                        path,
-                        diff,
-                        //todo: Actually detect if this edit was predicted or not
-                        predicted: false,
-                    })
-                }
-            }
+        let diff = language::unified_diff(&self.old_snapshot.text(), &self.new_snapshot.text());
+
+        if path == old_path && diff.is_empty() {
+            None
+        } else {
+            Some(Arc::new(predict_edits_v3::Event::BufferChange {
+                old_path,
+                path,
+                diff,
+                in_open_source_repo,
+                // TODO: Actually detect if this edit was predicted or not
+                predicted: false,
+            }))
         }
     }
+}
 
-    pub fn project_path(&self, cx: &App) -> Option<project::ProjectPath> {
-        match self {
-            Event::BufferChange { new_snapshot, .. } => new_snapshot
-                .file()
-                .map(|f| project::ProjectPath::from_file(f.as_ref(), cx)),
-        }
+fn buffer_path_with_id_fallback(snapshot: &BufferSnapshot, cx: &App) -> Arc<Path> {
+    if let Some(file) = snapshot.file() {
+        file.full_path(cx).into()
+    } else {
+        Path::new(&format!("untitled-{}", snapshot.remote_id())).into()
     }
 }
 
@@ -525,17 +535,6 @@ impl Zeta {
         }
     }
 
-    pub fn history_for_project(
-        &self,
-        project: &Entity<Project>,
-    ) -> impl DoubleEndedIterator<Item = &Event> {
-        self.projects
-            .get(&project.entity_id())
-            .map(|project| project.events.iter())
-            .into_iter()
-            .flatten()
-    }
-
     pub fn context_for_project(
         &self,
         project: &Entity<Project>,
@@ -593,6 +592,7 @@ impl Zeta {
                     None
                 },
                 events: VecDeque::new(),
+                last_event: None,
                 recent_paths: VecDeque::new(),
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
@@ -705,8 +705,8 @@ impl Zeta {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
-        let sweep_ai_project = self.get_or_init_zeta_project(project, cx);
-        let registered_buffer = Self::register_buffer_impl(sweep_ai_project, buffer, project, cx);
+        let project_state = self.get_or_init_zeta_project(project, cx);
+        let registered_buffer = Self::register_buffer_impl(project_state, buffer, project, cx);
 
         let new_snapshot = buffer.read(cx).snapshot();
         if new_snapshot.version == registered_buffer.snapshot.version {
@@ -718,13 +718,13 @@ impl Zeta {
             .anchored_edits_since::<Point>(&old_snapshot.version)
             .last()
             .map(|(_, range)| range.end);
-        let events = &mut sweep_ai_project.events;
+        let events = &mut project_state.events;
 
-        if let Some(Event::BufferChange {
+        if let Some(LastEvent {
             new_snapshot: last_new_snapshot,
             end_edit_anchor: last_end_edit_anchor,
             ..
-        }) = events.back_mut()
+        }) = project_state.last_event.as_mut()
         {
             let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
                 == last_new_snapshot.remote_id()
@@ -747,15 +747,18 @@ impl Zeta {
             }
         }
 
-        if events.len() >= EVENT_COUNT_MAX {
+        if events.len() + 1 >= EVENT_COUNT_MAX {
             events.pop_front();
         }
 
-        events.push_back(Event::BufferChange {
+        if let Some(event) = project_state.last_event.take() {
+            events.extend(event.finalize(&project_state.license_detection_watchers, cx));
+        }
+
+        project_state.last_event = Some(LastEvent {
             old_snapshot,
             new_snapshot,
             end_edit_anchor,
-            timestamp: Instant::now(),
         });
     }
 
@@ -1210,7 +1213,7 @@ impl Zeta {
         let offset = position.to_offset(&snapshot);
 
         let project_state = self.get_or_init_zeta_project(project, cx);
-        let events = project_state.events.clone();
+        let events = project_state.events(cx);
         let has_events = !events.is_empty();
         let recent_buffers = project_state.recent_paths.iter().cloned();
         let http_client = cx.http_client();
@@ -1236,11 +1239,6 @@ impl Zeta {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
         let buffer_snapshotted_at = Instant::now();
 
-        let input_events = events
-            .iter()
-            .filter_map(|ev| ev.to_request_event(cx))
-            .collect();
-
         let result = cx.background_spawn({
             let snapshot = snapshot.clone();
             let diagnostic_search_range = diagnostic_search_range.clone();
@@ -1248,8 +1246,8 @@ impl Zeta {
                 let text = snapshot.text();
 
                 let mut recent_changes = String::new();
-                for event in events {
-                    sweep_ai::write_event(event, &mut recent_changes).unwrap();
+                for event in &events {
+                    sweep_ai::write_event(event.as_ref(), &mut recent_changes).unwrap();
                 }
 
                 let mut file_chunks = recent_buffer_snapshots
@@ -1338,7 +1336,7 @@ impl Zeta {
                 let body: AsyncBody = buf.into();
 
                 let inputs = EditPredictionInputs {
-                    events: input_events,
+                    events,
                     included_files: vec![cloud_llm_client::predict_edits_v3::IncludedFile {
                         path: full_path.clone(),
                         max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
@@ -1572,13 +1570,7 @@ impl Zeta {
         let debug_tx = self.debug_tx.clone();
 
         let events = project_state
-            .map(|state| {
-                state
-                    .events
-                    .iter()
-                    .filter_map(|event| event.to_request_event(cx))
-                    .collect::<Vec<_>>()
-            })
+            .map(|state| state.events(cx))
             .unwrap_or_default();
 
         let diagnostics = active_snapshot.diagnostic_sets().clone();
@@ -2215,11 +2207,7 @@ impl Zeta {
                 excerpt_path: current_file_path,
                 excerpt_line_range: cursor_excerpt.line_range,
                 cursor_file_max_row: Line(snapshot.max_point().row),
-                events: zeta_project
-                    .events
-                    .iter()
-                    .filter_map(|ev| ev.to_request_event(cx))
-                    .collect(),
+                events: zeta_project.events(cx),
             },
         ) {
             Ok(prompt) => prompt,
@@ -2558,43 +2546,19 @@ impl Zeta {
         self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
     }
 
-    fn can_collect_events(&self, project: &Entity<Project>, events: &[Event], cx: &App) -> bool {
+    fn can_collect_events(&self, events: &[Arc<Event>]) -> bool {
         if !self.data_collection_choice.is_enabled() {
             return false;
         }
-        let mut last_checked_file = None;
-        for event in events {
-            match event {
+        events.iter().all(|event| {
+            matches!(
+                event.as_ref(),
                 Event::BufferChange {
-                    old_snapshot,
-                    new_snapshot,
+                    in_open_source_repo: true,
                     ..
-                } => {
-                    if let Some(old_file) = old_snapshot.file()
-                        && let Some(new_file) = new_snapshot.file()
-                    {
-                        if let Some(last_checked_file) = last_checked_file
-                            && Arc::ptr_eq(last_checked_file, old_file)
-                            && Arc::ptr_eq(last_checked_file, new_file)
-                        {
-                            continue;
-                        }
-                        if !self.can_collect_file(project, old_file, cx) {
-                            return false;
-                        }
-                        if !Arc::ptr_eq(old_file, new_file)
-                            && !self.can_collect_file(project, new_file, cx)
-                        {
-                            return false;
-                        }
-                        last_checked_file = Some(new_file);
-                    } else {
-                        return false;
-                    }
                 }
-            }
-        }
-        true
+            )
+        })
     }
 
     fn load_data_collection_choice() -> DataCollectionChoice {
@@ -2689,7 +2653,7 @@ pub struct ZedUpdateRequiredError {
 fn make_syntax_context_cloud_request(
     excerpt_path: Arc<Path>,
     context: EditPredictionContext,
-    events: Vec<predict_edits_v3::Event>,
+    events: Vec<Arc<predict_edits_v3::Event>>,
     can_collect_data: bool,
     diagnostic_groups: Vec<predict_edits_v3::DiagnosticGroup>,
     diagnostic_groups_truncated: bool,

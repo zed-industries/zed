@@ -39,7 +39,7 @@ pub struct EditPrediction {
 
 #[derive(Clone, Serialize)]
 pub struct EditPredictionInputs {
-    pub events: Vec<cloud_llm_client::predict_edits_v3::Event>,
+    pub events: Vec<Arc<cloud_llm_client::predict_edits_v3::Event>>,
     pub included_files: Vec<cloud_llm_client::predict_edits_v3::IncludedFile>,
     pub cursor_point: cloud_llm_client::predict_edits_v3::Point,
     pub cursor_path: Arc<Path>,
