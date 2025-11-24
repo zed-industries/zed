@@ -29,6 +29,7 @@ use util::{
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: Version = Version::new(0, 6, 0);
+#[allow(dead_code)]
 pub const MAX_VERSION: Version = Version::new(0, 7, 0);
 
 wasmtime::component::bindgen!({
