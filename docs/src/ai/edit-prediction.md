@@ -3,7 +3,7 @@
 Edit Prediction is Zed's LLM mechanism for predicting the code you want to write.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you also use [other providers](#other-providers) like GitHub Copilot, Supermaven, and Codestral.
+The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Supermaven, and Codestral.
 
 ## Configuring Zeta
 
@@ -22,7 +22,7 @@ Or you can also look for a little Z icon in the right of your status bar at the 
 
 ### Pricing and Plans
 
-By just signing in, while in Zed's free plan, you get 2,000 Zeta-powered edit predictions per month.
+From just signing in, while in Zed's free plan, you get 2,000 Zeta-powered edit predictions per month.
 But you can get _**unlimited edit predictions**_ by upgrading to [the Pro plan](../ai/plans-and-usage.md).
 More information can be found in [Zed's pricing page](https://zed.dev/pricing).
 
