@@ -55,6 +55,7 @@ async fn capture_unix(
         // xonsh doesn't support redirecting to stdin, and control sequences are printed to
         // stdout on startup
         ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
+        ShellKind::PowerShell => (FD_STDIN, format!(">{}", FD_STDIN)),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
 
