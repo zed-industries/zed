@@ -652,7 +652,7 @@ impl DebugPanel {
         };
 
         let close_bottom_panel_button = {
-            h_flex().gap_1().child(Divider::vertical()).child(
+            h_flex().pl_0p5().gap_1().child(Divider::vertical()).child(
                 IconButton::new("debug-close-panel", IconName::Close)
                     .icon_size(IconSize::Small)
                     .on_click(move |_, window, cx| {
