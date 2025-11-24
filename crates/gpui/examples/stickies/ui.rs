@@ -167,10 +167,11 @@ impl Sticky {
                     )
                     .with_window_handle(window_handle.into())
                 });
-                let handle = note.read(cx).focus_handle(cx);
+                // Focus the TextArea directly instead of the Sticky container
+                let text_area_handle = note.read(cx).text_area.read(cx).focus_handle(cx);
 
                 window.activate_window();
-                window.focus(&handle);
+                window.focus(&text_area_handle);
 
                 note
             },
@@ -221,11 +222,13 @@ impl Render for Sticky {
             .text_size(px(12.))
             .line_height(px(14.))
             .pt(px(TITLEBAR_HEIGHT)) // reserve space for absolutely positioned titlebar
-            .on_click(cx.listener(move |_, _, window, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 if !window.is_window_active() {
                     window.activate_window();
                 }
-                window.focus(&focus_handle);
+                // Focus the TextArea instead of the Sticky container
+                let text_area_handle = this.text_area.read(cx).focus_handle(cx);
+                window.focus(&text_area_handle);
                 cx.notify();
             }))
             .child(Titlebar::new(entity, window_active))

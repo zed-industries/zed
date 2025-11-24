@@ -8,8 +8,10 @@ mod text_area;
 mod ui;
 
 use text_area::{
-    Backspace as TextAreaBackspace, Delete as TextAreaDelete, Down, End as TextAreaEnd, Enter,
-    Home as TextAreaHome, Left, Right, SelectDown, SelectLeft, SelectRight, SelectUp, Up,
+    Backspace as TextAreaBackspace, Copy as TextAreaCopy, Cut as TextAreaCut,
+    Delete as TextAreaDelete, Down, End as TextAreaEnd, Enter, Home as TextAreaHome, Left,
+    Paste as TextAreaPaste, Right, SelectAll as TextAreaSelectAll, SelectDown, SelectLeft,
+    SelectRight, SelectUp, Up,
 };
 use ui::{Sticky, StickyColor};
 
@@ -297,6 +299,10 @@ fn main() {
             KeyBinding::new("home", TextAreaHome, None),
             KeyBinding::new("end", TextAreaEnd, None),
             KeyBinding::new("enter", Enter, None),
+            KeyBinding::new("cmd-a", TextAreaSelectAll, None),
+            KeyBinding::new("cmd-c", TextAreaCopy, None),
+            KeyBinding::new("cmd-x", TextAreaCut, None),
+            KeyBinding::new("cmd-v", TextAreaPaste, None),
         ]);
     });
 }
