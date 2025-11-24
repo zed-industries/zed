@@ -292,7 +292,7 @@ path = "examples/pattern.rs"
 
 [[example]]
 name = "stickies"
-path = "examples/stickies.rs"
+path = "examples/stickies/main.rs"
 
 [[example]]
 name = "counter"
