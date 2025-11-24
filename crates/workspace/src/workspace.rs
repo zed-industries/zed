@@ -9174,7 +9174,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -9407,10 +9407,10 @@ mod tests {
 
         // Open two docks (left and right) with one panel each
         let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
-            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
             workspace.add_panel(left_panel.clone(), window, cx);
 
-            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
             workspace.add_panel(right_panel.clone(), window, cx);
 
             workspace.toggle_dock(DockPosition::Left, window, cx);
@@ -9838,10 +9838,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
-            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
-            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
             workspace.add_panel(panel_2.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 
@@ -10748,7 +10748,7 @@ mod tests {
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
