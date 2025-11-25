@@ -285,7 +285,6 @@ impl InlineAssistant {
                             thread_store,
                             prompt_store,
                             action.prompt.clone(),
-                            action.auto_start,
                             window,
                             cx,
                         )
@@ -300,7 +299,6 @@ impl InlineAssistant {
                             thread_store,
                             prompt_store,
                             action.prompt.clone(),
-                            action.auto_start,
                             window,
                             cx,
                         )
@@ -349,7 +347,6 @@ impl InlineAssistant {
         &mut self,
         editor: &Entity<Editor>,
         snapshot: &EditorSnapshot,
-        auto_start: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(Vec<Range<Anchor>>, Selection<Point>)> {
@@ -492,7 +489,6 @@ impl InlineAssistant {
         });
 
         let mut assists = Vec::new();
-        let mut created_assist_ids = Vec::new();
         let mut assist_to_focus = None;
 
         for range in codegen_ranges {
@@ -549,7 +545,6 @@ impl InlineAssistant {
                 prompt_block_id,
                 end_block_id,
             ));
-            created_assist_ids.push(assist_id);
         }
 
         let editor_assists = self
@@ -629,12 +624,6 @@ impl InlineAssistant {
 
         if let Some(assist_id) = assist_to_focus {
             self.focus_assist(assist_id, window, cx);
-        }
-
-        if auto_start {
-            for assist_id in created_assist_ids {
-                self.start_assist(assist_id, window, cx);
-            }
         }
     }
 

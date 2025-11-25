@@ -2,8 +2,8 @@ use crate::StatusItemView;
 use gpui::{
     Action, Context, IntoElement, MouseButton, Render, Subscription, Window, div, prelude::*, svg,
 };
-use transcription::{Transcription, TranscriptionThreadState, ToggleDictationChannel};
 use theme::ActiveTheme;
+use transcription::{ToggleDictationChannel, Transcription, TranscriptionThreadState};
 
 pub struct SpeechIndicator {
     subscription: Option<Subscription>,
