@@ -243,22 +243,22 @@ async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
 async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
     let completions = vec![
         CompletionBuilder::new("10.4.22", None, "00000001", None),
-        CompletionBuilder::new("10.4.2", None, None, None),
-        CompletionBuilder::new("10.4.20", None, None, None),
-        CompletionBuilder::new("10.4.21", None, None, None),
-        CompletionBuilder::new("10.4.12", None, None, None),
+        CompletionBuilder::new("10.4.2", None, "00000015", None),
+        CompletionBuilder::new("10.4.20", None, "00000012", None),
+        CompletionBuilder::new("10.4.21", None, "00000010", None),
+        CompletionBuilder::new("10.4.12", None, "00000014", None),
         // Pre-release versions
-        CompletionBuilder::new("10.4.22-alpha", None, None, None),
-        CompletionBuilder::new("10.4.22-alpha.1", None, None, None),
-        CompletionBuilder::new("10.4.22-alpha.2", None, None, None),
-        CompletionBuilder::new("10.4.22-beta", None, None, None),
-        CompletionBuilder::new("10.4.22-beta.1", None, None, None),
-        CompletionBuilder::new("10.4.22-rc.1", None, None, None),
-        CompletionBuilder::new("10.4.20-beta.1", None, None, None),
+        CompletionBuilder::new("10.4.22-alpha", None, "00000007", None),
+        CompletionBuilder::new("10.4.22-alpha.1", None, "00000006", None),
+        CompletionBuilder::new("10.4.22-alpha.2", None, "00000005", None),
+        CompletionBuilder::new("10.4.22-beta", None, "00000004", None),
+        CompletionBuilder::new("10.4.22-beta.1", None, "00000003", None),
+        CompletionBuilder::new("10.4.22-rc.1", None, "00000002", None),
+        CompletionBuilder::new("10.4.20-beta.1", None, "00000013", None),
         // Build metadata versions
-        CompletionBuilder::new("10.4.21+build.123", None, None, None),
-        CompletionBuilder::new("10.4.21+build.456", None, None, None),
-        CompletionBuilder::new("10.4.20+20210327", None, None, None),
+        CompletionBuilder::new("10.4.21+build.123", None, "00000009", None),
+        CompletionBuilder::new("10.4.21+build.456", None, "00000008", None),
+        CompletionBuilder::new("10.4.20+20210327", None, "00000011", None),
     ];
 
     let matches = filter_and_sort_matches("2", &completions, SnippetSortOrder::default(), cx).await;
