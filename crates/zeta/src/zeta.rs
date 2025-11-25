@@ -170,7 +170,7 @@ impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
 
