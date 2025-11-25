@@ -58,27 +58,29 @@ impl LineWrapper {
                             continue;
                         }
 
-                        let mut candidate = false;
-                        if Self::is_word_char(c) {
-                            if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                                candidate = true;
+                        if first_non_whitespace_ix.is_some() {
+                            let mut candidate = false;
+                            if Self::is_word_char(c) {
+                                if prev_c == ' ' && c != ' ' {
+                                    candidate = true;
+                                }
+                            } else {
+                                if c != ' ' {
+                                    // For CJK, may not be space separated, e.g.: `Hello world你好世界`,
+                                    // when `ix` is `你`, we can wrap here.
+                                    candidate = true;
+                                } else if prev_c == ' ' && c == ' ' {
+                                    // For continue spaces, we can wrap at the space
+                                    // if the previous character is not a space.
+                                    // But not set width, to keep space at line end.
+                                    candidate = true;
+                                }
                             }
-                        } else {
-                            if c != ' ' && first_non_whitespace_ix.is_some() {
-                                // For CJK, may not be space separated, e.g.: `Hello world你好世界`,
-                                // when `ix` is `你`, we can wrap here.
-                                candidate = true;
-                            } else if c == ' ' && prev_c != ' ' && first_non_whitespace_ix.is_some()
-                            {
-                                // For continue spaces, we can wrap at the space
-                                // if the previous character is not a space.
-                                candidate = true;
-                            }
-                        }
 
-                        if candidate {
-                            last_candidate_ix = ix;
-                            last_candidate_width = width;
+                            if candidate {
+                                last_candidate_ix = ix;
+                                last_candidate_width = width;
+                            }
                         }
 
                         if c != ' ' && first_non_whitespace_ix.is_none() {
@@ -410,6 +412,19 @@ mod tests {
                 Boundary::new(14, 3),
                 Boundary::new(18, 3),
                 Boundary::new(22, 3),
+            ]
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("aa bbb cccc ddddd eeee         ")],
+                    px(72.)
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(12, 0),
+                Boundary::new(18, 0)
             ]
         );
 
