@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 How to use our internal tools to profile and keep Zed fast.
 
 # Flamechart/CPU profiling
