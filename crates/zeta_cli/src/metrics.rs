@@ -170,6 +170,24 @@ pub fn chr_f(expected: &str, actual: &str) -> f64 {
     f_score * 100.0
 }
 
+/// Computes a diff-aware chrF score for comparing predicted edits
+/// against expected edits.
+///
+/// Standard chrF is usually used for comparing single code completions
+/// (old-school code autocompletion), but Zeta edits can modify existing
+/// code across multiple locations. Naively comparing entire files after
+/// applying edits would result in a score dominated by unchanged context
+/// lines.
+///
+/// This metric addresses that by:
+/// 1. Extracting only the changed lines from each patch
+/// 2. Computing chrF separately for deletions and insertions
+/// 3. Combining them via harmonic mean.
+///
+/// The harmonic mean ensures both deletion and insertion accuracy
+/// contribute to the final score. A patch that perfectly matches
+/// deletions but misses insertions (or vice versa) will be penalized
+/// appropriately.
 pub fn patch_chr_f(expected: &[DiffLine], actual: &[DiffLine]) -> f64 {
     let mut expected_ins = String::default();
     let mut expected_del = String::default();
