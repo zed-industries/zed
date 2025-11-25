@@ -792,13 +792,13 @@ async fn stream_completion(
     is_user_initiated: bool,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
-      ChatMessage::User { content }
-      | ChatMessage::Assistant { content, .. }
-      | ChatMessage::Tool { content, .. } => {
-          matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
-      }
-      _ => false,
-  });
+        ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. }
+        | ChatMessage::Tool { content, .. } => {
+            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+        }
+        _ => false,
+    });
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
