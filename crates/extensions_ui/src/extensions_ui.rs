@@ -18,6 +18,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
+use offline_mode::OfflineModeSetting;
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsContent};
@@ -996,9 +997,11 @@ impl ExtensionsPage {
             .provides
             .contains(&ExtensionProvides::ContextServers);
 
+        let is_offline = OfflineModeSetting::get_global(cx).0;
+
         match status.clone() {
-            ExtensionStatus::NotInstalled => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
+            ExtensionStatus::NotInstalled => {
+                let mut button = Button::new(
                     SharedString::from(extension.id.clone()),
                     "Install",
                 )
@@ -1006,18 +1009,29 @@ impl ExtensionsPage {
                 .icon(IconName::Download)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
-                .on_click({
-                    let extension_id = extension.id.clone();
-                    move |_, _, cx| {
-                        telemetry::event!("Extension Installed");
-                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.install_latest_extension(extension_id.clone(), cx)
-                        });
-                    }
-                }),
-                configure: None,
-                upgrade: None,
+                .icon_position(IconPosition::Start);
+
+                if is_offline {
+                    button = button
+                        .disabled(true)
+                        .tooltip(Tooltip::text("Unavailable in Offline Mode"));
+                } else {
+                    button = button.on_click({
+                        let extension_id = extension.id.clone();
+                        move |_, _, cx| {
+                            telemetry::event!("Extension Installed");
+                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                store.install_latest_extension(extension_id.clone(), cx)
+                            });
+                        }
+                    });
+                }
+
+                ExtensionCardButtons {
+                    install_or_uninstall: button,
+                    configure: None,
+                    upgrade: None,
+                }
             },
             ExtensionStatus::Installing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
@@ -1096,40 +1110,47 @@ impl ExtensionsPage {
                 upgrade: if installed_version == extension.manifest.version {
                     None
                 } else {
-                    Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
-                          .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .when(!is_compatible, |upgrade_button| {
-                                upgrade_button.disabled(true).tooltip({
-                                    let version = extension.manifest.version.clone();
-                                    move |_, cx| {
-                                        Tooltip::simple(
-                                            format!(
-                                                "v{version} is not compatible with this version of Zed.",
-                                            ),
-                                             cx,
-                                        )
-                                    }
-                                })
-                            })
-                            .disabled(!is_compatible)
-                            .on_click({
-                                let extension_id = extension.id.clone();
+                    let mut upgrade_button = Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                          .style(ButtonStyle::Tinted(ui::TintColor::Accent));
+
+                    if is_offline {
+                        upgrade_button = upgrade_button
+                            .disabled(true)
+                            .tooltip(Tooltip::text("Unavailable in Offline Mode"));
+                    } else if !is_compatible {
+                        upgrade_button = upgrade_button
+                            .disabled(true)
+                            .tooltip({
                                 let version = extension.manifest.version.clone();
-                                move |_, _, cx| {
-                                    telemetry::event!("Extension Installed", extension_id, version);
-                                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                                        store
-                                            .upgrade_extension(
-                                                extension_id.clone(),
-                                                version.clone(),
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx)
-                                    });
+                                move |_, cx| {
+                                    Tooltip::simple(
+                                        format!(
+                                            "v{version} is not compatible with this version of Zed.",
+                                        ),
+                                         cx,
+                                    )
                                 }
-                            }),
-                    )
+                            });
+                    } else {
+                        upgrade_button = upgrade_button.on_click({
+                            let extension_id = extension.id.clone();
+                            let version = extension.manifest.version.clone();
+                            move |_, _, cx| {
+                                telemetry::event!("Extension Installed", extension_id, version);
+                                ExtensionStore::global(cx).update(cx, |store, cx| {
+                                    store
+                                        .upgrade_extension(
+                                            extension_id.clone(),
+                                            version.clone(),
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx)
+                                });
+                            }
+                        });
+                    }
+
+                    Some(upgrade_button)
                 },
             },
             ExtensionStatus::Removing => ExtensionCardButtons {
@@ -1292,11 +1313,16 @@ impl ExtensionsPage {
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
+        let is_offline = OfflineModeSetting::get_global(cx).0;
 
         let message = if self.is_fetching_extensions {
             "Loading extensions…"
         } else if self.fetch_failed {
-            "Failed to load extensions. Please check your connection and try again."
+            if is_offline {
+                "Offline Mode - Extension downloads disabled"
+            } else {
+                "Failed to load extensions. Please check your connection and try again."
+            }
         } else {
             match self.filter {
                 ExtensionFilter::All => {

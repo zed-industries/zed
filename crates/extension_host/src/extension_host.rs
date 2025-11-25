@@ -41,6 +41,7 @@ use language::{
     QUERY_FILENAME_PREFIXES, Rope,
 };
 use node_runtime::NodeRuntime;
+use offline_mode::OfflineModeSetting;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use remote::RemoteClient;
@@ -663,6 +664,10 @@ impl ExtensionStore {
         query: &[(&str, &str)],
         cx: &mut Context<ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow!("Extension marketplace unavailable in offline mode")));
+        }
+
         let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
         cx.spawn(async move |_, _| {
@@ -712,6 +717,10 @@ impl ExtensionStore {
         operation: ExtensionOperation,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow!("Extension downloads unavailable in offline mode")));
+        }
+
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();

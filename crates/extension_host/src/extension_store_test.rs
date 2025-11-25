@@ -19,7 +19,7 @@ use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -871,4 +871,170 @@ fn init_test(cx: &mut TestAppContext) {
         theme::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);
     });
+}
+
+#[gpui::test]
+async fn test_extension_fetch_offline_mode(cx: &mut TestAppContext) {
+    use offline_mode::OfflineModeSetting;
+
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::with_200_response();
+
+    fs.insert_tree(
+        "/extensions",
+        json!({
+            "installed": {}
+        }),
+    )
+    .await;
+
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
+    let node_runtime = NodeRuntime::unavailable();
+
+    let store = cx.new(|cx| {
+        ExtensionStore::new(
+            PathBuf::from("/extensions"),
+            None,
+            proxy.clone(),
+            fs.clone(),
+            http_client.clone(),
+            http_client.clone(),
+            None,
+            node_runtime.clone(),
+            cx,
+        )
+    });
+
+    // Test fetch_extensions_from_api returns error when offline
+    cx.update(|cx| {
+        OfflineModeSetting::override_global(OfflineModeSetting(true), cx);
+    });
+
+    let result = store
+        .update(cx, |store, cx| {
+            store.fetch_extensions(None, None, cx)
+        })
+        .await;
+
+    // The fetch should fail with an offline mode error
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Extension marketplace unavailable in offline mode"));
+
+    // Test that online mode works
+    cx.update(|cx| {
+        OfflineModeSetting::override_global(OfflineModeSetting(false), cx);
+    });
+
+    let result = store
+        .update(cx, |store, cx| {
+            store.fetch_extensions(None, None, cx)
+        })
+        .await;
+
+    // The fetch should succeed when online (or fail with a different error)
+    // We don't check for success because we're using a fake HTTP client
+    // Just verify it doesn't give us the offline error
+    if let Err(err) = result {
+        assert!(!err.to_string().contains("unavailable in offline mode"));
+    }
+}
+
+#[gpui::test]
+async fn test_extension_install_offline_mode(cx: &mut TestAppContext) {
+    use offline_mode::OfflineModeSetting;
+    use url::Url;
+
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::with_200_response();
+
+    fs.insert_tree(
+        "/extensions",
+        json!({
+            "installed": {}
+        }),
+    )
+    .await;
+
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
+    let node_runtime = NodeRuntime::unavailable();
+
+    let store = cx.new(|cx| {
+        ExtensionStore::new(
+            PathBuf::from("/extensions"),
+            None,
+            proxy.clone(),
+            fs.clone(),
+            http_client.clone(),
+            http_client.clone(),
+            None,
+            node_runtime.clone(),
+            cx,
+        )
+    });
+
+    // Enable offline mode
+    cx.update(|cx| {
+        OfflineModeSetting::override_global(OfflineModeSetting(true), cx);
+    });
+
+    // Test install_or_upgrade_extension_at_endpoint returns error when offline
+    let test_url = Url::parse("https://example.com/extension.tar.gz").unwrap();
+    let result = store
+        .update(cx, |store, cx| {
+            store.install_or_upgrade_extension_at_endpoint(
+                "test-extension".into(),
+                test_url,
+                crate::ExtensionOperation::Install,
+                cx,
+            )
+        })
+        .await;
+
+    // The install should fail with an offline mode error
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Extension downloads unavailable in offline mode"));
+
+    // Verify outstanding_operations was not modified
+    store.read_with(cx, |store, _| {
+        assert!(!store
+            .outstanding_operations
+            .contains_key("test-extension"));
+    });
+
+    // Test that online mode works
+    cx.update(|cx| {
+        OfflineModeSetting::override_global(OfflineModeSetting(false), cx);
+    });
+
+    let test_url = Url::parse("https://example.com/extension.tar.gz").unwrap();
+    let _result = store.update(cx, |store, cx| {
+        store.install_or_upgrade_extension_at_endpoint(
+            "test-extension-2".into(),
+            test_url,
+            crate::ExtensionOperation::Install,
+            cx,
+        )
+    });
+
+    // When online, the operation should be added to outstanding_operations
+    // (it will eventually fail because we're using a fake HTTP client, but that's expected)
+    cx.executor().run_until_parked();
 }
