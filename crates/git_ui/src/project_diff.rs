@@ -19,7 +19,7 @@ use git::{
     status::FileStatus,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
@@ -336,7 +336,7 @@ impl ProjectDiff {
         };
         let repo = git_repo.read(cx);
         let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
-        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
         self.move_to_path(path_key, window, cx)
     }
@@ -520,7 +520,8 @@ impl ProjectDiff {
             if was_empty {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     // TODO select the very beginning (possibly inside a deletion)
-                    selections.select_ranges([0..0])
+                    selections
+                        .select_ranges([multi_buffer::Anchor::min()..multi_buffer::Anchor::min()])
                 });
             }
             if is_excerpt_newly_added
@@ -566,7 +567,7 @@ impl ProjectDiff {
                 for entry in buffers_to_load.iter() {
                     let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
                     let path_key =
-                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
+                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
                     previous_paths.remove(&path_key);
                     path_keys.push(path_key)
                 }
@@ -774,11 +775,11 @@ impl Item for ProjectDiff {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -1587,9 +1588,6 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
             editor::init(cx);
             crate::init(cx);
         });

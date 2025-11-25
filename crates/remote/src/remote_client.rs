@@ -22,7 +22,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, FutureExt, Global, SemanticVersion, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, Task, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -31,6 +31,7 @@ use rpc::{
     AnyProtoClient, ErrorExt, ProtoClient, ProtoMessageHandlerSet, RpcError,
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
+use semver::Version;
 use std::{
     collections::VecDeque,
     fmt,
@@ -67,18 +68,18 @@ pub trait RemoteClientDelegate: Send + Sync {
         tx: oneshot::Sender<EncryptedPassword>,
         cx: &mut AsyncApp,
     );
-    fn get_download_params(
+    fn get_download_url(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>>;
+    ) -> Task<Result<Option<String>>>;
     fn download_server_binary_locally(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
     ) -> Task<Result<PathBuf>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp);
@@ -1506,9 +1507,10 @@ mod fake {
         },
         select_biased,
     };
-    use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
+    use gpui::{App, AppContext as _, AsyncApp, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
+    use semver::Version;
     use std::{path::PathBuf, sync::Arc};
     use util::paths::{PathStyle, RemotePathBuf};
 
@@ -1663,19 +1665,19 @@ mod fake {
             &self,
             _: RemotePlatform,
             _: ReleaseChannel,
-            _: Option<SemanticVersion>,
+            _: Option<Version>,
             _: &mut AsyncApp,
         ) -> Task<Result<PathBuf>> {
             unreachable!()
         }
 
-        fn get_download_params(
+        fn get_download_url(
             &self,
             _platform: RemotePlatform,
             _release_channel: ReleaseChannel,
-            _version: Option<SemanticVersion>,
+            _version: Option<Version>,
             _cx: &mut AsyncApp,
-        ) -> Task<Result<Option<(String, String)>>> {
+        ) -> Task<Result<Option<String>>> {
             unreachable!()
         }
 

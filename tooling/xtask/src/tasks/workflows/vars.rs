@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Concurrency, Env, Expression};
+use gh_workflow::{Concurrency, Env, Expression, Step, WorkflowDispatchInput};
 
 use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
@@ -11,12 +11,15 @@ macro_rules! secret {
 }
 
 macro_rules! var {
-    ($secret_name:ident) => {
-        pub const $secret_name: &str = concat!("${{ vars.", stringify!($secret_name), " }}");
+    ($var_name:ident) => {
+        pub const $var_name: &str = concat!("${{ vars.", stringify!($var_name), " }}");
     };
 }
 
 secret!(ANTHROPIC_API_KEY);
+secret!(OPENAI_API_KEY);
+secret!(GOOGLE_AI_API_KEY);
+secret!(GOOGLE_CLOUD_PROJECT);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
@@ -34,6 +37,12 @@ secret!(ZED_CLIENT_CHECKSUM_SEED);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
 secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
+secret!(ZED_ZIPPY_APP_ID);
+secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
+secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
+secret!(WINGET_TOKEN);
+secret!(VERCEL_TOKEN);
+secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -67,14 +76,20 @@ pub fn bundle_envs(platform: Platform) -> Env {
     }
 }
 
-pub(crate) fn one_workflow_per_non_main_branch() -> Concurrency {
+pub fn one_workflow_per_non_main_branch() -> Concurrency {
     Concurrency::default()
         .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
         .cancel_in_progress(true)
 }
 
+pub(crate) fn allow_concurrent_runs() -> Concurrency {
+    Concurrency::default()
+        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}")
+        .cancel_in_progress(true)
+}
+
 // Represents a pattern to check for changed files and corresponding output variable
-pub(crate) struct PathCondition {
+pub struct PathCondition {
     pub name: &'static str,
     pub pattern: &'static str,
     pub invert: bool,
@@ -107,12 +122,89 @@ impl PathCondition {
             name: job.name,
             job: job
                 .job
-                .add_needs(set_by_step.clone())
+                .add_need(set_by_step.clone())
                 .cond(Expression::new(format!(
                     "needs.{}.outputs.{} == 'true'",
                     &set_by_step, self.name
                 ))),
         }
+    }
+}
+
+pub(crate) struct StepOutput {
+    name: &'static str,
+    step_id: String,
+}
+
+impl StepOutput {
+    pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
+        Self {
+            name,
+            step_id: step
+                .value
+                .id
+                .clone()
+                .expect("Steps that produce outputs must have an ID"),
+        }
+    }
+
+    pub fn expr(&self) -> String {
+        format!("steps.{}.outputs.{}", self.step_id, self.name)
+    }
+}
+
+impl serde::Serialize for StepOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl std::fmt::Display for StepOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
+    }
+}
+
+pub struct Input {
+    pub input_type: &'static str,
+    pub name: &'static str,
+    pub default: Option<String>,
+}
+
+impl Input {
+    pub fn string(name: &'static str, default: Option<String>) -> Self {
+        Self {
+            input_type: "string",
+            name,
+            default,
+        }
+    }
+
+    pub fn input(&self) -> WorkflowDispatchInput {
+        WorkflowDispatchInput {
+            description: self.name.to_owned(),
+            required: self.default.is_none(),
+            input_type: self.input_type.to_owned(),
+            default: self.default.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ inputs.{} }}}}", self.name)
+    }
+}
+
+impl serde::Serialize for Input {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 

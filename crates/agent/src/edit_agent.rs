@@ -703,6 +703,7 @@ impl EditAgent {
             role: Role::User,
             content: vec![MessageContent::Text(prompt)],
             cache: false,
+            reasoning_details: None,
         });
 
         // Include tools in the request so that we can take advantage of
@@ -1394,7 +1395,7 @@ mod tests {
 
     async fn init_test(cx: &mut TestAppContext) -> EditAgent {
         cx.update(settings::init);
-        cx.update(Project::init_settings);
+
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));

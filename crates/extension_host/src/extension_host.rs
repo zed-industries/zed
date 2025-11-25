@@ -11,7 +11,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
-use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -43,8 +43,8 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::{RemoteClient, RemoteConnectionOptions};
-use semantic_version::SemanticVersion;
+use remote::RemoteClient;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::ops::RangeInclusive;
@@ -98,7 +98,7 @@ pub fn is_version_compatible(
         .manifest
         .wasm_api_version
         .as_ref()
-        .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
+        .and_then(|wasm_api_version| Version::from_str(wasm_api_version).ok())
         && !is_supported_wasm_api_version(release_channel, wasm_api_version)
     {
         return false;
@@ -123,7 +123,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub remote_clients: HashMap<RemoteConnectionOptions, WeakEntity<RemoteClient>>,
+    pub remote_clients: Vec<WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -200,8 +200,6 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    ExtensionSettings::register(cx);
-
     let store = cx.new(move |cx| {
         ExtensionStore::new(
             paths::extensions_dir().clone(),
@@ -276,7 +274,7 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            remote_clients: HashMap::default(),
+            remote_clients: Default::default(),
             ssh_registered_tx: connection_registered_tx,
         };
 
@@ -345,12 +343,12 @@ impl ExtensionStore {
                                 let index = this
                                     .update(cx, |this, cx| this.rebuild_extension_index(cx))?
                                     .await;
-                                this.update( cx, |this, cx| this.extensions_updated(index, cx))?
+                                this.update(cx, |this, cx| this.extensions_updated(index, cx))?
                                     .await;
                                 index_changed = false;
                             }
 
-                            Self::update_ssh_clients(&this, cx).await?;
+                            Self::update_remote_clients(&this, cx).await?;
                         }
                         _ = connection_registered_rx.next() => {
                             debounce_timer = cx
@@ -641,9 +639,8 @@ impl ExtensionStore {
                     this.extension_index.extensions.get(&extension.id)
                 {
                     let installed_version =
-                        SemanticVersion::from_str(&installed_extension.manifest.version).ok()?;
-                    let latest_version =
-                        SemanticVersion::from_str(&extension.manifest.version).ok()?;
+                        Version::from_str(&installed_extension.manifest.version).ok()?;
+                    let latest_version = Version::from_str(&extension.manifest.version).ok()?;
 
                     if installed_version >= latest_version {
                         return None;
@@ -760,29 +757,28 @@ impl ExtensionStore {
             if let Some(content_length) = content_length {
                 let actual_len = tar_gz_bytes.len();
                 if content_length != actual_len {
-                    bail!("downloaded extension size {actual_len} does not match content length {content_length}");
+                    bail!(concat!(
+                        "downloaded extension size {actual_len} ",
+                        "does not match content length {content_length}"
+                    ));
                 }
             }
             let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(extension_dir).await?;
-            this.update( cx, |this, cx| {
-                this.reload(Some(extension_id.clone()), cx)
-            })?
-            .await;
+            this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
+                .await;
 
             if let ExtensionOperation::Install = operation {
-                this.update( cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                     if let Some(events) = ExtensionEvents::try_global(cx)
-                        && let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                            events.update(cx, |this, cx| {
-                                this.emit(
-                                    extension::Event::ExtensionInstalled(manifest.clone()),
-                                    cx,
-                                )
-                            });
-                        }
+                        && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
+                    {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                        });
+                    }
                 })
                 .ok();
             }
@@ -1131,6 +1127,7 @@ impl ExtensionStore {
         }
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
+            self.reload_complete_senders.clear();
             return Task::ready(());
         }
 
@@ -1728,7 +1725,7 @@ impl ExtensionStore {
         })
     }
 
-    async fn sync_extensions_over_ssh(
+    async fn sync_extensions_to_remotes(
         this: &WeakEntity<Self>,
         client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
@@ -1781,7 +1778,11 @@ impl ExtensionStore {
                     })?,
                 path_style,
             );
-            log::info!("Uploading extension {}", missing_extension.clone().id);
+            log::info!(
+                "Uploading extension {} to {:?}",
+                missing_extension.clone().id,
+                dest_dir
+            );
 
             client
                 .update(cx, |client, cx| {
@@ -1794,27 +1795,35 @@ impl ExtensionStore {
                 missing_extension.clone().id
             );
 
-            client
+            let result = client
                 .update(cx, |client, _cx| {
                     client.proto_client().request(proto::InstallExtension {
                         tmp_dir: dest_dir.to_proto(),
-                        extension: Some(missing_extension),
+                        extension: Some(missing_extension.clone()),
                     })
                 })?
-                .await?;
+                .await;
+
+            if let Err(e) = result {
+                log::error!(
+                    "Failed to install extension {}: {}",
+                    missing_extension.id,
+                    e
+                );
+            }
         }
 
         anyhow::Ok(())
     }
 
-    pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+    pub async fn update_remote_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
-            this.remote_clients.retain(|_k, v| v.upgrade().is_some());
-            this.remote_clients.values().cloned().collect::<Vec<_>>()
+            this.remote_clients.retain(|v| v.upgrade().is_some());
+            this.remote_clients.clone()
         })?;
 
         for client in clients {
-            Self::sync_extensions_over_ssh(this, client, cx)
+            Self::sync_extensions_to_remotes(this, client, cx)
                 .await
                 .log_err();
         }
@@ -1822,16 +1831,12 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
-        let options = client.read(cx).connection_options();
-
-        if let Some(existing_client) = self.remote_clients.get(&options)
-            && existing_client.upgrade().is_some()
-        {
-            return;
-        }
-
-        self.remote_clients.insert(options, client.downgrade());
+    pub fn register_remote_client(
+        &mut self,
+        client: Entity<RemoteClient>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.remote_clients.push(client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

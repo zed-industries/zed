@@ -16,7 +16,7 @@ use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::{get_default_system_shell, maybe, rel_path::RelPath};
+use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
 
@@ -127,8 +127,10 @@ impl Project {
                         .language_for_name(&toolchain.language_name.0)
                         .await
                         .ok();
-                    let lister = language?.toolchain_lister();
-                    return Some(lister?.activation_script(&toolchain, shell_kind));
+                    let lister = language?.toolchain_lister()?;
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
+                        .ok();
                 }
                 None
             })
@@ -238,6 +240,8 @@ impl Project {
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
+                        settings.path_hyperlink_regexes,
+                        settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
                         Some(completion_tx),
@@ -317,7 +321,8 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
         };
-        let shell_kind = ShellKind::new(&shell, self.path_style(cx).is_windows());
+
+        let is_windows = self.path_style(cx).is_windows();
 
         // Prepare a task for resolving the environment
         let env_task =
@@ -325,6 +330,7 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
+            let shell_kind = ShellKind::new(&shell, is_windows);
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -337,13 +343,16 @@ impl Project {
                         .language_for_name(&toolchain.language_name.0)
                         .await
                         .ok();
-                    let lister = language?.toolchain_lister();
-                    return Some(lister?.activation_script(&toolchain, shell_kind));
+                    let lister = language?.toolchain_lister()?;
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
+                        .ok();
                 }
                 None
             })
             .await
             .unwrap_or_default();
+
             let builder = project
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
@@ -362,6 +371,8 @@ impl Project {
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
+                        settings.path_hyperlink_regexes,
+                        settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
                         None,
@@ -498,13 +509,13 @@ impl Project {
                             None,
                             None,
                         )?;
-                        let mut command = std::process::Command::new(command_template.program);
+                        let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
                         command.envs(command_template.env);
                         Ok(command)
                     }
                     None => {
-                        let mut command = std::process::Command::new(command);
+                        let mut command = new_std_command(command);
                         command.args(args);
                         command.envs(env);
                         if let Some(path) = path {

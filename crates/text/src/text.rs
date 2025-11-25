@@ -54,7 +54,7 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     pub lamport_clock: clock::Lamport,
-    subscriptions: Topic,
+    subscriptions: Topic<usize>,
     edit_id_resolvers: HashMap<clock::Lamport, Vec<oneshot::Sender<()>>>,
     wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
 }
@@ -1619,7 +1619,7 @@ impl Buffer {
         self.edited_ranges_for_edit_ids(&transaction.edit_ids)
     }
 
-    pub fn subscribe(&mut self) -> Subscription {
+    pub fn subscribe(&mut self) -> Subscription<usize> {
         self.subscriptions.subscribe()
     }
 
@@ -2281,12 +2281,20 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev();
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
+            let Some(insertion) = insertion_cursor.item() else {
+                panic!(
+                    "invalid insertion for buffer {}@{:?} with anchor {:?}",
+                    self.remote_id(),
+                    self.version,
+                    anchor
+                );
+            };
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp,
-                "invalid insertion for buffer {} with anchor {:?}",
+                "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
+                self.version,
                 anchor
             );
 
@@ -2439,7 +2447,6 @@ impl BufferSnapshot {
             if offset > self.visible_text.len() {
                 panic!("offset {} is out of bounds", offset)
             }
-            self.visible_text.assert_char_boundary(offset);
             let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
             let fragment = item.unwrap();
             let overshoot = offset - start;
@@ -3122,13 +3129,13 @@ pub trait ToOffset {
 }
 
 impl ToOffset for Point {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    #[track_caller]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         assert!(
             *self <= snapshot.len(),
@@ -3141,24 +3148,28 @@ impl ToOffset for usize {
 }
 
 impl ToOffset for Anchor {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl<T: ToOffset> ToOffset for &T {
+    #[inline]
     fn to_offset(&self, content: &BufferSnapshot) -> usize {
         (*self).to_offset(content)
     }
 }
 
 impl ToOffset for PointUtf16 {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for Unclipped<PointUtf16> {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.unclipped_point_utf16_to_offset(*self)
     }
@@ -3169,24 +3180,28 @@ pub trait ToPoint {
 }
 
 impl ToPoint for Anchor {
+    #[inline]
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPoint for usize {
+    #[inline]
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
 }
 
 impl ToPoint for Point {
+    #[inline]
     fn to_point(&self, _: &BufferSnapshot) -> Point {
         *self
     }
 }
 
 impl ToPoint for Unclipped<PointUtf16> {
+    #[inline]
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.unclipped_point_utf16_to_point(*self)
     }
@@ -3197,24 +3212,28 @@ pub trait ToPointUtf16 {
 }
 
 impl ToPointUtf16 for Anchor {
+    #[inline]
     fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPointUtf16 for usize {
+    #[inline]
     fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPointUtf16 for PointUtf16 {
+    #[inline]
     fn to_point_utf16(&self, _: &BufferSnapshot) -> PointUtf16 {
         *self
     }
 }
 
 impl ToPointUtf16 for Point {
+    #[inline]
     fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
@@ -3225,18 +3244,21 @@ pub trait ToOffsetUtf16 {
 }
 
 impl ToOffsetUtf16 for Anchor {
+    #[inline]
     fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToOffsetUtf16 for usize {
+    #[inline]
     fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
         snapshot.offset_to_offset_utf16(*self)
     }
 }
 
 impl ToOffsetUtf16 for OffsetUtf16 {
+    #[inline]
     fn to_offset_utf16(&self, _snapshot: &BufferSnapshot) -> OffsetUtf16 {
         *self
     }
@@ -3247,24 +3269,28 @@ pub trait FromAnchor {
 }
 
 impl FromAnchor for Anchor {
+    #[inline]
     fn from_anchor(anchor: &Anchor, _snapshot: &BufferSnapshot) -> Self {
         *anchor
     }
 }
 
 impl FromAnchor for Point {
+    #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
     }
 }
 
 impl FromAnchor for PointUtf16 {
+    #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
     }
 }
 
 impl FromAnchor for usize {
+    #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
     }

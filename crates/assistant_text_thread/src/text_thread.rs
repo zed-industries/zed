@@ -7,9 +7,10 @@ use assistant_slash_command::{
 use assistant_slash_commands::FileCommandMetadata;
 use client::{self, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
 use clock::ReplicaId;
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+use cloud_llm_client::{CompletionIntent, UsageLimit};
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
+
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
@@ -667,7 +668,7 @@ pub struct TextThread {
     buffer: Entity<Buffer>,
     pub(crate) parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
-    edits_since_last_parse: language::Subscription,
+    edits_since_last_parse: language::Subscription<usize>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     pub(crate) slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
@@ -1416,6 +1417,7 @@ impl TextThread {
                 role: Role::User,
                 content: vec!["Respond only with OK, nothing else.".into()],
                 cache: false,
+                reasoning_details: None,
             });
             req
         };
@@ -2073,16 +2075,22 @@ impl TextThread {
                                     });
 
                                 match event {
-                                    LanguageModelCompletionEvent::StatusUpdate(status_update) => {
-                                        if let CompletionRequestStatus::UsageUpdated { amount, limit } = status_update {
-                                            this.update_model_request_usage(
-                                                amount as u32,
-                                                limit,
-                                                cx,
-                                            );
-                                        }
+                                    LanguageModelCompletionEvent::Started |
+                                    LanguageModelCompletionEvent::Queued {..} |
+                                    LanguageModelCompletionEvent::ToolUseLimitReached { .. } => {}
+                                    LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
+                                        this.update_model_request_usage(
+                                            amount as u32,
+                                            limit,
+                                            cx,
+                                        );
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
+                                    LanguageModelCompletionEvent::ReasoningDetails(_) => {
+                                        // ReasoningDetails are metadata (signatures, encrypted data, format info)
+                                        // used for request/response validation, not UI content.
+                                        // The displayable thinking text is already handled by the Thinking event.
+                                    }
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
@@ -2306,6 +2314,7 @@ impl TextThread {
                 role: message.role,
                 content: Vec::new(),
                 cache: message.cache.as_ref().is_some_and(|cache| cache.is_anchor),
+                reasoning_details: None,
             };
 
             while let Some(content) = contents.peek() {
@@ -2677,6 +2686,7 @@ impl TextThread {
                 role: Role::User,
                 content: vec![SUMMARIZE_THREAD_PROMPT.into()],
                 cache: false,
+                reasoning_details: None,
             });
 
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can

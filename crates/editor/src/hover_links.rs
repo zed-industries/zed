@@ -116,7 +116,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
+        let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&modifiers, cx);
         if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
@@ -241,8 +241,8 @@ impl Editor {
                         }
                     })
                     .collect();
-                let navigate_task =
-                    self.navigate_to_hover_links(None, links, modifiers.alt, window, cx);
+                let split = Self::is_alt_pressed(&modifiers, cx);
+                let navigate_task = self.navigate_to_hover_links(None, links, split, window, cx);
                 self.select(SelectPhase::End, window, cx);
                 return navigate_task;
             }
@@ -261,7 +261,8 @@ impl Editor {
         );
 
         let navigate_task = if point.as_valid().is_some() {
-            match (modifiers.shift, modifiers.alt) {
+            let split = Self::is_alt_pressed(&modifiers, cx);
+            match (modifiers.shift, split) {
                 (true, true) => {
                     self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
                 }
@@ -737,6 +738,7 @@ mod tests {
     use gpui::Modifiers;
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use multi_buffer::MultiBufferOffset;
     use settings::InlayHintSettingsContent;
     use util::{assert_set_eq, path};
     use workspace::item::Item;
@@ -1066,8 +1068,8 @@ mod tests {
             .clone();
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let anchor_range = snapshot.anchor_before(selection_range.start)
-                ..snapshot.anchor_after(selection_range.end);
+            let anchor_range = snapshot.anchor_before(MultiBufferOffset(selection_range.start))
+                ..snapshot.anchor_after(MultiBufferOffset(selection_range.end));
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.set_pending_anchor_range(anchor_range, crate::SelectMode::Character)
             });
@@ -1121,7 +1123,7 @@ mod tests {
                 }
             "})[0]
             .start;
-        let hint_position = cx.to_lsp(hint_start_offset);
+        let hint_position = cx.to_lsp(MultiBufferOffset(hint_start_offset));
         let target_range = cx.lsp_range(indoc! {"
                 struct «TestStruct»;
 
@@ -1178,8 +1180,8 @@ mod tests {
             .unwrap();
         let midpoint = cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let previous_valid = inlay_range.start.to_display_point(&snapshot);
-            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            let previous_valid = MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
+            let next_valid = MultiBufferOffset(inlay_range.end).to_display_point(&snapshot);
             assert_eq!(previous_valid.row(), next_valid.row());
             assert!(previous_valid.column() < next_valid.column());
             DisplayPoint::new(
@@ -1202,7 +1204,7 @@ mod tests {
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             let expected_highlight = InlayHighlight {
                 inlay: InlayId::Hint(0),
-                inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
+                inlay_position: buffer_snapshot.anchor_after(MultiBufferOffset(inlay_range.start)),
                 range: 0..hint_label.len(),
             };
             assert_set_eq!(actual_highlights, vec![&expected_highlight]);

@@ -15,14 +15,9 @@ pub use settings::{
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{Settings, SettingsLocation, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-
-/// Initializes the language settings.
-pub fn init(cx: &mut App) {
-    AllLanguageSettings::register(cx);
-}
 
 /// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
@@ -50,7 +45,7 @@ pub fn all_language_settings<'a>(
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RegisterSetting)]
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
@@ -59,14 +54,14 @@ pub struct AllLanguageSettings {
     pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WhitespaceMap {
     pub space: SharedString,
     pub tab: SharedString,
 }
 
 /// The settings for a particular language.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LanguageSettings {
     /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
@@ -158,9 +153,11 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
+    pub colorize_brackets: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompletionSettings {
     /// Controls how words are completed.
     /// For large documents, not all words may be fetched for completion.
@@ -212,7 +209,7 @@ pub struct IndentGuideSettings {
     pub background_coloring: settings::IndentGuideBackgroundColoring,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LanguageTaskSettings {
     /// Extra task variables to set for a particular language.
     pub variables: HashMap<String, String>,
@@ -230,7 +227,7 @@ pub struct LanguageTaskSettings {
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PrettierSettings {
     /// Enables or disables formatting with Prettier for a given language.
     pub allowed: bool,
@@ -589,6 +586,7 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 show_completions_on_input: settings.show_completions_on_input.unwrap(),
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
+                colorize_brackets: settings.colorize_brackets.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
                     words_min_length: completions.words_min_length.unwrap() as usize,

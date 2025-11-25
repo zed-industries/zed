@@ -1,9 +1,9 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::{
-    fmt::Display,
+    fmt::{Display, Write as _},
     ops::{Add, Range, Sub},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 use strum::EnumIter;
@@ -11,7 +11,14 @@ use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
 
-// TODO: snippet ordering within file / relative to excerpt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanContextRetrievalRequest {
+    pub excerpt: String,
+    pub excerpt_path: Arc<Path>,
+    pub excerpt_line_range: Range<Line>,
+    pub cursor_file_max_row: Line,
+    pub events: Vec<Arc<Event>>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
@@ -29,7 +36,7 @@ pub struct PredictEditsRequest {
     pub signatures: Vec<Signature>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub referenced_declarations: Vec<ReferencedDeclaration>,
-    pub events: Vec<Event>,
+    pub events: Vec<Arc<Event>>,
     #[serde(default)]
     pub can_collect_data: bool,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -66,8 +73,15 @@ pub enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
     NumLinesUniDiff,
+    OldTextNewText,
     /// Prompt format intended for use via zeta_cli
     OnlySnippets,
+    /// One-sentence instructions used in fine-tuned models
+    Minimal,
+    /// One-sentence instructions + FIM-like template
+    MinimalQwen,
+    /// No instructions, Qwen chat + Seed-Coder 1120 FIM-like template
+    SeedCoder1120,
 }
 
 impl PromptFormat {
@@ -93,6 +107,10 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
             PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
             PromptFormat::NumLinesUniDiff => write!(f, "Numbered Lines / Unified Diff"),
+            PromptFormat::OldTextNewText => write!(f, "Old Text / New Text"),
+            PromptFormat::Minimal => write!(f, "Minimal"),
+            PromptFormat::MinimalQwen => write!(f, "Minimal + Qwen FIM"),
+            PromptFormat::SeedCoder1120 => write!(f, "Seed-Coder 1120"),
         }
     }
 }
@@ -102,10 +120,11 @@ impl std::fmt::Display for PromptFormat {
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
-        path: Option<PathBuf>,
-        old_path: Option<PathBuf>,
+        path: Arc<Path>,
+        old_path: Arc<Path>,
         diff: String,
         predicted: bool,
+        in_open_source_repo: bool,
     },
 }
 
@@ -117,27 +136,43 @@ impl Display for Event {
                 old_path,
                 diff,
                 predicted,
+                ..
             } => {
-                let new_path = path.as_deref().unwrap_or(Path::new("untitled"));
-                let old_path = old_path.as_deref().unwrap_or(new_path);
-
                 if *predicted {
                     write!(
                         f,
                         "// User accepted prediction:\n--- a/{}\n+++ b/{}\n{diff}",
-                        old_path.display(),
-                        new_path.display()
+                        DiffPathFmt(old_path),
+                        DiffPathFmt(path)
                     )
                 } else {
                     write!(
                         f,
                         "--- a/{}\n+++ b/{}\n{diff}",
-                        old_path.display(),
-                        new_path.display()
+                        DiffPathFmt(old_path),
+                        DiffPathFmt(path)
                     )
                 }
             }
         }
+    }
+}
+
+/// always format the Path as a unix path with `/` as the path sep in Diffs
+pub struct DiffPathFmt<'a>(pub &'a Path);
+
+impl<'a> std::fmt::Display for DiffPathFmt<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut is_first = true;
+        for component in self.0.components() {
+            if !is_first {
+                f.write_char('/')?;
+            } else {
+                is_first = false;
+            }
+            write!(f, "{}", component.as_os_str().display())?;
+        }
+        Ok(())
     }
 }
 
@@ -264,10 +299,11 @@ mod tests {
     #[test]
     fn test_event_display() {
         let ev = Event::BufferChange {
-            path: None,
-            old_path: None,
+            path: Path::new("untitled").into(),
+            old_path: Path::new("untitled").into(),
             diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
             predicted: false,
+            in_open_source_repo: true,
         };
         assert_eq!(
             ev.to_string(),
@@ -281,10 +317,11 @@ mod tests {
         );
 
         let ev = Event::BufferChange {
-            path: Some(PathBuf::from("foo/bar.txt")),
-            old_path: Some(PathBuf::from("foo/bar.txt")),
+            path: Path::new("foo/bar.txt").into(),
+            old_path: Path::new("foo/bar.txt").into(),
             diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
             predicted: false,
+            in_open_source_repo: true,
         };
         assert_eq!(
             ev.to_string(),
@@ -298,10 +335,11 @@ mod tests {
         );
 
         let ev = Event::BufferChange {
-            path: Some(PathBuf::from("abc.txt")),
-            old_path: Some(PathBuf::from("123.txt")),
+            path: Path::new("abc.txt").into(),
+            old_path: Path::new("123.txt").into(),
             diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
             predicted: false,
+            in_open_source_repo: true,
         };
         assert_eq!(
             ev.to_string(),
@@ -315,10 +353,11 @@ mod tests {
         );
 
         let ev = Event::BufferChange {
-            path: Some(PathBuf::from("abc.txt")),
-            old_path: Some(PathBuf::from("123.txt")),
+            path: Path::new("abc.txt").into(),
+            old_path: Path::new("123.txt").into(),
             diff: "@@ -1,2 +1,2 @@\n-a\n-b\n".into(),
             predicted: true,
+            in_open_source_repo: true,
         };
         assert_eq!(
             ev.to_string(),

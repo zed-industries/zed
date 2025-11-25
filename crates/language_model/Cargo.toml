@@ -17,7 +17,6 @@ test-support = []
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
-open_router.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 client.workspace = true
@@ -30,8 +29,11 @@ http_client.workspace = true
 icons.workspace = true
 image.workspace = true
 log.workspace = true
+open_ai = { workspace = true, features = ["schemars"] }
+open_router.workspace = true
 parking_lot.workspace = true
 proto.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

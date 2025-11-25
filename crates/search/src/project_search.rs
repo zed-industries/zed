@@ -9,19 +9,17 @@ use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects, VimFlavor,
+    SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
     multibuffer_context_lines,
     scroll::Autoscroll,
-    vim_flavor,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
-    Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
-    Render, SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions,
-    div,
+    Action, AnyElement, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
+    SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
 };
 use language::{Buffer, Language};
 use menu::Confirm;
@@ -498,7 +496,7 @@ impl Item for ProjectSearchView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
@@ -1431,8 +1429,7 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-                let range_to_select = editor.range_for_match(&range_to_select, collapse);
+                let range_to_select = editor.range_for_match(&range_to_select);
                 let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
                     Autoscroll::center()
                 } else {
@@ -1509,10 +1506,9 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
-                    let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
                     let range_to_select = match_ranges
                         .first()
-                        .map(|range| editor.range_for_match(range, collapse));
+                        .map(|range| editor.range_for_match(range));
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
@@ -2453,6 +2449,7 @@ pub mod tests {
     use editor::{DisplayPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, rust_lang};
+    use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
     use settings::{InlayHintSettingsContent, SettingsStore};
@@ -2513,10 +2510,6 @@ pub mod tests {
                     ),
                     (
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
-                        selection_background_color
-                    ),
-                    (
-                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         match_background_color
                     ),
 
@@ -2526,7 +2519,7 @@ pub mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx))),
                 [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
             );
 
@@ -2537,9 +2530,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
@@ -2550,9 +2543,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
@@ -2563,9 +2556,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(0));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
@@ -2576,9 +2569,9 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
@@ -2589,9 +2582,9 @@ pub mod tests {
             .update(cx, |search_view, _, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
-                    search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
             })
@@ -4547,11 +4540,7 @@ pub mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
-            language::init(cx);
-            client::init_settings(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             crate::init(cx);
         });
     }

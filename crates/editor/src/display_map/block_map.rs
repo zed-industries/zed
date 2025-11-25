@@ -11,15 +11,15 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
-    ToOffset, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferOffset, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
+    ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -61,6 +61,14 @@ pub struct BlockSnapshot {
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
+}
+
+impl Deref for BlockSnapshot {
+    type Target = WrapSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.wrap_snapshot
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -453,6 +461,7 @@ pub struct BlockChunks<'a> {
     input_chunk: Chunk<'a>,
     output_row: BlockRow,
     max_output_row: BlockRow,
+    line_count_overflow: RowDelta,
     masked: bool,
 }
 
@@ -1199,7 +1208,7 @@ impl BlockMapWriter<'_> {
 
     pub fn remove_intersecting_replace_blocks(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<usize>>,
+        ranges: impl IntoIterator<Item = Range<MultiBufferOffset>>,
         inclusive: bool,
     ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
@@ -1274,7 +1283,7 @@ impl BlockMapWriter<'_> {
 
     fn blocks_intersecting_buffer_range(
         &self,
-        range: Range<usize>,
+        range: Range<MultiBufferOffset>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
         if range.is_empty() && !inclusive {
@@ -1352,6 +1361,7 @@ impl BlockSnapshot {
             input_chunk: Default::default(),
             transforms: cursor,
             output_row: rows.start,
+            line_count_overflow: RowDelta(0),
             max_output_row,
             masked,
         }
@@ -1743,6 +1753,17 @@ impl<'a> Iterator for BlockChunks<'a> {
             return None;
         }
 
+        if self.line_count_overflow > RowDelta(0) {
+            let lines = self.line_count_overflow.0.min(u128::BITS);
+            self.line_count_overflow.0 -= lines;
+            self.output_row += RowDelta(lines);
+            return Some(Chunk {
+                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..lines as usize]) },
+                chars: 1u128.unbounded_shl(lines).wrapping_sub(1),
+                ..Default::default()
+            });
+        }
+
         let transform = self.transforms.item()?;
         if transform.block.is_some() {
             let block_start = self.transforms.start().0;
@@ -1754,13 +1775,14 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
-            // todo: We need to split the chunk here instead of taking min
-            let line_count = cmp::min(end_in_block - start_in_block, RowDelta(u128::BITS));
-            self.output_row += line_count;
+            let line_count = end_in_block - start_in_block;
+            let lines = RowDelta(line_count.0.min(u128::BITS));
+            self.line_count_overflow = line_count - lines;
+            self.output_row += lines;
 
             return Some(Chunk {
-                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count.0 as usize]) },
-                chars: 1u128.unbounded_shl(line_count.0) - 1,
+                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..lines.0 as usize]) },
+                chars: 1u128.unbounded_shl(lines.0).wrapping_sub(1),
                 ..Default::default()
             });
         }
@@ -1857,18 +1879,14 @@ impl Iterator for BlockRows<'_> {
         }
 
         let transform = self.transforms.item()?;
-        if let Some(block) = transform.block.as_ref() {
-            if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                if matches!(block, Block::FoldedBuffer { .. }) {
-                    Some(RowInfo::default())
-                } else {
-                    Some(self.input_rows.next().unwrap())
-                }
-            } else {
-                Some(RowInfo::default())
-            }
+        if transform.block.as_ref().is_none_or(|block| {
+            block.is_replacement()
+                && self.transforms.start().0 == self.output_row
+                && matches!(block, Block::FoldedBuffer { .. }).not()
+        }) {
+            self.input_rows.next()
         } else {
-            Some(self.input_rows.next().unwrap())
+            Some(RowInfo::default())
         }
     }
 }
@@ -3025,8 +3043,10 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
-                            let offset =
-                                buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Left);
+                            let offset = buffer.clip_offset(
+                                rng.random_range(MultiBufferOffset(0)..=buffer.len()),
+                                Bias::Left,
+                            );
                             let mut min_height = 0;
                             let placement = match rng.random_range(0..3) {
                                 0 => {
@@ -3042,7 +3062,7 @@ mod tests {
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
 
-                            let height = rng.random_range(min_height..5);
+                            let height = rng.random_range(min_height..512);
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,
@@ -3226,7 +3246,7 @@ mod tests {
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
-                0..,
+                MultiBufferOffset(0)..,
                 &wraps_snapshot,
             ));
 

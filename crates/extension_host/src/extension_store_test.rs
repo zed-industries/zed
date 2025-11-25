@@ -1,14 +1,14 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
-    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
-    GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
+    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
@@ -19,7 +19,7 @@ use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use settings::{Settings as _, SettingsStore};
+use settings::SettingsStore;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -31,8 +31,7 @@ use util::test::TempTree;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    // show info logs while we debug the extension_store tests hanging.
-    zlog::init_test_with("info");
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -532,6 +531,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
+    log::info!("Initializing test");
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -555,6 +555,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
+
+    log::info!("Setting up test");
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
@@ -673,6 +675,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             cx,
         )
     });
+
+    log::info!("Flushing events");
 
     // Ensure that debounces fire.
     let mut events = cx.events(&extension_store);
@@ -862,12 +866,9 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        Project::init_settings(cx);
-        ExtensionSettings::register(cx);
-        language::init(cx);
         gpui_tokio::init(cx);
     });
 }

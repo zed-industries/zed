@@ -29,6 +29,8 @@ use settings::SettingsStore;
 use ui::{CommonAnimationExt, prelude::*};
 use util::debug_panic;
 
+use crate::ui::ConfiguredApiCard;
+
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("GitHub Copilot Chat");
@@ -141,9 +143,11 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         };
 
         let Some(copilot) = Copilot::global(cx) else {
-            return Task::ready( Err(anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ).into()));
+            return Task::ready(Err(anyhow!(concat!(
+                "Copilot must be enabled for Copilot Chat to work. ",
+                "Please enable Copilot and try again."
+            ))
+            .into()));
         };
 
         let err = match copilot.read(cx).status() {
@@ -357,6 +361,7 @@ pub fn map_to_language_model_completion_events(
         id: String,
         name: String,
         arguments: String,
+        thought_signature: Option<String>,
     }
 
     struct State {
@@ -414,6 +419,11 @@ pub fn map_to_language_model_completion_events(
                                 if let Some(arguments) = function.arguments.clone() {
                                     entry.arguments.push_str(&arguments);
                                 }
+
+                                if let Some(thought_signature) = function.thought_signature.clone()
+                                {
+                                    entry.thought_signature = Some(thought_signature);
+                                }
                             }
                         }
 
@@ -454,6 +464,7 @@ pub fn map_to_language_model_completion_events(
                                                 is_input_complete: true,
                                                 input,
                                                 raw_input: tool_call.arguments,
+                                                thought_signature: tool_call.thought_signature,
                                             },
                                         )),
                                         Err(error) => Ok(
@@ -545,6 +556,7 @@ impl CopilotResponsesEventMapper {
                     call_id,
                     name,
                     arguments,
+                    thought_signature,
                     ..
                 } => {
                     let mut events = Vec::new();
@@ -556,6 +568,7 @@ impl CopilotResponsesEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: arguments.clone(),
+                                thought_signature,
                             },
                         ))),
                         Err(error) => {
@@ -770,6 +783,7 @@ fn into_copilot_chat(
                                 function: copilot::copilot_chat::FunctionContent {
                                     name: tool_use.name.to_string(),
                                     arguments: serde_json::to_string(&tool_use.input)?,
+                                    thought_signature: tool_use.thought_signature.clone(),
                                 },
                             },
                         });
@@ -944,6 +958,7 @@ fn into_copilot_responses(
                             name: tool_use.name.to_string(),
                             arguments: tool_use.raw_input.clone(),
                             status: None,
+                            thought_signature: tool_use.thought_signature.clone(),
                         });
                     }
                 }
@@ -1116,6 +1131,7 @@ mod tests {
                 name: "do_it".into(),
                 arguments: "{\"x\":1}".into(),
                 status: None,
+                thought_signature: None,
             },
         }];
 
@@ -1141,6 +1157,7 @@ mod tests {
                 name: "do_it".into(),
                 arguments: "{not json}".into(),
                 status: None,
+                thought_signature: None,
             },
         }];
 
@@ -1244,6 +1261,7 @@ mod tests {
                     name: "do_it".into(),
                     arguments: "{}".into(),
                     status: None,
+                    thought_signature: None,
                 },
             },
             responses::StreamEvent::Completed {
@@ -1326,27 +1344,12 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("Authorized")),
-                )
-                .child(
-                    Button::new("sign_out", "Sign Out")
-                        .label_size(LabelSize::Small)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
-                        }),
-                )
+            ConfiguredApiCard::new("Authorized")
+                .button_label("Sign Out")
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
+                })
+                .into_any_element()
         } else {
             let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
 
@@ -1357,37 +1360,49 @@ impl Render for ConfigurationView {
                     Status::Starting { task: _ } => h_flex()
                         .gap_2()
                         .child(loading_icon)
-                        .child(Label::new("Starting Copilot…")),
+                        .child(Label::new("Starting Copilot…"))
+                        .into_any_element(),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
                     } => h_flex()
                         .gap_2()
                         .child(loading_icon)
-                        .child(Label::new("Signing into Copilot…")),
+                        .child(Label::new("Signing into Copilot…"))
+                        .into_any_element(),
                     Status::Error(_) => {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
                             .gap_6()
                             .child(Label::new(LABEL))
                             .child(svg().size_8().path(IconName::CopilotError.path()))
+                            .into_any_element()
                     }
                     _ => {
                         const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
 
-                        v_flex().gap_2().child(Label::new(LABEL)).child(
-                            Button::new("sign_in", "Sign in to use GitHub Copilot")
-                                .full_width()
-                                .style(ButtonStyle::Outlined)
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
-                        )
+                        v_flex()
+                            .gap_2()
+                            .child(Label::new(LABEL))
+                            .child(
+                                Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                    .full_width()
+                                    .style(ButtonStyle::Outlined)
+                                    .icon_color(Color::Muted)
+                                    .icon(IconName::Github)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(|_, window, cx| {
+                                        copilot::initiate_sign_in(window, cx)
+                                    }),
+                            )
+                            .into_any_element()
                     }
                 },
-                None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),
+                None => v_flex()
+                    .gap_6()
+                    .child(Label::new(ERROR_LABEL))
+                    .into_any_element(),
             }
         }
     }

@@ -279,6 +279,13 @@ impl SyntaxSnapshot {
         self.layers.is_empty()
     }
 
+    pub fn root_language(&self) -> Option<Arc<Language>> {
+        match &self.layers.first()?.content {
+            SyntaxLayerContent::Parsed { language, .. } => Some(language.clone()),
+            SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
+
     pub fn update_count(&self) -> usize {
         self.update_count
     }
@@ -587,6 +594,8 @@ impl SyntaxSnapshot {
                     let changed_ranges;
 
                     let mut included_ranges = step.included_ranges;
+                    let is_combined = matches!(step.mode, ParseMode::Combined { .. });
+
                     for range in &mut included_ranges {
                         range.start_byte -= step_start_byte;
                         range.end_byte -= step_start_byte;
@@ -749,16 +758,20 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    let included_sub_ranges: Option<Vec<Range<Anchor>>> =
-                        (included_ranges.len() > 1).then_some(
+                    let included_sub_ranges: Option<Vec<Range<Anchor>>> = if is_combined {
+                        Some(
                             included_ranges
                                 .into_iter()
+                                .filter(|r| r.start_byte < r.end_byte)
                                 .map(|r| {
                                     text.anchor_before(r.start_byte + step_start_byte)
                                         ..text.anchor_after(r.end_byte + step_start_byte)
                                 })
                                 .collect(),
-                        );
+                        )
+                    } else {
+                        None
+                    };
                     SyntaxLayerContent::Parsed {
                         tree,
                         language,

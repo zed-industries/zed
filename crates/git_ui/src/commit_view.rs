@@ -1,11 +1,14 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
-    WeakEntity, Window, actions,
+    Action, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -187,7 +190,7 @@ impl CommitView {
             editor.update(cx, |editor, cx| {
                 editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(vec![0..0]);
+                    selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
                 });
             });
         }
@@ -266,7 +269,7 @@ impl language::File for GitBlob {
     }
 
     fn path(&self) -> &Arc<RelPath> {
-        &self.path.0
+        self.path.as_ref()
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
@@ -415,12 +418,14 @@ fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
         commit.author_name, commit.author_email
     )
     .unwrap();
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     writeln!(
         &mut result,
         "Date:   {}",
-        time_format::format_local_timestamp(
+        time_format::format_localized_timestamp(
             time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
             time::OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )
@@ -494,11 +499,11 @@ impl Item for CommitView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

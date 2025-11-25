@@ -1,6 +1,6 @@
 //! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
 
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, time::Duration};
 
@@ -28,7 +28,7 @@ pub struct EventRequestBody {
 }
 
 impl EventRequestBody {
-    pub fn semver(&self) -> Option<SemanticVersion> {
+    pub fn semver(&self) -> Option<Version> {
         self.app_version.parse().ok()
     }
 }
@@ -123,67 +123,4 @@ pub struct AssistantEventData {
     pub response_latency: Option<Duration>,
     pub error_message: Option<String>,
     pub language_name: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BacktraceFrame {
-    pub ip: usize,
-    pub symbol_addr: usize,
-    pub base: Option<usize>,
-    pub symbols: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HangReport {
-    pub backtrace: Vec<BacktraceFrame>,
-    pub app_version: Option<SemanticVersion>,
-    pub os_name: String,
-    pub os_version: Option<String>,
-    pub architecture: String,
-    /// Identifier unique to each Zed installation (differs for stable, preview, dev)
-    pub installation_id: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct LocationData {
-    pub file: String,
-    pub line: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Panic {
-    /// The name of the thread that panicked
-    pub thread: String,
-    /// The panic message
-    pub payload: String,
-    /// The location of the panic (file, line number)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub location_data: Option<LocationData>,
-    pub backtrace: Vec<String>,
-    /// Zed version number
-    pub app_version: String,
-    /// The Git commit SHA that Zed was built at.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub app_commit_sha: Option<String>,
-    /// Zed release channel (stable, preview, dev)
-    pub release_channel: String,
-    pub target: Option<String>,
-    pub os_name: String,
-    pub os_version: Option<String>,
-    pub architecture: String,
-    /// The time the panic occurred (UNIX millisecond timestamp)
-    pub panicked_on: i64,
-    /// Identifier unique to each system Zed is installed on
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_id: Option<String>,
-    /// Identifier unique to each Zed installation (differs for stable, preview, dev)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub installation_id: Option<String>,
-    /// Identifier unique to each Zed session (differs for each time you open Zed)
-    pub session_id: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct PanicRequest {
-    pub panic: Panic,
 }

@@ -11,8 +11,7 @@ use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter, Focusable, FontFeatures,
-    ParentElement as _, PromptLevel, Render, SemanticVersion, SharedString, Task,
-    TextStyleRefinement, WeakEntity,
+    ParentElement as _, PromptLevel, Render, SharedString, Task, TextStyleRefinement, WeakEntity,
 };
 
 use language::{CursorShape, Point};
@@ -22,8 +21,9 @@ use remote::{
     ConnectionIdentifier, RemoteClient, RemoteConnection, RemoteConnectionOptions, RemotePlatform,
     SshConnectionOptions,
 };
+use semver::Version;
 pub use settings::SshConnection;
-use settings::{ExtendingVec, Settings, WslConnection};
+use settings::{ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -32,6 +32,7 @@ use ui::{
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
+#[derive(RegisterSetting)]
 pub struct SshSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
@@ -479,15 +480,17 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
+        let this = self.clone();
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
+                release_channel,
+                version.clone(),
                 platform.os,
                 platform.arch,
-                release_channel,
-                version,
+                move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
             .await
@@ -495,6 +498,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
                 format!(
                     "Downloading remote server binary (version: {}, os: {}, arch: {})",
                     version
+                        .as_ref()
                         .map(|v| format!("{}", v))
                         .unwrap_or("unknown".to_string()),
                     platform.os,
@@ -504,19 +508,19 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         })
     }
 
-    fn get_download_params(
+    fn get_download_url(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>> {
+    ) -> Task<Result<Option<String>>> {
         cx.spawn(async move |cx| {
             AutoUpdater::get_remote_server_release_url(
-                platform.os,
-                platform.arch,
                 release_channel,
                 version,
+                platform.os,
+                platform.arch,
                 cx,
             )
             .await
@@ -659,7 +663,7 @@ pub async fn open_remote_project(
                             }
                         })
                         .ok();
-                    log::error!("Failed to open project: {e:?}");
+                    log::error!("Failed to open project: {e:#}");
                     let response = window
                         .update(cx, |_, window, cx| {
                             window.prompt(
@@ -668,7 +672,7 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                     RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                                 },
-                                Some(&e.to_string()),
+                                Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
                                 cx,
                             )
@@ -715,7 +719,7 @@ pub async fn open_remote_project(
 
         match opened_items {
             Err(e) => {
-                log::error!("Failed to open project: {e:?}");
+                log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
                         window.prompt(
@@ -724,7 +728,7 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                             },
-                            Some(&e.to_string()),
+                            Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
                             cx,
                         )

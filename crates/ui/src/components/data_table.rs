@@ -641,11 +641,10 @@ pub fn render_table_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(Some));
 
     let mut row = h_flex()
-        .h_full()
         .id(("table_row", row_index))
-        .w_full()
-        .justify_between()
+        .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
+        .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
         .when(!is_striped, |row| {
             row.border_b_1()
                 .border_color(transparent_black())

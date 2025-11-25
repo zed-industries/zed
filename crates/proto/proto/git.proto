@@ -347,6 +347,7 @@ message Commit {
     string message = 6;
     optional CommitOptions options = 7;
     reserved 8;
+    uint64 askpass_id = 9;
 
     message CommitOptions {
         bool amend = 1;
@@ -403,8 +404,9 @@ message Pull {
     reserved 2;
     uint64 repository_id = 3;
     string remote_name = 4;
-    string branch_name = 5;
+    optional string branch_name = 5;
     uint64 askpass_id = 6;
+    bool rebase = 7;
 }
 
 message RemoteMessageResponse {
@@ -528,4 +530,14 @@ message GitCreateWorktree {
     string name = 3;
     string directory = 4;
     optional string commit = 5;
+}
+
+message RunGitHook {
+    enum GitHook {
+        PRE_COMMIT = 0;
+    }
+
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    GitHook hook = 3;
 }

@@ -68,6 +68,18 @@ pub trait AgentServer: Send {
     ) {
     }
 
+    fn default_model(&self, _cx: &mut App) -> Option<agent_client_protocol::ModelId> {
+        None
+    }
+
+    fn set_default_model(
+        &self,
+        _model_id: Option<agent_client_protocol::ModelId>,
+        _fs: Arc<dyn Fs>,
+        _cx: &mut App,
+    ) {
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,
