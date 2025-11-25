@@ -873,6 +873,10 @@ debug = "full"
 lto = false
 codegen-units = 16
 
+[profile.profiling]
+inherits = "release"
+debug = "full"
+
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow" }
 
