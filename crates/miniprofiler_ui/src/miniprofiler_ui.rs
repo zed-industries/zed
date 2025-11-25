@@ -214,7 +214,7 @@ impl ProfilerWindow {
             )
             .child(
                 div()
-                    .min_w(px(60.0))
+                    .min_w(px(70.))
                     .flex_shrink_0()
                     .text_right()
                     .child(format!("{:.1} ms", time_ms)),
