@@ -65,7 +65,7 @@ impl LineWrapper {
                             }
                         } else {
                             if c == ' ' || first_non_whitespace_ix.is_some() {
-                                // 1. For english, the space to as a spliter to wrap, e.g.: `Hello world `,
+                                // 1. For english, the space to as a splitter to wrap, e.g.: `Hello world `,
                                 // 2. For CJK, may not be space separated, e.g.: `Hello world你好世界`,
                                 // when `ix` is `你`, we can also need to wrap here.
                                 last_candidate_ix = ix;
