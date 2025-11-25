@@ -159,6 +159,7 @@ dependencies = [
  "derive_more 0.99.20",
  "editor",
  "env_logger 0.11.8",
+ "eval_utils",
  "fs",
  "futures 0.3.31",
  "git",
@@ -5770,6 +5771,16 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+]
+
+[[package]]
+name = "eval_utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "serde",
+ "smol",
 ]
 
 [[package]]

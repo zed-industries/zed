@@ -59,6 +59,7 @@ members = [
     "crates/zeta2_tools",
     "crates/editor",
     "crates/eval",
+    "crates/eval_utils",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
@@ -288,6 +289,7 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }
