@@ -277,6 +277,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::Five
             | Model::FiveMini
             | Model::FiveNano
+            | Model::FivePointOne
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -674,7 +675,7 @@ pub fn count_open_ai_tokens(
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
             // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
-            Model::Five | Model::FiveMini | Model::FiveNano => {
+            Model::Five | Model::FiveMini | Model::FiveNano | Model::FivePointOne => {
                 tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
             }
         }
