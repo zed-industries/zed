@@ -56,11 +56,7 @@ impl MultiBuffer {
         let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.read(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
-        Some(Anchor::in_buffer(
-            excerpt.id,
-            excerpt.buffer_id,
-            excerpt.range.context.start,
-        ))
+        Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
     }
 
     pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
@@ -263,7 +259,6 @@ impl MultiBuffer {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
-                    buffer_snapshot.remote_id(),
                     buffer_snapshot.anchor_before(&range.primary.start)
                         ..buffer_snapshot.anchor_after(&range.primary.end),
                 );

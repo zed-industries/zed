@@ -4103,7 +4103,9 @@ impl AcpThreadView {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
-                                                        vec![Anchor::MIN..Anchor::MAX],
+                                                        vec![Anchor::min_max_range_for_buffer(
+                                                            buffer.read(cx).remote_id(),
+                                                        )],
                                                         Some(telemetry.clone()),
                                                         cx,
                                                     )
@@ -4124,7 +4126,9 @@ impl AcpThreadView {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
-                                                    Anchor::MIN..Anchor::MAX,
+                                                    Anchor::min_max_range_for_buffer(
+                                                        buffer.read(cx).remote_id(),
+                                                    ),
                                                     Some(telemetry.clone()),
                                                     cx,
                                                 );
@@ -4743,11 +4747,8 @@ impl AcpThreadView {
                     let buffer = multibuffer.as_singleton();
                     if agent_location.buffer.upgrade() == buffer {
                         let excerpt_id = multibuffer.excerpt_ids().first().cloned();
-                        let anchor = editor::Anchor::in_buffer(
-                            excerpt_id.unwrap(),
-                            buffer.unwrap().read(cx).remote_id(),
-                            agent_location.position,
-                        );
+                        let anchor =
+                            editor::Anchor::in_buffer(excerpt_id.unwrap(), agent_location.position);
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
