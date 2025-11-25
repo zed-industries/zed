@@ -347,7 +347,17 @@ pub async fn handle_cli_connection(
                 reuse,
                 env,
                 user_data_dir: _,
+                offline,
             } => {
+                if offline {
+                    cx.update(|cx| {
+                        settings::SettingsStore::update(cx, |store, _cx| {
+                            store.override_global(offline_mode::OfflineModeSetting(true));
+                        });
+                    })
+                    .log_err();
+                }
+
                 if !urls.is_empty() {
                     cx.update(|cx| {
                         match OpenRequest::parse(

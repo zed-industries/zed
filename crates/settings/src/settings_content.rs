@@ -150,6 +150,11 @@ pub struct SettingsContent {
     /// Default: false
     pub vim_mode: Option<bool>,
 
+    /// Whether to enable offline mode, disabling all network features.
+    ///
+    /// Default: false
+    pub offline: Option<bool>,
+
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 

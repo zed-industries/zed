@@ -10897,6 +10897,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "offline_mode"
+version = "0.1.0"
+dependencies = [
+ "settings",
+]
+
+[[package]]
 name = "ollama"
 version = "0.1.0"
 dependencies = [
@@ -21248,6 +21255,7 @@ dependencies = [
  "nc",
  "node_runtime",
  "notifications",
+ "offline_mode",
  "onboarding",
  "outline",
  "outline_panel",

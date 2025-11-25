@@ -63,6 +63,9 @@ struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
     #[arg(short, long)]
     wait: bool,
+    /// Start Zed in offline mode with all network features disabled
+    #[arg(long)]
+    offline: bool,
     /// Add files to the currently open workspace
     #[arg(short, long, overrides_with_all = ["new", "reuse"])]
     add: bool,
@@ -297,6 +300,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_offline_flag() {
+        let args = Args::parse_from(["zed", "--offline"]);
+        assert!(args.offline);
+
+        let args_default = Args::parse_from(["zed"]);
+        assert!(!args_default.offline);
+    }
+
+    #[test]
+    fn test_offline_flag_with_other_args() {
+        let args = Args::parse_from(["zed", "--offline", "--new", "file.txt"]);
+        assert!(args.offline);
+        assert!(args.new);
+        assert_eq!(args.paths_with_position, vec!["file.txt"]);
     }
 }
 
@@ -542,6 +562,7 @@ fn main() -> Result<()> {
                     reuse: args.reuse,
                     env,
                     user_data_dir: user_data_dir_for_thread,
+                    offline: args.offline,
                 })?;
 
                 while let Ok(response) = rx.recv() {
