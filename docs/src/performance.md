@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 How to use our internal tools to profile and keep Zed fast.
 
 # Flamechart/CPU profiling
@@ -10,6 +11,8 @@ opens an interactive profile in the browser. See its README on how to install an
 Get a profile of the zed foreground executor and background executors. Check if
 anything is blocking the foreground too long or taking too much (clock) time in
 the background.
+Get a profile of the zed foreground executor
+>>>>>>> c66025a2f7 (add performance doc from channel to docs)
 
 The profiler always runs in the background. You can save a trace from its UI or look at the results live.
 
