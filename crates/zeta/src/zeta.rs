@@ -638,7 +638,9 @@ impl Zeta {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                self.refresh_prediction_from_diagnostics(project, cx);
+                if cx.has_flag::<Zeta2FeatureFlag>() {
+                    self.refresh_prediction_from_diagnostics(project, cx);
+                }
             }
             _ => (),
         }
@@ -1178,7 +1180,13 @@ impl Zeta {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        self.request_prediction_internal(project.clone(), active_buffer.clone(), position, true, cx)
+        self.request_prediction_internal(
+            project.clone(),
+            active_buffer.clone(),
+            position,
+            cx.has_flag::<Zeta2FeatureFlag>(),
+            cx,
+        )
     }
 
     fn request_prediction_internal(
