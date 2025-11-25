@@ -1,7 +1,5 @@
 # Channels
 
-At Zed we believe that great things are built by great people working together. We have designed Zed to help every individual work faster and to help teams of people work together more effectively.
-
 ## Overview
 
 Channels provide a way to streamline collaborating for software engineers in many ways, but particularly:

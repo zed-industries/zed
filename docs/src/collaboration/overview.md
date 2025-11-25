@@ -5,7 +5,7 @@ We have designed Zed to help individuals work faster and help teams of people wo
 Zed has two mechanisms for collaborating:
 
 1. [Channels](./channels.md): Ongoing project rooms where team members can share projects, collaborate on code, and maintain ambient awareness of what everyone is working on.
-1. [Private Calls](./private-calls.md): 1:1 private collaboration with those in your contacts.
+1. [Private Calls](./private-calls.md): Private collaboration with those in your contacts list.
 
 You will need to [sign in](../authentication.md#signing-in) in order to begin using Zed's collaboration features.
 
