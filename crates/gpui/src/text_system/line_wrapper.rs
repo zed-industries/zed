@@ -417,14 +417,15 @@ mod tests {
         assert_eq!(
             wrapper
                 .wrap_line(
-                    &[LineFragment::text("aa bbb cccc ddddd eeee         ")],
+                    &[LineFragment::text("aa bbb cccc ddddd eeeeee    ")],
                     px(72.)
                 )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
                 Boundary::new(12, 0),
-                Boundary::new(18, 0)
+                Boundary::new(18, 0),
+                Boundary::new(25, 0),
             ]
         );
 
@@ -460,11 +461,7 @@ mod tests {
                     px(72.)
                 )
                 .collect::<Vec<_>>(),
-            &[
-                Boundary::new(5, 0),
-                Boundary::new(9, 0),
-                Boundary::new(11, 0)
-            ],
+            &[Boundary::new(5, 0), Boundary::new(10, 0)],
         );
 
         // Test with element at the beginning and text afterward
