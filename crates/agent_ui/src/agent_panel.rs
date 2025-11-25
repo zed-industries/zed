@@ -828,6 +828,7 @@ impl AgentPanel {
                 window,
                 cx,
             ),
+            true,
             window,
             cx,
         );
@@ -923,7 +924,12 @@ impl AgentPanel {
                     )
                 });
 
-                this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
+                this.set_active_view(
+                    ActiveView::ExternalAgentThread { thread_view },
+                    !loading,
+                    window,
+                    cx,
+                );
             })
         })
         .detach_and_log_err(cx);
@@ -965,10 +971,10 @@ impl AgentPanel {
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.active_view, ActiveView::History) {
             if let Some(previous_view) = self.previous_view.take() {
-                self.set_active_view(previous_view, window, cx);
+                self.set_active_view(previous_view, true, window, cx);
             }
         } else {
-            self.set_active_view(ActiveView::History, window, cx);
+            self.set_active_view(ActiveView::History, true, window, cx);
         }
         cx.notify();
     }
@@ -1024,6 +1030,7 @@ impl AgentPanel {
                 window,
                 cx,
             ),
+            true,
             window,
             cx,
         );
@@ -1169,7 +1176,7 @@ impl AgentPanel {
         let context_server_store = self.project.read(cx).context_server_store();
         let fs = self.fs.clone();
 
-        self.set_active_view(ActiveView::Configuration, window, cx);
+        self.set_active_view(ActiveView::Configuration, true, window, cx);
         self.configuration = Some(cx.new(|cx| {
             AgentConfiguration::new(
                 fs,
@@ -1286,6 +1293,7 @@ impl AgentPanel {
     fn set_active_view(
         &mut self,
         new_view: ActiveView,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1324,7 +1332,9 @@ impl AgentPanel {
             self.active_view = new_view;
         }
 
-        self.focus_handle(cx).focus(window);
+        if focus {
+            self.focus_handle(cx).focus(window);
+        }
     }
 
     fn populate_recently_opened_menu_section(
