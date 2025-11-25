@@ -5859,6 +5859,7 @@ dependencies = [
  "serde",
  "serde_json",
  "task",
+ "tempfile",
  "toml 0.8.23",
  "url",
  "util",
