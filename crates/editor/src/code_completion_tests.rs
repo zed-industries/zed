@@ -267,10 +267,10 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         })
         .collect();
 
-    // Case 1: User types just major and minor version
+    // Case 1: User types just the major and minor version
     let matches =
         filter_and_sort_matches("10.4.", &completions, SnippetSortOrder::default(), cx).await;
-    // Versions are ordered by recency
+    // Versions are ordered by recency (latest first)
     let expected_versions = [
         "10.4.112",
         "10.4.22",
@@ -288,13 +288,13 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         assert_eq!(match_item.string.as_ref() as &str, *expected);
     }
 
-    // Case 2: User types major, minor and patch version
+    // Case 2: User types the major, minor, and patch version
     let matches =
         filter_and_sort_matches("10.4.2", &completions, SnippetSortOrder::default(), cx).await;
     let expected_versions = [
-        // Exact version comes first
+        // Exact match comes first
         "10.4.2",
-        // Ordered by recency with exact major, minor and patch versions
+        // Ordered by recency with exact major, minor, and patch versions
         "10.4.22",
         "10.4.22-rc.1",
         "10.4.22-beta.1",
@@ -303,9 +303,9 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         "10.4.21",
         "10.4.20+20210327",
         "10.4.20",
-        // Versions with non exact patch version are ordered by fuzzy score
-        // Higher fuzzy score than 112 patch version since 2, comes before than
-        // of 112 version
+        // Versions with non-exact patch versions are ordered by fuzzy score
+        // Higher fuzzy score than 112 patch version since "2" appears before "1"
+        // in "12", making it rank higher than "112"
         "10.4.12",
         "10.4.112",
     ];
