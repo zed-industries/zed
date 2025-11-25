@@ -25,7 +25,7 @@ After joining a channel, you can `Share` a project with the other people there. 
 
 When you are editing someone else’s project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors. This is extremely powerful for pairing, as one of you can be implementing the current method while the other is reading and researching the correct solution to the next problem. And, because you have your own config running, it feels like you’re using your own machine.
 
-See [our collaboration documentation](../private-calls.md) for more details about how this works.
+See [our collaboration documentation](./private-calls.md) for more details about how this works.
 
 ## Notes
 
