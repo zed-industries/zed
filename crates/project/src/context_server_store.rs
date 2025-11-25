@@ -122,7 +122,7 @@ impl ContextServerConfiguration {
         cx: &AsyncApp,
     ) -> Option<Self> {
         match settings {
-            ContextServerSettings::Custom {
+            ContextServerSettings::Stdio {
                 enabled: _,
                 command,
             } => Some(ContextServerConfiguration::Custom { command }),
@@ -199,12 +199,12 @@ impl ContextServerStore {
         )
     }
 
-    /// Returns all configured context server ids, regardless of enabled state.
+    /// Returns all configured context server ids, excluding the ones that are disabled
     pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
         self.context_server_settings
-            .keys()
-            .cloned()
-            .map(ContextServerId)
+            .iter()
+            .filter(|(_, settings)| settings.enabled())
+            .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
     }
 
@@ -1003,7 +1003,7 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        settings::ContextServerSettingsContent::Custom {
+                        settings::ContextServerSettingsContent::Stdio {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
@@ -1044,7 +1044,7 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        settings::ContextServerSettingsContent::Custom {
+                        settings::ContextServerSettingsContent::Stdio {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
@@ -1127,7 +1127,7 @@ mod tests {
             json!({"code.rs": ""}),
             vec![(
                 SERVER_1_ID.into(),
-                ContextServerSettings::Custom {
+                ContextServerSettings::Stdio {
                     enabled: true,
                     command: ContextServerCommand {
                         path: "somebinary".into(),
@@ -1180,7 +1180,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Custom {
+                    settings::ContextServerSettingsContent::Stdio {
                         enabled: false,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
@@ -1209,7 +1209,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    settings::ContextServerSettingsContent::Custom {
+                    settings::ContextServerSettingsContent::Stdio {
                         enabled: true,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
@@ -1328,7 +1328,7 @@ mod tests {
     }
 
     fn dummy_server_settings() -> ContextServerSettings {
-        ContextServerSettings::Custom {
+        ContextServerSettings::Stdio {
             enabled: true,
             command: ContextServerCommand {
                 path: "somebinary".into(),

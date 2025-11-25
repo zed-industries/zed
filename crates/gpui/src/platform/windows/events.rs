@@ -138,7 +138,7 @@ impl WindowsWindowInner {
             // monitor is invalid, we do nothing.
             if !monitor.is_invalid() && lock.display.handle != monitor {
                 // we will get the same monitor if we only have one
-                lock.display = WindowsDisplay::new_with_handle(monitor);
+                lock.display = WindowsDisplay::new_with_handle(monitor).log_err()?;
             }
         }
         if let Some(mut callback) = lock.callbacks.moved.take() {
@@ -829,7 +829,7 @@ impl WindowsWindowInner {
             log::error!("No monitor detected!");
             return None;
         }
-        let new_display = WindowsDisplay::new_with_handle(new_monitor);
+        let new_display = WindowsDisplay::new_with_handle(new_monitor).log_err()?;
         self.state.borrow_mut().display = new_display;
         Some(0)
     }

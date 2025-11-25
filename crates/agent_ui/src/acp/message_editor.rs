@@ -15,8 +15,9 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, ToOffset,
-    actions::Paste, code_context_menus::CodeContextMenu, scroll::Autoscroll,
+    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset,
+    MultiBufferSnapshot, ToOffset, actions::Paste, code_context_menus::CodeContextMenu,
+    scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
@@ -133,18 +134,16 @@ impl MessageEditor {
             editor.register_addon(MessageEditorAddon::new());
             editor
         });
-        let mention_set = cx.new(|cx| {
+        let mention_set = cx.new(|_cx| {
             MentionSet::new(
-                editor.clone(),
                 project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
-                window,
-                cx,
             )
         });
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             cx.entity(),
+            editor.downgrade(),
             mention_set.clone(),
             history_store.clone(),
             prompt_store.clone(),
@@ -166,14 +165,18 @@ impl MessageEditor {
         let mut has_hint = false;
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.subscribe(&editor, {
-            move |this, editor, event, cx| {
+        subscriptions.push(cx.subscribe_in(&editor, window, {
+            move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event
                     && !editor.read(cx).read_only(cx)
                 {
                     editor.update(cx, |editor, cx| {
+                        let snapshot = editor.snapshot(window, cx);
+                        this.mention_set
+                            .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
+
                         let new_hints = this
-                            .command_hint(editor.buffer(), cx)
+                            .command_hint(snapshot.buffer())
                             .into_iter()
                             .collect::<Vec<_>>();
                         let has_new_hint = !new_hints.is_empty();
@@ -206,13 +209,12 @@ impl MessageEditor {
         }
     }
 
-    fn command_hint(&self, buffer: &Entity<MultiBuffer>, cx: &App) -> Option<Inlay> {
+    fn command_hint(&self, snapshot: &MultiBufferSnapshot) -> Option<Inlay> {
         let available_commands = self.available_commands.borrow();
         if available_commands.is_empty() {
             return None;
         }
 
-        let snapshot = buffer.read(cx).snapshot(cx);
         let parsed_command = SlashCommandCompletion::try_parse(&snapshot.text(), 0)?;
         if parsed_command.argument.is_some() {
             return None;
@@ -286,6 +288,7 @@ impl MessageEditor {
                     content_len,
                     uri,
                     supports_images,
+                    self.editor.clone(),
                     &workspace,
                     window,
                     cx,
@@ -480,7 +483,7 @@ impl MessageEditor {
             editor.remove_creases(
                 self.mention_set.update(cx, |mention_set, _cx| {
                     mention_set
-                        .remove_all()
+                        .clear()
                         .map(|(crease_id, _)| crease_id)
                         .collect::<Vec<_>>()
                 }),
@@ -628,6 +631,7 @@ impl MessageEditor {
                     content_len,
                     uri,
                     supports_images,
+                    self.editor.clone(),
                     &workspace,
                     window,
                     cx,
@@ -659,6 +663,7 @@ impl MessageEditor {
             PromptCompletionProvider::<Entity<MessageEditor>>::completion_for_action(
                 PromptContextAction::AddSelections,
                 anchor..anchor,
+                self.editor.downgrade(),
                 self.mention_set.downgrade(),
                 &workspace,
                 cx,
