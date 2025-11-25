@@ -190,9 +190,8 @@ pub struct SessionSettingsContent {
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
-#[serde(tag = "source", rename_all = "snake_case")]
+#[serde(untagged, rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
-    #[serde(alias = "custom")]
     Stdio {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
