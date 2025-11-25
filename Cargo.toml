@@ -147,7 +147,6 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
-    "crates/semantic_version",
     "crates/session",
     "crates/settings",
     "crates/settings_json",
@@ -165,7 +164,6 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
-    "crates/sweep_ai",
     "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
@@ -203,7 +201,6 @@ members = [
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/zeta",
-    "crates/zeta2",
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
@@ -382,7 +379,6 @@ rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_json = { path = "crates/settings_json" }
@@ -399,7 +395,6 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
-sweep_ai = { path = "crates/sweep_ai" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
@@ -437,7 +432,6 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
-zeta2 = { path = "crates/zeta2" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
 
@@ -463,7 +457,7 @@ async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
-async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
+async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
     "hardcoded-credentials",
@@ -609,7 +603,6 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
-ref-cast = "1.0.24"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
@@ -632,7 +625,7 @@ rustls-platform-verifier = "0.5.0"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
-semver = "1.0"
+semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
@@ -643,7 +636,6 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
-serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
@@ -721,6 +713,7 @@ wasmtime = { version = "29", default-features = false, features = [
     "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
+wax = "0.6"
 which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
@@ -784,6 +777,7 @@ features = [
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -847,7 +841,6 @@ refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
 rich_text = { codegen-units = 1 }
-semantic_version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }

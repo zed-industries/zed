@@ -1,7 +1,7 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
-use crate::{Oid, SHORT_SHA_LENGTH};
+use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -482,6 +482,12 @@ pub trait GitRepository: Send + Sync {
     fn unstage_paths(
         &self,
         paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn run_hook(
+        &self,
+        hook: RunHook,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1643,6 +1649,7 @@ impl GitRepository for RealGitRepository {
                 .args(["commit", "--quiet", "-m"])
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
+                .arg("--no-verify")
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
@@ -2037,6 +2044,26 @@ impl GitRepository for RealGitRepository {
             })
             .boxed()
     }
+
+    fn run_hook(
+        &self,
+        hook: RunHook,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor)
+                    .envs(HashMap::clone(&env));
+                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                    .await?;
+                Ok(())
+            })
+            .boxed()
+    }
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
@@ -2045,7 +2072,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
-        OsString::from("--find-renames"),
+        OsString::from("--no-renames"),
         OsString::from("-z"),
     ];
     args.extend(

@@ -21,7 +21,7 @@ use futures::{FutureExt as _, io::BufReader};
 use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::{
     env,
     net::Ipv4Addr,
@@ -36,8 +36,8 @@ use util::{
 };
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 7, 0);
+pub const MIN_VERSION: Version = Version::new(0, 6, 0);
+pub const MAX_VERSION: Version = Version::new(0, 7, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -990,6 +990,9 @@ impl ExtensionImports for WasmState {
                                 command: None,
                                 settings: Some(settings),
                             })?),
+                            project::project_settings::ContextServerSettings::Http { .. } => {
+                                bail!("remote context server settings not supported in 0.6.0")
+                            }
                         }
                     }
                     _ => {

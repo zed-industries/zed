@@ -1,18 +1,39 @@
+use crate::{MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16};
+
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
-use language::{OffsetUtf16, Point, TextDimension};
+use language::Point;
 use std::{
     cmp::Ordering,
-    ops::{Range, Sub},
+    ops::{AddAssign, Range, Sub},
 };
 use sum_tree::Bias;
 use text::BufferId;
 
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Anchor {
+    /// Invariant: If buffer id is `None`, excerpt id must be `ExcerptId::min()` or `ExcerptId::max()`.
     pub buffer_id: Option<BufferId>,
     pub excerpt_id: ExcerptId,
     pub text_anchor: text::Anchor,
     pub diff_base_anchor: Option<text::Anchor>,
+}
+
+impl std::fmt::Debug for Anchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if *self == Self::min() {
+            return f.write_str("Anchor::MIN");
+        }
+        if *self == Self::max() {
+            return f.write_str("Anchor::MAX");
+        }
+
+        f.debug_struct("Anchor")
+            .field("buffer_id", &self.buffer_id)
+            .field("excerpt_id", &self.excerpt_id)
+            .field("text_anchor", &self.text_anchor)
+            .field("diff_base_anchor", &self.diff_base_anchor)
+            .finish()
+    }
 }
 
 impl Anchor {
@@ -28,6 +49,10 @@ impl Anchor {
         buffer_id: BufferId,
         text_anchor: text::Anchor,
     ) -> Self {
+        debug_assert!(
+            text_anchor.buffer_id.is_none_or(|id| id == buffer_id),
+            "buffer id does not match the one in the text anchor: {buffer_id:?} {text_anchor:?}",
+        );
         Self {
             buffer_id: Some(buffer_id),
             excerpt_id,
@@ -75,7 +100,12 @@ impl Anchor {
         if excerpt_id_cmp.is_ne() {
             return excerpt_id_cmp;
         }
-        if self_excerpt_id == ExcerptId::min() || self_excerpt_id == ExcerptId::max() {
+        if self_excerpt_id == ExcerptId::max()
+            && self.text_anchor == text::Anchor::MAX
+            && self.text_anchor == text::Anchor::MAX
+            && self.diff_base_anchor.is_none()
+            && other.diff_base_anchor.is_none()
+        {
             return Ordering::Equal;
         }
         if let Some(excerpt) = snapshot.excerpt(self_excerpt_id) {
@@ -117,8 +147,8 @@ impl Anchor {
             && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
         {
             return Self {
-                buffer_id: self.buffer_id,
-                excerpt_id: self.excerpt_id,
+                buffer_id: Some(excerpt.buffer_id),
+                excerpt_id: excerpt.id,
                 text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
                 diff_base_anchor: self.diff_base_anchor.map(|a| {
                     if let Some(base_text) = snapshot
@@ -141,8 +171,8 @@ impl Anchor {
             && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
         {
             return Self {
-                buffer_id: self.buffer_id,
-                excerpt_id: self.excerpt_id,
+                buffer_id: Some(excerpt.buffer_id),
+                excerpt_id: excerpt.id,
                 text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
                 diff_base_anchor: self.diff_base_anchor.map(|a| {
                     if let Some(base_text) = snapshot
@@ -162,14 +192,18 @@ impl Anchor {
 
     pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = D>,
+        D: MultiBufferDimension
+            + Ord
+            + Sub<Output = D::TextDimension>
+            + AddAssign<D::TextDimension>,
+        D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         snapshot.summary_for_anchor(self)
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        if *self == Anchor::min() || *self == Anchor::max() {
-            true
+        if *self == Anchor::min() || self.excerpt_id == ExcerptId::max() {
+            !snapshot.is_empty()
         } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
             (self.text_anchor == excerpt.range.context.start
                 || self.text_anchor == excerpt.range.context.end
@@ -182,10 +216,10 @@ impl Anchor {
 }
 
 impl ToOffset for Anchor {
-    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         self.summary(snapshot)
     }
-    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
         self.summary(snapshot)
     }
 }
@@ -203,7 +237,7 @@ pub trait AnchorRangeExt {
     fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
     fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
-    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
+    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferOffset>;
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
 }
 
@@ -223,7 +257,7 @@ impl AnchorRangeExt for Range<Anchor> {
         self.end.cmp(&other.start, buffer).is_ge() && self.start.cmp(&other.end, buffer).is_le()
     }
 
-    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {
+    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferOffset> {
         self.start.to_offset(content)..self.end.to_offset(content)
     }
 
@@ -231,6 +265,3 @@ impl AnchorRangeExt for Range<Anchor> {
         self.start.to_point(content)..self.end.to_point(content)
     }
 }
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Ord, PartialOrd)]
-pub struct Offset(pub usize);

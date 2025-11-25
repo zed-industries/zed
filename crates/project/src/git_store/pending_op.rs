@@ -11,6 +11,14 @@ pub enum GitStatus {
     Unchanged,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobStatus {
+    Running,
+    Finished,
+    Skipped,
+    Error,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingOps {
     pub repo_path: RepoPath,
@@ -21,7 +29,7 @@ pub struct PendingOps {
 pub struct PendingOp {
     pub id: PendingOpId,
     pub git_status: GitStatus,
-    pub finished: bool,
+    pub job_status: JobStatus,
 }
 
 #[derive(Clone, Debug)]
@@ -106,7 +114,7 @@ impl PendingOps {
     /// File is staged if the last job is finished and has status Staged.
     pub fn staged(&self) -> bool {
         if let Some(last) = self.ops.last() {
-            if last.git_status == GitStatus::Staged && last.finished {
+            if last.git_status == GitStatus::Staged && last.job_status == JobStatus::Finished {
                 return true;
             }
         }
@@ -116,10 +124,24 @@ impl PendingOps {
     /// File is staged if the last job is not finished and has status Staged.
     pub fn staging(&self) -> bool {
         if let Some(last) = self.ops.last() {
-            if last.git_status == GitStatus::Staged && !last.finished {
+            if last.git_status == GitStatus::Staged && last.job_status != JobStatus::Finished {
                 return true;
             }
         }
         false
+    }
+}
+
+impl PendingOp {
+    pub fn running(&self) -> bool {
+        self.job_status == JobStatus::Running
+    }
+
+    pub fn finished(&self) -> bool {
+        matches!(self.job_status, JobStatus::Finished | JobStatus::Skipped)
+    }
+
+    pub fn error(&self) -> bool {
+        self.job_status == JobStatus::Error
     }
 }

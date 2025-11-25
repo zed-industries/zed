@@ -55,6 +55,7 @@ remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true
 rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -92,6 +93,7 @@ node_runtime = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 prompt_store.workspace = true

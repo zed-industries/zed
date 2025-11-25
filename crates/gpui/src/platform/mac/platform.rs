@@ -9,8 +9,7 @@ use crate::{
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
-    hash,
+    PlatformWindow, Result, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -47,20 +46,23 @@ use objc::{
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
+use semver::Version;
 use std::{
     cell::Cell,
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
-    process::Command,
     ptr,
     rc::Rc,
     slice, str,
     sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
-use util::ResultExt;
+use util::{
+    ResultExt,
+    command::{new_smol_command, new_std_command},
+};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -387,7 +389,7 @@ impl MacPlatform {
                                     ns_string(key_to_native(keystroke.key()).as_ref()),
                                 )
                                 .autorelease();
-                            if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
+                            if Self::os_version() >= Version::new(12, 0, 0) {
                                 let _: () = msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
                             }
                             item.setKeyEquivalentModifierMask_(mask);
@@ -450,15 +452,15 @@ impl MacPlatform {
         }
     }
 
-    fn os_version() -> SemanticVersion {
+    fn os_version() -> Version {
         let version = unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             process_info.operatingSystemVersion()
         };
-        SemanticVersion::new(
-            version.majorVersion as usize,
-            version.minorVersion as usize,
-            version.patchVersion as usize,
+        Version::new(
+            version.majorVersion,
+            version.minorVersion,
+            version.patchVersion,
         )
     }
 }
@@ -552,7 +554,7 @@ impl Platform for MacPlatform {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/bin/bash")
+        let restart_process = new_std_command("/bin/bash")
             .arg("-c")
             .arg(script)
             .arg(app_pid)
@@ -666,7 +668,7 @@ impl Platform for MacPlatform {
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
-        if Self::os_version() < SemanticVersion::new(12, 0, 0) {
+        if Self::os_version() < Version::new(12, 0, 0) {
             return Task::ready(Err(anyhow!(
                 "macOS 12.0 or later is required to register URL schemes"
             )));
@@ -810,7 +812,7 @@ impl Platform for MacPlatform {
                                     // to break that use-case than breaking `a.sql`.
                                     if chunks.len() == 3
                                         && chunks[1].starts_with(chunks[2])
-                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                        && Self::os_version() >= Version::new(15, 0, 0)
                                     {
                                         let new_filename = OsStr::from_bytes(
                                             &filename.as_bytes()
@@ -867,7 +869,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = smol::process::Command::new("open")
+                if let Some(mut child) = new_smol_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -1133,32 +1135,7 @@ impl Platform for MacPlatform {
                 }
             }
 
-            // Next, check for URL flavors (including file URLs). Some tools only provide a URL
-            // with no plain text entry.
-            {
-                // Try the modern UTType identifiers first.
-                let file_url_type: id = ns_string("public.file-url");
-                let url_type: id = ns_string("public.url");
-
-                let url_data = if msg_send![types, containsObject: file_url_type] {
-                    pasteboard.dataForType(file_url_type)
-                } else if msg_send![types, containsObject: url_type] {
-                    pasteboard.dataForType(url_type)
-                } else {
-                    nil
-                };
-
-                if url_data != nil && !url_data.bytes().is_null() {
-                    let bytes = slice::from_raw_parts(
-                        url_data.bytes() as *mut u8,
-                        url_data.length() as usize,
-                    );
-
-                    return Some(self.read_string_from_clipboard(&state, bytes));
-                }
-            }
-
-            // If it wasn't a string or URL, try the various supported image types.
+            // If it wasn't a string, try the various supported image types.
             for format in ImageFormat::iter() {
                 if let Some(item) = try_clipboard_image(pasteboard, format) {
                     return Some(item);
@@ -1166,7 +1143,7 @@ impl Platform for MacPlatform {
             }
         }
 
-        // If it wasn't a string, URL, or a supported image type, give up.
+        // If it wasn't a string or a supported image type, give up.
         None
     }
 
@@ -1738,40 +1715,6 @@ mod tests {
         assert_eq!(
             platform.read_from_clipboard(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
-        );
-    }
-
-    #[test]
-    fn test_file_url_reads_as_url_string() {
-        let platform = build_platform();
-
-        // Create a file URL for an arbitrary test path and write it to the pasteboard.
-        // This path does not need to exist; we only validate URL→path conversion.
-        let mock_path = "/tmp/zed-clipboard-file-url-test";
-        unsafe {
-            // Build an NSURL from the file path
-            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(mock_path)];
-            let abs: id = msg_send![url, absoluteString];
-
-            // Encode the URL string as UTF-8 bytes
-            let len: usize = msg_send![abs, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-            let bytes_ptr = abs.UTF8String() as *const u8;
-            let data = NSData::dataWithBytes_length_(nil, bytes_ptr as *const c_void, len as u64);
-
-            // Write as public.file-url to the unique pasteboard
-            let file_url_type: id = ns_string("public.file-url");
-            platform
-                .0
-                .lock()
-                .pasteboard
-                .setData_forType(data, file_url_type);
-        }
-
-        // Ensure the clipboard read returns the URL string, not a converted path
-        let expected_url = format!("file://{}", mock_path);
-        assert_eq!(
-            platform.read_from_clipboard(),
-            Some(ClipboardItem::new_string(expected_url))
         );
     }
 
