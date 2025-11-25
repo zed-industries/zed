@@ -163,7 +163,6 @@ zed_env_vars.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
-is_executable = "=1.0.5"
 chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
