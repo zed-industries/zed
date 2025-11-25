@@ -2,7 +2,8 @@ use collections::{BTreeMap, HashMap};
 use gpui::HighlightStyle;
 use language::Chunk;
 use multi_buffer::{
-    BufferOffset, MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _,
+    AnchorRangeExt, BufferOffset, MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot,
+    ToOffset as _,
 };
 use std::{
     cmp,
@@ -11,9 +12,9 @@ use std::{
     sync::Arc,
     vec,
 };
-use text::{BufferId, BufferSnapshot};
+use text::BufferId;
 
-use crate::display_map::{HighlightKey, PositionedSemanticTokens, TextHighlights};
+use crate::display_map::{HighlightKey, SemanticTokenHighlight, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -24,7 +25,7 @@ pub struct CustomHighlightsChunks<'a> {
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
-    semantic_tokens: Option<&'a HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
+    semantic_token_highlights: Option<&'a HashMap<BufferId, Arc<[SemanticTokenHighlight]>>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -39,7 +40,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<MultiBufferOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        semantic_tokens: Option<&'a HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
+        semantic_token_highlights: Option<&'a HashMap<BufferId, Arc<[SemanticTokenHighlight]>>>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -50,12 +51,12 @@ impl<'a> CustomHighlightsChunks<'a> {
             highlight_endpoints: create_highlight_endpoints(
                 &range,
                 text_highlights,
-                semantic_tokens,
+                semantic_token_highlights,
                 multibuffer_snapshot,
             ),
             active_highlights: Default::default(),
             multibuffer_snapshot,
-            semantic_tokens,
+            semantic_token_highlights,
         }
     }
 
@@ -63,7 +64,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         self.highlight_endpoints = create_highlight_endpoints(
             &new_range,
             self.text_highlights,
-            self.semantic_tokens,
+            self.semantic_token_highlights,
             self.multibuffer_snapshot,
         );
         self.offset = new_range.start;
@@ -76,7 +77,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<MultiBufferOffset>,
     text_highlights: Option<&TextHighlights>,
-    semantic_tokens: Option<&HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
+    semantic_token_highlights: Option<&HashMap<BufferId, Arc<[SemanticTokenHighlight]>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -114,7 +115,7 @@ fn create_highlight_endpoints(
             }
         }
     }
-    if let Some(tokens) = semantic_tokens {
+    if let Some(tokens) = semantic_token_highlights {
         for mut excerpt in buffer.excerpts_for_range(range.clone()) {
             let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
                 continue;
@@ -124,9 +125,8 @@ fn create_highlight_endpoints(
             let buffer_range = excerpt
                 .buffer()
                 .range_to_version(buffer_range.start.0..buffer_range.end.0, &tokens.version);
-            for token in tokens.tokens_in_range(buffer_range) {
-                let token_range =
-                    range_from_version(excerpt.buffer(), token.range.clone(), &tokens.version);
+            for token in tokens_in_range(&tokens, buffer_range) {
+                let token_range = token.range.to_offset(buffer);
                 let token_range = BufferOffset(token_range.start)..BufferOffset(token_range.end);
                 if !excerpt.contains_partial_buffer_range(token_range.clone()) {
                     continue;
@@ -156,36 +156,19 @@ fn create_highlight_endpoints(
     highlight_endpoints.into_iter().peekable()
 }
 
-// TODO kb why cannot we use the latest version always?
-pub fn range_from_version(
-    buffer: &BufferSnapshot,
+fn tokens_in_range(
+    all_tokens: &[SemanticTokenHighlight],
     range: Range<usize>,
-    version: &clock::Global,
-) -> Range<usize> {
-    let mut edits = buffer.edits_since(version).peekable();
-    let mut last_old_end = 0;
-    let mut last_new_end = 0;
-    let offsets = [range.start, range.end].map(move |old_offset| {
-        while let Some(edit) = edits.peek() {
-            if edit.old.start > old_offset {
-                break;
-            }
+) -> &[SemanticTokenHighlight] {
+    let start = all_tokens
+        .binary_search_by_key(&range.start, |token| token.range.start)
+        .unwrap_or_else(|next_ix| next_ix);
 
-            if edit.old.end <= old_offset {
-                last_new_end = edit.new.end;
-                last_old_end = edit.old.end;
-                edits.next();
-                continue;
-            }
+    let end = all_tokens
+        .binary_search_by_key(&range.end, |token| token.range.start)
+        .unwrap_or_else(|next_ix| next_ix);
 
-            let overshoot = old_offset - edit.old.start;
-            return (edit.new.start + overshoot).min(edit.new.end);
-        }
-
-        last_new_end + old_offset.saturating_sub(last_old_end)
-    });
-
-    offsets[0]..offsets[1]
+    &all_tokens[start..end]
 }
 
 impl<'a> Iterator for CustomHighlightsChunks<'a> {

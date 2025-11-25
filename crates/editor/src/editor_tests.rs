@@ -16931,8 +16931,9 @@ async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
     });
     task.await;
     let buffer_id = cx.buffer(|b, _| b.remote_id());
-    let tokens = &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_tokens[&buffer_id].clone());
-    assert_eq!(tokens.tokens[0].range, 3..7);
+    let tokens =
+        &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_token_highlights[&buffer_id].clone());
+    assert_eq!(tokens[0].range, 3..7);
 
     assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
 }
@@ -17009,8 +17010,9 @@ async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
     });
     task.await;
     let buffer_id = cx.buffer(|b, _| b.remote_id());
-    let tokens = &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_tokens[&buffer_id].clone());
-    assert_eq!(tokens.tokens[0].range, 3..7);
+    let tokens =
+        &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_token_highlights[&buffer_id].clone());
+    assert_eq!(tokens[0].range, 3..7);
 
     assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
 }
@@ -17105,8 +17107,9 @@ async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
     task.await;
 
     let buffer_id = cx.buffer(|b, _| b.remote_id());
-    let tokens = &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_tokens[&buffer_id].clone());
-    assert_eq!(tokens.tokens[0].range, 3..7);
+    let tokens =
+        &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_token_highlights[&buffer_id].clone());
+    assert_eq!(tokens[0].range, 3..7);
 
     assert_eq!(full_counter.load(atomic::Ordering::Acquire), 1);
     assert_eq!(delta_counter.load(atomic::Ordering::Acquire), 1);
@@ -17319,10 +17322,15 @@ async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
             .read(cx)
             .remote_id();
 
-        editor.read(cx).display_map.read(cx).semantic_tokens[&buffer_id].clone()
+        editor
+            .read(cx)
+            .display_map
+            .read(cx)
+            .semantic_token_highlights[&buffer_id]
+            .clone()
     });
-    assert_eq!(tokens.tokens[0].range, 0..1);
-    assert_eq!(tokens.tokens[1].range, 4..5);
+    assert_eq!(tokens[0].range, 0..1);
+    assert_eq!(tokens[1].range, 4..5);
 
     assert_eq!(full_counter_toml_1.load(atomic::Ordering::Acquire), 1);
     assert_eq!(full_counter_toml_2.load(atomic::Ordering::Acquire), 1);
@@ -17757,7 +17765,14 @@ async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
         std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
     });
     task.await;
-    let tokens = cx.read(|cx| editor.read(cx).display_map.read(cx).semantic_tokens.clone());
+    let tokens = cx.read(|cx| {
+        editor
+            .read(cx)
+            .display_map
+            .read(cx)
+            .semantic_token_highlights
+            .clone()
+    });
     assert_eq!(tokens.values().next().unwrap().tokens[0].range, 0..1);
 
     assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);

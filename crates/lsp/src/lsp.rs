@@ -871,7 +871,7 @@ impl LanguageServer {
                         dynamic_registration: Some(true),
                     }),
                     semantic_tokens: Some(SemanticTokensClientCapabilities {
-                        dynamic_registration: Some(true),
+                        dynamic_registration: Some(false),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: None,
                             full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),

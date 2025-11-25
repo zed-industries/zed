@@ -7077,14 +7077,10 @@ impl LspStore {
         ))
     }
 
-    pub fn refresh_semantic_tokens(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
-        self.latest_lsp_data(buffer, cx).semantic_tokens = None;
-        // TODO kb we need new tokens after this
-    }
-
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
+        refresh: bool,
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
@@ -7097,10 +7093,11 @@ impl LspStore {
             return Task::ready(Ok(Default::default())).shared();
         }
 
-        let semantic_tokens_data = self
-            .latest_lsp_data(&buffer, cx)
-            .semantic_tokens
-            .get_or_insert_default();
+        let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
+        if refresh {
+            latest_lsp_data.semantic_tokens = None;
+        }
+        let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
 
         if let Some((updating_for, task)) = &semantic_tokens_data.update
             && !version_queried_for.changed_since(updating_for)
@@ -7145,11 +7142,6 @@ impl LspStore {
 
         let task: SemanticTokensTask = cx
             .spawn(async move |lsp_store, cx| {
-                // TODO kb this is a bit too late to debounce, need to get up into the editor?
-                cx.background_executor()
-                    .timer(Duration::from_millis(30))
-                    .await;
-
                 tasks
                     .await
                     .into_iter()
