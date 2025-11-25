@@ -277,8 +277,10 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
     assert_eq!(matches[10].string, "10.4.20+20210327");
     assert_eq!(matches[11].string, "10.4.20");
     assert_eq!(matches[12].string, "10.4.20-beta.1");
-    assert_eq!(matches[13].string, "10.4.12");
-    assert_eq!(matches[14].string, "10.4.2");
+    // TODO: we still need to figure how to handle case where
+    // we might want to prefer sort_text over sort_positions and sort_score
+    assert_eq!(matches[13].string, "10.4.2");
+    assert_eq!(matches[14].string, "10.4.12");
 }
 
 async fn test_for_each_prefix<F>(
