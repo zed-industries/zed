@@ -10,12 +10,13 @@ path = "src/transcription.rs"
 workspace = true
 
 [dependencies]
+audio.workspace = true
 anyhow.workspace = true
 async-channel = "2.3.1"
-cpal = "0.15.3"
 gpui.workspace = true
 log.workspace = true
 parking_lot = "0.12.1"
 paths.workspace = true
+rodio.workspace = true
 transcription_settings.workspace = true
 whisper-rs = { version = "0.15.1", features = ["tracing_backend", "vulkan"] }
