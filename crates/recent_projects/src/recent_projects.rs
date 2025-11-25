@@ -583,7 +583,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |this, _event, window, cx| {
                                     cx.stop_propagation();
-                                    window.prevent_default();
 
                                     this.delegate.delete_recent_project(ix, window, cx)
                                 }))

@@ -1946,17 +1946,6 @@ impl Window {
         self.text_style().line_height_in_pixels(self.rem_size())
     }
 
-    /// Call to prevent the default action of an event. Currently only used to prevent
-    /// parent elements from becoming focused on mouse down.
-    pub fn prevent_default(&mut self) {
-        self.default_prevented = true;
-    }
-
-    /// Obtain whether default has been prevented for the event currently being dispatched.
-    pub fn default_prevented(&self) -> bool {
-        self.default_prevented
-    }
-
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
     pub fn is_action_available(&self, action: &dyn Action, cx: &mut App) -> bool {
         let node_id =

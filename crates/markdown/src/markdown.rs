@@ -644,8 +644,7 @@ impl MarkdownElement {
                             };
                             window.focus(&markdown.focus_handle);
                         }
-
-                        window.prevent_default();
+                        cx.stop_propagation();
                         cx.notify();
                     }
                 } else if phase.capture() {

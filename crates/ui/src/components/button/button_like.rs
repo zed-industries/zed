@@ -704,8 +704,7 @@ impl RenderOnce for ButtonLike {
             .when_some(
                 self.on_right_click.filter(|_| !self.disabled),
                 |this, on_right_click| {
-                    this.on_mouse_down(MouseButton::Right, |_event, window, cx| {
-                        window.prevent_default();
+                    this.on_mouse_down(MouseButton::Right, |_event, _window, cx| {
                         cx.stop_propagation();
                     })
                     .on_mouse_up(
@@ -735,9 +734,8 @@ impl RenderOnce for ButtonLike {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(move |event, window, cx| {
-                            cx.stop_propagation();
                             (on_click)(event, window, cx)
                         })
                 },

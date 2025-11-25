@@ -242,7 +242,6 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                         && hitbox_id.is_hovered(window)
                     {
                         cx.stop_propagation();
-                        window.prevent_default();
 
                         let new_menu = (builder)(window, cx);
                         let menu2 = menu.clone();

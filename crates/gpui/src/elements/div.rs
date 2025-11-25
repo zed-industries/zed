@@ -2037,15 +2037,15 @@ impl Interactivity {
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _| {
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && hitbox.is_hovered(window)
-                    && !window.default_prevented()
+                    && !cx.propagation_stopped()
                 {
                     window.focus(&focus_handle);
                     // If there is a parent that is also focusable, prevent it
                     // from transferring focus because we already did so.
-                    window.prevent_default();
+                    cx.stop_propagation();
                 }
             });
         }
@@ -2195,7 +2195,7 @@ impl Interactivity {
                         let click_listeners = click_listeners.clone();
                         let hitbox = hitbox.clone();
                         move |event: &KeyUpEvent, phase, window, cx| {
-                            if phase.bubble() && !window.default_prevented() {
+                            if phase.bubble() && !cx.propagation_stopped() {
                                 let stroke = &event.keystroke;
                                 let keyboard_button = if stroke.key.eq("enter") {
                                     Some(KeyboardButton::Enter)
@@ -2345,8 +2345,8 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
                 let hitbox = hitbox.clone();
-                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
-                    if phase == DispatchPhase::Bubble && !window.default_prevented() {
+                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble && !cx.propagation_stopped() {
                         let group_hovered = active_group_hitbox
                             .is_some_and(|group_hitbox_id| group_hitbox_id.is_hovered(window));
                         let element_hovered = hitbox.is_hovered(window);

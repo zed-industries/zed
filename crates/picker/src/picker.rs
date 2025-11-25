@@ -577,7 +577,6 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        window.prevent_default();
         self.set_selected_index(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
