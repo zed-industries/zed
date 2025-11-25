@@ -11,7 +11,7 @@ use crate::{
     StyleRefinement, Styled, Window, point, size,
 };
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc, usize};
 
 use super::ListHorizontalSizingBehavior;
 
@@ -234,6 +234,11 @@ impl UniformListScrollHandle {
         } else {
             false
         }
+    }
+
+    /// Scroll to the bottom of the list.
+    pub fn scroll_to_bottom(&self) {
+        self.scroll_to_item(usize::MAX, ScrollStrategy::Bottom);
     }
 }
 

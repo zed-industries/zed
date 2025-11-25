@@ -2044,8 +2044,9 @@ impl OutlinePanel {
                 PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
                 PanelEntry::Search(SearchEntry { match_range, .. }) => match_range
                     .start
+                    .text_anchor
                     .buffer_id
-                    .or(match_range.end.buffer_id)
+                    .or(match_range.end.text_anchor.buffer_id)
                     .map(|buffer_id| {
                         outline_panel.update(cx, |outline_panel, cx| {
                             outline_panel

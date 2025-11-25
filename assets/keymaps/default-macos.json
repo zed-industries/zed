@@ -1218,23 +1218,23 @@
     }
   },
   {
-    "context": "RateCompletionModal",
+    "context": "RatePredictionsModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
-      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion",
+      "cmd-shift-enter": "zeta::ThumbsUpActivePrediction",
+      "cmd-shift-backspace": "zeta::ThumbsDownActivePrediction",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
-      "right": "zeta::PreviewCompletion"
+      "right": "zeta::PreviewPrediction"
     }
   },
   {
-    "context": "RateCompletionModal > Editor",
+    "context": "RatePredictionsModal > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "escape": "zeta::FocusCompletions",
-      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
-      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
+      "escape": "zeta::FocusPredictions",
+      "cmd-shift-enter": "zeta::ThumbsUpActivePrediction",
+      "cmd-shift-backspace": "zeta::ThumbsDownActivePrediction"
     }
   },
   {

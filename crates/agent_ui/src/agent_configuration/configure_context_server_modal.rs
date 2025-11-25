@@ -182,7 +182,7 @@ impl ConfigurationSource {
                     parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
                         (
                             id,
-                            ContextServerSettings::Custom {
+                            ContextServerSettings::Stdio {
                                 enabled: true,
                                 command,
                             },
@@ -403,7 +403,7 @@ impl ConfigureContextServerModal {
 
         window.spawn(cx, async move |cx| {
             let target = match settings {
-                ContextServerSettings::Custom {
+                ContextServerSettings::Stdio {
                     enabled: _,
                     command,
                 } => Some(ConfigurationTarget::Existing {
@@ -635,7 +635,6 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
-        // All variants now use single editor approach
         let editor = match &self.source {
             ConfigurationSource::New { editor, .. } => editor,
             ConfigurationSource::Existing { editor, .. } => editor,
@@ -712,12 +711,12 @@ impl ConfigureContextServerModal {
                     )
                 } else if let ConfigurationSource::New { is_http, .. } = &self.source {
                     let label = if *is_http {
-                        "Run command"
+                        "Configure Local"
                     } else {
-                        "Connect via HTTP"
+                        "Configure Remote"
                     };
                     let tooltip = if *is_http {
-                        "Configure an MCP serevr that runs on stdin/stdout."
+                        "Configure an MCP server that runs on stdin/stdout."
                     } else {
                         "Configure an MCP server that you connect to over HTTP"
                     };

@@ -13,6 +13,7 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
+    unified_diff,
 };
 pub use crate::{
     Grammar, Language, LanguageRegistry,
@@ -745,6 +746,33 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
+    pub fn as_unified_diff(&self, edits: &[(Range<Anchor>, impl AsRef<str>)]) -> Option<String> {
+        let (first, _) = edits.first()?;
+        let (last, _) = edits.last()?;
+
+        let start = first.start.to_point(&self.old_snapshot);
+        let old_end = last.end.to_point(&self.old_snapshot);
+        let new_end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+
+        let start = Point::new(start.row.saturating_sub(3), 0);
+        let old_end = Point::new(old_end.row + 3, 0).min(self.old_snapshot.max_point());
+        let new_end = Point::new(new_end.row + 3, 0).min(self.applied_edits_snapshot.max_point());
+
+        Some(unified_diff(
+            &self
+                .old_snapshot
+                .text_for_range(start..old_end)
+                .collect::<String>(),
+            &self
+                .applied_edits_snapshot
+                .text_for_range(start..new_end)
+                .collect::<String>(),
+        ))
+    }
+
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
@@ -758,6 +786,8 @@ impl EditPreview {
 
         let mut highlighted_text = HighlightedTextBuilder::default();
 
+        let visible_range_in_preview_snapshot =
+            visible_range_in_preview_snapshot.to_offset(&self.applied_edits_snapshot);
         let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
 
         let insertion_highlight_style = HighlightStyle {
@@ -825,7 +855,19 @@ impl EditPreview {
         highlighted_text.build()
     }
 
-    fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<usize>> {
+    pub fn build_result_buffer(&self, cx: &mut App) -> Entity<Buffer> {
+        cx.new(|cx| {
+            let mut buffer = Buffer::local_normalized(
+                self.applied_edits_snapshot.as_rope().clone(),
+                self.applied_edits_snapshot.line_ending(),
+                cx,
+            );
+            buffer.set_language(self.syntax_snapshot.root_language(), cx);
+            buffer
+        })
+    }
+
+    pub fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<Point>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -842,7 +884,7 @@ impl EditPreview {
         let range = Point::new(start.row, 0)
             ..Point::new(end.row, self.applied_edits_snapshot.line_len(end.row));
 
-        Some(range.to_offset(&self.applied_edits_snapshot))
+        Some(range)
     }
 }
 

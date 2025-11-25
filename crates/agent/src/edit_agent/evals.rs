@@ -1081,6 +1081,7 @@ fn message(
         role,
         content: contents.into_iter().collect(),
         cache: false,
+        reasoning_details: None,
     }
 }
 
@@ -1268,6 +1269,7 @@ impl EvalAssertion {
                     role: Role::User,
                     content: vec![prompt.into()],
                     cache: false,
+                    reasoning_details: None,
                 }],
                 thinking_allowed: true,
                 ..Default::default()
@@ -1594,6 +1596,7 @@ impl EditAgentTest {
                 role: Role::System,
                 content: vec![MessageContent::Text(system_prompt)],
                 cache: true,
+                reasoning_details: None,
             }]
             .into_iter()
             .chain(eval.conversation)

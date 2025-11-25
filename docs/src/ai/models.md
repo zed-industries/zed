@@ -5,6 +5,10 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 
 | Model                  | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ---------------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
+| Claude Opus 4.5        | Anthropic | Input               | $5.00                        | $5.50                   |
+|                        | Anthropic | Output              | $25.00                       | $27.50                  |
+|                        | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
+|                        | Anthropic | Input - Cache Read  | $0.50                        | $0.55                   |
 | Claude Opus 4.1        | Anthropic | Input               | $15.00                       | $16.50                  |
 |                        | Anthropic | Output              | $75.00                       | $82.50                  |
 |                        | Anthropic | Input - Cache Write | $18.75                       | $20.625                 |
@@ -34,6 +38,8 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 | GPT-5 nano             | OpenAI    | Input               | $0.05                        | $0.055                  |
 |                        | OpenAI    | Output              | $0.40                        | $0.44                   |
 |                        | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
+| Gemini 3.0 Pro         | Google    | Input               | $2.00                        | $2.20                   |
+|                        | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 2.5 Pro         | Google    | Input               | $1.25                        | $1.375                  |
 |                        | Google    | Output              | $10.00                       | $11.00                  |
 | Gemini 2.5 Flash       | Google    | Input               | $0.30                        | $0.33                   |
@@ -63,6 +69,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 
 | Model             | Provider  | Zed-Hosted Context Window |
 | ----------------- | --------- | ------------------------- |
+| Claude Opus 4.5   | Anthropic | 200k                      |
 | Claude Opus 4.1   | Anthropic | 200k                      |
 | Claude Sonnet 4   | Anthropic | 200k                      |
 | Claude Sonnet 3.7 | Anthropic | 200k                      |
@@ -72,6 +79,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | GPT-5 nano        | OpenAI    | 400k                      |
 | Gemini 2.5 Pro    | Google    | 200k                      |
 | Gemini 2.5 Flash  | Google    | 200k                      |
+| Gemini 3.0 Pro    | Google    | 200k                      |
 
 > We're planning on expanding supported context windows for hosted Sonnet 4 and Gemini 2.5 Pro/Flash in the near future. Stay tuned!
 

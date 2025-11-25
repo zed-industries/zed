@@ -56,11 +56,7 @@ impl MultiBuffer {
         let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.read(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
-        Some(Anchor::in_buffer(
-            *excerpt_id,
-            excerpt.buffer_id,
-            excerpt.range.context.start,
-        ))
+        Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
     }
 
     pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
@@ -182,11 +178,16 @@ impl MultiBuffer {
             };
 
             let ids_to_expand = HashSet::from_iter(ids);
+            let mut excerpt_id_ = None;
             let expanded_ranges = excerpt_ids.iter().filter_map(|excerpt_id| {
                 let excerpt = snapshot.excerpt(*excerpt_id)?;
+                let excerpt_id = excerpt.id;
+                if excerpt_id_.is_none() {
+                    excerpt_id_ = Some(excerpt_id);
+                }
 
                 let mut context = excerpt.range.context.to_point(&excerpt.buffer);
-                if ids_to_expand.contains(excerpt_id) {
+                if ids_to_expand.contains(&excerpt_id) {
                     match direction {
                         ExpandExcerptDirection::Up => {
                             context.start.row = context.start.row.saturating_sub(line_count);
@@ -222,10 +223,10 @@ impl MultiBuffer {
                 }
                 merged_ranges.push(range)
             }
-            let Some(excerpt_id) = excerpt_ids.first() else {
+            let Some(excerpt_id) = excerpt_id_ else {
                 continue;
             };
-            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(*excerpt_id) else {
+            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(excerpt_id) else {
                 continue;
             };
 
@@ -258,7 +259,6 @@ impl MultiBuffer {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
-                    buffer_snapshot.remote_id(),
                     buffer_snapshot.anchor_before(&range.primary.start)
                         ..buffer_snapshot.anchor_after(&range.primary.end),
                 );

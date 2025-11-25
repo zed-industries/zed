@@ -615,8 +615,16 @@ message RegisteredForBuffer {
     uint64 buffer_id = 2;
 }
 
+message LanguageServerBinaryInfo {
+    string path = 1;
+    repeated string arguments = 2;
+}
+
 message ServerMetadataUpdated {
     optional string capabilities = 1;
+    optional LanguageServerBinaryInfo binary = 2;
+    optional string configuration = 3;
+    repeated string workspace_folders = 4;
 }
 
 message LanguageServerLog {

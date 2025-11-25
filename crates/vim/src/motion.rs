@@ -2268,17 +2268,13 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
+            let anchor = Anchor::in_buffer(excerpt, text_anchor);
             return anchor.to_display_point(map);
         } else if offset <= excerpt_range.start {
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), range.context.start);
+            let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
         } else {
-            last_position = Some(Anchor::in_buffer(
-                excerpt,
-                buffer.remote_id(),
-                range.context.end,
-            ));
+            last_position = Some(Anchor::in_buffer(excerpt, range.context.end));
         }
     }
 

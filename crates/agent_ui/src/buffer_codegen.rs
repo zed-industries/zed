@@ -423,6 +423,7 @@ impl CodegenAlternative {
                 role: Role::User,
                 content: Vec::new(),
                 cache: false,
+                reasoning_details: None,
             };
 
             if let Some(context) = context_task.await {

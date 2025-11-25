@@ -1072,6 +1072,7 @@ impl RulesLibrary {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
                                         cache: false,
+                                        reasoning_details: None,
                                     }],
                                     tools: Vec::new(),
                                     tool_choice: None,

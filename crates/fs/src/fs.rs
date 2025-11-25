@@ -421,6 +421,75 @@ impl RealFs {
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         }
     }
+
+    #[cfg(target_os = "windows")]
+    fn canonicalize(path: &Path) -> Result<PathBuf> {
+        let mut strip_prefix = None;
+
+        let mut new_path = PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Prefix(_) => {
+                    let canonicalized = std::fs::canonicalize(component)?;
+
+                    let mut strip = PathBuf::new();
+                    for component in canonicalized.components() {
+                        match component {
+                            Component::Prefix(prefix_component) => {
+                                match prefix_component.kind() {
+                                    std::path::Prefix::Verbatim(os_str) => {
+                                        strip.push(os_str);
+                                    }
+                                    std::path::Prefix::VerbatimUNC(host, share) => {
+                                        strip.push("\\\\");
+                                        strip.push(host);
+                                        strip.push(share);
+                                    }
+                                    std::path::Prefix::VerbatimDisk(disk) => {
+                                        strip.push(format!("{}:", disk as char));
+                                    }
+                                    _ => strip.push(component),
+                                };
+                            }
+                            _ => strip.push(component),
+                        }
+                    }
+                    strip_prefix = Some(strip);
+                    new_path.push(component);
+                }
+                std::path::Component::RootDir => {
+                    new_path.push(component);
+                }
+                std::path::Component::CurDir => {
+                    if strip_prefix.is_none() {
+                        // unrooted path
+                        new_path.push(component);
+                    }
+                }
+                std::path::Component::ParentDir => {
+                    if strip_prefix.is_some() {
+                        // rooted path
+                        new_path.pop();
+                    } else {
+                        new_path.push(component);
+                    }
+                }
+                std::path::Component::Normal(_) => {
+                    if let Ok(link) = std::fs::read_link(new_path.join(component)) {
+                        let link = match &strip_prefix {
+                            Some(e) => link.strip_prefix(e).unwrap_or(&link),
+                            None => &link,
+                        };
+                        new_path.extend(link);
+                    } else {
+                        new_path.push(component);
+                    }
+                }
+            }
+        }
+
+        Ok(new_path)
+    }
 }
 
 #[async_trait::async_trait]
@@ -749,7 +818,13 @@ impl Fs for RealFs {
         let path = path.to_owned();
         self.executor
             .spawn(async move {
-                std::fs::canonicalize(&path).with_context(|| format!("canonicalizing {path:?}"))
+                #[cfg(target_os = "windows")]
+                let result = Self::canonicalize(&path);
+
+                #[cfg(not(target_os = "windows"))]
+                let result = std::fs::canonicalize(&path);
+
+                result.with_context(|| format!("canonicalizing {path:?}"))
             })
             .await
     }
