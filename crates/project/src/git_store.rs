@@ -4289,6 +4289,7 @@ impl Repository {
                     RepositoryState::Local {
                         backend,
                         environment,
+                        ..
                     } => backend.run_hook(hook, environment.clone()).await,
                     RepositoryState::Remote { project_id, client } => {
                         client
