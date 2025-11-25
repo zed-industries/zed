@@ -198,7 +198,7 @@ pub struct SessionSettingsContent {
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
 #[serde(untagged, rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
-    Custom {
+    Stdio {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
@@ -231,7 +231,7 @@ pub enum ContextServerSettingsContent {
 impl ContextServerSettingsContent {
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
-            ContextServerSettingsContent::Custom {
+            ContextServerSettingsContent::Stdio {
                 enabled: custom_enabled,
                 ..
             } => {
