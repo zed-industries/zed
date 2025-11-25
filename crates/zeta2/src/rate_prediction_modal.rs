@@ -715,8 +715,6 @@ impl RatePredictionsModal {
     }
 
     fn render_shown_completions(&self, cx: &Context<Self>) -> impl Iterator<Item = ListItem> {
-        const UNTITLED: SharedString = SharedString::new_static("untitled");
-
         self.zeta
             .read(cx)
             .shown_predictions()
@@ -737,9 +735,11 @@ impl RatePredictionsModal {
                     };
 
                 let file = completion.buffer.read(cx).file();
-                let file_name = file.as_ref().map_or(UNTITLED.clone(), |file| {
-                    file.file_name(cx).to_string().into()
-                });
+                let file_name = file
+                    .as_ref()
+                    .map_or(SharedString::new_static("untitled"), |file| {
+                        file.file_name(cx).to_string().into()
+                    });
                 let file_path = file.map(|file| file.path().as_unix_str().to_string());
 
                 ListItem::new(completion.id.clone())
