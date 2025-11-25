@@ -2684,10 +2684,15 @@ impl LocalLspStore {
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
-            let _ = self.buffer_snapshots.remove(&buffer.remote_id());
+            let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
 
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                language_server.unregister_buffer(file_url.clone());
+                if snapshots
+                    .as_mut()
+                    .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
+                {
+                    language_server.unregister_buffer(file_url.clone());
+                }
             }
         });
     }
