@@ -1,4 +1,4 @@
-use crate::metrics::Scores;
+use crate::metrics::{self, Scores};
 use std::{
     collections::{BTreeSet, HashMap},
     io::{IsTerminal, Write},
@@ -120,14 +120,15 @@ fn write_aggregated_scores(
     }
 
     if successful.len() > 1 {
-        let mut edit_predictions = successful
+        let completion_scores = successful
             .iter()
-            .filter_map(|r| r.edit_prediction.as_ref())
-            .peekable();
-        let has_edit_predictions = edit_predictions.peek().is_some();
+            .filter_map(|r| r.completion_scores.clone())
+            .collect::<Vec<_>>();
+        let has_edit_predictions = completion_scores.len() > 0;
         let aggregated_result = EvaluationResult {
-            context: Scores::aggregate(successful.iter().map(|r| &r.context)),
-            edit_prediction: has_edit_predictions.then(|| Scores::aggregate(edit_predictions)),
+            context_scores: Scores::aggregate(successful.iter().map(|r| &r.context_scores)),
+            completion_scores: has_edit_predictions
+                .then(|| CompletionScores::aggregate(&completion_scores)),
             prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
             generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
                 / successful.len(),
@@ -259,10 +260,25 @@ fn write_eval_result(
     anyhow::Ok(())
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct CompletionScores {
+    pub line_match: Scores,
+    pub chr_f: f64,
+}
+
+impl CompletionScores {
+    pub fn aggregate(scores: &[CompletionScores]) -> CompletionScores {
+        let line_match = Scores::aggregate(scores.iter().map(|s| &s.line_match));
+        let chr_f = scores.iter().map(|s| s.chr_f).sum::<f64>() / scores.len() as f64;
+
+        CompletionScores { line_match, chr_f }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
-    pub edit_prediction: Option<Scores>,
-    pub context: Scores,
+    pub completion_scores: Option<CompletionScores>,
+    pub context_scores: Scores,
     pub prompt_len: usize,
     pub generated_len: usize,
     pub context_lines_in_expected_patch: usize,
@@ -287,15 +303,15 @@ impl EvaluationResult {
 ### Context Scores
 {}
 "#,
-            self.context.to_markdown(),
+            self.context_scores.to_markdown(),
         )?;
-        if let Some(prediction) = &self.edit_prediction {
+        if let Some(scores) = &self.completion_scores {
             write!(
                 f,
                 r#"
                 ### Edit Prediction Scores
                 {}"#,
-                prediction.to_markdown()
+                scores.line_match.to_markdown()
             )?;
         }
         Ok(())
@@ -318,27 +334,28 @@ impl EvaluationResult {
             "",
             "",
             "",
-            self.context.true_positives,
-            self.context.false_positives,
-            self.context.false_negatives,
-            self.context.precision() * 100.0,
-            self.context.recall() * 100.0,
-            self.context.f1_score() * 100.0
+            self.context_scores.true_positives,
+            self.context_scores.false_positives,
+            self.context_scores.false_negatives,
+            self.context_scores.precision() * 100.0,
+            self.context_scores.recall() * 100.0,
+            self.context_scores.f1_score() * 100.0
         )?;
-        if let Some(edit_prediction) = &self.edit_prediction {
+        if let Some(completion_scores) = &self.completion_scores {
+            let line_match = &completion_scores.line_match;
             writeln!(
                 f,
-                "Edit Prediction    {:<7} {:<9} {:<16} {:<16} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+                "Completion_lines   {:<7} {:<9} {:<16} {:<16} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
                 self.prompt_len,
                 self.generated_len,
                 self.context_lines_found_in_context,
                 self.context_lines_in_expected_patch,
-                edit_prediction.true_positives,
-                edit_prediction.false_positives,
-                edit_prediction.false_negatives,
-                edit_prediction.precision() * 100.0,
-                edit_prediction.recall() * 100.0,
-                edit_prediction.f1_score() * 100.0
+                line_match.true_positives,
+                line_match.false_positives,
+                line_match.false_negatives,
+                line_match.precision() * 100.0,
+                line_match.recall() * 100.0,
+                line_match.f1_score() * 100.0
             )?;
         }
         Ok(())
@@ -393,11 +410,11 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
         }
 
         let best_alternative = best_alternative_score.unwrap_or_default();
-        eval_result.context.false_negatives += best_alternative.false_negatives;
-        eval_result.context.true_positives += best_alternative.true_positives;
+        eval_result.context_scores.false_negatives += best_alternative.false_negatives;
+        eval_result.context_scores.true_positives += best_alternative.true_positives;
     }
 
-    eval_result.context.false_positives = false_positive_lines.len();
+    eval_result.context_scores.false_positives = false_positive_lines.len();
 
     if predict {
         // todo: alternatives for patches
@@ -406,6 +423,7 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .lines()
             .map(DiffLine::parse)
             .collect::<Vec<_>>();
+        let actual_patch = preds.diff.lines().map(DiffLine::parse).collect::<Vec<_>>();
         let expected_patch_lines = expected_patch
             .iter()
             .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
@@ -439,10 +457,10 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .map(|line| line.to_string())
             .collect();
 
-        eval_result.edit_prediction = Some(Scores::from_sets(
-            &expected_patch_lines,
-            &actual_patch_lines,
-        ));
+        let line_match = Scores::from_sets(&expected_patch_lines, &actual_patch_lines);
+        let chr_f = metrics::patch_chr_f(&expected_patch, &actual_patch);
+
+        eval_result.completion_scores = Some(CompletionScores { line_match, chr_f });
         eval_result.context_lines_in_expected_patch = expected_context_lines.len();
         eval_result.context_lines_found_in_context = matched;
     }
@@ -526,14 +544,14 @@ fn write_bucketed_analysis(
             .or_insert_with(|| EditBucket {
                 diff: execution_data.diff.clone(),
                 is_correct: {
-                    evaluation_result
-                        .edit_prediction
-                        .as_ref()
-                        .map_or(false, |edit_prediction| {
-                            edit_prediction.false_positives == 0
-                                && edit_prediction.false_negatives == 0
-                                && edit_prediction.true_positives > 0
-                        })
+                    evaluation_result.completion_scores.as_ref().map_or(
+                        false,
+                        |completion_scores| {
+                            completion_scores.line_match.false_positives == 0
+                                && completion_scores.line_match.false_negatives == 0
+                                && completion_scores.line_match.true_positives > 0
+                        },
+                    )
                 },
                 execution_indices: vec![execution_data.execution_id.clone()],
                 reasoning_samples: vec![execution_data.reasoning.clone()],

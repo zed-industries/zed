@@ -1,8 +1,9 @@
 use collections::{HashMap, HashSet};
+use zeta::udiff::DiffLine;
 
 type Counts = HashMap<String, usize>;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Scores {
     pub true_positives: usize,
     pub false_positives: usize,
@@ -162,6 +163,36 @@ pub fn chr_f(expected: &str, actual: &str) -> f64 {
     };
 
     f_score * 100.0
+}
+
+pub fn patch_chr_f(expected: &[DiffLine], actual: &[DiffLine]) -> f64 {
+    let mut expected_ins = String::default();
+    let mut expected_del = String::default();
+    let mut actual_ins = String::default();
+    let mut actual_del = String::default();
+
+    for line in expected {
+        match line {
+            DiffLine::Deletion(s) => expected_del.push_str(s),
+            DiffLine::Addition(s) => expected_ins.push_str(s),
+            _ => (),
+        };
+    }
+
+    for line in actual {
+        match line {
+            DiffLine::Deletion(s) => actual_del.push_str(s),
+            DiffLine::Addition(s) => actual_ins.push_str(s),
+            _ => (),
+        };
+    }
+
+    let score_del = chr_f(&expected_del, &actual_del);
+    let score_ins = chr_f(&expected_ins, &actual_ins);
+
+    let score = 2.0 * score_del * score_ins / (score_del + score_ins + 0.00001);
+
+    score
 }
 
 fn get_ngram_counts(text: &str, n: usize) -> Counts {
