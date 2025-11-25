@@ -1020,7 +1020,13 @@
     // Minimum number of lines to display in the agent message editor.
     //
     // Default: 4
-    "message_editor_min_lines": 4
+    "message_editor_min_lines": 4,
+    // Whether to automatically start a new thread from summary when token usage reaches 90%.
+    // This allows the agent to continue working indefinitely without manual intervention,
+    // transitioning smoothly before hitting the hard token limit.
+    //
+    // Default: false
+    "auto_summarize_on_token_limit": false
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

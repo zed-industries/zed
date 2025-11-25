@@ -1021,7 +1021,7 @@ impl AcpThreadView {
         .detach();
     }
 
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else { return };
 
         if self.is_loading_contents {
@@ -1410,16 +1410,50 @@ impl AcpThreadView {
             AcpThreadEvent::Stopped => {
                 self.thread_retry_status.take();
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
-                self.notify_with_sound(
-                    if used_tools {
-                        "Finished running tools"
-                    } else {
-                        "New message"
-                    },
-                    IconName::ZedAssistant,
-                    window,
-                    cx,
-                );
+
+                // Threshold at which auto-summarize triggers (90%)
+                const AUTO_SUMMARIZE_THRESHOLD: f32 = 0.9;
+
+                // Check if token usage is at threshold or more and auto-summarize is enabled.
+                // We trigger at 90% rather than 100% to ensure smooth transition before
+                // hitting the hard limit.
+                let should_auto_summarize = AgentSettings::get_global(cx)
+                    .auto_summarize_on_token_limit
+                    && thread.read(cx).token_usage().is_some_and(|usage| {
+                        usage.max_tokens > 0
+                            && (usage.used_tokens as f32 / usage.max_tokens as f32)
+                                >= AUTO_SUMMARIZE_THRESHOLD
+                    });
+
+                if should_auto_summarize {
+                    let session_id = thread.read(cx).session_id().clone();
+                    telemetry::event!("Agent Auto-Summarized", session = session_id.0.to_string());
+                    self.notify_with_sound(
+                        "Continuing in new thread...",
+                        IconName::ZedAssistant,
+                        window,
+                        cx,
+                    );
+                    window.dispatch_action(
+                        crate::NewNativeAgentThreadFromSummary {
+                            from_session_id: session_id,
+                            auto_send: true,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                } else {
+                    self.notify_with_sound(
+                        if used_tools {
+                            "Finished running tools"
+                        } else {
+                            "New message"
+                        },
+                        IconName::ZedAssistant,
+                        window,
+                        cx,
+                    );
+                }
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
@@ -5241,6 +5275,7 @@ impl AcpThreadView {
                                     window.dispatch_action(
                                         crate::NewNativeAgentThreadFromSummary {
                                             from_session_id: session_id,
+                                            auto_send: false,
                                         }
                                         .boxed_clone(),
                                         cx,

@@ -142,6 +142,10 @@ pub struct NewExternalAgentThread {
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
     from_session_id: agent_client_protocol::SessionId,
+    /// Whether to automatically send the message after the thread is created.
+    /// This is used when auto-summarizing on token limit.
+    #[serde(default)]
+    pub auto_send: bool,
 }
 
 // TODO unify this with AgentType
@@ -468,6 +472,7 @@ mod tests {
             expand_terminal_card: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            auto_summarize_on_token_limit: false,
         };
 
         cx.update(|cx| {
