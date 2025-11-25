@@ -239,12 +239,11 @@ impl Render for ProfilerWindow {
             .id("profiler")
             .w_full()
             .h_full()
-            .gap_2()
             .bg(cx.theme().colors().surface_background)
             .text_color(cx.theme().colors().text)
             .child(
                 h_flex()
-                    .py_3()
+                    .py_2()
                     .px_4()
                     .w_full()
                     .justify_between()
