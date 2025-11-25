@@ -21690,7 +21690,6 @@ name = "zeta2_tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "client",
  "cloud_llm_client",
@@ -21703,9 +21702,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
- "log",
  "multi_buffer",
- "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
  "serde",
