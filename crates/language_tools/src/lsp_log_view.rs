@@ -340,10 +340,11 @@ impl LspLogView {
 * Configuration: {CONFIGURATION}",
             NAME = info.status.name,
             ID = info.id,
-            BINARY = info.status.binary.as_ref().map_or_else(
-                || "Unknown".to_string(),
-                |binary| format!("{:#?}", binary)
-            ),
+            BINARY = info
+                .status
+                .binary
+                .as_ref()
+                .map_or_else(|| "Unknown".to_string(), |binary| format!("{:#?}", binary)),
             WORKSPACE_FOLDERS = info
                 .status
                 .workspace_folders
