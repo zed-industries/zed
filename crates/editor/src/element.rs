@@ -1158,7 +1158,7 @@ impl EditorElement {
         }
     }
 
-    fn mouse_moved(
+    pub(crate) fn mouse_moved(
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,
@@ -1169,7 +1169,7 @@ impl EditorElement {
         let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
         let text_hovered = text_hitbox.is_hovered(window);
-        let gutter_hovered = gutter_hitbox.is_hovered(window);
+        let gutter_hovered = gutter_hitbox.bounds.contains(&event.position);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.show_mouse_cursor(cx);
 
@@ -9283,7 +9283,7 @@ impl Element for EditorElement {
                                     HashMap::default();
                                 for selection in all_anchor_selections.iter() {
                                     let head = selection.head();
-                                    if let Some(buffer_id) = head.buffer_id {
+                                    if let Some(buffer_id) = head.text_anchor.buffer_id {
                                         anchors_by_buffer
                                             .entry(buffer_id)
                                             .and_modify(|(latest_id, latest_anchor)| {

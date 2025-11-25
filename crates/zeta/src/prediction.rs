@@ -1,7 +1,13 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
+use serde::Serialize;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(pub SharedString);
@@ -26,6 +32,17 @@ pub struct EditPrediction {
     pub edit_preview: EditPreview,
     // We keep a reference to the buffer so that we do not need to reload it from disk when applying the prediction.
     pub buffer: Entity<Buffer>,
+    pub buffer_snapshotted_at: Instant,
+    pub response_received_at: Instant,
+    pub inputs: EditPredictionInputs,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EditPredictionInputs {
+    pub events: Vec<Arc<cloud_llm_client::predict_edits_v3::Event>>,
+    pub included_files: Vec<cloud_llm_client::predict_edits_v3::IncludedFile>,
+    pub cursor_point: cloud_llm_client::predict_edits_v3::Point,
+    pub cursor_path: Arc<Path>,
 }
 
 impl EditPrediction {
@@ -33,14 +50,17 @@ impl EditPrediction {
         id: EditPredictionId,
         edited_buffer: &Entity<Buffer>,
         edited_buffer_snapshot: &BufferSnapshot,
-        edits: Vec<(Range<Anchor>, Arc<str>)>,
+        edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+        buffer_snapshotted_at: Instant,
+        response_received_at: Instant,
+        inputs: EditPredictionInputs,
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         let (edits, snapshot, edit_preview_task) = edited_buffer
             .read_with(cx, |buffer, cx| {
                 let new_snapshot = buffer.snapshot();
                 let edits: Arc<[_]> =
-                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits.into())?.into();
+                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits)?.into();
 
                 Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
             })
@@ -53,7 +73,10 @@ impl EditPrediction {
             edits,
             snapshot,
             edit_preview,
+            inputs,
             buffer: edited_buffer.clone(),
+            buffer_snapshotted_at,
+            response_received_at,
         })
     }
 
@@ -66,6 +89,10 @@ impl EditPrediction {
 
     pub fn targets_buffer(&self, buffer: &Buffer) -> bool {
         self.snapshot.remote_id() == buffer.remote_id()
+    }
+
+    pub fn latency(&self) -> Duration {
+        self.response_received_at - self.buffer_snapshotted_at
     }
 }
 
@@ -147,6 +174,17 @@ mod tests {
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
+            inputs: EditPredictionInputs {
+                events: vec![],
+                included_files: vec![],
+                cursor_point: cloud_llm_client::predict_edits_v3::Point {
+                    line: cloud_llm_client::predict_edits_v3::Line(0),
+                    column: 0,
+                },
+                cursor_path: Path::new("path.txt").into(),
+            },
+            buffer_snapshotted_at: Instant::now(),
+            response_received_at: Instant::now(),
         };
 
         cx.update(|cx| {

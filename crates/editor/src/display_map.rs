@@ -651,8 +651,8 @@ impl DisplayMap {
 
     pub fn invalidate_semantic_highlights(&mut self, buffer_id: BufferId) {
         self.semantic_token_highlights.retain(|highlight| {
-            let start_buffer = highlight.range.start.buffer_id;
-            let end_buffer = highlight.range.end.buffer_id;
+            let start_buffer = highlight.range.start.text_anchor.buffer_id;
+            let end_buffer = highlight.range.end.text_anchor.buffer_id;
             start_buffer.is_some_and(|cached_buffer_id| cached_buffer_id != buffer_id)
                 && (start_buffer == end_buffer
                     || end_buffer.is_some_and(|cached_buffer_id| cached_buffer_id != buffer_id))

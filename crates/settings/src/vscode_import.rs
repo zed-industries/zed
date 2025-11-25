@@ -672,7 +672,7 @@ impl VsCodeSettings {
             .filter_map(|(k, v)| {
                 Some((
                     k.clone().into(),
-                    ContextServerSettingsContent::Custom {
+                    ContextServerSettingsContent::Stdio {
                         enabled: true,
                         command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()
@@ -876,6 +876,8 @@ impl VsCodeSettings {
             working_directory: None,
             env,
             detect_venv: None,
+            path_hyperlink_regexes: None,
+            path_hyperlink_timeout_ms: None,
         }
     }
 
@@ -945,6 +947,7 @@ impl VsCodeSettings {
             resize_all_panels_in_dock: None,
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
             restore_on_startup: None,
+            window_decorations: None,
             show_call_status_icon: None,
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
             use_system_prompts: None,

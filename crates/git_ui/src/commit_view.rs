@@ -223,7 +223,11 @@ impl CommitView {
                         let snapshot = buffer.read(cx).snapshot();
                         let diff = buffer_diff.read(cx);
                         let diff_hunk_ranges = diff
-                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                            .hunks_intersecting_range(
+                                Anchor::min_max_range_for_buffer(diff.buffer_id),
+                                &snapshot,
+                                cx,
+                            )
                             .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();

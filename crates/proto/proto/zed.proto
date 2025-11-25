@@ -439,11 +439,13 @@ message Envelope {
 
         ExternalExtensionAgentsUpdated external_extension_agents_updated = 394;
 
-        SemanticTokensFull semantic_tokens_full = 395;
-        SemanticTokensFullResponse semantic_tokens_full_response = 396;
-        SemanticTokensDelta semantic_tokens_delta = 397;
-        SemanticTokensDeltaResponse semantic_tokens_delta_response = 398;
-        RefreshSemanticTokens refresh_semantic_tokens = 399; // current max
+        RunGitHook run_git_hook = 395;
+
+        SemanticTokensFull semantic_tokens_full = 396;
+        SemanticTokensFullResponse semantic_tokens_full_response = 397;
+        SemanticTokensDelta semantic_tokens_delta = 398;
+        SemanticTokensDeltaResponse semantic_tokens_delta_response = 399;
+        RefreshSemanticTokens refresh_semantic_tokens = 400; // current max
     }
 
     reserved 87 to 88;
