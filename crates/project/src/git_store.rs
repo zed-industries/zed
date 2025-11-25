@@ -293,6 +293,7 @@ impl std::ops::Deref for Repository {
 #[derive(Clone)]
 pub enum RepositoryState {
     Local {
+        fs: Arc<dyn Fs>,
         backend: Arc<dyn GitRepository>,
         environment: Arc<HashMap<String, String>>,
     },
@@ -4352,7 +4353,6 @@ impl Repository {
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
         let abs_path = self.snapshot.repo_path_to_abs_path(&path);
-        let fs = fs::RealFs::new(None, cx.background_executor().clone());
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
             None,
@@ -4362,17 +4362,19 @@ impl Repository {
                     path.as_unix_str()
                 );
 
-                let executable = match fs.metadata(&abs_path).await {
-                    Ok(Some(meta)) => meta.is_executable,
-                    Ok(None) => false,
-                    Err(_err) => false,
-                };
+               
                 match git_repo {
                     RepositoryState::Local {
+                        fs,
                         backend,
                         environment,
                         ..
                     } => {
+                         let executable = match fs.metadata(&abs_path).await {
+                            Ok(Some(meta)) => meta.is_executable,
+                            Ok(None) => false,
+                            Err(_err) => false,
+                        };
                         backend
                             .set_index_text(path.clone(), content, environment.clone(), executable)
                             .await?;
@@ -4907,6 +4909,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+        let fs_clone = fs.clone();
 
         cx.spawn(async move |_, cx| {
             let environment = project_environment
@@ -4938,8 +4941,8 @@ impl Repository {
                     backend.clone(),
                 );
             }
-
             let state = RepositoryState::Local {
+                fs: fs_clone,
                 backend,
                 environment: Arc::new(environment),
             };

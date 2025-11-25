@@ -39,6 +39,8 @@ use std::{
 };
 use tempfile::TempDir;
 use text::LineEnding;
+use is_executable::IsExecutable;
+
 
 #[cfg(any(test, feature = "test-support"))]
 mod fake_git_repo;
@@ -764,16 +766,7 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
-        #[cfg(unix)]
-        let is_executable = {
-            use std::os::unix::fs::PermissionsExt;
-            metadata.permissions().mode() & 0o111 != 0
-        };
-
-        #[cfg(windows)]
-        let is_executable = path
-            .extension()
-            .is_some_and(|ext| matches!(ext.to_str(), Some("exe" | "bat")));
+       let is_executable = path.is_executable();
 
         Ok(Some(Metadata {
             inode,

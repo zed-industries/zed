@@ -116,33 +116,7 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
     worktrees
 }
 
-pub fn get_file_mode(
-    working_directory: &Path,
-    path: &RepoPath,
-    is_executable: bool,
-) -> anyhow::Result<String> {
-    let repo = Git2Repository::open(working_directory)?;
-    let path_str = path.as_std_path();
 
-    if let Ok(index) = repo.index() {
-        if let Some(entry) = index.get_path(Path::new(path_str), 0) {
-            let mode = format!("{:o}", entry.mode);
-            return Ok(mode);
-        }
-    }
-    if let Ok(head) = repo.head() {
-        if let Some(commit) = head.peel_to_commit().ok() {
-            if let Ok(tree) = commit.tree() {
-                if let Ok(entry) = tree.get_path(Path::new(path_str)) {
-                    let mode = format!("{:o}", entry.filemode() as u32);
-                    return Ok(mode);
-                }
-            }
-        }
-    }
-    let mode = if is_executable { "100755" } else { "100644" }; // currently kept for earlier suggested method as fallback
-    Ok(mode.to_string())
-}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
@@ -1015,7 +989,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let mode = get_file_mode(&working_directory, &path, is_executable)?;
+                let mode = if is_executable { "100755" } else { "100644" }.to_string();
 
                 if let Some(content) = content {
                     let mut child = new_smol_command(&git_binary_path)
