@@ -1652,10 +1652,7 @@ impl Buffer {
     ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for anchor in anchors {
-            if !self.version.observed(anchor.timestamp)
-                && anchor != Anchor::MAX
-                && anchor != Anchor::MIN
-            {
+            if !self.version.observed(anchor.timestamp) && !anchor.is_max() && !anchor.is_min() {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers
                     .entry(anchor.timestamp)
@@ -2258,9 +2255,9 @@ impl BufferSnapshot {
         let mut position = D::zero(());
 
         anchors.map(move |(anchor, payload)| {
-            if *anchor == Anchor::MIN {
+            if anchor.is_min() {
                 return (D::zero(()), payload);
-            } else if *anchor == Anchor::MAX {
+            } else if anchor.is_max() {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
@@ -2318,9 +2315,9 @@ impl BufferSnapshot {
     }
 
     pub fn offset_for_anchor(&self, anchor: &Anchor) -> usize {
-        if *anchor == Anchor::MIN {
+        if anchor.is_min() {
             0
-        } else if *anchor == Anchor::MAX {
+        } else if anchor.is_max() {
             self.visible_text.len()
         } else {
             debug_assert!(anchor.buffer_id == Some(self.remote_id));
@@ -2393,9 +2390,9 @@ impl BufferSnapshot {
     }
 
     fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {
-        if *anchor == Anchor::MIN {
+        if anchor.is_min() {
             Some(Locator::min_ref())
-        } else if *anchor == Anchor::MAX {
+        } else if anchor.is_max() {
             Some(Locator::max_ref())
         } else {
             let anchor_key = InsertionFragmentKey {
@@ -2440,9 +2437,9 @@ impl BufferSnapshot {
 
     fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
         if bias == Bias::Left && offset == 0 {
-            Anchor::MIN
+            Anchor::min_for_buffer(self.remote_id)
         } else if bias == Bias::Right && offset == self.len() {
-            Anchor::MAX
+            Anchor::max_for_buffer(self.remote_id)
         } else {
             if cfg!(debug_assertions) {
                 self.visible_text.assert_char_boundary(offset);
@@ -2462,8 +2459,8 @@ impl BufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        *anchor == Anchor::MIN
-            || *anchor == Anchor::MAX
+        anchor.is_min()
+            || anchor.is_max()
             || (Some(self.remote_id) == anchor.buffer_id && self.version.observed(anchor.timestamp))
     }
 

@@ -716,7 +716,7 @@ impl<'a> Chunks<'a> {
         };
         let chunk_offset = offset - chunks.start();
         if let Some(chunk) = chunks.item() {
-            chunk.assert_char_boundary(chunk_offset);
+            chunk.assert_char_boundary::<true>(chunk_offset);
         }
         Self {
             chunks,

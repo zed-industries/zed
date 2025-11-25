@@ -1579,7 +1579,10 @@ async fn test_share_project(
     buffer_a.read_with(cx_a, |buffer, _| {
         buffer
             .snapshot()
-            .selections_in_range(text::Anchor::MIN..text::Anchor::MAX, false)
+            .selections_in_range(
+                text::Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                false,
+            )
             .count()
             == 1
     });
@@ -1620,7 +1623,10 @@ async fn test_share_project(
     buffer_a.read_with(cx_a, |buffer, _| {
         buffer
             .snapshot()
-            .selections_in_range(text::Anchor::MIN..text::Anchor::MAX, false)
+            .selections_in_range(
+                text::Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                false,
+            )
             .count()
             == 0
     });

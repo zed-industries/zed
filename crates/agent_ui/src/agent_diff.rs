@@ -145,7 +145,7 @@ impl AgentDiffPane {
 
             let diff_hunk_ranges = diff
                 .hunks_intersecting_range(
-                    language::Anchor::MIN..language::Anchor::MAX,
+                    language::Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
                     cx,
                 )

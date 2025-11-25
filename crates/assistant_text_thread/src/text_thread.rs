@@ -796,7 +796,7 @@ impl TextThread {
         });
         let message = MessageAnchor {
             id: first_message_id,
-            start: language::Anchor::MIN,
+            start: language::Anchor::min_for_buffer(this.buffer.read(cx).remote_id()),
         };
         this.messages_metadata.insert(
             first_message_id,
@@ -1146,12 +1146,10 @@ impl TextThread {
         cx: &App,
     ) -> bool {
         let version = &self.buffer.read(cx).version;
-        let observed_start = range.start == language::Anchor::MIN
-            || range.start == language::Anchor::MAX
-            || version.observed(range.start.timestamp);
-        let observed_end = range.end == language::Anchor::MIN
-            || range.end == language::Anchor::MAX
-            || version.observed(range.end.timestamp);
+        let observed_start =
+            range.start.is_min() || range.start.is_max() || version.observed(range.start.timestamp);
+        let observed_end =
+            range.end.is_min() || range.end.is_max() || version.observed(range.end.timestamp);
         observed_start && observed_end
     }
 
@@ -2856,7 +2854,8 @@ impl TextThread {
                         messages.next();
                     }
                 }
-                let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
+                let message_end_anchor =
+                    message_end.unwrap_or(language::Anchor::max_for_buffer(buffer.remote_id()));
                 let message_end = message_end_anchor.to_offset(buffer);
 
                 return Some(Message {

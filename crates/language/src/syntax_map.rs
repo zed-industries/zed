@@ -323,7 +323,7 @@ impl SyntaxSnapshot {
                 let slice = cursor.slice(
                     &SyntaxLayerPosition {
                         depth: depth + 1,
-                        range: Anchor::MIN..Anchor::MAX,
+                        range: Anchor::min_max_range_for_buffer(text.remote_id()),
                         language: None,
                     },
                     Bias::Left,
@@ -486,7 +486,7 @@ impl SyntaxSnapshot {
                 start_point: Point::zero().to_ts_point(),
                 end_point: text.max_point().to_ts_point(),
             }],
-            range: Anchor::MIN..Anchor::MAX,
+            range: Anchor::min_max_range_for_buffer(text.remote_id()),
             mode: ParseMode::Single,
         });
 
@@ -508,7 +508,7 @@ impl SyntaxSnapshot {
             } else {
                 SyntaxLayerPosition {
                     depth: max_depth + 1,
-                    range: Anchor::MAX..Anchor::MAX,
+                    range: Anchor::min_max_range_for_buffer(text.remote_id()),
                     language: None,
                 }
             };
