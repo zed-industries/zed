@@ -5128,9 +5128,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        // todo: this is not quite correct
-        if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
-            true
+        if *anchor == Anchor::min() || anchor.excerpt_id == ExcerptId::max() {
+            !self.is_empty()
         } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
             excerpt.buffer.can_resolve(&anchor.text_anchor)
         } else {

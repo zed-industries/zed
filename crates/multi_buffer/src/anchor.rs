@@ -77,7 +77,7 @@ impl Anchor {
         if excerpt_id_cmp.is_ne() {
             return excerpt_id_cmp;
         }
-        if self_excerpt_id == ExcerptId::min() || self_excerpt_id == ExcerptId::max() {
+        if self_excerpt_id == ExcerptId::max() {
             return Ordering::Equal;
         }
         if let Some(excerpt) = snapshot.excerpt(self_excerpt_id) {
@@ -174,9 +174,8 @@ impl Anchor {
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        // todo: this check is not quite right if a we have a weird mixed min / max anchor?
-        if *self == Anchor::min() || *self == Anchor::max() {
-            true
+        if *self == Anchor::min() || self.excerpt_id == ExcerptId::max() {
+            !snapshot.is_empty()
         } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
             (self.text_anchor == excerpt.range.context.start
                 || self.text_anchor == excerpt.range.context.end
