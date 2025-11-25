@@ -1306,7 +1306,7 @@ struct Args {
 
     /// Print logs
     ///
-    /// Called by CLI binary when --foreground is given
+    /// Set by CLI binary when running zed in the foreground
     #[arg(long)]
     #[cfg_attr(debug_assertions, arg(default_value_t = true, hide = true))]
     foreground: bool,
