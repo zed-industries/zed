@@ -817,6 +817,10 @@ async fn stream_completion(
     let is_streaming = request.stream;
 
     let json = serde_json::to_string(&request)?;
+    eprintln!(
+        "Copilot chat completion request to {}: {}",
+        completion_url, json
+    );
     let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
@@ -824,12 +828,22 @@ async fn stream_completion(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
+        eprintln!(
+            "Copilot chat completion HTTP error: status={}, response_body={}",
+            response.status(),
+            body_str
+        );
         anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
         );
     }
+
+    eprintln!(
+        "Copilot chat completion response status: {}",
+        response.status()
+    );
 
     if is_streaming {
         let reader = BufReader::new(response.into_body());
@@ -838,6 +852,7 @@ async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
+                        eprintln!("Copilot chat completion stream line: {}", line);
                         let line = line.strip_prefix("data: ")?;
                         if line.starts_with("[DONE]") {
                             return None;
@@ -851,7 +866,14 @@ async fn stream_completion(
                                     Some(Ok(response))
                                 }
                             }
-                            Err(error) => Some(Err(anyhow!(error))),
+                            Err(error) => {
+                                eprintln!(
+                                    "Failed to parse Copilot chat completion stream event: {}\nLine: {}",
+                                    error,
+                                    line
+                                );
+                                Some(Err(anyhow!(error)))
+                            }
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),
@@ -862,6 +884,10 @@ async fn stream_completion(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
+        eprintln!(
+            "Copilot chat completion non-streaming response body: {}",
+            body_str
+        );
         let response: ResponseEvent = serde_json::from_str(body_str)?;
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())

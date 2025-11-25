@@ -313,14 +313,23 @@ pub async fn stream_response(
     };
 
     let is_streaming = request.stream;
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    eprintln!("Copilot responses request to {}: {}", api_url, json);
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
+        eprintln!(
+            "Copilot responses HTTP error: status={}, response_body={}",
+            response.status(),
+            body
+        );
         anyhow::bail!("Failed to connect to API: {} {}", response.status(), body);
     }
+
+    eprintln!("Copilot responses response status: {}", response.status());
 
     if is_streaming {
         let reader = BufReader::new(response.into_body());
@@ -329,6 +338,7 @@ pub async fn stream_response(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
+                        eprintln!("Copilot responses stream line: {}", line);
                         let line = line.strip_prefix("data: ")?;
                         if line.starts_with("[DONE]") || line.is_empty() {
                             return None;
@@ -355,6 +365,7 @@ pub async fn stream_response(
         // Removes the need of having a method to map StreamEvent and another to map Response to a LanguageCompletionEvent
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
+        eprintln!("Copilot responses non-streaming response body: {}", body);
 
         match serde_json::from_str::<Response>(&body) {
             Ok(response) => {
