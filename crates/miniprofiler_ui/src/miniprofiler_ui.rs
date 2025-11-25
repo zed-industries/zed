@@ -327,20 +327,26 @@ impl Render for ProfilerWindow {
                             ),
                     )
                     .child(
-                        Checkbox::new("autoscroll", self.autoscroll.into())
-                            .label("Auto Scroll")
-                            .on_click(cx.listener(|this, checked: &ToggleState, _window, cx| {
-                                this.autoscroll = checked.selected();
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Checkbox::new("include-self", self.include_self_timings)
-                            .label("Include profiler timings")
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.include_self_timings = *checked;
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .gap_3()
+                            .child(
+                                Checkbox::new("autoscroll", self.autoscroll.into())
+                                    .label("Auto Scroll")
+                                    .on_click(cx.listener(
+                                        |this, checked: &ToggleState, _window, cx| {
+                                            this.autoscroll = checked.selected();
+                                            cx.notify();
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Checkbox::new("include-self", self.include_self_timings)
+                                    .label("Include profiler timings")
+                                    .on_click(cx.listener(|this, checked, _window, cx| {
+                                        this.include_self_timings = *checked;
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             )
             .when_some(self.get_timings(), |div, e| {
