@@ -1335,7 +1335,6 @@ mod tests {
             r#"{
     "context_servers": {
         "some-mcp-server": {
-            "source": "custom",
             "command": {
                 "path": "npx",
                 "args": [
@@ -1355,7 +1354,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "some-mcp-server": {
-            "source": "custom",
             "command": "npx",
             "args": [
                 "-y",
@@ -1377,7 +1375,6 @@ mod tests {
             r#"{
     "context_servers": {
         "server-with-extras": {
-            "source": "custom",
             "command": {
                 "path": "/usr/bin/node",
                 "args": ["server.js"]
@@ -1390,7 +1387,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "server-with-extras": {
-            "source": "custom",
             "command": "/usr/bin/node",
             "args": ["server.js"],
             "settings": {}
@@ -1405,7 +1401,6 @@ mod tests {
             r#"{
     "context_servers": {
         "simple-server": {
-            "source": "custom",
             "command": {
                 "path": "simple-mcp-server"
             }
@@ -1416,7 +1411,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "simple-server": {
-            "source": "custom",
             "command": "simple-mcp-server"
         }
     }
