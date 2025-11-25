@@ -595,7 +595,7 @@ pub mod simple_message_notification {
         AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
         ScrollHandle, SharedString, Styled,
     };
-    use ui::{ScrollAxes, WithScrollbar, prelude::*};
+    use ui::{WithScrollbar, prelude::*};
 
     use crate::notifications::NotificationFrame;
 
