@@ -33,7 +33,7 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
-zeta2.workspace = true
+zeta.workspace = true
 
 [dev-dependencies]
 clap.workspace = true

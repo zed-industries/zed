@@ -14,7 +14,7 @@ use settings::{
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use zeta2::{SweepFeatureFlag, Zeta2FeatureFlag, ZetaEditPredictionProvider};
+use zeta::{SweepFeatureFlag, Zeta2FeatureFlag, ZetaEditPredictionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -100,8 +100,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 }
 
-fn clear_zeta_edit_history(_: &zeta2::ClearHistory, cx: &mut App) {
-    if let Some(zeta) = zeta2::Zeta::try_global(cx) {
+fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
+    if let Some(zeta) = zeta::Zeta::try_global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
     }
 }
@@ -203,7 +203,7 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
-            let zeta = zeta2::Zeta::global(client, &user_store, cx);
+            let zeta = zeta::Zeta::global(client, &user_store, cx);
 
             if let Some(project) = editor.project()
                 && let Some(buffer) = &singleton_buffer
@@ -214,16 +214,16 @@ fn assign_edit_prediction_provider(
                         if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<SweepFeatureFlag>()
                         {
-                            zeta2::ZetaEditPredictionModel::Sweep
+                            zeta::ZetaEditPredictionModel::Sweep
                         } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<Zeta2FeatureFlag>()
                         {
-                            zeta2::ZetaEditPredictionModel::Zeta2
+                            zeta::ZetaEditPredictionModel::Zeta2
                         } else {
                             return false;
                         }
                     } else if user_store.read(cx).current_user().is_some() {
-                        zeta2::ZetaEditPredictionModel::Zeta1
+                        zeta::ZetaEditPredictionModel::Zeta1
                     } else {
                         return false;
                     };

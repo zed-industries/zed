@@ -31,7 +31,7 @@ use serde_json::json;
 use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
-use zeta2::ContextMode;
+use zeta::ContextMode;
 
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
@@ -199,8 +199,8 @@ enum PredictionProvider {
     Sweep,
 }
 
-fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
-    zeta2::ZetaOptions {
+fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta::ZetaOptions {
+    zeta::ZetaOptions {
         context: ContextMode::Syntax(EditPredictionContextOptions {
             max_retrieved_declarations: args.max_retrieved_definitions,
             use_imports: !args.disable_imports_gathering,
@@ -398,7 +398,7 @@ async fn zeta2_syntax_context(
     let output = cx
         .update(|cx| {
             let zeta = cx.new(|cx| {
-                zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+                zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
             });
             let indexing_done_task = zeta.update(cx, |zeta, cx| {
                 zeta.set_options(zeta2_args_to_options(&args.zeta2_args, true));
@@ -436,7 +436,7 @@ async fn zeta1_context(
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<zeta2::zeta1::GatherContextOutput> {
+) -> Result<zeta::zeta1::GatherContextOutput> {
     let LoadedContext {
         full_path_str,
         snapshot,
@@ -451,7 +451,7 @@ async fn zeta1_context(
 
     let prompt_for_events = move || (events, 0);
     cx.update(|cx| {
-        zeta2::zeta1::gather_context(
+        zeta::zeta1::gather_context(
             full_path_str,
             &snapshot,
             clipped_cursor,

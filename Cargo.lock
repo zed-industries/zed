@@ -5308,7 +5308,7 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
- "zeta2",
+ "zeta",
 ]
 
 [[package]]
@@ -21314,7 +21314,7 @@ dependencies = [
  "zed-reqwest",
  "zed_actions",
  "zed_env_vars",
- "zeta2",
+ "zeta",
  "zeta2_tools",
  "zlog",
  "zlog_settings",
@@ -21628,7 +21628,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeta2"
+name = "zeta"
 version = "0.1.0"
 dependencies = [
  "ai_onboarding",
@@ -21718,7 +21718,7 @@ dependencies = [
  "ui_input",
  "util",
  "workspace",
- "zeta2",
+ "zeta",
  "zlog",
 ]
 
@@ -21767,7 +21767,7 @@ dependencies = [
  "toml 0.8.23",
  "util",
  "watch",
- "zeta2",
+ "zeta",
  "zlog",
 ]
 

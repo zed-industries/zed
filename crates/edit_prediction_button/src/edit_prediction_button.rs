@@ -39,8 +39,8 @@ use workspace::{
     notifications::NotificationId,
 };
 use zed_actions::OpenBrowser;
-use zeta2::RateCompletions;
-use zeta2::{SweepFeatureFlag, Zeta2FeatureFlag};
+use zeta::RateCompletions;
+use zeta::{SweepFeatureFlag, Zeta2FeatureFlag};
 
 actions!(
     edit_prediction,
@@ -318,7 +318,7 @@ impl Render for EditPredictionButton {
                     (false, false) => IconName::ZedPredictDisabled,
                 };
 
-                if zeta2::should_show_upsell_modal() {
+                if zeta::should_show_upsell_modal() {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
@@ -557,7 +557,7 @@ impl EditPredictionButton {
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
-                        let has_api_token = zeta2::Zeta::try_global(cx)
+                        let has_api_token = zeta::Zeta::try_global(cx)
                             .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
 
                         let entry = ContextMenuEntry::new("Sweep")

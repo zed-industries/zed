@@ -18,7 +18,7 @@ use ui::{ButtonLike, ContextMenu, ContextMenuEntry, DropdownMenu, KeyBinding, pr
 use ui_input::InputField;
 use util::ResultExt;
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{
+use zeta::{
     AgenticContextOptions, ContextMode, DEFAULT_SYNTAX_CONTEXT_OPTIONS, EditPredictionInputs, Zeta,
     Zeta2FeatureFlag, ZetaDebugInfo, ZetaEditPredictionDebugInfo, ZetaOptions,
 };
@@ -292,7 +292,7 @@ impl Zeta2Inspector {
                     ContextMode::Syntax(context_options) => {
                         let max_retrieved_declarations = match &this.context_mode {
                             ContextModeState::Llm => {
-                                zeta2::DEFAULT_SYNTAX_CONTEXT_OPTIONS.max_retrieved_declarations
+                                zeta::DEFAULT_SYNTAX_CONTEXT_OPTIONS.max_retrieved_declarations
                             }
                             ContextModeState::Syntax {
                                 max_retrieved_declarations,
@@ -327,7 +327,7 @@ impl Zeta2Inspector {
 
     fn update_last_prediction(
         &mut self,
-        prediction: zeta2::ZetaDebugInfo,
+        prediction: zeta::ZetaDebugInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -622,11 +622,11 @@ impl Zeta2Inspector {
                     .justify_between()
                     .child(
                         ui::Button::new("reset-options", "Reset")
-                            .disabled(self.zeta.read(cx).options() == &zeta2::DEFAULT_OPTIONS)
+                            .disabled(self.zeta.read(cx).options() == &zeta::DEFAULT_OPTIONS)
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Large)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_options_state(&zeta2::DEFAULT_OPTIONS, window, cx);
+                                this.set_options_state(&zeta::DEFAULT_OPTIONS, window, cx);
                             })),
                     ),
             )

@@ -1,5 +1,5 @@
 [package]
-name = "zeta2"
+name = "zeta"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/zeta2.rs"
+path = "src/zeta.rs"
 
 [features]
 eval-support = []
