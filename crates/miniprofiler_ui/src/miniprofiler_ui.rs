@@ -217,7 +217,7 @@ impl ProfilerWindow {
                     .min_w(px(60.0))
                     .flex_shrink_0()
                     .text_right()
-                    .child(format!("{:.1}ms", time_ms)),
+                    .child(format!("{:.1} ms", time_ms)),
             )
     }
 }
