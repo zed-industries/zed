@@ -318,22 +318,45 @@ impl EvaluationResult {
     }
 
     fn fmt_table(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "### Scores\n")?;
+        writeln!(f, "#### Prompt Statistics")?;
         writeln!(
             f,
-            "                   Prompt  Generated RetrievedContext PatchContext     TP     FP     FN     Precision   Recall     F1"
+            "──────────────────────────────────────────────────────────────"
         )?;
         writeln!(
             f,
-            "─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            "Prompt_len  Generated_len  RetrievedContext  PatchContext"
         )?;
         writeln!(
             f,
-            "Context Retrieval  {:<7} {:<9} {:<16} {:<16} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
-            "",
-            "",
-            "",
-            "",
+            "──────────────────────────────────────────────────────────────"
+        )?;
+        writeln!(
+            f,
+            "{:<11} {:<14} {:<17} {}",
+            self.prompt_len,
+            self.generated_len,
+            self.context_lines_found_in_context,
+            self.context_lines_in_expected_patch
+        )?;
+        writeln!(f)?;
+        writeln!(f)?;
+        writeln!(f, "#### Performance Scores")?;
+        writeln!(
+            f,
+            "──────────────────────────────────────────────────────────────────"
+        )?;
+        writeln!(
+            f,
+            "                   TP     FP     FN     Precision   Recall     F1"
+        )?;
+        writeln!(
+            f,
+            "──────────────────────────────────────────────────────────────────"
+        )?;
+        writeln!(
+            f,
+            "Context Retrieval  {:<6} {:<6} {:<6} {:>8.2}  {:>7.2}  {:>6.2}",
             self.context_scores.true_positives,
             self.context_scores.false_positives,
             self.context_scores.false_negatives,
@@ -343,19 +366,21 @@ impl EvaluationResult {
         )?;
         if let Some(completion_scores) = &self.completion_scores {
             let line_match = &completion_scores.line_match;
+            writeln!(f, "Edit Prediction")?;
             writeln!(
                 f,
-                "Completion_lines   {:<7} {:<9} {:<16} {:<16} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
-                self.prompt_len,
-                self.generated_len,
-                self.context_lines_found_in_context,
-                self.context_lines_in_expected_patch,
+                "  ├─ exact lines   {:<6} {:<6} {:<6} {:>8.2}  {:>7.2}  {:>6.2}",
                 line_match.true_positives,
                 line_match.false_positives,
                 line_match.false_negatives,
                 line_match.precision() * 100.0,
                 line_match.recall() * 100.0,
                 line_match.f1_score() * 100.0
+            )?;
+            writeln!(
+                f,
+                "  └─ diff chrF     {:<6} {:<6} {:<6} {:>8} {:>8}  {:>6.2}",
+                "-", "-", "-", "-", "-", completion_scores.chr_f
             )?;
         }
         Ok(())
