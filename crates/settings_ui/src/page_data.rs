@@ -6960,44 +6960,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SectionHeader("Word Diff"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Word Diff Mode",
-            description: "Whether to calculate word diff based on characters or words. 'Word' highlights whole words that have changed, while 'Character' highlights only the specific characters that have changed.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).word_diff_mode"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.word_diff_mode.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.word_diff_mode = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Word Diff Algorithm",
-            description: "What algorithm to use for word/character diff highlighting. 'Myers' is fast and produces good results for most cases. 'Patience' often produces more intuitive diffs for code, especially when lines are reordered, but can be slower. 'LCS' (Longest Common Subsequence) is simpler and faster, but may produce less optimal diffs.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).word_diff_algorithm"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.word_diff_algorithm.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.word_diff_algorithm = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
             title: "Word Diff Max Lines",
             description: "Maximum number of lines in a diff section before word/character diff highlighting is disabled. If either the deleted or added section of a diff exceeds this line count, no word/character diff will be generated for that section. This improves performance for large diffs.",
             field: Box::new(SettingField {

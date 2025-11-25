@@ -1,10 +1,7 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
-use language::{
-    File, Language, LanguageName, LanguageRegistry,
-    language_settings::{self},
-};
+use language::{DiffOptions, Language, LanguageRegistry, word_diff_ranges};
 use rope::Rope;
 use std::{
     cmp::Ordering,
@@ -12,47 +9,10 @@ use std::{
     iter,
     ops::Range,
     sync::{Arc, LazyLock},
-    time::Duration,
 };
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
-
-const WORD_DIFF_TIMEOUT: Duration = Duration::from_millis(30);
-
-#[derive(Copy, Clone)]
-struct WordDiffOptions {
-    algorithm: language_settings::WordDiffAlgorithm,
-    mode: language_settings::WordDiffMode,
-    max_lines: language_settings::WordDiffMaxLines,
-}
-
-impl WordDiffOptions {
-    fn from_language(
-        file: Option<&Arc<dyn File>>,
-        language: Option<LanguageName>,
-        cx: &App,
-    ) -> Self {
-        // This is so all multi buffer tests don't have to initialize the settings store
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            if !cx.has_global::<settings::SettingsStore>() {
-                return Self {
-                    algorithm: language_settings::WordDiffAlgorithm::default(),
-                    mode: language_settings::WordDiffMode::default(),
-                    max_lines: language_settings::WordDiffMaxLines::default(),
-                };
-            }
-        }
-
-        let settings = language_settings::language_settings(language, file, cx);
-        Self {
-            algorithm: settings.word_diff_algorithm,
-            mode: settings.word_diff_mode,
-            max_lines: settings.word_diff_max_lines,
-        }
-    }
-}
 
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
@@ -250,8 +210,11 @@ impl BufferDiffSnapshot {
         let base_text_pair;
         let base_text_exists;
         let base_text_snapshot;
-        let word_diff_options =
-            WordDiffOptions::from_language(None, language.as_ref().map(|lang| lang.name()), cx);
+        let diff_options = DiffOptions {
+            language_scope: language.as_ref().map(|lang| lang.default_scope()),
+            max_word_diff_line_count: 5,
+            ..Default::default()
+        };
 
         if let Some(text) = &base_text {
             let base_text_rope = Rope::from(text.as_str());
@@ -270,7 +233,7 @@ impl BufferDiffSnapshot {
             .background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, {
                 let buffer = buffer.clone();
-                async move { compute_hunks(base_text_pair, buffer, &word_diff_options) }
+                async move { compute_hunks(base_text_pair, buffer, diff_options) }
             });
 
         async move {
@@ -293,11 +256,13 @@ impl BufferDiffSnapshot {
         base_text_snapshot: language::BufferSnapshot,
         cx: &App,
     ) -> impl Future<Output = Self> + use<> {
-        let word_diff_options = WordDiffOptions::from_language(
-            base_text_snapshot.file(),
-            base_text_snapshot.language().map(|lang| lang.name()),
-            cx,
-        );
+        let diff_options = DiffOptions {
+            language_scope: base_text_snapshot
+                .language()
+                .map(|lang| lang.default_scope()),
+            max_word_diff_line_count: 5,
+            ..Default::default()
+        };
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| {
             debug_assert_eq!(&*text, &base_text_snapshot.text());
@@ -309,7 +274,7 @@ impl BufferDiffSnapshot {
                     inner: BufferDiffInner {
                         base_text: base_text_snapshot,
                         pending_hunks: SumTree::new(&buffer),
-                        hunks: compute_hunks(base_text_pair, buffer, &word_diff_options),
+                        hunks: compute_hunks(base_text_pair, buffer, diff_options),
                         base_text_exists,
                     },
                     secondary_diff: None,
@@ -811,7 +776,7 @@ impl BufferDiffInner {
 fn compute_hunks(
     diff_base: Option<(Arc<String>, Rope)>,
     buffer: text::BufferSnapshot,
-    word_diff_options: &WordDiffOptions,
+    diff_options: DiffOptions,
 ) -> SumTree<InternalDiffHunk> {
     let mut tree = SumTree::new(&buffer);
 
@@ -854,7 +819,7 @@ fn compute_hunks(
                     &diff_base_rope,
                     &buffer,
                     &mut divergence,
-                    *word_diff_options,
+                    &diff_options,
                 );
                 tree.push(hunk, &buffer);
             }
@@ -880,7 +845,7 @@ fn process_patch_hunk(
     diff_base: &Rope,
     buffer: &text::BufferSnapshot,
     buffer_row_divergence: &mut i64,
-    word_diff_options: WordDiffOptions,
+    diff_options: &DiffOptions,
 ) -> InternalDiffHunk {
     let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
     assert!(line_item_count > 0);
@@ -952,85 +917,34 @@ fn process_patch_hunk(
 
     let (base_word_diffs, buffer_word_diffs) = if (!diff_base_byte_range.is_empty()
         && !buffer_row_range.is_empty())
-        && (word_diff_options.max_lines.0 as usize >= largest_diff_line_count)
+        && (diff_options.max_word_diff_line_count >= largest_diff_line_count)
     {
         let base_text: String = diff_base
             .chunks_in_range(diff_base_byte_range.clone())
             .collect();
 
         let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
-        let algo = match word_diff_options.algorithm {
-            language_settings::WordDiffAlgorithm::Myers => similar::Algorithm::Myers,
-            language_settings::WordDiffAlgorithm::Patience => similar::Algorithm::Patience,
-            language_settings::WordDiffAlgorithm::Lcs => similar::Algorithm::Lcs,
-        };
 
-        let text_diffs = match word_diff_options.mode {
-            language_settings::WordDiffMode::Character => similar::TextDiff::configure()
-                .timeout(WORD_DIFF_TIMEOUT)
-                .algorithm(algo)
-                .diff_chars(&base_text, &buffer_text),
-            language_settings::WordDiffMode::Word => similar::TextDiff::configure()
-                .timeout(WORD_DIFF_TIMEOUT)
-                .algorithm(algo)
-                .diff_unicode_words(&base_text, &buffer_text),
-        };
+        let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
+            &base_text,
+            &buffer_text,
+            DiffOptions {
+                language_scope: diff_options.language_scope.clone(),
+                ..*diff_options
+            },
+        );
 
-        let mut base_word_diffs: Vec<Range<usize>> = Vec::default();
-        let mut buffer_word_diffs: Vec<Range<usize>> = Vec::default();
+        let buffer_start_offset = buffer_range.start.to_offset(buffer);
+        let buffer_word_diffs = buffer_word_diffs_relative
+            .into_iter()
+            .map(|range| {
+                let start = buffer.anchor_after(buffer_start_offset + range.start);
+                let end = buffer.anchor_after(buffer_start_offset + range.end);
+                start..end
+            })
+            .collect();
 
-        // Editor Element expects this to be relative to the start of the deleted hunk
-        let mut base_offset = 0;
-        let mut buffer_offset = buffer_range.start.to_offset(buffer);
-
-        for change in text_diffs.iter_all_changes() {
-            let change_offset = change.value().len();
-
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    buffer_offset += change_offset;
-                    base_offset += change_offset;
-                }
-                similar::ChangeTag::Insert => {
-                    buffer_offset += change_offset;
-
-                    if !change.value().trim().is_empty() {
-                        if let Some(last_diff) = buffer_word_diffs.last_mut()
-                            && last_diff.end >= buffer_offset - change_offset
-                        {
-                            last_diff.end = buffer_offset;
-                        } else {
-                            buffer_word_diffs.push(buffer_offset - change_offset..buffer_offset);
-                        }
-                    }
-                }
-                similar::ChangeTag::Delete => {
-                    base_offset += change_offset;
-
-                    if !change.value().trim().is_empty() {
-                        if let Some(last_diff) = base_word_diffs.last_mut()
-                            && last_diff.end >= base_offset - change_offset
-                        {
-                            last_diff.end = base_offset;
-                        } else {
-                            base_word_diffs.push(base_offset - change_offset..base_offset);
-                        }
-                    }
-                }
-            }
-        }
-
-        (
-            base_word_diffs,
-            buffer_word_diffs
-                .into_iter()
-                .map(|range| {
-                    let start = buffer.anchor_after(range.start);
-                    let end = buffer.anchor_after(range.end);
-                    start..end
-                })
-                .collect(),
-        )
+        (base_word_diffs, buffer_word_diffs)
     } else {
         (Vec::default(), Vec::default())
     };

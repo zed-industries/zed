@@ -13,8 +13,7 @@ use itertools::{Either, Itertools};
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordDiffAlgorithm, WordDiffMaxLines,
-    WordDiffMode, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordDiffMaxLines, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
@@ -154,26 +153,7 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
-    /// What algorithm to use for word/character diff highlighting.
-    ///
-    /// - `Myers`: Fast and produces good results for most cases by minimizing edit distance.
-    ///   This is the most common algorithm, used by Git by default.
-    /// - `Patience`: Matches unique lines first, then processes sections between them.
-    ///   Often produces more intuitive diffs for code, especially when lines are reordered,
-    ///   but can be slower than Myers.
-    /// - `Lcs`: Longest Common Subsequence algorithm. Simpler and faster, but may produce
-    ///   less optimal diffs.
-    ///
-    /// Default: `Myers`
-    pub word_diff_algorithm: WordDiffAlgorithm,
-    /// Whether to calculate word diff based on characters or words.
-    ///
-    /// - `Word`: Highlights whole words that have changed
-    /// - `Character`: Highlights only the specific characters that have changed
-    ///
-    /// Default: `Word`
-    pub word_diff_mode: WordDiffMode,
-    /// Maximum number of lines in a diff section before word/character diff highlighting is disabled.
+    /// Maximum number of lines in a diff section before word diff highlighting is disabled.
     ///
     /// If either the deleted or added section of a diff exceeds this line count,
     /// no word/character diff will be generated for that section. This improves
@@ -623,8 +603,6 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
-                word_diff_algorithm: settings.word_diff_algorithm.unwrap(),
-                word_diff_mode: settings.word_diff_mode.unwrap(),
                 word_diff_max_lines: settings.word_diff_max_lines.unwrap(),
             }
         }
