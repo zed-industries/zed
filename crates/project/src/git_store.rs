@@ -680,13 +680,60 @@ impl GitStore {
         })
     }
 
+    fn load_diff_bases(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<DiffBasesChange>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        match &self.state {
+            GitStoreState::Local { .. } => {
+                let Some((repo, repo_path)) =
+                    self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+                else {
+                    return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
+                };
+                repo.update(cx, |repo, cx| {
+                    repo.load_committed_text(buffer_id, repo_path, cx)
+                })
+            }
+            GitStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => cx.background_spawn({
+                let upstream_client = upstream_client.clone();
+                let upstream_project_id = *upstream_project_id;
+
+                async move {
+                    use proto::open_uncommitted_diff_response::Mode;
+
+                    let response = upstream_client
+                        .request(proto::OpenUncommittedDiff {
+                            project_id: upstream_project_id,
+                            buffer_id: buffer_id.to_proto(),
+                        })
+                        .await?;
+                    let mode = Mode::from_i32(response.mode).context("Invalid mode")?;
+                    let bases = match mode {
+                        Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
+                        Mode::IndexAndHead => DiffBasesChange::SetEach {
+                            head: response.committed_text,
+                            index: response.staged_text,
+                        },
+                    };
+                    Ok(bases)
+                }
+            }),
+        }
+    }
+
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-
         if let Some(diff_state) = self.diffs.get(&buffer_id)
             && let Some(uncommitted_diff) = diff_state
                 .read(cx)
@@ -705,20 +752,11 @@ impl GitStore {
             return Task::ready(Ok(uncommitted_diff));
         }
 
-        let Some((repo, repo_path)) =
-            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-        else {
-            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
-        };
-
+        let changes = self.load_diff_bases(buffer.clone(), cx);
         let task = self
             .loading_diffs
             .entry((buffer_id, DiffKind::Uncommitted))
             .or_insert_with(|| {
-                let changes = repo.update(cx, |repo, cx| {
-                    repo.load_committed_text(buffer_id, repo_path, cx)
-                });
-
                 // todo(lw): hot foreground spawn
                 cx.spawn(async move |this, cx| {
                     Self::open_diff_internal(this, DiffKind::Uncommitted, changes.await, buffer, cx)
@@ -728,7 +766,6 @@ impl GitStore {
                 .shared()
             })
             .clone();
-
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
@@ -1401,36 +1438,22 @@ impl GitStore {
                 // repository. In that case, we'll want to update the buffer's
                 // `BufferDiffState`, in case it already has one.
                 let buffer_id = buffer.read(cx).remote_id();
-                let diff_state = self.diffs.get(&buffer_id);
-                let repo = self.repository_and_path_for_buffer_id(buffer_id, cx);
-
-                if let Some(diff_state) = diff_state
-                    && let Some((repo, repo_path)) = repo
-                {
-                    let buffer = buffer.clone();
-                    let diff_state = diff_state.clone();
-
-                    cx.spawn(async move |_git_store, cx| {
-                        async {
-                            let diff_bases_change = repo
-                                .update(cx, |repo, cx| {
-                                    repo.load_committed_text(buffer_id, repo_path, cx)
-                                })?
-                                .await?;
-
-                            diff_state.update(cx, |diff_state, cx| {
-                                let buffer_snapshot = buffer.read(cx).text_snapshot();
-                                diff_state.diff_bases_changed(
-                                    buffer_snapshot,
-                                    Some(diff_bases_change),
-                                    cx,
-                                );
-                            })
-                        }
-                        .await
-                        .log_err();
-                    })
-                    .detach();
+                if let Some(diff_state) = self.diffs.get(&buffer_id) {
+                    let diff_state = diff_state.downgrade();
+                    let diff_bases = self.load_diff_bases(buffer.clone(), cx);
+                    let buffer = buffer.downgrade();
+                    cx.spawn(async move |_, cx| {
+                        let diff_bases_change = diff_bases.await?;
+                        let buffer = buffer.upgrade().context("buffer dropped")?;
+                        diff_state.update(cx, |diff_state, cx| {
+                            let buffer_snapshot = buffer.read(cx).text_snapshot();
+                            diff_state.diff_bases_changed(
+                                buffer_snapshot,
+                                Some(diff_bases_change),
+                                cx,
+                            );
+                        })
+                    }).detach();
                 }
             }
             _ => {}
