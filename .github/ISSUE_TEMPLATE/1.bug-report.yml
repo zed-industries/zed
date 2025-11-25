@@ -86,7 +86,7 @@ body:
       required: true
   - type: dropdown
     attributes:
-      label: If you are using WSL on Windows, which Linux are you using?
+      label: If you are using WSL on Windows, what flavor of Linux are you using?
       description: Select one.
       multiple: false
       options:
