@@ -3,7 +3,7 @@
 Channels provide a way to streamline collaborating for software engineers in many ways, but particularly:
 
 - Pairing – when working on something together, you both have your own screen, mouse, and keyboard.
-- Mentoring – it’s easy to jump in to someone else’s context, and help them get unstuck, without the friction of pushing code up.
+- Mentoring – it's easy to jump in to someone else's context, and help them get unstuck, without the friction of pushing code up.
 - Refactoring – you can have multiple people join in on large refactoring without fear of conflict.
 - Ambient awareness – you can see what everyone else is working on with no need for status emails or meetings.
 
@@ -14,7 +14,7 @@ You will need to [sign in](../../authentication.md#signing-in) in order to begin
 Open the collaboration panel via {#kb collab_panel::ToggleFocus} or `collab panel: toggle focus` from the command palette.
 
 Each channel corresponds to an ongoing project or work-stream.
-You can see who’s in a channel as their avatars will show up in the sidebar.
+You can see who's in a channel as their avatars will show up in the sidebar.
 This makes it easy to see what everyone is doing and where to find them if needed.
 
 You can create as many channels as you need.
@@ -44,9 +44,9 @@ If you'd prefer your microphone to be off when joining a channel, you can do so 
 After joining a channel, you can share a project over the channel via the `Share` button in the upper right-hand side of the window.
 This will allow channel members to edit the code hosted on your machine as though they had it checked out locally.
 
-When you are editing someone else’s project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors.
+When you are editing someone else's project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors.
 This is extremely powerful for pairing, as one of you can be implementing the current method while the other is reading and researching the correct solution to the next problem.
-And, because you have your own config running, it feels like you’re using your own machine.
+And, because you have your own config running, it feels like you're using your own machine.
 
 Avatars of collaborators in the same project as you are in color, and have a cursor color.
 Collaborators in other projects are shown in gray.
@@ -58,7 +58,7 @@ Guests have a read-only view of the project, including access to language server
 
 ## Channel Notes
 
-Each channel has a Markdown notes file associated with it to keep track of current status, new ideas, or to collaborate on building out the design for the feature that you’re working on before diving into code.
+Each channel has a Markdown notes file associated with it to keep track of current status, new ideas, or to collaborate on building out the design for the feature that you're working on before diving into code.
 
 This is similar to a Google Doc, except powered by Zed's collaborative software and persisted to our servers.
 
@@ -108,7 +108,8 @@ This allows anyone to join the channel by clicking on the link.
 
 Guest users in channels can hear and see everything that is happening, and have read only access to projects and channel notes.
 
-If you'd like to invite a guest to participate in a channel for the duration of a call you can do so by right clicking on them in the Collaboration Panel. "Allowing Write Access" will allow them to edit any projects shared into the call, and to use their microphone and share their screen if they wish.
+If you'd like to invite a guest to participate in a channel for the duration of a call you can do so by right clicking on them in the Collaboration Panel.
+"Allowing Write Access" will allow them to edit any projects shared into the call, and to use their microphone and share their screen if they wish.
 
 ## Leave call
 
