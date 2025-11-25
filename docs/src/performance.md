@@ -2,18 +2,18 @@ How to use our internal tools to profile and keep Zed fast.
 
 # Flamechart/CPU profiling
 
-See what the CPU spends the most time on. Strongly recommend you use [samply](https://github.com/mstange/samply). It
-opens an interactive profile in the browser. See its README on how to install and run.
+See what the CPU spends the most time on. Strongly recommend you use
+[samply](https://github.com/mstange/samply). It opens an interactive profile in
+the browser. See its README on how to install and run.
 
 # Task/Async profiling
 
 Get a profile of the zed foreground executor and background executors. Check if
 anything is blocking the foreground too long or taking too much (clock) time in
 the background.
-Get a profile of the zed foreground executor
->>>>>>> c66025a2f7 (add performance doc from channel to docs)
 
-The profiler always runs in the background. You can save a trace from its UI or look at the results live.
+The profiler always runs in the background. You can save a trace from its UI or
+look at the results live.
 
 ## Setup/Building the importer:
 
