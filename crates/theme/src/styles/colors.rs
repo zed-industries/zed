@@ -127,12 +127,8 @@ pub struct ThemeColors {
     pub tab_bar_background: Hsla,
     pub tab_inactive_background: Hsla,
     pub tab_active_background: Hsla,
-
-    /// Background color for passive search matches.
     pub search_match_background: Hsla,
-    /// Background color to highlight the active search match.
     pub search_active_match_background: Hsla,
-
     pub panel_background: Hsla,
     pub panel_focused_border: Hsla,
     pub panel_indent_guide: Hsla,
