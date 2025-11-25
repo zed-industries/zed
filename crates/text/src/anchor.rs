@@ -6,7 +6,7 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Anchor {
     pub timestamp: clock::Lamport,
     /// The byte offset in the buffer
@@ -14,6 +14,24 @@ pub struct Anchor {
     /// Describes which character the anchor is biased towards
     pub bias: Bias,
     pub buffer_id: Option<BufferId>,
+}
+
+impl Debug for Anchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if *self == Self::MIN {
+            return f.write_str("Anchor::MIN");
+        }
+        if *self == Self::MAX {
+            return f.write_str("Anchor::MAX");
+        }
+
+        f.debug_struct("Anchor")
+            .field("timestamp", &self.timestamp)
+            .field("offset", &self.offset)
+            .field("bias", &self.bias)
+            .field("buffer_id", &self.buffer_id)
+            .finish()
+    }
 }
 
 impl Anchor {

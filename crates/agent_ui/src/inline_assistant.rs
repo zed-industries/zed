@@ -1445,6 +1445,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
+                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
                             Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );

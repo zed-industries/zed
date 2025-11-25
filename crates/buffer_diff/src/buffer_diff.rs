@@ -147,6 +147,7 @@ impl std::fmt::Debug for BufferDiffInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferDiffSnapshot")
             .field("hunks", &self.hunks)
+            .field("remote_id", &self.base_text.remote_id())
             .finish()
     }
 }
