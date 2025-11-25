@@ -41,6 +41,8 @@ pub enum Model {
     ClaudeOpus4,
     #[serde(rename = "claude-opus-4-1", alias = "claude-opus-4-1-latest")]
     ClaudeOpus4_1,
+    #[serde(rename = "claude-opus-4-5", alias = "claude-opus-4-5-latest")]
+    ClaudeOpus4_5,
     #[serde(
         rename = "claude-opus-4-thinking",
         alias = "claude-opus-4-thinking-latest"
@@ -51,6 +53,11 @@ pub enum Model {
         alias = "claude-opus-4-1-thinking-latest"
     )]
     ClaudeOpus4_1Thinking,
+    #[serde(
+        rename = "claude-opus-4-5-thinking",
+        alias = "claude-opus-4-5-thinking-latest"
+    )]
+    ClaudeOpus4_5Thinking,
     #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
     Claude3_5SonnetV2,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
@@ -159,6 +166,18 @@ impl Model {
             Ok(Self::ClaudeSonnet4Thinking)
         } else if id.starts_with("claude-sonnet-4") {
             Ok(Self::ClaudeSonnet4)
+        } else if id.starts_with("claude-opus-4-5-thinking") {
+            Ok(Self::ClaudeOpus4_5Thinking)
+        } else if id.starts_with("claude-opus-4-5") {
+            Ok(Self::ClaudeOpus4_5)
+        } else if id.starts_with("claude-opus-4-1-thinking") {
+            Ok(Self::ClaudeOpus4_1Thinking)
+        } else if id.starts_with("claude-opus-4-1") {
+            Ok(Self::ClaudeOpus4_1)
+        } else if id.starts_with("claude-opus-4-thinking") {
+            Ok(Self::ClaudeOpus4Thinking)
+        } else if id.starts_with("claude-opus-4") {
+            Ok(Self::ClaudeOpus4)
         } else {
             anyhow::bail!("invalid model id {id}");
         }
@@ -172,8 +191,10 @@ impl Model {
             Model::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-thinking",
             Model::ClaudeOpus4 => "claude-opus-4",
             Model::ClaudeOpus4_1 => "claude-opus-4-1",
+            Model::ClaudeOpus4_5 => "claude-opus-4-5",
             Model::ClaudeOpus4Thinking => "claude-opus-4-thinking",
             Model::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking",
+            Model::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking",
             Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet",
             Model::Claude3Opus => "claude-3-opus",
@@ -240,6 +261,9 @@ impl Model {
             Model::ClaudeOpus4_1 | Model::ClaudeOpus4_1Thinking => {
                 "anthropic.claude-opus-4-1-20250805-v1:0"
             }
+            Model::ClaudeOpus4_5 | Model::ClaudeOpus4_5Thinking => {
+                "anthropic.claude-opus-4-5-20251101-v1:0"
+            }
             Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
@@ -301,8 +325,10 @@ impl Model {
             Self::ClaudeSonnet4_5Thinking => "Claude Sonnet 4.5 Thinking",
             Self::ClaudeOpus4 => "Claude Opus 4",
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
+            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
             Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
             Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
+            Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
             Self::Claude3_5SonnetV2 => "Claude 3.5 Sonnet v2",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
@@ -367,11 +393,13 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking => 200_000,
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5Thinking => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
@@ -389,7 +417,9 @@ impl Model {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking => 32_000,
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => 32_000,
             Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
@@ -409,6 +439,8 @@ impl Model {
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -434,6 +466,8 @@ impl Model {
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -473,7 +507,9 @@ impl Model {
             | Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking => true,
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => true,
 
             // Custom models - check if they have cache configuration
             Self::Custom {
@@ -495,7 +531,9 @@ impl Model {
             | Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking => Some(BedrockModelCacheConfiguration {
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => Some(BedrockModelCacheConfiguration {
                 max_cache_anchors: 4,
                 min_total_token: 1024,
             }),
@@ -524,7 +562,7 @@ impl Model {
                     budget_tokens: Some(4096),
                 }
             }
-            Model::ClaudeOpus4Thinking | Model::ClaudeOpus4_1Thinking => {
+            Model::ClaudeOpus4Thinking | Model::ClaudeOpus4_1Thinking | Model::ClaudeOpus4_5Thinking => {
                 BedrockModelMode::Thinking {
                     budget_tokens: Some(4096),
                 }
@@ -581,6 +619,8 @@ impl Model {
                 | Model::ClaudeOpus4Thinking
                 | Model::ClaudeOpus4_1
                 | Model::ClaudeOpus4_1Thinking
+                | Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
                 | Model::Claude3Haiku
                 | Model::Claude3Opus
                 | Model::Claude3Sonnet
