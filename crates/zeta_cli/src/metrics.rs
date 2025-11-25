@@ -245,3 +245,58 @@ fn test_chr_f_empty() {
     let score = chr_f(reference, hypothesis);
     assert!((score - 100.00).abs() < 1e-2);
 }
+
+#[test]
+fn test_patch_chr_f_perfect_match() {
+    use zeta::udiff::DiffLine;
+
+    let diff = vec![
+        DiffLine::Context("fn main() {"),
+        DiffLine::Deletion("    println!(\"Hello\");"),
+        DiffLine::Addition("    println!(\"Hello, World!\");"),
+        DiffLine::Context("}"),
+    ];
+
+    let score = patch_chr_f(&diff, &diff);
+    assert!((score - 100.0).abs() < 1e-2);
+}
+
+#[test]
+fn test_patch_chr_f_partial_match() {
+    use zeta::udiff::DiffLine;
+
+    let expected = vec![
+        DiffLine::Deletion("let x = 42;"),
+        DiffLine::Addition("let x = 100;"),
+    ];
+
+    let actual = vec![
+        DiffLine::Deletion("let x = 42;"),
+        DiffLine::Addition("let x = 99;"),
+    ];
+
+    let score = patch_chr_f(&expected, &actual);
+    // Deletions match perfectly, insertions differ slightly
+    // Score should be high but not perfect
+    assert!(score > 50.0 && score < 100.0);
+}
+
+#[test]
+fn test_patch_chr_f_empty_diffs() {
+    use zeta::udiff::DiffLine;
+
+    // Both diffs have only context lines (no actual changes)
+    let expected = vec![
+        DiffLine::Context("fn foo() {}"),
+        DiffLine::Context("fn bar() {}"),
+    ];
+
+    let actual = vec![
+        DiffLine::Context("fn foo() {}"),
+        DiffLine::Context("fn bar() {}"),
+    ];
+
+    let score = patch_chr_f(&expected, &actual);
+    // Empty strings compared via chr_f return 100.0, harmonic mean ~100.0
+    assert!((score - 100.0).abs() < 1e-2);
+}
