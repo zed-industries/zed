@@ -1,3 +1,4 @@
+use crate::metrics::Scores;
 use std::{
     collections::{BTreeSet, HashMap},
     io::{IsTerminal, Write},
@@ -268,89 +269,6 @@ pub struct EvaluationResult {
     pub context_lines_found_in_context: usize,
 }
 
-#[derive(Default, Debug)]
-pub struct Scores {
-    pub true_positives: usize,
-    pub false_positives: usize,
-    pub false_negatives: usize,
-}
-
-impl Scores {
-    pub fn new(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
-        let true_positives = expected.intersection(actual).count();
-        let false_positives = actual.difference(expected).count();
-        let false_negatives = expected.difference(actual).count();
-
-        Scores {
-            true_positives,
-            false_positives,
-            false_negatives,
-        }
-    }
-
-    pub fn to_markdown(&self) -> String {
-        format!(
-            "
-Precision       : {:.4}
-Recall          : {:.4}
-F1 Score        : {:.4}
-True Positives  : {}
-False Positives : {}
-False Negatives : {}",
-            self.precision(),
-            self.recall(),
-            self.f1_score(),
-            self.true_positives,
-            self.false_positives,
-            self.false_negatives
-        )
-    }
-
-    pub fn aggregate<'a>(scores: impl Iterator<Item = &'a Scores>) -> Scores {
-        let mut true_positives = 0;
-        let mut false_positives = 0;
-        let mut false_negatives = 0;
-
-        for score in scores {
-            true_positives += score.true_positives;
-            false_positives += score.false_positives;
-            false_negatives += score.false_negatives;
-        }
-
-        Scores {
-            true_positives,
-            false_positives,
-            false_negatives,
-        }
-    }
-
-    pub fn precision(&self) -> f64 {
-        if self.true_positives + self.false_positives == 0 {
-            0.0
-        } else {
-            self.true_positives as f64 / (self.true_positives + self.false_positives) as f64
-        }
-    }
-
-    pub fn recall(&self) -> f64 {
-        if self.true_positives + self.false_negatives == 0 {
-            0.0
-        } else {
-            self.true_positives as f64 / (self.true_positives + self.false_negatives) as f64
-        }
-    }
-
-    pub fn f1_score(&self) -> f64 {
-        let recall = self.recall();
-        let precision = self.precision();
-        if precision + recall == 0.0 {
-            0.0
-        } else {
-            2.0 * precision * recall / (precision + recall)
-        }
-    }
-}
-
 impl std::fmt::Display for EvaluationResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if f.alternate() {
@@ -462,7 +380,7 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
                 })
                 .collect();
 
-            let scores = Scores::new(&expected, &actual_context_lines);
+            let scores = Scores::from_sets(&expected, &actual_context_lines);
 
             false_positive_lines.retain(|line| !expected.contains(line));
 
@@ -521,7 +439,10 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .map(|line| line.to_string())
             .collect();
 
-        eval_result.edit_prediction = Some(Scores::new(&expected_patch_lines, &actual_patch_lines));
+        eval_result.edit_prediction = Some(Scores::from_sets(
+            &expected_patch_lines,
+            &actual_patch_lines,
+        ));
         eval_result.context_lines_in_expected_patch = expected_context_lines.len();
         eval_result.context_lines_found_in_context = matched;
     }
