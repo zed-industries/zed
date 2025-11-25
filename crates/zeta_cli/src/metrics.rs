@@ -140,6 +140,11 @@ pub fn chr_f(expected: &str, actual: &str) -> f64 {
         actual.to_string()
     };
 
+    // Special case: empty strings
+    if expected.is_empty() && actual.is_empty() {
+        return 100.0;
+    }
+
     // Compute precision and recall for each n-gram order, then average
     let mut total_precision = 0.0;
     let mut total_recall = 0.0;
@@ -208,10 +213,17 @@ fn get_ngram_counts(text: &str, n: usize) -> Counts {
 }
 
 #[test]
-fn test_chr_f() {
+fn test_chr_f_normal() {
     let reference = "let s = \"Привіт!\";";
     let hypothesis = "let mut s = \"Hello!\";";
-
     let score = chr_f(reference, hypothesis);
     assert!((score - 24.16).abs() < 1e-2);
+}
+
+#[test]
+fn test_chr_f_empty() {
+    let reference = "";
+    let hypothesis = "";
+    let score = chr_f(reference, hypothesis);
+    assert!((score - 100.00).abs() < 1e-2);
 }
