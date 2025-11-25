@@ -204,6 +204,8 @@ pub struct OpenAiAvailableModel {
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
     pub reasoning_effort: Option<OpenAiReasoningEffort>,
+    #[serde(default)]
+    pub capabilities: OpenAiModelCapabilities,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema, MergeFrom)]
@@ -224,6 +226,21 @@ pub struct OpenAiCompatibleSettingsContent {
 
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OpenAiModelCapabilities {
+    #[serde(default = "default_true")]
+    pub chat_completions: bool,
+}
+
+impl Default for OpenAiModelCapabilities {
+    fn default() -> Self {
+        Self {
+            chat_completions: default_true(),
+        }
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -241,6 +258,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub images: bool,
     pub parallel_tool_calls: bool,
     pub prompt_cache_key: bool,
+    #[serde(default = "default_true")]
+    pub chat_completions: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -250,6 +269,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             images: false,
             parallel_tool_calls: false,
             prompt_cache_key: false,
+            chat_completions: default_true(),
         }
     }
 }
