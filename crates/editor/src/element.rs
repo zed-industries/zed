@@ -5604,12 +5604,11 @@ impl EditorElement {
                     if start_row_offset < row_infos.len() {
                         if let Some(row_info) = row_infos.get(start_row_offset) {
                             if let Some(diff_status) = row_info.diff_status {
+                                let colors = cx.theme().colors();
                                 let background_color = match diff_status.kind {
-                                    DiffHunkStatusKind::Added => {
-                                        cx.theme().colors().version_control_added
-                                    }
+                                    DiffHunkStatusKind::Added => colors.version_control_word_added,
                                     DiffHunkStatusKind::Deleted => {
-                                        cx.theme().colors().version_control_deleted
+                                        colors.version_control_word_deleted
                                     }
                                     DiffHunkStatusKind::Modified => {
                                         debug_panic!("modified diff status for row info");
@@ -5617,8 +5616,7 @@ impl EditorElement {
                                     }
                                 };
 
-                                highlighted_ranges
-                                    .push((start_point..end_point, background_color.opacity(0.6)));
+                                highlighted_ranges.push((start_point..end_point, background_color));
                             }
                         }
                     }

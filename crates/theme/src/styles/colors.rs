@@ -300,7 +300,10 @@ pub struct ThemeColors {
     pub version_control_conflict: Hsla,
     /// Represents an ignored entry in version control systems.
     pub version_control_ignored: Hsla,
-
+    /// Represents an added word in a word diff.
+    pub version_control_word_added: Hsla,
+    /// Represents a deleted word in a word diff.
+    pub version_control_word_deleted: Hsla,
     /// Represents the "ours" region of a merge conflict.
     pub version_control_conflict_marker_ours: Hsla,
     /// Represents the "theirs" region of a merge conflict.
