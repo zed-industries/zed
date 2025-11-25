@@ -9,7 +9,7 @@ use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, Render, SerializedTaskTiming, SharedString, StatefulInteractiveElement,
     Styled, Task, TaskTiming, TitlebarOptions, UniformListScrollHandle, WindowBounds, WindowHandle,
-    WindowOptions, div, point, prelude::FluentBuilder, px, relative, size, uniform_list,
+    WindowOptions, div, prelude::FluentBuilder, px, relative, size, uniform_list,
 };
 use util::ResultExt;
 use workspace::{
@@ -129,16 +129,7 @@ impl ProfilerWindow {
                     .get_current_thread_timings();
 
                 this.update(cx, |this: &mut ProfilerWindow, cx| {
-                    let max_offset = this.scroll_handle.max_offset();
-                    let scroll_offset = this.scroll_handle.offset();
-                    this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
                     this.data = DataMode::Realtime(Some(data));
-
-                    if this.autoscroll {
-                        this.scroll_handle
-                            .set_offset(point(px(0.), -max_offset.height));
-                    }
-
                     cx.notify();
                 })
                 .ok();
@@ -237,6 +228,13 @@ impl Render for ProfilerWindow {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
+        let scroll_offset = self.scroll_handle.offset();
+        let max_offset = self.scroll_handle.max_offset();
+        self.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
+        if self.autoscroll {
+            self.scroll_handle.scroll_to_bottom();
+        }
+
         v_flex()
             .id("profiler")
             .w_full()
@@ -399,10 +397,9 @@ impl Render for ProfilerWindow {
                                 }
                             })
                             .p_4()
-                            .on_scroll_wheel(cx.listener(|this, _, _window, _| {
-                                let scroll_offset = this.scroll_handle.offset();
-                                let max_offset = this.scroll_handle.max_offset();
-                                this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
+                            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                                this.autoscroll = false;
+                                cx.notify();
                             }))
                             .track_scroll(self.scroll_handle.clone())
                             .size_full(),
