@@ -1,7 +1,7 @@
 use gpui::{
     AnyWindowHandle, App, Bounds, ClickEvent, Context, CursorStyle, ElementId, Entity, FocusHandle,
-    Focusable, Hsla, Pixels, Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions,
-    div, prelude::*, px, rgb, size,
+    Focusable, Hsla, Pixels, Point, SharedString, Size, Window, WindowBounds, WindowKind,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 use std::sync::atomic::Ordering;
 
@@ -65,6 +65,7 @@ pub struct Sticky {
     bounds: Bounds<Pixels>,
     color: StickyColor,
     collapsed: bool,
+    original_size: Option<Size<Pixels>>,
     content: SharedString,
     window_handle: Option<AnyWindowHandle>,
     text_area: Entity<TextArea>,
@@ -84,6 +85,7 @@ impl Sticky {
             bounds,
             color,
             collapsed: false,
+            original_size: None,
             content: SharedString::new(""),
             window_handle: None,
             text_area,
@@ -99,12 +101,28 @@ impl Sticky {
         self
     }
 
-    pub fn collapsed(&self) -> bool {
-        self.collapsed
-    }
+    // pub fn collapsed(&self) -> bool {
+    //     self.collapsed
+    // }
 
-    pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_collapsed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.collapsed = !self.collapsed;
+
+        if self.collapsed {
+            // Store original size if this is the first collapse
+            if self.original_size.is_none() {
+                let current_bounds = window.window_bounds().get_bounds();
+                self.original_size = Some(current_bounds.size);
+            }
+            // Resize to titlebar height only
+            window.resize(size(self.bounds.size.width, px(TITLEBAR_HEIGHT)));
+        } else {
+            // Restore original size
+            if let Some(original_size) = self.original_size {
+                window.resize(original_size);
+            }
+        }
+
         cx.notify();
     }
 
@@ -239,7 +257,7 @@ impl Render for Sticky {
                 cx.notify();
             }))
             .when(self.collapsed, |this| {
-                this.h(px(TITLEBAR_HEIGHT)).overflow_hidden()
+                this.h(px(TITLEBAR_HEIGHT * 3.0)).overflow_hidden()
             })
             .when(!self.collapsed, |this| {
                 this.child(Titlebar::new(entity, window_active))
@@ -273,7 +291,7 @@ impl RenderOnce for Titlebar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = self.sticky.clone();
         let sticky_state = self.sticky.read(cx);
-        let note_preview = sticky_state.text_area.read(cx).content().clone();
+        let note_preview = sticky_state.text_area.read(cx).content();
         let note_preview = if note_preview.len() > 45 {
             format!("{}...", &note_preview[..45])
         } else {
@@ -303,7 +321,7 @@ impl RenderOnce for Titlebar {
                 let state = state.clone();
 
                 state.update(cx, |state, cx| {
-                    state.toggle_collapsed(cx);
+                    state.toggle_collapsed(window, cx);
                 });
             })
             // .on_click(|event, window, cx: &mut App| {

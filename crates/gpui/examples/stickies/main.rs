@@ -10,8 +10,9 @@ mod ui;
 use text_area::{
     Backspace as TextAreaBackspace, Copy as TextAreaCopy, Cut as TextAreaCut,
     Delete as TextAreaDelete, Down, End as TextAreaEnd, Enter, Home as TextAreaHome, Left,
-    Paste as TextAreaPaste, Right, SelectAll as TextAreaSelectAll, SelectDown, SelectLeft,
-    SelectRight, SelectUp, Up,
+    MoveToBeginning, MoveToEnd, Paste as TextAreaPaste, Right, SelectAll as TextAreaSelectAll,
+    SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd, SelectUp, SelectWordLeft,
+    SelectWordRight, Up, WordLeft, WordRight,
 };
 use ui::{Sticky, StickyColor};
 
@@ -309,6 +310,16 @@ fn main() {
             KeyBinding::new("cmd-c", TextAreaCopy, None),
             KeyBinding::new("cmd-x", TextAreaCut, None),
             KeyBinding::new("cmd-v", TextAreaPaste, None),
+            // Word navigation (Option+Arrow)
+            KeyBinding::new("alt-left", WordLeft, None),
+            KeyBinding::new("alt-right", WordRight, None),
+            KeyBinding::new("alt-shift-left", SelectWordLeft, None),
+            KeyBinding::new("alt-shift-right", SelectWordRight, None),
+            // Document navigation (Cmd+Arrow)
+            KeyBinding::new("cmd-up", MoveToBeginning, None),
+            KeyBinding::new("cmd-down", MoveToEnd, None),
+            KeyBinding::new("cmd-shift-up", SelectToBeginning, None),
+            KeyBinding::new("cmd-shift-down", SelectToEnd, None),
         ]);
     });
 }
