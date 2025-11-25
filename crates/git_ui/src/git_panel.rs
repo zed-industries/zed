@@ -2868,20 +2868,19 @@ impl GitPanel {
                     if ops.staged() {
                         self.single_staged_entry = single_staged_entry;
                     }
+                } else {
+                    self.single_staged_entry = single_staged_entry;
                 }
-            } else if repo.pending_ops_summary().item_summary.staging_count == 1 {
-                self.single_staged_entry = repo.pending_ops().find_map(|ops| {
-                    if ops.staging() {
-                        repo.status_for_path(&ops.repo_path)
-                            .map(|status| GitStatusEntry {
-                                repo_path: ops.repo_path.clone(),
-                                status: status.status,
-                                staging: StageStatus::Staged,
-                            })
-                    } else {
-                        None
-                    }
-                });
+            } else if repo.pending_ops_summary().item_summary.staging_count == 1
+                && let Some(ops) = repo.pending_ops().find(|ops| ops.staging())
+            {
+                self.single_staged_entry =
+                    repo.status_for_path(&ops.repo_path)
+                        .map(|status| GitStatusEntry {
+                            repo_path: ops.repo_path.clone(),
+                            status: status.status,
+                            staging: StageStatus::Staged,
+                        });
             }
         }
 
