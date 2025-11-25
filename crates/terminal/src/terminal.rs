@@ -2463,10 +2463,7 @@ mod tests {
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
 
-    fn init_ctrl_click_hyperlink_test(
-        cx: &mut TestAppContext,
-        output: &[u8],
-    ) -> Entity<Terminal> {
+    fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
