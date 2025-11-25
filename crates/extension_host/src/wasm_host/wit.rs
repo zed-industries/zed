@@ -114,11 +114,14 @@ impl Extension {
         version: Version,
         component: &Component,
     ) -> Result<Self> {
-        // TODO: Enable v0.7.0 when extensions are updated to support virtual documents
-        // For now, always use v0.6.0 as the maximum version to maintain compatibility
-        let use_v0_7_0 = true; // Enabled for dev extensions that support virtual documents
+        // Check if the component exports the v0.7.0-specific function.
+        // Extensions built against published zed_extension_api 0.7.0 before virtual document
+        // support was added will report version 0.7.0 but won't have this export.
+        let has_virtual_document_export = component
+            .export_index(None, "language-server-virtual-document-configs")
+            .is_some();
 
-        if use_v0_7_0 && version >= latest::MIN_VERSION {
+        if version >= latest::MIN_VERSION && has_virtual_document_export {
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker(executor))
                     .await
