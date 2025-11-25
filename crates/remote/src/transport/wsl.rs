@@ -145,10 +145,6 @@ impl WslRemoteConnection {
         windows_path_to_wsl_path_impl(&self.connection_options, source, self.can_exec).await
     }
 
-    fn wsl_command(&self, program: &str, args: &[impl AsRef<OsStr>]) -> process::Command {
-        wsl_command_impl(&self.connection_options, program, args, self.can_exec)
-    }
-
     async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
         run_wsl_command_impl(&self.connection_options, program, args, self.can_exec).await
     }
@@ -354,16 +350,17 @@ impl RemoteConnection for WslRemoteConnection {
         if reconnect {
             proxy_args.push("--reconnect".to_owned());
         }
-        let proxy_process = match self
-            .wsl_command("env", &proxy_args)
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(process) => process,
-            Err(error) => {
-                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
-            }
-        };
+
+        let proxy_process =
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, self.can_exec)
+                .kill_on_drop(true)
+                .spawn()
+            {
+                Ok(process) => process,
+                Err(error) => {
+                    return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
+                }
+            };
 
         super::handle_rpc_messages_over_child_process_stdio(
             proxy_process,

@@ -2938,7 +2938,9 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
         for _ in 0..10 {
             let end_ix = rng.random_range(0..=text_rope.len());
+            let end_ix = text_rope.floor_char_boundary(end_ix);
             let start_ix = rng.random_range(0..=end_ix);
+            let start_ix = text_rope.floor_char_boundary(start_ix);
             assert_eq!(
                 snapshot
                     .bytes_in_range(start_ix..end_ix)

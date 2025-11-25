@@ -715,10 +715,8 @@ impl<'a> Chunks<'a> {
             range.start
         };
         let chunk_offset = offset - chunks.start();
-        if let Some(chunk) = chunks.item()
-            && !chunk.text.is_char_boundary(chunk_offset)
-        {
-            panic!("byte index {} is not a char boundary", offset);
+        if let Some(chunk) = chunks.item() {
+            chunk.assert_char_boundary(chunk_offset);
         }
         Self {
             chunks,
