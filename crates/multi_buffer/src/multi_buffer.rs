@@ -576,16 +576,16 @@ enum DiffTransform {
         summary: TextSummary,
         buffer_id: BufferId,
         hunk_info: DiffTransformHunkInfo,
-        base_text_byte_range: Range<usize>,
         has_trailing_newline: bool,
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct DiffTransformHunkInfo {
     excerpt_id: ExcerptId,
     hunk_start_anchor: text::Anchor,
     hunk_secondary_status: DiffHunkSecondaryStatus,
+    base_text_byte_range: Range<usize>,
 }
 
 impl Eq for DiffTransformHunkInfo {}
@@ -613,7 +613,7 @@ pub struct ExcerptInfo {
 }
 
 /// Used with [`MultiBuffer::push_buffer_content_transform`]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct CurrentInsertedHunk {
     hunk_excerpt_start: ExcerptOffset,
     insertion_end_offset: ExcerptOffset,
@@ -967,8 +967,19 @@ struct MultiBufferRegion<'a, MBD, BD> {
     diff_hunk_status: Option<DiffHunkStatus>,
     excerpt: &'a Excerpt,
     buffer_range: Range<BD>,
+    diff_base_byte_range: Option<Range<usize>>,
     range: Range<MBD>,
     has_trailing_newline: bool,
+}
+
+impl<'a, MBD, BD> MultiBufferRegion<'a, MBD, BD>
+where
+    MBD: Ord,
+    BD: Ord,
+{
+    fn is_filtered(&self) -> bool {
+        self.range.is_empty() && self.buffer_range.is_empty() && self.diff_hunk_status == None
+    }
 }
 
 struct ExcerptChunks<'a> {
@@ -3031,7 +3042,6 @@ impl MultiBuffer {
         if excerpt_edits.is_empty() {
             return vec![];
         }
-        dbg!(&excerpt_edits);
 
         let mut excerpts = snapshot.excerpts.cursor::<ExcerptOffset>(());
         let mut old_diff_transforms = snapshot
@@ -3093,7 +3103,7 @@ impl MultiBuffer {
             // in response by hunks_intersecting_range to keep it at a row boundary. In KeepDeletions
             // mode, we need to make sure that the whole added range is still filtered out in this situation.
             // We do that by adding an additional edit that covers the rest of the hunk added range.
-            if let Some(current_inserted_hunk) = end_of_current_insert
+            if let Some(current_inserted_hunk) = &end_of_current_insert
                 && current_inserted_hunk.is_filtered
                 // No additional edit needed if we've already covered the whole added range.
                 && current_inserted_hunk.insertion_end_offset > edit.new.end
@@ -3111,7 +3121,7 @@ impl MultiBuffer {
                     old: edit.old.end..edit.old.end + overshoot,
                     new: edit.new.end..current_inserted_hunk.insertion_end_offset,
                 };
-                excerpt_edits.push_front(dbg!(additional_edit));
+                excerpt_edits.push_front(additional_edit);
             }
 
             // Compute the end of the edit in output coordinates.
@@ -3125,7 +3135,7 @@ impl MultiBuffer {
                     edit.old.end - old_diff_transforms.start().0,
                 ))
             };
-            let edit_new_end_overshoot = if let Some(current_inserted_hunk) = end_of_current_insert
+            let edit_new_end_overshoot = if let Some(current_inserted_hunk) = &end_of_current_insert
                 && current_inserted_hunk.is_filtered
             {
                 let insertion_end_offset = current_inserted_hunk.insertion_end_offset;
@@ -3133,7 +3143,6 @@ impl MultiBuffer {
                 let base = insertion_end_offset.max(excerpt_len);
                 edit.new.end.saturating_sub(base)
             } else {
-                // FIXME
                 edit.new.end - new_diff_transforms.summary().excerpt_len()
             };
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.0;
@@ -3143,7 +3152,6 @@ impl MultiBuffer {
                 new: edit_new_start..edit_new_end,
             };
 
-            dbg!(&output_edit);
             output_delta += (output_edit.new.end - output_edit.new.start) as isize;
             output_delta -= (output_edit.old.end - output_edit.old.start) as isize;
             if changed_diff_hunks || matches!(change_kind, DiffChangeKind::BufferEdited) {
@@ -3179,7 +3187,7 @@ impl MultiBuffer {
                     snapshot,
                     &mut new_diff_transforms,
                     excerpt_offset,
-                    end_of_current_insert,
+                    end_of_current_insert.as_ref(),
                 );
                 at_transform_boundary = true;
             }
@@ -3286,6 +3294,7 @@ impl MultiBuffer {
                         excerpt_id: excerpt.id,
                         hunk_start_anchor: hunk.buffer_range.start,
                         hunk_secondary_status: hunk.secondary_status,
+                        base_text_byte_range: hunk.diff_base_byte_range.clone(),
                     };
 
                     let hunk_excerpt_start = excerpt_start
@@ -3297,7 +3306,7 @@ impl MultiBuffer {
                         snapshot,
                         new_diff_transforms,
                         hunk_excerpt_start,
-                        *end_of_current_insert,
+                        end_of_current_insert.as_ref(),
                     );
 
                     // For every existing hunk, determine if it was previously expanded
@@ -3327,15 +3336,8 @@ impl MultiBuffer {
                             excerpt.id
                         );
 
-                        // FIXME we should have the property that if we push the additional edit, we should have consumed at least one byte of the added region of the hunk
-
                         if !hunk.diff_base_byte_range.is_empty()
-                            // FIXME, if we create an additional edit, the edit_buffer_start for the additional edit
-                            // will be the same as the edit_buffer_end for the original edit
-                            //
-                            //                 <----original edit-----><----additional edit---->
-                            //                                         |--------------------------------------------------------| hunk added range
-                            && dbg!(hunk_buffer_range.start) >= dbg!(edit_buffer_start)
+                            && hunk_buffer_range.start >= edit_buffer_start
                             && hunk_buffer_range.start <= excerpt_buffer_end
                             && filter_mode != Some(MultiBufferFilterMode::KeepInsertions)
                         {
@@ -3353,10 +3355,9 @@ impl MultiBuffer {
 
                             new_diff_transforms.push(
                                 DiffTransform::DeletedHunk {
-                                    base_text_byte_range: hunk.diff_base_byte_range.clone(),
                                     summary: base_text_summary.into(),
                                     buffer_id: excerpt.buffer_id,
-                                    hunk_info,
+                                    hunk_info: hunk_info.clone(),
                                     has_trailing_newline,
                                 },
                                 (),
@@ -3415,7 +3416,7 @@ impl MultiBuffer {
         old_snapshot: &MultiBufferSnapshot,
         new_transforms: &mut SumTree<DiffTransform>,
         end_offset: ExcerptOffset,
-        current_inserted_hunk: Option<CurrentInsertedHunk>,
+        current_inserted_hunk: Option<&CurrentInsertedHunk>,
     ) {
         if let Some(current_inserted_hunk) = current_inserted_hunk {
             let start_offset = new_transforms.summary().excerpt_len();
@@ -3429,12 +3430,12 @@ impl MultiBuffer {
                 let transform = if current_inserted_hunk.is_filtered {
                     DiffTransform::FilteredInsertedHunk {
                         summary: summary_to_add,
-                        hunk_info: current_inserted_hunk.hunk_info,
+                        hunk_info: current_inserted_hunk.hunk_info.clone(),
                     }
                 } else {
                     DiffTransform::InsertedHunk {
                         summary: summary_to_add,
-                        hunk_info: current_inserted_hunk.hunk_info,
+                        hunk_info: current_inserted_hunk.hunk_info.clone(),
                     }
                 };
                 if !Self::extend_last_buffer_content_transform(new_transforms, &transform) {
@@ -4789,12 +4790,12 @@ impl MultiBufferSnapshot {
             DiffTransform::FilteredInsertedHunk { .. } => MBD::default(),
             DiffTransform::DeletedHunk {
                 buffer_id,
-                base_text_byte_range,
                 has_trailing_newline,
+                hunk_info,
                 ..
             } => {
-                let buffer_start = base_text_byte_range.start + start_overshoot;
-                let mut buffer_end = base_text_byte_range.start + end_overshoot;
+                let buffer_start = hunk_info.base_text_byte_range.start + start_overshoot;
+                let mut buffer_end = hunk_info.base_text_byte_range.start + end_overshoot;
                 let Some(base_text) = self.diffs.get(buffer_id).map(|diff| diff.base_text()) else {
                     panic!("{:?} is in non-existent deleted hunk", range.start)
                 };
@@ -4842,20 +4843,20 @@ impl MultiBufferSnapshot {
             }
             DiffTransform::FilteredInsertedHunk { .. } => MBD::default(),
             DiffTransform::DeletedHunk {
-                base_text_byte_range,
                 buffer_id,
                 has_trailing_newline,
+                hunk_info,
                 ..
             } => {
-                let buffer_end = base_text_byte_range.start + overshoot;
+                let buffer_end = hunk_info.base_text_byte_range.start + overshoot;
                 let Some(base_text) = self.diffs.get(buffer_id).map(|diff| diff.base_text()) else {
                     panic!("{:?} is in non-existent deleted hunk", range.end)
                 };
 
                 let mut suffix = base_text.text_summary_for_range::<MBD::TextDimension, _>(
-                    base_text_byte_range.start..buffer_end,
+                    hunk_info.base_text_byte_range.start..buffer_end,
                 );
-                if *has_trailing_newline && buffer_end == base_text_byte_range.end + 1 {
+                if *has_trailing_newline && buffer_end == hunk_info.base_text_byte_range.end + 1 {
                     suffix.add_assign(&<MBD::TextDimension>::from_text_summary(
                         &TextSummary::from("\n"),
                     ))
@@ -4961,7 +4962,7 @@ impl MultiBufferSnapshot {
             match diff_transforms.item() {
                 Some(DiffTransform::DeletedHunk {
                     buffer_id,
-                    base_text_byte_range,
+                    hunk_info,
                     ..
                 }) => {
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor
@@ -4970,12 +4971,12 @@ impl MultiBufferSnapshot {
                         && base_text.can_resolve(diff_base_anchor)
                     {
                         let base_text_offset = diff_base_anchor.to_offset(base_text);
-                        if base_text_offset >= base_text_byte_range.start
-                            && base_text_offset <= base_text_byte_range.end
+                        if base_text_offset >= hunk_info.base_text_byte_range.start
+                            && base_text_offset <= hunk_info.base_text_byte_range.end
                         {
                             let position_in_hunk = base_text
                                 .text_summary_for_range::<MBD::TextDimension, _>(
-                                    base_text_byte_range.start..base_text_offset,
+                                    hunk_info.base_text_byte_range.start..base_text_offset,
                                 );
                             position.0.add_text_dim(&position_in_hunk);
                         } else if at_transform_end {
@@ -5286,11 +5287,12 @@ impl MultiBufferSnapshot {
         let mut diff_base_anchor = None;
         if let Some(DiffTransform::DeletedHunk {
             buffer_id,
-            base_text_byte_range,
             has_trailing_newline,
+            hunk_info,
             ..
         }) = diff_transforms.item()
         {
+            let base_text_byte_range = &hunk_info.base_text_byte_range;
             let diff = self.diffs.get(buffer_id).expect("missing diff");
             if offset_in_transform > base_text_byte_range.len() {
                 debug_assert!(*has_trailing_newline);
@@ -6795,7 +6797,6 @@ where
         match self.diff_transforms.item()? {
             DiffTransform::DeletedHunk {
                 buffer_id,
-                base_text_byte_range,
                 has_trailing_newline,
                 hunk_info,
                 ..
@@ -6803,8 +6804,9 @@ where
                 let diff = self.snapshot.diffs.get(buffer_id)?;
                 let buffer = diff.base_text();
                 let mut rope_cursor = buffer.as_rope().cursor(0);
-                let buffer_start = rope_cursor.summary::<BD>(base_text_byte_range.start);
-                let buffer_range_len = rope_cursor.summary::<BD>(base_text_byte_range.end);
+                let buffer_start = rope_cursor.summary::<BD>(hunk_info.base_text_byte_range.start);
+                let buffer_range_len =
+                    rope_cursor.summary::<BD>(hunk_info.base_text_byte_range.end);
                 let mut buffer_end = buffer_start;
                 TextDimension::add_assign(&mut buffer_end, &buffer_range_len);
                 let start = self.diff_transforms.start().output_dimension.0;
@@ -6819,6 +6821,7 @@ where
                     )),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
+                    diff_base_byte_range: Some(hunk_info.base_text_byte_range.clone()),
                 })
             }
             transform @ (DiffTransform::Unmodified { .. }
@@ -6827,6 +6830,11 @@ where
                 let mut diff_hunk_status = transform
                     .hunk_info()
                     .map(|hunk_info| DiffHunkStatus::added(hunk_info.hunk_secondary_status));
+
+                let diff_base_byte_range = transform
+                    .hunk_info()
+                    .map(|hunk_info| hunk_info.base_text_byte_range.clone());
+
                 let buffer = &excerpt.buffer;
                 let buffer_context_start = excerpt.range.context.start.summary::<BD>(buffer);
 
@@ -6874,6 +6882,7 @@ where
                     has_trailing_newline,
                     is_main_buffer: true,
                     diff_hunk_status,
+                    diff_base_byte_range,
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })
@@ -7194,7 +7203,7 @@ impl DiffTransform {
         match self {
             DiffTransform::DeletedHunk { hunk_info, .. }
             | DiffTransform::InsertedHunk { hunk_info, .. }
-            | DiffTransform::FilteredInsertedHunk { hunk_info, .. } => Some(*hunk_info),
+            | DiffTransform::FilteredInsertedHunk { hunk_info, .. } => Some(hunk_info.clone()),
             DiffTransform::Unmodified { .. } => None,
         }
     }
@@ -7561,8 +7570,12 @@ impl Iterator for MultiBufferRows<'_> {
                     None
                 } else {
                     let needs_expand_up = first_row == last_row
-                        && last_row > 0
-                        && !region.diff_hunk_status.is_some_and(|d| d.is_deleted());
+                        && (last_row > 0)
+                        && !region.diff_hunk_status.is_some_and(|d| d.is_deleted())
+                        && !(region.is_filtered()
+                            && region
+                                .diff_base_byte_range
+                                .is_some_and(|range| !range.is_empty()));
                     let needs_expand_down = last_row < last_excerpt.buffer.max_point().row;
 
                     if needs_expand_up && needs_expand_down {
@@ -7841,15 +7854,15 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             }
             DiffTransform::DeletedHunk {
                 buffer_id,
-                base_text_byte_range,
+                hunk_info,
                 has_trailing_newline,
                 ..
             } => {
-                let base_text_start =
-                    base_text_byte_range.start + (self.range.start - diff_transform_start);
+                let base_text_start = hunk_info.base_text_byte_range.start
+                    + (self.range.start - diff_transform_start);
                 let base_text_end =
-                    base_text_byte_range.start + (self.range.end - diff_transform_start);
-                let base_text_end = base_text_end.min(base_text_byte_range.end);
+                    hunk_info.base_text_byte_range.start + (self.range.end - diff_transform_start);
+                let base_text_end = base_text_end.min(hunk_info.base_text_byte_range.end);
 
                 let mut chunks = if let Some((_, mut chunks)) = self
                     .diff_base_chunks

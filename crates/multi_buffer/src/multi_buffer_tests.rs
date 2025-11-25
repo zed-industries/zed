@@ -29,7 +29,7 @@ fn test_empty_singleton(cx: &mut App) {
         [RowInfo {
             buffer_id: Some(buffer_id),
             buffer_row: Some(0),
-            base_text_row: Some(BaseTextRow(0)),
+            base_text_row: None,
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             expand_info: None,
