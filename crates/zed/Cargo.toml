@@ -102,6 +102,7 @@ nc.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
 offline_mode.workspace = true
+offline_mode_indicator.workspace = true
 onboarding.workspace = true
 outline.workspace = true
 outline_panel.workspace = true

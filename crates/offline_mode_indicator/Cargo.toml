@@ -1,0 +1,20 @@
+[package]
+name = "offline_mode_indicator"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/offline_mode_indicator.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+offline_mode.workspace = true
+settings.workspace = true
+ui.workspace = true
+workspace.workspace = true

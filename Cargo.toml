@@ -117,6 +117,7 @@ members = [
     "crates/node_runtime",
     "crates/notifications",
     "crates/offline_mode",
+    "crates/offline_mode_indicator",
     "crates/ollama",
     "crates/onboarding",
     "crates/open_ai",
@@ -349,6 +350,7 @@ net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 offline_mode = { path = "crates/offline_mode" }
+offline_mode_indicator = { path = "crates/offline_mode_indicator" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }

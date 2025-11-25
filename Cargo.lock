@@ -10904,6 +10904,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "offline_mode_indicator"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "offline_mode",
+ "settings",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "ollama"
 version = "0.1.0"
 dependencies = [
@@ -21256,6 +21267,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "offline_mode",
+ "offline_mode_indicator",
  "onboarding",
  "outline",
  "outline_panel",
