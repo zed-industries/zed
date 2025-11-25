@@ -51,7 +51,7 @@ You can mute/unmute your microphone via the microphone icon in the upper right-h
 After joining a channel, you can share a project over the channel via the `Share` button in the upper right-hand side of the window.
 This will allow channel members to edit the code hosted on your machine as though they had it checked out locally.
 
-When you are editing someone else's project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors.
+When you are editing someone else's project, you still have the full power of the editor at your fingertips; you can jump to definitions, use the AI assistant, and see any diagnostic errors.
 This is extremely powerful for pairing, as one of you can be implementing the current method while the other is reading and researching the correct solution to the next problem.
 And, because you have your own config running, it feels like you're using your own machine.
 
@@ -115,7 +115,7 @@ After you've shared your screen, others can click on the `Screen` entry under yo
 If they are following you, Zed will automatically switch between following your cursor in their Zed instance and your screen share, depending on whether you are focused on Zed or another application, like a web browser.
 
 > Note: Collaborators can see your entire screen when you are screen sharing, so be careful not to share anything you don't want to share.
-Remember to stop screen sharing when you are finished.
+> Remember to stop screen sharing when you are finished.
 
 ## Livestreaming & Guests
 

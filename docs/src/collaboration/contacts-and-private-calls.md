@@ -15,6 +15,6 @@ Before you can collaborate, you'll need to add a collaborator to your contacts. 
 
 ## Private calls
 
-1. Simply click on a contact to start a private Calls
+1. Simply click on a contact to start a private calls
 
 _Aside from a few additional features (channel notes, etc.), collaboration in private calls is largely the same as it is in [channels](./channels.md)._
