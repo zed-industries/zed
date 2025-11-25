@@ -35,7 +35,6 @@ multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", rev = "764dd270c642f77f10f3e19d05cc178a6cbe69f3", features = ["use_tokio"], optional = true }
 picker.workspace = true
 project.workspace = true
-project_panel.workspace = true
 regex.workspace = true
 schemars.workspace = true
 search.workspace = true
@@ -67,6 +66,7 @@ lsp = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project_panel.workspace = true
 release_channel.workspace = true
+semver.workspace = true
 settings_ui.workspace = true
 settings.workspace = true
 perf.workspace = true

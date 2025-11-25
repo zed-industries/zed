@@ -150,6 +150,7 @@ impl DbThread {
                                     .unwrap_or_default(),
                                 input: tool_use.input,
                                 is_input_complete: true,
+                                thought_signature: None,
                             },
                         ));
                     }
@@ -181,6 +182,7 @@ impl DbThread {
                     crate::Message::Agent(AgentMessage {
                         content,
                         tool_results,
+                        reasoning_details: None,
                     })
                 }
                 language_model::Role::System => {

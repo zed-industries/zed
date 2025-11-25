@@ -34,6 +34,10 @@ util.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+util = { workspace = true, features = ["test-support"] }
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 exec.workspace = true
 fork.workspace = true

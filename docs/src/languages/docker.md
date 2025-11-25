@@ -10,7 +10,7 @@ Docker `compose.yaml` language support in Zed is provided by the [Docker Compose
 
 ## Dockerfile
 
-`Dockerfile` language support in Zed is provided by the [Dockerfile extension](https://github.com/d1y/dockerfile.zed). Please issues to: [https://github.com/d1y/dockerfile.zed/issues](https://github.com/d1y/dockerfile.zed/issues).
+`Dockerfile` language support in Zed is provided by the [Dockerfile extension](https://github.com/d1y/dockerfile.zed). Please report issues to: [https://github.com/d1y/dockerfile.zed/issues](https://github.com/d1y/dockerfile.zed/issues).
 
 - Tree-sitter: [camdencheek/tree-sitter-dockerfile](https://github.com/camdencheek/tree-sitter-dockerfile)
 - Language Server: [rcjsuen/dockerfile-language-server](https://github.com/rcjsuen/dockerfile-language-server)

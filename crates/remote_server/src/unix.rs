@@ -9,16 +9,17 @@ use fs::{Fs, RealFs};
 use futures::channel::{mpsc, oneshot};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+use util::command::new_smol_command;
 
 use proto::CrashReport;
-use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
+use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
 use remote::RemoteClient;
 use remote::{
     json_log::LogRecord,
@@ -47,10 +48,16 @@ use std::{
 };
 use thiserror::Error;
 
-pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
-    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION").to_owned(),
     ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-        option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+        let commit_sha = option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha");
+        let build_identifier = option_env!("ZED_BUILD_ID");
+        if let Some(build_id) = build_identifier {
+            format!("{build_id}+{commit_sha}")
+        } else {
+            commit_sha.to_owned()
+        }
     }
 });
 
@@ -372,7 +379,7 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
         .thread_name(|ix| format!("RayonWorker{}", ix))
         .build_global()
@@ -389,7 +396,12 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
+        let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
+        let app_version = AppVersion::load(
+            env!("ZED_PKG_VERSION"),
+            option_env!("ZED_BUILD_ID"),
+            app_commit_sha,
+        );
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
@@ -656,7 +668,7 @@ pub(crate) fn execute_proxy(
 
 async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
-    smol::process::Command::new("kill")
+    new_smol_command("kill")
         .arg(pid.to_string())
         .output()
         .await
@@ -707,7 +719,7 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
-    let mut server_process = smol::process::Command::new(binary_name);
+    let mut server_process = new_smol_command(binary_name);
     server_process
         .arg("run")
         .arg("--log-file")
@@ -772,7 +784,7 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match smol::process::Command::new("kill")
+    match new_smol_command("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()
@@ -1001,9 +1013,9 @@ fn cleanup_old_binaries() -> Result<()> {
 }
 
 fn is_new_version(version: &str) -> bool {
-    SemanticVersion::from_str(version)
+    semver::Version::from_str(version)
         .ok()
-        .zip(SemanticVersion::from_str(env!("ZED_PKG_VERSION")).ok())
+        .zip(semver::Version::from_str(env!("ZED_PKG_VERSION")).ok())
         .is_some_and(|(version, current_version)| version >= current_version)
 }
 

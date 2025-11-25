@@ -6,9 +6,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
-use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
-use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use gpui::{App, AppContext as _, AsyncApp, Task};
+use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
+use semver::Version;
 use smol::{fs, process};
 use std::{
     ffi::OsStr,
@@ -62,13 +63,8 @@ impl WslRemoteConnection {
             connection_options.distro_name,
             connection_options.user
         );
-        let (release_channel, version, commit) = cx.update(|cx| {
-            (
-                ReleaseChannel::global(cx),
-                AppVersion::global(cx),
-                AppCommitSha::try_global(cx),
-            )
-        })?;
+        let (release_channel, version) =
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
 
         let mut this = Self {
             connection_options,
@@ -92,9 +88,9 @@ impl WslRemoteConnection {
             .detect_platform()
             .await
             .context("failed detecting platform")?;
-        log::info!("Remote platform discovered: {}", this.shell);
+        log::info!("Remote platform discovered: {:?}", this.platform);
         this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await
                 .context("failed ensuring server binary")?,
         );
@@ -145,10 +141,6 @@ impl WslRemoteConnection {
         windows_path_to_wsl_path_impl(&self.connection_options, source, self.can_exec).await
     }
 
-    fn wsl_command(&self, program: &str, args: &[impl AsRef<OsStr>]) -> process::Command {
-        wsl_command_impl(&self.connection_options, program, args, self.can_exec)
-    }
-
     async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
         run_wsl_command_impl(&self.connection_options, program, args, self.can_exec).await
     }
@@ -157,15 +149,10 @@ impl WslRemoteConnection {
         &self,
         delegate: &Arc<dyn RemoteClientDelegate>,
         release_channel: ReleaseChannel,
-        version: SemanticVersion,
-        commit: Option<AppCommitSha>,
+        version: Version,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
-            ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.full()).unwrap_or_default();
-                format!("{}-{}", version, commit)
-            }
             ReleaseChannel::Dev => "build".to_string(),
             _ => version.to_string(),
         };
@@ -251,11 +238,13 @@ impl WslRemoteConnection {
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
-                .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
+                .context("Failed to create directory when uploading file")?;
         }
 
         let t0 = Instant::now();
-        let src_stat = fs::metadata(&src_path).await?;
+        let src_stat = fs::metadata(&src_path)
+            .await
+            .with_context(|| format!("source path does not exist: {}", src_path.display()))?;
         let size = src_stat.len();
         log::info!(
             "uploading remote server to WSL {:?} ({}kb)",
@@ -352,16 +341,17 @@ impl RemoteConnection for WslRemoteConnection {
         if reconnect {
             proxy_args.push("--reconnect".to_owned());
         }
-        let proxy_process = match self
-            .wsl_command("env", &proxy_args)
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(process) => process,
-            Err(error) => {
-                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
-            }
-        };
+
+        let proxy_process =
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, self.can_exec)
+                .kill_on_drop(true)
+                .spawn()
+            {
+                Ok(process) => process,
+                Err(error) => {
+                    return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
+                }
+            };
 
         super::handle_rpc_messages_over_child_process_stdio(
             proxy_process,

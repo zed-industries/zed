@@ -1410,7 +1410,7 @@ impl App {
                 let quit_on_empty = match cx.quit_mode {
                     QuitMode::Explicit => false,
                     QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => !cfg!(macos),
+                    QuitMode::Default => cfg!(not(target_os = "macos")),
                 };
 
                 if quit_on_empty && cx.windows.is_empty() {
@@ -2399,10 +2399,6 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 

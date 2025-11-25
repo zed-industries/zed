@@ -3,7 +3,8 @@ pub mod retrieval_prompt;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::predict_edits_v3::{
-    self, DiffPathFmt, Excerpt, Line, Point, PromptFormat, ReferencedDeclaration,
+    self, DiffPathFmt, Event, Excerpt, IncludedFile, Line, Point, PromptFormat,
+    ReferencedDeclaration,
 };
 use indoc::indoc;
 use ordered_float::OrderedFloat;
@@ -166,6 +167,24 @@ const OLD_TEXT_NEW_TEXT_REMINDER: &str = indoc! {r#"
 pub fn build_prompt(
     request: &predict_edits_v3::PredictEditsRequest,
 ) -> Result<(String, SectionLabels)> {
+    let mut section_labels = Default::default();
+
+    let prompt_data = PromptData {
+        events: request.events.clone(),
+        cursor_point: request.cursor_point,
+        cursor_path: request.excerpt_path.clone(),
+        included_files: request.included_files.clone(),
+    };
+    match request.prompt_format {
+        PromptFormat::MinimalQwen => {
+            return Ok((MinimalQwenPrompt.render(&prompt_data), section_labels));
+        }
+        PromptFormat::SeedCoder1120 => {
+            return Ok((SeedCoder1120Prompt.render(&prompt_data), section_labels));
+        }
+        _ => (),
+    };
+
     let mut insertions = match request.prompt_format {
         PromptFormat::MarkedExcerpt => vec![
             (
@@ -191,6 +210,8 @@ pub fn build_prompt(
             vec![(request.cursor_point, CURSOR_MARKER)]
         }
         PromptFormat::OnlySnippets => vec![],
+        PromptFormat::MinimalQwen => unreachable!(),
+        PromptFormat::SeedCoder1120 => unreachable!(),
     };
 
     let mut prompt = match request.prompt_format {
@@ -200,6 +221,8 @@ pub fn build_prompt(
         PromptFormat::OldTextNewText => XML_TAGS_INSTRUCTIONS.to_string(),
         PromptFormat::OnlySnippets => String::new(),
         PromptFormat::Minimal => STUDENT_MODEL_INSTRUCTIONS.to_string(),
+        PromptFormat::MinimalQwen => unreachable!(),
+        PromptFormat::SeedCoder1120 => unreachable!(),
     };
 
     if request.events.is_empty() {
@@ -250,8 +273,6 @@ pub fn build_prompt(
 
     prompt.push_str(excerpts_preamble);
     prompt.push('\n');
-
-    let mut section_labels = Default::default();
 
     if !request.referenced_declarations.is_empty() || !request.signatures.is_empty() {
         let syntax_based_prompt = SyntaxBasedPrompt::populate(request)?;
@@ -310,6 +331,13 @@ pub fn build_prompt(
     }
 
     Ok((prompt, section_labels))
+}
+
+pub fn generation_params(prompt_format: PromptFormat) -> GenerationParams {
+    match prompt_format {
+        PromptFormat::SeedCoder1120 => SeedCoder1120Prompt::generation_params(),
+        _ => GenerationParams::default(),
+    }
 }
 
 pub fn write_codeblock<'a>(
@@ -404,7 +432,7 @@ pub fn write_excerpts<'a>(
     }
 }
 
-pub fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+pub fn push_events(output: &mut String, events: &[Arc<predict_edits_v3::Event>]) {
     if events.is_empty() {
         return;
     };
@@ -769,6 +797,8 @@ impl<'a> SyntaxBasedPrompt<'a> {
                             writeln!(output, "<|section_{}|>", section_index).ok();
                         }
                     }
+                    PromptFormat::MinimalQwen => unreachable!(),
+                    PromptFormat::SeedCoder1120 => unreachable!(),
                 }
 
                 let push_full_snippet = |output: &mut String| {
@@ -876,5 +906,170 @@ fn declaration_size(declaration: &ReferencedDeclaration, style: DeclarationStyle
     match style {
         DeclarationStyle::Signature => declaration.signature_range.len(),
         DeclarationStyle::Declaration => declaration.text.len(),
+    }
+}
+
+struct PromptData {
+    events: Vec<Arc<Event>>,
+    cursor_point: Point,
+    cursor_path: Arc<Path>, // TODO: make a common struct with cursor_point
+    included_files: Vec<IncludedFile>,
+}
+
+#[derive(Default)]
+pub struct GenerationParams {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Option<Vec<String>>,
+}
+
+trait PromptFormatter {
+    fn render(&self, data: &PromptData) -> String;
+
+    fn generation_params() -> GenerationParams {
+        return GenerationParams::default();
+    }
+}
+
+struct MinimalQwenPrompt;
+
+impl PromptFormatter for MinimalQwenPrompt {
+    fn render(&self, data: &PromptData) -> String {
+        let edit_history = self.fmt_edit_history(data);
+        let context = self.fmt_context(data);
+
+        format!(
+            "{instructions}\n\n{edit_history}\n\n{context}",
+            instructions = MinimalQwenPrompt::INSTRUCTIONS,
+            edit_history = edit_history,
+            context = context
+        )
+    }
+}
+
+impl MinimalQwenPrompt {
+    const INSTRUCTIONS: &str = "You are a code completion assistant that analyzes edit history to identify and systematically complete incomplete refactorings or patterns across the entire codebase.\n";
+
+    fn fmt_edit_history(&self, data: &PromptData) -> String {
+        if data.events.is_empty() {
+            "(No edit history)\n\n".to_string()
+        } else {
+            let mut events_str = String::new();
+            push_events(&mut events_str, &data.events);
+            format!(
+                "The following are the latest edits made by the user, from earlier to later.\n\n{}",
+                events_str
+            )
+        }
+    }
+
+    fn fmt_context(&self, data: &PromptData) -> String {
+        let mut context = String::new();
+        let include_line_numbers = true;
+
+        for related_file in &data.included_files {
+            writeln!(context, "<|file_sep|>{}", DiffPathFmt(&related_file.path)).unwrap();
+
+            if related_file.path == data.cursor_path {
+                write!(context, "<|fim_prefix|>").unwrap();
+                write_excerpts(
+                    &related_file.excerpts,
+                    &[(data.cursor_point, "<|fim_suffix|>")],
+                    related_file.max_row,
+                    include_line_numbers,
+                    &mut context,
+                );
+                writeln!(context, "<|fim_middle|>").unwrap();
+            } else {
+                write_excerpts(
+                    &related_file.excerpts,
+                    &[],
+                    related_file.max_row,
+                    include_line_numbers,
+                    &mut context,
+                );
+            }
+        }
+        context
+    }
+}
+
+struct SeedCoder1120Prompt;
+
+impl PromptFormatter for SeedCoder1120Prompt {
+    fn render(&self, data: &PromptData) -> String {
+        let edit_history = self.fmt_edit_history(data);
+        let context = self.fmt_context(data);
+
+        format!(
+            "# Edit History:\n{edit_history}\n\n{context}",
+            edit_history = edit_history,
+            context = context
+        )
+    }
+
+    fn generation_params() -> GenerationParams {
+        GenerationParams {
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            stop: Some(vec!["<[end_of_sentence]>".into()]),
+        }
+    }
+}
+
+impl SeedCoder1120Prompt {
+    fn fmt_edit_history(&self, data: &PromptData) -> String {
+        if data.events.is_empty() {
+            "(No edit history)\n\n".to_string()
+        } else {
+            let mut events_str = String::new();
+            push_events(&mut events_str, &data.events);
+            events_str
+        }
+    }
+
+    fn fmt_context(&self, data: &PromptData) -> String {
+        let mut context = String::new();
+        let include_line_numbers = true;
+
+        for related_file in &data.included_files {
+            writeln!(context, "# Path: {}\n", DiffPathFmt(&related_file.path)).unwrap();
+
+            if related_file.path == data.cursor_path {
+                let fim_prompt = self.fmt_fim(&related_file, data.cursor_point);
+                context.push_str(&fim_prompt);
+            } else {
+                write_excerpts(
+                    &related_file.excerpts,
+                    &[],
+                    related_file.max_row,
+                    include_line_numbers,
+                    &mut context,
+                );
+            }
+        }
+        context
+    }
+
+    fn fmt_fim(&self, file: &IncludedFile, cursor_point: Point) -> String {
+        let mut buf = String::new();
+        const FIM_SUFFIX: &str = "<[fim-suffix]>";
+        const FIM_PREFIX: &str = "<[fim-prefix]>";
+        const FIM_MIDDLE: &str = "<[fim-middle]>";
+        write!(buf, "{}", FIM_PREFIX).unwrap();
+        write_excerpts(
+            &file.excerpts,
+            &[(cursor_point, FIM_SUFFIX)],
+            file.max_row,
+            true,
+            &mut buf,
+        );
+
+        // Swap prefix and suffix parts
+        let index = buf.find(FIM_SUFFIX).unwrap();
+        let prefix = &buf[..index];
+        let suffix = &buf[index..];
+
+        format!("{}{}{}", suffix, prefix, FIM_MIDDLE)
     }
 }
