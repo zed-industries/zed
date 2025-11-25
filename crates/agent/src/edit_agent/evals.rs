@@ -4,7 +4,6 @@ use crate::{
 };
 use Role::*;
 use client::{Client, UserStore};
-use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext, Timer};
@@ -20,9 +19,7 @@ use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use std::{
-    cmp::Reverse,
     fmt::{self, Display},
-    io::Write as _,
     path::Path,
     str::FromStr,
     sync::mpsc,
@@ -1318,99 +1315,131 @@ fn eval(
     mismatched_tag_threshold: f32,
     mut eval: EvalInput,
 ) {
-    let mut evaluated_count = 0;
-    let mut failed_count = 0;
-    report_progress(evaluated_count, failed_count, iterations);
-
-    let (tx, rx) = mpsc::channel();
-
+    let (tx, _rx) = std::sync::mpsc::channel();
+    // YYY - is this bit about caching nonsense?
     // Cache the last message in the conversation, and run one instance of the eval so that
     // all the next ones are cached.
     eval.conversation.last_mut().unwrap().cache = true;
-    run_eval(eval.clone(), tx.clone());
+    run_eval(eval.clone(), tx);
 
-    let executor = gpui::background_executor();
-    let semaphore = Arc::new(smol::lock::Semaphore::new(32));
-    for _ in 1..iterations {
-        let eval = eval.clone();
-        let tx = tx.clone();
-        let semaphore = semaphore.clone();
-        executor
-            .spawn(async move {
-                let _guard = semaphore.acquire().await;
-                run_eval(eval, tx)
-            })
-            .detach();
-    }
-    drop(tx);
+    eval_utils::eval(
+        iterations,
+        expected_pass_ratio,
+        mismatched_tag_threshold,
+        Arc::new(move |tx| run_eval(eval.clone(), tx)),
+    );
 
-    let mut failed_evals = HashMap::default();
-    let mut errored_evals = HashMap::default();
-    let mut eval_outputs = Vec::new();
-    let mut cumulative_parser_metrics = EditParserMetrics::default();
-    while let Ok(output) = rx.recv() {
-        match output {
-            Ok(output) => {
-                cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
-                eval_outputs.push(output.clone());
-                if output.assertion.score < 80 {
-                    failed_count += 1;
-                    failed_evals
-                        .entry(output.sample.text_after.clone())
-                        .or_insert(Vec::new())
-                        .push(output);
-                }
-            }
-            Err(error) => {
-                failed_count += 1;
-                *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
-            }
-        }
+    // let mut evaluated_count = 0;
+    // let mut failed_count = 0;
+    // report_progress(evaluated_count, failed_count, iterations);
 
-        evaluated_count += 1;
-        report_progress(evaluated_count, failed_count, iterations);
-    }
+    // let (tx, rx) = mpsc::channel();
 
-    let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
-    println!("Actual pass ratio: {}\n", actual_pass_ratio);
-    if actual_pass_ratio < expected_pass_ratio {
-        let mut errored_evals = errored_evals.into_iter().collect::<Vec<_>>();
-        errored_evals.sort_by_key(|(_, count)| Reverse(*count));
-        for (error, count) in errored_evals {
-            println!("Eval errored {} times. Error: {}", count, error);
-        }
+    // // Cache the last message in the conversation, and run one instance of the eval so that
+    // // all the next ones are cached.
+    // eval.conversation.last_mut().unwrap().cache = true;
+    // run_eval(eval.clone(), tx.clone());
 
-        let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
-        failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
-        for (_buffer_output, failed_evals) in failed_evals {
-            let eval_output = failed_evals.first().unwrap();
-            println!("Eval failed {} times", failed_evals.len());
-            println!("{}", eval_output);
-        }
+    // let executor = gpui::background_executor();
+    // let semaphore = Arc::new(smol::lock::Semaphore::new(32));
+    // for _ in 1..iterations {
+    //     let eval = eval.clone();
+    //     let tx = tx.clone();
+    //     let semaphore = semaphore.clone();
+    //     executor
+    //         .spawn(async move {
+    //             let _guard = semaphore.acquire().await;
+    //             run_eval(eval, tx)
+    //         })
+    //         .detach();
+    // }
+    // drop(tx);
 
-        panic!(
-            "Actual pass ratio: {}\nExpected pass ratio: {}",
-            actual_pass_ratio, expected_pass_ratio
-        );
-    }
+    // let mut failed_evals = HashMap::default();
+    // let mut errored_evals = HashMap::default();
+    // let mut eval_outputs = Vec::new();
+    // let mut cumulative_parser_metrics = EditParserMetrics::default();
+    // while let Ok(output) = rx.recv() {
+    //     match output {
+    //         Ok(output) => {
+    //             cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
+    //             eval_outputs.push(output.clone());
+    //             if output.assertion.score < 80 {
+    //                 failed_count += 1;
+    //                 failed_evals
+    //                     .entry(output.sample.text_after.clone())
+    //                     .or_insert(Vec::new())
+    //                     .push(output);
+    //             }
+    //         }
+    //         Err(error) => {
+    //             failed_count += 1;
+    //             *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
+    //         }
+    //     }
 
-    let mismatched_tag_ratio =
-        cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
-    if mismatched_tag_ratio > mismatched_tag_threshold {
-        for eval_output in eval_outputs {
-            println!("{}", eval_output);
-        }
-        panic!("Too many mismatched tags: {:?}", cumulative_parser_metrics);
-    }
+    //     evaluated_count += 1;
+    //     report_progress(evaluated_count, failed_count, iterations);
+    // }
+
+    // let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
+    // println!("Actual pass ratio: {}\n", actual_pass_ratio);
+    // if actual_pass_ratio < expected_pass_ratio {
+    //     let mut errored_evals = errored_evals.into_iter().collect::<Vec<_>>();
+    //     errored_evals.sort_by_key(|(_, count)| Reverse(*count));
+    //     for (error, count) in errored_evals {
+    //         println!("Eval errored {} times. Error: {}", count, error);
+    //     }
+
+    //     let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
+    //     failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
+    //     for (_buffer_output, failed_evals) in failed_evals {
+    //         let eval_output = failed_evals.first().unwrap();
+    //         println!("Eval failed {} times", failed_evals.len());
+    //         println!("{}", eval_output);
+    //     }
+
+    //     panic!(
+    //         "Actual pass ratio: {}\nExpected pass ratio: {}",
+    //         actual_pass_ratio, expected_pass_ratio
+    //     );
+    // }
+
+    // let mismatched_tag_ratio =
+    //     cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
+    // if mismatched_tag_ratio > mismatched_tag_threshold {
+    //     for eval_output in eval_outputs {
+    //         println!("{}", eval_output);
+    //     }
+    //     panic!("Too many mismatched tags: {:?}", cumulative_parser_metrics);
+    // }
 }
 
-fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
+fn run_eval(eval: EvalInput, tx: mpsc::Sender<eval_utils::EvalOutput>) {
     let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
     let mut cx = TestAppContext::build(dispatcher, None);
-    let output = cx.executor().block_test(async {
+    let result = cx.executor().block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await
     });
+    let output = match result {
+        Ok(output) => eval_utils::EvalOutput {
+            data: output.to_string(),
+            mismatched_tags: output.sample.edit_output.parser_metrics.mismatched_tags,
+            tags: output.sample.edit_output.parser_metrics.tags,
+            outcome_kind: if output.assertion.score < 80 {
+                eval_utils::OutcomeKind::Failed
+            } else {
+                eval_utils::OutcomeKind::Passed
+            },
+        },
+        Err(e) => eval_utils::EvalOutput {
+            data: format!("{e:?}"),
+            mismatched_tags: 0,
+            tags: 0,
+            outcome_kind: eval_utils::OutcomeKind::Error,
+        },
+    };
     tx.send(output).unwrap();
 }
 
@@ -1437,22 +1466,6 @@ impl Display for EvalOutput {
         writeln!(f, "Raw Edits:\n{}", self.sample.edit_output.raw_edits)?;
         Ok(())
     }
-}
-
-fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usize) {
-    let passed_count = evaluated_count - failed_count;
-    let passed_ratio = if evaluated_count == 0 {
-        0.0
-    } else {
-        passed_count as f64 / evaluated_count as f64
-    };
-    print!(
-        "\r\x1b[KEvaluated {}/{} ({:.2}% passed)",
-        evaluated_count,
-        iterations,
-        passed_ratio * 100.0
-    );
-    std::io::stdout().flush().unwrap();
 }
 
 struct EditAgentTest {

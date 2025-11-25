@@ -22,11 +22,11 @@ fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usiz
     std::io::stdout().flush().unwrap();
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutcomeKind {
     Passed,
     Failed,
-    Error(String),
+    Error,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,7 +41,7 @@ pub fn eval(
     iterations: usize,
     expected_pass_ratio: f32,
     mismatched_tag_threshold: f32,
-    evalf: &(dyn Fn(mpsc::Sender<EvalOutput>) + Send),
+    evalf: Arc<dyn Fn(mpsc::Sender<EvalOutput>) + Send + Sync>,
 ) {
     let mut evaluated_count = 0;
     let mut failed_count = 0;
@@ -52,9 +52,9 @@ pub fn eval(
     let executor = gpui::background_executor();
     let semaphore = Arc::new(smol::lock::Semaphore::new(32));
     for _ in 1..iterations {
-        let eval = eval.clone();
         let tx = tx.clone();
         let semaphore = semaphore.clone();
+        let evalf = evalf.clone();
         executor
             .spawn(async move {
                 let _guard = semaphore.acquire().await;
@@ -65,7 +65,7 @@ pub fn eval(
     drop(tx);
 
     let mut failed_evals = Vec::new();
-    let mut errored_evals = HashMap::default();
+    let mut errored_evals = HashMap::new();
     let mut eval_outputs = Vec::new();
     let mut cumulative_mismatched_tags = 0usize;
     let mut cumulative_tags = 0usize;
@@ -74,8 +74,8 @@ pub fn eval(
             output.outcome_kind,
             OutcomeKind::Passed | OutcomeKind::Failed
         ) {
-            cumulative_mismatched_tags += output.cumulative_mismatched_tags;
-            cumulative_tags += output.cumulative_tags;
+            cumulative_mismatched_tags += output.mismatched_tags;
+            cumulative_tags += output.tags;
             eval_outputs.push(output.clone());
         }
 
@@ -85,9 +85,9 @@ pub fn eval(
                 failed_count += 1;
                 failed_evals.push(output);
             }
-            OutcomeKind::Error(s) => {
+            OutcomeKind::Error => {
                 failed_count += 1;
-                *errored_evals.entry(s).or_insert(0) += 1;
+                *errored_evals.entry(output.data).or_insert(0) += 1;
             }
         }
 
@@ -101,8 +101,6 @@ pub fn eval(
         for (error, count) in errored_evals {
             println!("Eval errored {} times. Error: {}", count, error);
         }
-
-        let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
 
         for failed in failed_evals {
             println!("Eval failed");
