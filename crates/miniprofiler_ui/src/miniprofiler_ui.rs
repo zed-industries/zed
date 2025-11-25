@@ -130,9 +130,13 @@ impl ProfilerWindow {
 
                 this.update(cx, |this: &mut ProfilerWindow, cx| {
                     this.data = DataMode::Realtime(Some(data));
+                    let max_offset = this.scroll_handle.max_offset();
+                    if !this.autoscroll {
+                        let scroll_offset = this.scroll_handle.offset();
+                        this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
+                    }
 
                     if this.autoscroll {
-                        let max_offset = this.scroll_handle.max_offset();
                         this.scroll_handle
                             .set_offset(point(px(0.), -max_offset.height));
                     }
@@ -327,26 +331,12 @@ impl Render for ProfilerWindow {
                             ),
                     )
                     .child(
-                        h_flex()
-                            .gap_3()
-                            .child(
-                                Checkbox::new("autoscroll", self.autoscroll.into())
-                                    .label("Auto Scroll")
-                                    .on_click(cx.listener(
-                                        |this, checked: &ToggleState, _window, cx| {
-                                            this.autoscroll = checked.selected();
-                                            cx.notify();
-                                        },
-                                    )),
-                            )
-                            .child(
-                                Checkbox::new("include-self", self.include_self_timings)
-                                    .label("Include profiler timings")
-                                    .on_click(cx.listener(|this, checked, _window, cx| {
-                                        this.include_self_timings = *checked;
-                                        cx.notify();
-                                    })),
-                            ),
+                        Checkbox::new("include-self", self.include_self_timings)
+                            .label("Include profiler timings")
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.include_self_timings = *checked;
+                                cx.notify();
+                            })),
                     ),
             )
             .when_some(self.get_timings(), |div, e| {
@@ -411,6 +401,11 @@ impl Render for ProfilerWindow {
                                 }
                             })
                             .p_4()
+                            .on_scroll_wheel(cx.listener(|this, _, _window, _| {
+                                let scroll_offset = this.scroll_handle.offset();
+                                let max_offset = this.scroll_handle.max_offset();
+                                this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
+                            }))
                             .track_scroll(self.scroll_handle.clone())
                             .size_full(),
                         )
