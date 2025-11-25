@@ -20,3 +20,5 @@ The collaboration panel is broken down into two sections:
 > Since sharing a project gives them access to your local file system, you should not share projects with people you do not trust; they could potentially do some nasty things.
 >
 > In the future, we will do more to prevent this type of access beyond the shared project and add more control over what collaborators can do, but for now, only collaborate with people you trust.
+
+See our [Data and Privacy FAQs](https://zed.dev/faq#data-and-privacy) for collaboration.
