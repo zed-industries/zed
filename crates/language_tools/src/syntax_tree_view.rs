@@ -121,7 +121,6 @@ type SemanticTokenState = Option<(
     HashMap<lsp::LanguageServerId, lsp::SemanticTokensLegend>,
     std::sync::Arc<BufferSemanticTokens>,
     BufferSnapshot,
-    clock::Global,
 )>;
 
 impl EditorState {
@@ -409,15 +408,14 @@ impl SyntaxTreeView {
             );
 
         if node.child_count() == 0 {
-            if let Some((legends, sema, buffer, version)) = semantic_tokens {
-                let token_range =
-                    editor::display_map::range_from_version(buffer, node.byte_range(), version);
-                for (server, tok) in sema.all_tokens().filter(|(_, t)| {
-                    let lsp_start = buffer.point_to_offset(Point::new(t.line, t.start));
-                    let lsp_end = lsp_start + t.length as usize;
-
-                    // If the lsp token range is within the tree-sitter token, show it.
-                    lsp_start >= token_range.start && lsp_end <= token_range.end
+            if let Some((legends, sema, buffer)) = semantic_tokens {
+                for (server, semantic_token) in sema.all_tokens().filter(|(_, semantic_token)| {
+                    let node_range = cursor.node().byte_range();
+                    // TODO kb is this correct? `fn point_offset_to_offsets` seems to do something similar but differently
+                    let token_start = buffer
+                        .point_to_offset(Point::new(semantic_token.line, semantic_token.start));
+                    let token_end = token_start + semantic_token.length as usize;
+                    token_start >= node_range.start && token_end < node_range.end
                 }) {
                     let Some(legend) = legends.get(&server) else {
                         continue;
@@ -429,19 +427,19 @@ impl SyntaxTreeView {
                         .child(
                             Label::new(format!(
                                 "({}:{} - {}:{}) ",
-                                tok.line + 1,
-                                tok.start + 1,
-                                tok.line + 1,
-                                tok.start + tok.length + 1,
+                                semantic_token.line + 1,
+                                semantic_token.start + 1,
+                                semantic_token.line + 1,
+                                semantic_token.start + semantic_token.length + 1,
                             ))
                             .color(Color::Muted),
                         )
                         .child(Label::new(
-                            legend.token_types[tok.token_type as usize]
+                            legend.token_types[semantic_token.token_type as usize]
                                 .as_str()
                                 .to_string(),
                         ))
-                        .when(tok.token_modifiers != 0, |row| {
+                        .when(semantic_token.token_modifiers != 0, |row| {
                             row.child(
                                 Label::new(format!(
                                     " ({})",
@@ -450,7 +448,7 @@ impl SyntaxTreeView {
                                         .iter()
                                         .enumerate()
                                         .filter_map(|(i, modifier)| {
-                                            if (tok.token_modifiers & (1 << i)) != 0 {
+                                            if (semantic_token.token_modifiers & (1 << i)) != 0 {
                                                 Some(modifier.as_str())
                                             } else {
                                                 None
@@ -583,7 +581,7 @@ impl SyntaxTreeView {
             .read(cx)
             .lsp_store()
             .read(cx);
-        let (semantic_tokens, version) = lsp_store.current_semantic_tokens(buffer_id)?;
+        let semantic_tokens = lsp_store.current_semantic_tokens(buffer_id)?;
 
         let legends = semantic_tokens
             .servers
@@ -602,7 +600,7 @@ impl SyntaxTreeView {
             })
             .collect::<HashMap<_, _>>();
 
-        Some((legends, semantic_tokens, buffer.snapshot(), version))
+        Some((legends, semantic_tokens, buffer.snapshot()))
     }
 }
 

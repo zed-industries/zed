@@ -1,13 +1,16 @@
-use std::{collections::hash_map, sync::Arc, time::Duration};
+use std::{collections::hash_map, time::Duration};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, Window};
+use gpui::{
+    App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
+};
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use project::project_settings::ProjectSettings;
 use settings::{
-    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRules,
+    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
+    SemanticTokenRules, Settings as _,
 };
 use text::{Bias, BufferId};
 use theme::SyntaxTheme;
@@ -16,9 +19,9 @@ use ui::ActiveTheme as _;
 use crate::{Editor, display_map::SemanticTokenHighlight};
 
 impl Editor {
-    pub fn toggle_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_semantic_tokens(&mut self, cx: &mut Context<Self>) {
         self.semantic_tokens_enabled = !self.semantic_tokens_enabled;
-        self.update_semantic_tokens(None, false, window, cx);
+        self.update_semantic_tokens(None, false, cx);
     }
 
     pub fn semantic_tokens_available(&self, cx: &App) -> bool {
@@ -37,7 +40,6 @@ impl Editor {
         &mut self,
         buffer_id: Option<BufferId>,
         refresh: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.mode().is_full() || !self.semantic_tokens_enabled {
@@ -61,32 +63,28 @@ impl Editor {
         let buffers_to_query = self
             .visible_excerpts(cx)
             .into_values()
-            .map(|(buffer, ..)| (buffer.read(cx).remote_id(), buffer))
-            .chain(buffer_id.and_then(|buffer_id| {
-                self.buffer
-                    .read(cx)
-                    .buffer(buffer_id)
-                    .map(|buffer| (buffer_id, buffer))
-            }))
-            .filter(|(editor_buffer_id, editor_buffer)| {
+            .map(|(buffer, ..)| buffer)
+            .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
+            .filter_map(|editor_buffer| {
+                let editor_buffer_id = editor_buffer.read(cx).remote_id();
                 let settings = language_settings(
                     editor_buffer.read(cx).language().map(|l| l.name()),
                     editor_buffer.read(cx).file(),
                     cx,
                 );
-                let retain = buffer_id.is_none_or(|buffer_id| &buffer_id == editor_buffer_id)
-                    && self.registered_buffers.contains_key(editor_buffer_id)
+                let retain = buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
+                    && self.registered_buffers.contains_key(&editor_buffer_id)
                     && settings.semantic_tokens;
-                if !retain {
+                if retain {
+                    Some((editor_buffer_id, editor_buffer))
+                } else {
                     self.display_map.update(cx, |display_map, _| {
-                        display_map
-                            .semantic_token_highlights
-                            .remove(editor_buffer_id);
+                        display_map.invalidate_semantic_highlights(editor_buffer_id);
                     });
                     self.semantic_tokens_fetched_for_buffers
-                        .remove(editor_buffer_id);
+                        .remove(&editor_buffer_id);
+                    None
                 }
-                retain
             })
             .unique_by(|(buffer_id, _)| *buffer_id)
             .collect::<Vec<_>>();
@@ -125,6 +123,9 @@ impl Editor {
             }
 
             editor.update(cx, |editor, cx| {
+                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let all_excerpts = editor.buffer().read(cx).excerpt_ids();
+
                 for (buffer_id, query_version, tokens) in all_semantic_tokens {
                     let Some(buffer) = editor.buffer().read(cx).buffer(buffer_id) else {
                         continue;
@@ -163,7 +164,7 @@ impl Editor {
                         .collect::<HashMap<_, _>>();
 
                         let buffer_snapshot = buffer.read(cx).snapshot();
-                        let mut token_highlights = tokens
+                        let token_highlights = tokens
                             .all_tokens()
                             .filter_map(|(server_id, token)| {
                                 let stylizer = stylizers.get(&server_id)?;
@@ -173,25 +174,29 @@ impl Editor {
                                     text::OffsetUtf16(token.length as usize),
                                     &buffer.read(cx),
                                 );
-                                let range = buffer_snapshot.anchor_before(start_offset)..buffer_snapshot.anchor_after(end_offset);
+                                let buffer_range = buffer_snapshot.anchor_before(start_offset)..buffer_snapshot.anchor_after(end_offset);
+                                let multi_buffer_start = all_excerpts.iter().find_map(|&excerpt_id| multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, buffer_range.start))?;
+                                let multi_buffer_end = all_excerpts.iter().find_map(|&excerpt_id| multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, buffer_range.end))?;
 
                                 Some(SemanticTokenHighlight {
-                                    range,
+                                    range: multi_buffer_start..multi_buffer_end,
                                     style: stylizer.convert(
                                         cx.theme().syntax(),
                                         token.token_type,
                                         token.token_modifiers,
                                     )?,
                                 })
-                            })
-                            .collect::<Vec<_>>();
+                            });
 
-                        // These should be sorted, but we rely on it for binary searching, so let's be sure.
-                        token_highlights.sort_by_key(|token| token.range.start);
+                        display_map.invalidate_semantic_highlights(buffer_id);
 
-                        display_map
-                            .semantic_token_highlights
-                            .insert(buffer_id, Arc::from(token_highlights));
+                        for highlight in token_highlights {
+                            let i = display_map
+                                .semantic_token_highlights.binary_search_by(|probe| probe.range.start.cmp(&&highlight.range.start, &multi_buffer_snapshot)).unwrap_or_else(|i| i);
+                            display_map
+                                .semantic_token_highlights
+                                .insert(i, highlight);
+                        }
                     });
                 }
 
@@ -201,6 +206,7 @@ impl Editor {
     }
 }
 
+// TODO kb this looks odd
 fn point_offset_to_offsets(
     point: text::PointUtf16,
     length: text::OffsetUtf16,

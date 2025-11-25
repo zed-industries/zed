@@ -96,7 +96,7 @@ use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
     FutureExt, StreamExt as _,
-    future::{self, Shared, join, join_all},
+    future::{self, Shared, join},
     stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -105,11 +105,11 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
-    SharedString, Size, Stateful, StrikethroughStyle, Styled, Subscription, Task, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
-    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
+    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -167,8 +167,7 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, SemanticTokenColorOverride, SemanticTokenFontStyle,
-    SemanticTokenFontWeight, SemanticTokenRules, Settings, SettingsLocation, SettingsStore,
+    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
     update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
@@ -1925,7 +1924,7 @@ impl Editor {
                         );
                     }
                     project::Event::RefreshSemanticTokens { .. } => {
-                        editor.update_semantic_tokens(None, true, window, cx);
+                        editor.update_semantic_tokens(None, true, cx);
                     }
                     project::Event::LanguageServerRemoved(..) => {
                         if editor.tasks_update_task.is_none() {
@@ -21470,7 +21469,7 @@ impl Editor {
                         .retain(|(task_buffer_id, _), _| task_buffer_id != buffer_id);
                     self.semantic_tokens_fetched_for_buffers.remove(buffer_id);
                     self.display_map.update(cx, |display_map, _| {
-                        display_map.semantic_token_highlights.remove(buffer_id);
+                        display_map.invalidate_semantic_highlights(*buffer_id);
                     });
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
@@ -21705,7 +21704,7 @@ impl Editor {
                 )),
                 cx,
             );
-            self.update_semantic_tokens(None, false, window, cx);
+            self.update_semantic_tokens(None, false, cx);
         }
 
         cx.notify();
@@ -22564,7 +22563,7 @@ impl Editor {
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
-        self.update_semantic_tokens(for_buffer, false, window, cx);
+        self.update_semantic_tokens(for_buffer, false, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {

@@ -16930,10 +16930,11 @@ async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
         std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
     });
     task.await;
-    let buffer_id = cx.buffer(|b, _| b.remote_id());
-    let tokens =
-        &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_token_highlights[&buffer_id].clone());
-    assert_eq!(tokens[0].range, 3..7);
+
+    assert_eq!(
+        extract_semantic_highlights(&cx.editor, &cx),
+        vec![MultiBufferOffset(3)..MultiBufferOffset(7)]
+    );
 
     assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
 }
@@ -17009,11 +17010,10 @@ async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
         std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
     });
     task.await;
-    let buffer_id = cx.buffer(|b, _| b.remote_id());
-    let tokens =
-        &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_token_highlights[&buffer_id].clone());
-    assert_eq!(tokens[0].range, 3..7);
-
+    assert_eq!(
+        extract_semantic_highlights(&cx.editor, &cx),
+        vec![MultiBufferOffset(3)..MultiBufferOffset(7)]
+    );
     assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
 }
 
@@ -17106,10 +17106,10 @@ async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
     });
     task.await;
 
-    let buffer_id = cx.buffer(|b, _| b.remote_id());
-    let tokens =
-        &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_token_highlights[&buffer_id].clone());
-    assert_eq!(tokens[0].range, 3..7);
+    assert_eq!(
+        extract_semantic_highlights(&cx.editor, &cx),
+        vec![MultiBufferOffset(3)..MultiBufferOffset(7)]
+    );
 
     assert_eq!(full_counter.load(atomic::Ordering::Acquire), 1);
     assert_eq!(delta_counter.load(atomic::Ordering::Acquire), 1);
@@ -17312,25 +17312,13 @@ async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
     });
     task.await;
 
-    let tokens = cx.read(|cx| {
-        let buffer_id = editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .unwrap()
-            .read(cx)
-            .remote_id();
-
-        editor
-            .read(cx)
-            .display_map
-            .read(cx)
-            .semantic_token_highlights[&buffer_id]
-            .clone()
-    });
-    assert_eq!(tokens[0].range, 0..1);
-    assert_eq!(tokens[1].range, 4..5);
+    assert_eq!(
+        extract_semantic_highlights(&editor, &cx),
+        vec![
+            MultiBufferOffset(0)..MultiBufferOffset(1),
+            MultiBufferOffset(4)..MultiBufferOffset(5),
+        ]
+    );
 
     assert_eq!(full_counter_toml_1.load(atomic::Ordering::Acquire), 1);
     assert_eq!(full_counter_toml_2.load(atomic::Ordering::Acquire), 1);
@@ -17765,17 +17753,29 @@ async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
         std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
     });
     task.await;
-    let tokens = cx.read(|cx| {
+    assert_eq!(
+        extract_semantic_highlights(&editor, &cx),
+        vec![MultiBufferOffset(0)..MultiBufferOffset(1)]
+    );
+
+    assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);
+}
+
+// TODO kb make a visual test instead?
+fn extract_semantic_highlights(
+    editor: &Entity<Editor>,
+    cx: &TestAppContext,
+) -> Vec<Range<MultiBufferOffset>> {
+    editor.read_with(cx, |editor, cx| {
+        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         editor
-            .read(cx)
             .display_map
             .read(cx)
             .semantic_token_highlights
-            .clone()
-    });
-    assert_eq!(tokens.values().next().unwrap().tokens[0].range, 0..1);
-
-    assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);
+            .iter()
+            .map(|highlights| highlights.range.to_offset(&multi_buffer_snapshot))
+            .collect()
+    })
 }
 
 #[gpui::test]

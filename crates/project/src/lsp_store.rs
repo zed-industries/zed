@@ -7065,16 +7065,15 @@ impl LspStore {
         }
     }
 
-    pub fn current_semantic_tokens(
-        &self,
-        buffer: BufferId,
-    ) -> Option<(Arc<BufferSemanticTokens>, Global)> {
-        let lsp_data = self.lsp_data.get(&buffer)?;
-
-        Some((
-            lsp_data.semantic_tokens.as_ref()?.buffer_tokens.clone(),
-            lsp_data.buffer_version.clone(),
-        ))
+    pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<Arc<BufferSemanticTokens>> {
+        Some(
+            self.lsp_data
+                .get(&buffer)?
+                .semantic_tokens
+                .as_ref()?
+                .buffer_tokens
+                .clone(),
+        )
     }
 
     pub fn semantic_tokens(
@@ -7130,14 +7129,14 @@ impl LspStore {
                 {
                     return self.fetch_semantic_tokens_delta(
                         buffer.clone(),
-                        cx,
                         server_id,
                         request,
+                        cx,
                     );
                 }
             }
 
-            self.fetch_semantic_tokens_full(buffer.clone(), cx, server_id)
+            self.fetch_semantic_tokens_full(buffer.clone(), server_id, cx)
         }));
 
         let task: SemanticTokensTask = cx
@@ -7177,9 +7176,9 @@ impl LspStore {
     fn fetch_semantic_tokens_full(
         &mut self,
         buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
         server: LanguageServerId,
-    ) -> Task<anyhow::Result<()>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let buffer_id = buffer.read(cx).remote_id();
 
         self.send_semantic_tokens_request(
@@ -7206,10 +7205,10 @@ impl LspStore {
     fn fetch_semantic_tokens_delta(
         &mut self,
         buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
         server: LanguageServerId,
         request: SemanticTokensDelta,
-    ) -> Task<anyhow::Result<()>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let buffer_id = buffer.read(cx).remote_id();
 
         self.send_semantic_tokens_request(buffer, cx, server, request, move |response, store| {

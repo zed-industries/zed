@@ -92,6 +92,8 @@ impl ServerSemanticTokens {
     }
 }
 
+// TODO kb why is it necessary?
+// Preform the data in the task instead?
 impl Iterator for BufferSemanticTokensIter<'_> {
     type Item = (lsp::LanguageServerId, SemanticToken);
 

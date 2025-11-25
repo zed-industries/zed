@@ -484,10 +484,10 @@ impl Render for QuickActionBar {
                                     .action(ToggleInlineDiagnostics.boxed_clone())
                                     .handler({
                                         let editor = editor.clone();
-                                        move |window, cx| {
+                                        move |_, cx| {
                                             editor
                                                 .update(cx, |editor, cx| {
-                                                    editor.toggle_semantic_tokens(window, cx);
+                                                    editor.toggle_semantic_tokens(cx);
                                                 })
                                                 .ok();
                                         }
