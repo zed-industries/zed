@@ -2516,9 +2516,9 @@ mod tests {
     fn ctrl_mouse_move_to(
         terminal: &mut Terminal,
         position: Point<Pixels>,
-        terminal_bounds: Bounds<Pixels>,
         cx: &mut Context<Terminal>,
     ) {
+        let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
         let drag_event = MouseMoveEvent {
             position,
             pressed_button: Some(MouseButton::Left),
@@ -3022,10 +3022,9 @@ mod tests {
         terminal.update(cx, |terminal, cx| {
             let down_position = point(px(80.0), px(10.0));
             let up_position = point(px(10.0), px(50.0));
-            let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
 
             ctrl_mouse_down_at(terminal, down_position, cx);
-            ctrl_mouse_move_to(terminal, up_position, terminal_bounds, cx);
+            ctrl_mouse_move_to(terminal, up_position, cx);
             ctrl_mouse_up_at(terminal, up_position, cx);
 
             assert!(
@@ -3045,10 +3044,9 @@ mod tests {
         terminal.update(cx, |terminal, cx| {
             let down_position = point(px(70.0), px(10.0));
             let up_position = point(px(130.0), px(10.0));
-            let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
 
             ctrl_mouse_down_at(terminal, down_position, cx);
-            ctrl_mouse_move_to(terminal, up_position, terminal_bounds, cx);
+            ctrl_mouse_move_to(terminal, up_position, cx);
             ctrl_mouse_up_at(terminal, up_position, cx);
 
             assert!(
