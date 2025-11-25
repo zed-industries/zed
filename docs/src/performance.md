@@ -20,7 +20,7 @@ The profiler always runs in the background. You can save a trace from its UI or 
 ## To Save a Trace:
 
 - Run the action: `zed open performance profiler`
-- Hit the save button. This opens a save dialoge or if that fails to open the trace gets saved in your working directory.
+- Hit the save button. This opens a save dialog or if that fails to open the trace gets saved in your working directory.
 - Convert the profile so it can be imported in tracy using the importer: `./tracy-import-miniprofiler <path to performance_profile.miniprof> output.tracy`
 - Go to <https://tracy.nereid.pl/> hit the 'power button' in the top left and then open saved trace.
 - Now zoom in to see the tasks and how long they took
