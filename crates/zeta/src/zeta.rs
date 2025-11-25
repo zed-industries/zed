@@ -1123,7 +1123,6 @@ impl Zeta {
         zeta_project.next_pending_prediction_id += 1;
         let last_request = zeta_project.last_prediction_refresh;
 
-        // TODO report cancelled requests like in zeta1
         let task = cx.spawn(async move |this, cx| {
             if let Some((last_entity, last_timestamp)) = last_request
                 && throttle_entity == last_entity
@@ -1132,6 +1131,12 @@ impl Zeta {
             {
                 cx.background_executor().timer(timeout).await;
             }
+
+            this.update(cx, |this, cx| {
+                this.get_or_init_zeta_project(&project, cx)
+                    .last_prediction_refresh = Some((throttle_entity, Instant::now()));
+            })
+            .ok();
 
             let edit_prediction_id = do_refresh(this.clone(), cx).await.log_err().flatten();
 
