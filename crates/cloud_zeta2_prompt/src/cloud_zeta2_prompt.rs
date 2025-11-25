@@ -432,7 +432,7 @@ pub fn write_excerpts<'a>(
     }
 }
 
-pub fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+pub fn push_events(output: &mut String, events: &[Arc<predict_edits_v3::Event>]) {
     if events.is_empty() {
         return;
     };
@@ -910,7 +910,7 @@ fn declaration_size(declaration: &ReferencedDeclaration, style: DeclarationStyle
 }
 
 struct PromptData {
-    events: Vec<Event>,
+    events: Vec<Arc<Event>>,
     cursor_point: Point,
     cursor_path: Arc<Path>, // TODO: make a common struct with cursor_point
     included_files: Vec<IncludedFile>,

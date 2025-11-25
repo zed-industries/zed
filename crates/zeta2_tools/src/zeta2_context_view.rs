@@ -25,7 +25,7 @@ use ui::{
     v_flex,
 };
 use workspace::Item;
-use zeta2::{
+use zeta::{
     Zeta, ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
     ZetaSearchQueryDebugInfo,
 };

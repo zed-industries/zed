@@ -279,6 +279,13 @@ impl SyntaxSnapshot {
         self.layers.is_empty()
     }
 
+    pub fn root_language(&self) -> Option<Arc<Language>> {
+        match &self.layers.first()?.content {
+            SyntaxLayerContent::Parsed { language, .. } => Some(language.clone()),
+            SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
+
     pub fn update_count(&self) -> usize {
         self.update_count
     }
