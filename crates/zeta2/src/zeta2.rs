@@ -68,7 +68,7 @@ use crate::assemble_excerpts::assemble_excerpts;
 use crate::license_detection::LicenseDetectionWatcher;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
-use crate::prediction::EditPredictionInputs;
+pub use crate::prediction::EditPredictionInputs;
 use crate::rate_prediction_modal::RatePredictionsModal;
 use crate::zeta1::request_prediction_with_zeta1;
 pub use provider::ZetaEditPredictionProvider;
@@ -254,7 +254,7 @@ pub struct ZetaContextRetrievalDebugInfo {
 
 #[derive(Debug)]
 pub struct ZetaEditPredictionDebugInfo {
-    pub request: predict_edits_v3::PredictEditsRequest,
+    pub inputs: EditPredictionInputs,
     pub retrieval_time: Duration,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
@@ -1749,16 +1749,11 @@ impl Zeta {
 
                 let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
 
-                let inputs = {
-                    // todo! use inputs instead of request in debug info
-                    let cloud_request = cloud_request.clone();
-
-                    EditPredictionInputs {
-                        included_files: cloud_request.included_files,
-                        events: cloud_request.events,
-                        cursor_point: cloud_request.cursor_point,
-                        cursor_path: cloud_request.excerpt_path,
-                    }
+                let inputs = EditPredictionInputs {
+                    included_files: cloud_request.included_files,
+                    events: cloud_request.events,
+                    cursor_point: cloud_request.cursor_point,
+                    cursor_path: cloud_request.excerpt_path,
                 };
 
                 let retrieval_time = Instant::now() - before_retrieval;
@@ -1769,7 +1764,7 @@ impl Zeta {
                     debug_tx
                         .unbounded_send(ZetaDebugInfo::EditPredictionRequested(
                             ZetaEditPredictionDebugInfo {
-                                request: cloud_request.clone(),
+                                inputs: inputs.clone(),
                                 retrieval_time,
                                 buffer: active_buffer.downgrade(),
                                 local_prompt: match prompt_result.as_ref() {

@@ -51,6 +51,7 @@ pub fn setup_zeta(
 
     zeta.update(cx, |zeta, _cx| {
         let model = match provider {
+            PredictionProvider::Zeta1 => zeta2::ZetaEditPredictionModel::Zeta1,
             PredictionProvider::Zeta2 => zeta2::ZetaEditPredictionModel::Zeta2,
             PredictionProvider::Sweep => zeta2::ZetaEditPredictionModel::Sweep,
         };
@@ -170,9 +171,9 @@ pub async fn perform_predict(
                                 let mut result = result.lock().unwrap();
                                 result.prompt_len = prompt.chars().count();
 
-                                for included_file in request.request.included_files {
+                                for included_file in request.inputs.included_files {
                                     let insertions =
-                                        vec![(request.request.cursor_point, CURSOR_MARKER)];
+                                        vec![(request.inputs.cursor_point, CURSOR_MARKER)];
                                     result.excerpts.extend(included_file.excerpts.iter().map(
                                         |excerpt| ActualExcerpt {
                                             path: included_file.path.components().skip(1).collect(),
@@ -182,7 +183,7 @@ pub async fn perform_predict(
                                     write_codeblock(
                                         &included_file.path,
                                         included_file.excerpts.iter(),
-                                        if included_file.path == request.request.excerpt_path {
+                                        if included_file.path == request.inputs.cursor_path {
                                             &insertions
                                         } else {
                                             &[]

@@ -193,6 +193,7 @@ pub struct EvaluateArguments {
 
 #[derive(clap::ValueEnum, Default, Debug, Clone, Copy, PartialEq)]
 enum PredictionProvider {
+    Zeta1,
     #[default]
     Zeta2,
     Sweep,
