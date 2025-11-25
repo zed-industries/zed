@@ -204,7 +204,7 @@ impl ContextServerStore {
         self.context_server_settings
             .iter()
             .filter(|(_, settings)| settings.enabled())
-            .map(|(id, _)| ContextServerId(*id))
+            .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
     }
 
