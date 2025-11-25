@@ -316,42 +316,37 @@ impl BufferDiffSnapshot {
 
     pub fn row_to_base_text_row(&self, row: BufferRow, buffer: &text::BufferSnapshot) -> u32 {
         // todo! expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
-        
+
         // Find the last hunk that starts before this position.
         let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
         let position = buffer.anchor_before(Point::new(row, 0));
         cursor.seek(&position, Bias::Left);
-        if cursor.item().is_none() {
+        if cursor
+            .item()
+            .is_none_or(|hunk| hunk.buffer_range.start.cmp(&position, buffer).is_gt())
+        {
             cursor.prev();
         }
 
         let unclipped_point = if let Some(hunk) = cursor.item()
             && hunk.buffer_range.start.cmp(&position, buffer).is_le()
         {
-            let unclipped_point = if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
-                // Position is between this hunk and the next hunk.
-                let overshoot = Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
-                cursor
-                    .end()
-                    .diff_base_byte_range
-                    .end
-                    .to_point(self.base_text())
-                    + overshoot
-            } else {
-                // Position is inside the added region for this hunk.
-                cursor
-                    .end()
-                    .diff_base_byte_range
-                    .end
-                    .to_point(self.base_text())
-            };
+            let mut unclipped_point = cursor
+                .end()
+                .diff_base_byte_range
+                .end
+                .to_point(self.base_text());
+            if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
+                unclipped_point +=
+                    Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
+            }
             // Move the cursor so that at the next step we can clip with the start of the next hunk.
             cursor.next();
             unclipped_point
         } else {
             // Position is before the added region for the first hunk.
             debug_assert!(self.inner.hunks.first().is_none_or(|first_hunk| {
-                position.cmp(&first_hunk.buffer_range.start, buffer).is_lt()
+                position.cmp(&first_hunk.buffer_range.start, buffer).is_le()
             }));
             Point::new(row, 0)
         };
@@ -2295,6 +2290,18 @@ mod tests {
         "
         .unindent();
 
+        //   zero
+        // - one
+        // + ONE
+        //   two
+        // - three
+        // - four
+        // + NINE
+        //   five
+        // - six
+        //   seven
+        // + eight
+
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let buffer_snapshot = buffer.snapshot();
         let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
@@ -2309,7 +2316,6 @@ mod tests {
             (6, 9),
         ];
         for (buffer_row, expected) in expected_results {
-            dbg!("----------");
             assert_eq!(
                 diff.row_to_base_text_row(buffer_row, &buffer_snapshot),
                 expected,

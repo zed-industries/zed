@@ -615,6 +615,7 @@ pub struct ExcerptInfo {
 /// Used with [`MultiBuffer::push_buffer_content_transform`]
 #[derive(Clone, Copy, Debug)]
 struct CurrentInsertedHunk {
+    hunk_excerpt_start: ExcerptOffset,
     insertion_end_offset: ExcerptOffset,
     hunk_info: DiffTransformHunkInfo,
     is_filtered: bool,
@@ -3030,6 +3031,7 @@ impl MultiBuffer {
         if excerpt_edits.is_empty() {
             return vec![];
         }
+        dbg!(&excerpt_edits);
 
         let mut excerpts = snapshot.excerpts.cursor::<ExcerptOffset>(());
         let mut old_diff_transforms = snapshot
@@ -3087,24 +3089,29 @@ impl MultiBuffer {
                 filter_mode,
             );
 
-            // For a last edit intersecting a given diff hunk, insert an additional edit covering the
-            // remainder of the hunk excerpt range when we're in KeepDeletions mode, to ensure that
-            // the whole added range of the hunk is filtered out.
+            // When the added range of a hunk is edited, the end anchor of the hunk may be moved later
+            // in response by hunks_intersecting_range to keep it at a row boundary. In KeepDeletions
+            // mode, we need to make sure that the whole added range is still filtered out in this situation.
+            // We do that by adding an additional edit that covers the rest of the hunk added range.
             if let Some(current_inserted_hunk) = end_of_current_insert
                 && current_inserted_hunk.is_filtered
+                // No additional edit needed if we've already covered the whole added range.
                 && current_inserted_hunk.insertion_end_offset > edit.new.end
+                // No additional edit needed if this edit just touched the start of the hunk
+                // (this also prevents pushing the deleted region for the hunk twice).
+                && edit.new.end > current_inserted_hunk.hunk_excerpt_start
+                // No additional edit needed if there is a subsequent edit that intersects
+                // the same hunk (the last such edit will take care of it).
                 && excerpt_edits.front().is_none_or(|next_edit| {
                     next_edit.new.start >= current_inserted_hunk.insertion_end_offset
                 })
-                // FIXME
-                && false
             {
                 let overshoot = current_inserted_hunk.insertion_end_offset - edit.new.end;
                 let additional_edit = Edit {
                     old: edit.old.end..edit.old.end + overshoot,
                     new: edit.new.end..current_inserted_hunk.insertion_end_offset,
                 };
-                excerpt_edits.push_front(additional_edit);
+                excerpt_edits.push_front(dbg!(additional_edit));
             }
 
             // Compute the end of the edit in output coordinates.
@@ -3126,6 +3133,7 @@ impl MultiBuffer {
                 let base = insertion_end_offset.max(excerpt_len);
                 edit.new.end.saturating_sub(base)
             } else {
+                // FIXME
                 edit.new.end - new_diff_transforms.summary().excerpt_len()
             };
             let edit_old_end = old_diff_transforms.start().1 + edit_old_end_overshoot.0;
@@ -3135,6 +3143,7 @@ impl MultiBuffer {
                 new: edit_new_start..edit_new_end,
             };
 
+            dbg!(&output_edit);
             output_delta += (output_edit.new.end - output_edit.new.start) as isize;
             output_delta -= (output_edit.old.end - output_edit.old.start) as isize;
             if changed_diff_hunks || matches!(change_kind, DiffChangeKind::BufferEdited) {
@@ -3318,8 +3327,15 @@ impl MultiBuffer {
                             excerpt.id
                         );
 
+                        // FIXME we should have the property that if we push the additional edit, we should have consumed at least one byte of the added region of the hunk
+
                         if !hunk.diff_base_byte_range.is_empty()
-                            && hunk_buffer_range.start >= edit_buffer_start
+                            // FIXME, if we create an additional edit, the edit_buffer_start for the additional edit
+                            // will be the same as the edit_buffer_end for the original edit
+                            //
+                            //                 <----original edit-----><----additional edit---->
+                            //                                         |--------------------------------------------------------| hunk added range
+                            && dbg!(hunk_buffer_range.start) >= dbg!(edit_buffer_start)
                             && hunk_buffer_range.start <= excerpt_buffer_end
                             && filter_mode != Some(MultiBufferFilterMode::KeepInsertions)
                         {
@@ -3352,6 +3368,7 @@ impl MultiBuffer {
                                 filter_mode == Some(MultiBufferFilterMode::KeepDeletions);
                             let insertion_end_offset = hunk_excerpt_end.min(excerpt_end);
                             *end_of_current_insert = Some(CurrentInsertedHunk {
+                                hunk_excerpt_start,
                                 insertion_end_offset,
                                 hunk_info,
                                 is_filtered,
@@ -7582,18 +7599,27 @@ impl Iterator for MultiBufferRows<'_> {
         let diff_status = region
             .diff_hunk_status
             .filter(|_| self.point < region.range.end);
-        let base_text_row = if let Some(diff_status) = diff_status
-            && diff_status.is_added()
-        {
-            None
-        } else {
-            // FIXME 
-            self.cursor
+        let base_text_row = match diff_status {
+            // FIXME perf
+            None => self
+                .cursor
                 .snapshot
                 .diffs
                 .get(&region.excerpt.buffer_id)
                 .map(|diff| diff.row_to_base_text_row(buffer_point.row, &region.buffer))
-                .map(BaseTextRow)
+                .map(BaseTextRow),
+            Some(DiffHunkStatus {
+                kind: DiffHunkStatusKind::Added,
+                ..
+            }) => None,
+            Some(DiffHunkStatus {
+                kind: DiffHunkStatusKind::Deleted,
+                ..
+            }) => Some(BaseTextRow(buffer_point.row)),
+            Some(DiffHunkStatus {
+                kind: DiffHunkStatusKind::Modified,
+                ..
+            }) => unreachable!(),
         };
         let expand_info = if self.is_singleton {
             None

@@ -119,7 +119,7 @@ impl SplittableEditor {
         cx.notify();
     }
 
-    pub(crate) fn unsplit(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn unsplit(&mut self, _: &UnsplitDiff, cx: &mut Context<Self>) {
         let Some((_, secondary_pane)) = self.secondary.take() else {
             return;
         };

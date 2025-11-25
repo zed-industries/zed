@@ -2408,13 +2408,15 @@ impl ReferenceMultibuffer {
                     // Add the buffer text before the hunk
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.start));
-                    regions.push(ReferenceRegion {
-                        buffer_id: Some(buffer.remote_id()),
-                        range: len..text.len(),
-                        buffer_range: Some((offset..hunk_range.start).to_point(&buffer)),
-                        status: None,
-                        excerpt_id: Some(excerpt.id),
-                    });
+                    if text.len() > len {
+                        regions.push(ReferenceRegion {
+                            buffer_id: Some(buffer.remote_id()),
+                            range: len..text.len(),
+                            buffer_range: Some((offset..hunk_range.start).to_point(&buffer)),
+                            status: None,
+                            excerpt_id: Some(excerpt.id),
+                        });
+                    }
 
                     // Add the deleted text for the hunk.
                     if !hunk.diff_base_byte_range.is_empty()
@@ -2459,10 +2461,6 @@ impl ReferenceMultibuffer {
                     };
                     offset = hunk_range.end;
                     if is_filtered {
-                        if text.ends_with("\n") {
-                            // FIXME
-                            // need_trailing_newline = false;
-                        }
                         filtered_regions.push(region);
                     } else {
                         regions.push(region);
@@ -2510,7 +2508,6 @@ impl ReferenceMultibuffer {
         // Retrieve the row info using the region that contains
         // the start of each multi-buffer line.
         let mut ix = 0;
-        let mut row_delta = 0;
         let row_infos = text
             .split('\n')
             .map(|line| {
@@ -2523,18 +2520,44 @@ impl ReferenceMultibuffer {
                             buffer_range.start.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
+                        let main_buffer = self
+                            .excerpts
+                            .iter()
+                            .find(|e| e.id == region.excerpt_id.unwrap())
+                            .map(|e| e.buffer.clone());
                         // FIXME
-                        let base_text_row = buffer_row
-                            .map(|buffer_row| BaseTextRow(buffer_row.strict_add_signed(row_delta)));
-                        if let Some(status) = region.status {
-                            match status.kind {
-                                DiffHunkStatusKind::Added => row_delta -= 1,
-                                DiffHunkStatusKind::Modified => {
-                                    unreachable!("modified status not allowed here")
-                                }
-                                DiffHunkStatusKind::Deleted => row_delta += 1,
-                            }
-                        }
+                        let base_text_row = match region.status {
+                            None => Some(
+                                main_buffer
+                                    .as_ref()
+                                    .and_then(|main_buffer| {
+                                        let diff = self
+                                            .diffs
+                                            .get(&main_buffer.read(cx).remote_id())
+                                            .unwrap();
+                                        let buffer_row = buffer_row.unwrap();
+                                        Some(BaseTextRow(
+                                            diff.read(cx).snapshot(cx).row_to_base_text_row(
+                                                buffer_row,
+                                                &main_buffer.read(cx).snapshot(),
+                                            ),
+                                        ))
+                                    })
+                                    .unwrap_or_default(),
+                            ),
+                            Some(DiffHunkStatus {
+                                kind: DiffHunkStatusKind::Added,
+                                ..
+                            }) => None,
+                            Some(DiffHunkStatus {
+                                kind: DiffHunkStatusKind::Deleted,
+                                ..
+                            }) => Some(BaseTextRow(buffer_row.unwrap())),
+                            Some(DiffHunkStatus {
+                                kind: DiffHunkStatusKind::Modified,
+                                ..
+                            }) => unreachable!(),
+                        };
                         let is_excerpt_start = region_ix == 0
                             || &regions[region_ix - 1].excerpt_id != &region.excerpt_id
                             || regions[region_ix - 1].range.is_empty();
@@ -2558,13 +2581,10 @@ impl ReferenceMultibuffer {
                             is_end = true;
                             is_excerpt_end = true;
                         }
+                        let multibuffer_row =
+                            MultiBufferRow(text[..ix].matches('\n').count() as u32);
                         let mut expand_direction = None;
-                        if let Some(buffer) = &self
-                            .excerpts
-                            .iter()
-                            .find(|e| e.id == region.excerpt_id.unwrap())
-                            .map(|e| e.buffer.clone())
-                        {
+                        if let Some(buffer) = &main_buffer {
                             // FIXME wrong in the presence of FilteredInsertedHunk
                             let buffer_row = buffer_row.unwrap();
                             let needs_expand_up = is_excerpt_start && is_start && buffer_row > 0;
@@ -2588,9 +2608,7 @@ impl ReferenceMultibuffer {
                             base_text_row,
                             wrapped_buffer_row: None,
 
-                            multibuffer_row: Some(MultiBufferRow(
-                                text[..ix].matches('\n').count() as u32
-                            )),
+                            multibuffer_row: Some(multibuffer_row),
                             expand_info: expand_direction.zip(region.excerpt_id).map(
                                 |(direction, excerpt_id)| ExpandInfo {
                                     direction,
@@ -2969,6 +2987,29 @@ async fn test_random_multibuffer_impl(
             }
         }
 
+        let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
+            cx.update(|cx| reference.expected_content(None, true, cx));
+        log::info!(
+            "\nunfiltered:\n{}",
+            format_diff(
+                &unfiltered_text,
+                &unfiltered_row_infos,
+                &unfiltered_boundary_rows,
+                None,
+            ),
+        );
+        let (expected_text, expected_row_infos, expected_boundary_rows) =
+            cx.update(|cx| reference.expected_content(filter_mode, filter_mode.is_some(), cx));
+        log::info!(
+            "\nexpected:\n{}",
+            format_diff(
+                &expected_text,
+                &expected_row_infos,
+                &expected_boundary_rows,
+                None,
+            )
+        );
+
         if rng.random_bool(0.3) {
             multibuffer.update(cx, |multibuffer, cx| {
                 old_versions.push((multibuffer.snapshot(cx), multibuffer.subscribe()));
@@ -2976,18 +3017,14 @@ async fn test_random_multibuffer_impl(
         }
 
         let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        log::info!("\ntransforms:\n{}", format_transforms(&snapshot));
         let actual_text = snapshot.text();
         let actual_boundary_rows = snapshot
             .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
             .map(|b| b.row)
             .collect::<HashSet<_>>();
 
-        let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
-            cx.update(|cx| reference.expected_content(None, true, cx));
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-
-        let (expected_text, expected_row_infos, expected_boundary_rows) =
-            cx.update(|cx| reference.expected_content(filter_mode, filter_mode.is_some(), cx));
 
         let has_diff = actual_row_infos
             .iter()
@@ -3029,7 +3066,7 @@ async fn test_random_multibuffer_impl(
             format_transforms(&snapshot),
             format_excerpts(&snapshot),
         );
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
+        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos,);
         pretty_assertions::assert_eq!(actual_text, expected_text);
 
         for _ in 0..5 {
@@ -3606,10 +3643,17 @@ fn format_diff(
 ) -> String {
     let has_diff =
         has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
+
+    let mut byte_offset = 0;
     text.split('\n')
         .enumerate()
         .zip(row_infos)
         .map(|((ix, line), info)| {
+            let byte_range_start = byte_offset;
+            byte_offset += line.as_bytes().len();
+            let byte_range_end = byte_offset;
+            byte_offset += 1; // newline
+
             let marker = match info.diff_status.map(|status| status.kind) {
                 Some(DiffHunkStatusKind::Added) => "+ ",
                 Some(DiffHunkStatusKind::Deleted) => "- ",
@@ -3624,9 +3668,9 @@ fn format_diff(
             };
             let boundary_row = if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
                 if has_diff {
-                    "  ----------\n"
+                    "                          |   ---------\n"
                 } else {
-                    "---------\n"
+                    "                          | ---------\n"
                 }
             } else {
                 ""
@@ -3639,7 +3683,14 @@ fn format_diff(
                     ExpandExcerptDirection::UpAndDown => " [↕]",
                 })
                 .unwrap_or_default();
+
             format!("{boundary_row}{marker}{line}{expand}")
+            // let mbr = info
+            //     .multibuffer_row
+            //     .map(|row| format!("{:0>3}", row.0))
+            //     .unwrap_or_else(|| "???".to_string());
+            // let byte_range = format!("{byte_range_start:0>3}..{byte_range_end:0>3}");
+            // format!("{boundary_row}Row: {mbr}, Bytes: {byte_range} | {marker}{line}{expand}")
         })
         .collect::<Vec<_>>()
         .join("\n")
