@@ -130,10 +130,8 @@ impl ProfilerWindow {
 
                 this.update(cx, |this: &mut ProfilerWindow, cx| {
                     let max_offset = this.scroll_handle.max_offset();
-                    if !this.autoscroll {
-                        let scroll_offset = this.scroll_handle.offset();
-                        this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
-                    }
+                    let scroll_offset = this.scroll_handle.offset();
+                    this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
                     this.data = DataMode::Realtime(Some(data));
 
                     if this.autoscroll {
