@@ -439,7 +439,10 @@ message Envelope {
 
         ExternalExtensionAgentsUpdated external_extension_agents_updated = 394;
 
-        RunGitHook run_git_hook = 395; // current max
+        RunGitHook run_git_hook = 395;
+
+        GitCreateRemote git_create_remote = 396;
+        GitRemoveRemote git_remove_remote = 397;// current max
     }
 
     reserved 87 to 88;

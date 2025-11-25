@@ -17,8 +17,8 @@ use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{
-    Divider, HighlightedLabel, ListItem, ListItemSpacing, ToggleButtonGroup, ToggleButtonSimple,
-    Tooltip, prelude::*,
+    CommonAnimationExt, Divider, HighlightedLabel, ListItem, ListItemSpacing, ToggleButtonGroup,
+    ToggleButtonSimple, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -288,16 +288,28 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        cx.spawn(async move |_, cx| {
+
+        cx.spawn(async move |this, cx| {
             repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url))?
                 .await??;
 
+            // this.update(cx, |picker, cx| {
+            //     picker.delegate.loading = false;
+            // })?;
+
             Ok(())
         })
-        .detach_and_prompt_err("Failed to create remote", window, cx, |e, _, _| {
+        .detach_and_prompt_err("Failed to create remote", window, cx, |e, _, _cx| {
             Some(e.to_string())
         });
         cx.emit(DismissEvent);
+    }
+
+    fn loader(&self) -> AnyElement {
+        Icon::new(IconName::LoadCircle)
+            .size(IconSize::Small)
+            .with_rotate_animation(3)
+            .into_any_element()
     }
 }
 
@@ -801,31 +813,9 @@ impl PickerDelegate for BranchListDelegate {
                                 )
                                 .selected(self.display_remotes)],
                             )
-                            .style(ui::ToggleButtonGroupStyle::Outlined),
+                            .style(ui::ToggleButtonGroupStyle::Transparent),
                         ),
                     )
-                    // .child(
-                    //     h_flex().gap_0p5().child(
-                    //         ToggleButton::new("filter-remotes", "Filter remotes")
-                    //             .style(ButtonStyle::Subtle)
-                    //             .size(ButtonSize::Default)
-                    //             .selected_style(ButtonStyle::Filled)
-                    //             .toggle_state(self.display_remotes)
-                    //             .on_click(cx.listener(move |this, _, window, cx| {
-                    //                 this.delegate.display_remotes = !this.delegate.display_remotes;
-                    //                 cx.spawn_in(window, async move |this, cx| {
-                    //                     this.update_in(cx, |this, window, cx| {
-                    //                         let last_query = this.delegate.last_query.clone();
-                    //                         this.delegate.update_matches(last_query, window, cx)
-                    //                     })?
-                    //                     .await;
-                    //                     Result::Ok::<_, anyhow::Error>(())
-                    //                 })
-                    //                 .detach_and_log_err(cx);
-                    //                 cx.notify();
-                    //             })),
-                    //     ),
-                    // )
                     .into_any(),
             ),
             PickerState::CreateRemote(_) => Some(

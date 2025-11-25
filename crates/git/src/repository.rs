@@ -1,7 +1,7 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
-use crate::{Oid, Remote, RunHook, RemoteUrl, SHORT_SHA_LENGTH, remote};
+use crate::{Oid, Remote, RemoteUrl, RunHook, SHORT_SHA_LENGTH, remote};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -568,8 +568,6 @@ pub trait GitRepository: Send + Sync {
     fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>>;
 
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>>;
-
-    fn remote(&self) -> BoxFuture<'_, Result<Option<Remote>>>;
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
@@ -1848,35 +1846,6 @@ impl GitRepository for RealGitRepository {
                     .collect();
 
                 Ok(remote_names.into_iter().collect())
-            })
-            .boxed()
-    }
-
-    fn remote(&self) -> BoxFuture<'_, Result<Option<Remote>>> {
-        let repo = self.repository.clone();
-        self.executor
-            .spawn(async move {
-                let repo = repo.lock();
-                let repo_config = repo.config()?;
-                let remote_name = repo_config
-                    .get_entry(REMOTE_DEFAULT_CONFIG)
-                    .ok()
-                    .and_then(|c| c.value().map(|v| v.to_string()))
-                    .unwrap_or("origin".to_string());
-                let remote = match repo.find_remote(&remote_name) {
-                    Ok(remote) => remote,
-                    Err(_err) => {
-                        return Ok(None);
-                    }
-                };
-
-                match remote.url() {
-                    Some(url) => Ok(Some(Remote {
-                        name: remote_name.into(),
-                        url: RemoteUrl::from_str(url)?,
-                    })),
-                    None => anyhow::bail!("remote not found"),
-                }
             })
             .boxed()
     }
