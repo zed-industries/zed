@@ -21642,6 +21642,7 @@ dependencies = [
  "cloud_llm_client",
  "cloud_zeta2_prompt",
  "collections",
+ "command_palette_hooks",
  "copilot",
  "ctor",
  "db",
