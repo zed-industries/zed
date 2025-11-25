@@ -175,6 +175,16 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // What draws Zed's window decorations (titlebar):
+  // 1. Client application (Zed) draws its own window decorations
+  //    "client"
+  // 2. Display server draws the window decorations. Not supported by GNOME Wayland.
+  //    "server"
+  //
+  // This requires restarting Zed for changes to take effect.
+  //
+  // Default: "client"
+  "window_decorations": "client",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -255,6 +265,12 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // Whether to colorize brackets in the editor.
+  // (also known as "rainbow brackets")
+  //
+  // The colors that are used for different indentation levels are defined in the theme (theme key: `accents`).
+  // They can be customized by using theme overrides.
+  "colorize_brackets": false,
   // When to show the scrollbar in the completion menu.
   // This setting can take four values:
   //
@@ -1316,7 +1332,10 @@
     //    "hunk_style": "staged_hollow"
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
-    "hunk_style": "staged_hollow"
+    "hunk_style": "staged_hollow",
+    // Should the name or path be displayed first in the git view.
+    // "path_style": "file_name_first" or "file_path_first"
+    "path_style": "file_name_first"
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1422,7 +1441,7 @@
     "default_height": 320,
     // What working directory to use when launching the terminal.
     // May take 4 values:
-    // 1. Use the current file's project directory.  Will Fallback to the
+    // 1. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
     // 2. Use the first project in this workspace's directory
@@ -1576,7 +1595,59 @@
     //
     // Most terminal themes have APCA values of 40-70.
     // A value of 45 preserves colorful themes while ensuring legibility.
-    "minimum_contrast": 45
+    "minimum_contrast": 45,
+    // Regexes used to identify paths for hyperlink navigation. Supports optional named capture
+    // groups `path`, `line`, `column`, and `link`. If none of these are present, the entire match
+    // is the hyperlink target. If `path` is present, it is the hyperlink target, along with `line`
+    // and `column` if present. `link` may be used to customize what text in terminal is part of the
+    // hyperlink. If `link` is not present, the text of the entire match is used. If `line` and
+    // `column` are not present, the default built-in line and column suffix processing is used
+    // which parses `line:column` and `(line,column)` variants. The default value handles Python
+    // diagnostics and common path, line, column syntaxes. This can be extended or replaced to
+    // handle specific scenarios. For example, to enable support for hyperlinking paths which
+    // contain spaces in rust output,
+    //
+    // [
+    //   "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
+    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)"
+    // ],
+    //
+    // could be used. Processing stops at the first regex with a match, even if no link is
+    // produced which is the case when the cursor is not over the hyperlinked text. For best
+    // performance it is recommended to order regexes from most common to least common. For
+    // readability and documentation, each regex may be an array of strings which are collected
+    // into one multi-line regex string for use in terminal path hyperlink detection.
+    "path_hyperlink_regexes": [
+      // Python-style diagnostics
+      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+      // Common path syntax with optional line, column, description, trailing punctuation, or
+      // surrounding symbols or quotes
+      [
+        "(?x)",
+        "# optionally starts with 0-2 opening prefix symbols",
+        "[({\\[<]{0,2}",
+        "# which may be followed by an opening quote",
+        "(?<quote>[\"'`])?",
+        "# `path` is the shortest sequence of any non-space character",
+        "(?<link>(?<path>[^ ]+?",
+        "    # which may end with a line and optionally a column,",
+        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+        "))",
+        "# which must be followed by a matching quote",
+        "(?(<quote>)\\k<quote>)",
+        "# and optionally a single closing symbol",
+        "[)}\\]>]?",
+        "# if line/column matched, may be followed by a description",
+        "(?(<line_column>):[^ 0-9][^ ]*)?",
+        "# which may be followed by trailing punctuation",
+        "[.,:)}\\]>]*",
+        "# and always includes trailing whitespace or end of line",
+        "([ ]+|$)"
+      ]
+    ],
+    // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
+    // timeout of `0` will disable path hyperlinking in terminal.
+    "path_hyperlink_timeout_ms": 1
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -1818,7 +1889,7 @@
       }
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "..."],
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -2058,6 +2129,18 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Linux.
+  "linux": {},
+  // Settings overrides to use when using macOS.
+  "macos": {},
+  // Settings overrides to use when using Windows.
+  "windows": {
+    "languages": {
+      "PHP": {
+        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
+      }
+    }
   },
   // Whether to show full labels in line indicator or short ones
   //

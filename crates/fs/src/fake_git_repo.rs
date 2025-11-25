@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
-    Oid,
+    Oid, RunHook,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
@@ -359,7 +359,6 @@ impl GitRepository for FakeGitRepository {
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             anyhow::Ok(GitStatus {
                 entries: entries.into(),
-                renamed_paths: HashMap::default(),
             })
         });
         Task::ready(match result {
@@ -528,6 +527,14 @@ impl GitRepository for FakeGitRepository {
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         _options: CommitOptions,
         _askpass: AskPassDelegate,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn run_hook(
+        &self,
+        _hook: RunHook,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()

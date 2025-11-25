@@ -29,7 +29,6 @@ use crate::{
     lsp_command::{self, *},
     lsp_store::{
         self,
-        inlay_hint_cache::BufferChunk,
         log_store::{GlobalLogStore, LanguageServerKind},
     },
     manifest_tree::{
@@ -73,6 +72,7 @@ use language::{
         serialize_lsp_edit, serialize_version,
     },
     range_from_lsp, range_to_lsp,
+    row_chunk::RowChunk,
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionOptions,
@@ -93,6 +93,7 @@ use rpc::{
     proto::{LspRequestId, LspRequestMessage as _},
 };
 use serde::Serialize;
+use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use smol::channel::Sender;
@@ -117,7 +118,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, Point, ToPoint as _};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -139,6 +140,7 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -599,14 +601,36 @@ impl LocalLspStore {
         };
 
         cx.spawn(async move |cx| {
-            let binary_result = adapter
+            let (existing_binary, maybe_download_binary) = adapter
                 .clone()
                 .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
+                .await
                 .await;
 
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
-            let mut binary = binary_result?;
+            let mut binary = match (existing_binary, maybe_download_binary) {
+                (binary, None) => binary?,
+                (Err(_), Some(downloader)) => downloader.await?,
+                (Ok(existing_binary), Some(downloader)) => {
+                    let mut download_timeout = cx
+                        .background_executor()
+                        .timer(SERVER_DOWNLOAD_TIMEOUT)
+                        .fuse();
+                    let mut downloader = downloader.fuse();
+                    futures::select! {
+                        _ = download_timeout => {
+                            // Return existing binary and kick the existing work to the background.
+                            cx.spawn(async move |_| downloader.await).detach();
+                            Ok(existing_binary)
+                        },
+                        downloaded_or_existing_binary = downloader => {
+                            // If download fails, this results in the existing binary.
+                            downloaded_or_existing_binary
+                        }
+                    }?
+                }
+            };
             let mut shell_env = delegate.shell_env().await;
 
             shell_env.extend(binary.env.unwrap_or_default());
@@ -2660,10 +2684,15 @@ impl LocalLspStore {
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
-            let _ = self.buffer_snapshots.remove(&buffer.remote_id());
+            let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
 
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                language_server.unregister_buffer(file_url.clone());
+                if snapshots
+                    .as_mut()
+                    .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
+                {
+                    language_server.unregister_buffer(file_url.clone());
+                }
             }
         });
     }
@@ -2717,7 +2746,7 @@ impl LocalLspStore {
         let actions = lsp_store
             .update(cx, move |this, cx| {
                 let request = GetCodeActions {
-                    range: text::Anchor::MIN..text::Anchor::MAX,
+                    range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
                     kinds: Some(code_action_kinds),
                 };
                 let server = LanguageServerToQuery::Other(language_server_id);
@@ -3534,6 +3563,21 @@ fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<
             message: proto::update_language_server::Variant::MetadataUpdated(
                 proto::ServerMetadataUpdated {
                     capabilities: Some(capabilities),
+                    binary: Some(proto::LanguageServerBinaryInfo {
+                        path: server.binary().path.to_string_lossy().into_owned(),
+                        arguments: server
+                            .binary()
+                            .arguments
+                            .iter()
+                            .map(|arg| arg.to_string_lossy().into_owned())
+                            .collect(),
+                    }),
+                    configuration: serde_json::to_string(server.configuration()).ok(),
+                    workspace_folders: server
+                        .workspace_folders()
+                        .iter()
+                        .map(|uri| uri.to_string())
+                        .collect(),
                 },
             ),
         });
@@ -3590,7 +3634,7 @@ pub struct BufferLspData {
     code_lens: Option<CodeLensData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
-    chunk_lsp_requests: HashMap<LspKey, HashMap<BufferChunk, LspRequestId>>,
+    chunk_lsp_requests: HashMap<LspKey, HashMap<RowChunk, LspRequestId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -3695,8 +3739,11 @@ pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<ProgressToken>,
+    pub progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
+    pub binary: Option<LanguageServerBinary>,
+    pub configuration: Option<Value>,
+    pub workspace_folders: BTreeSet<Uri>,
 }
 
 #[derive(Clone, Debug)]
@@ -6706,7 +6753,7 @@ impl LspStore {
         self.latest_lsp_data(buffer, cx)
             .inlay_hints
             .applicable_chunks(ranges)
-            .map(|chunk| chunk.start..chunk.end)
+            .map(|chunk| chunk.row_range())
             .collect()
     }
 
@@ -6729,7 +6776,6 @@ impl LspStore {
         known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
         cx: &mut Context<Self>,
     ) -> HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>> {
-        let buffer_snapshot = buffer.read(cx).snapshot();
         let next_hint_id = self.next_hint_id.clone();
         let lsp_data = self.latest_lsp_data(&buffer, cx);
         let query_version = lsp_data.buffer_version.clone();
@@ -6758,13 +6804,11 @@ impl LspStore {
         let mut ranges_to_query = None;
         let applicable_chunks = existing_inlay_hints
             .applicable_chunks(ranges.as_slice())
-            .filter(|chunk| !known_chunks.contains(&(chunk.start..chunk.end)))
+            .filter(|chunk| !known_chunks.contains(&chunk.row_range()))
             .collect::<Vec<_>>();
         if applicable_chunks.is_empty() {
             return HashMap::default();
         }
-
-        let last_chunk_number = existing_inlay_hints.buffer_chunks_len() - 1;
 
         for row_chunk in applicable_chunks {
             match (
@@ -6779,16 +6823,12 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
-                    let end = if last_chunk_number == row_chunk.id {
-                        Point::new(row_chunk.end, buffer_snapshot.line_len(row_chunk.end))
-                    } else {
-                        Point::new(row_chunk.end, 0)
+                    let Some(chunk_range) = existing_inlay_hints.chunk_range(row_chunk) else {
+                        continue;
                     };
-                    ranges_to_query.get_or_insert_with(Vec::new).push((
-                        row_chunk,
-                        buffer_snapshot.anchor_before(Point::new(row_chunk.start, 0))
-                            ..buffer_snapshot.anchor_after(end),
-                    ));
+                    ranges_to_query
+                        .get_or_insert_with(Vec::new)
+                        .push((row_chunk, chunk_range));
                 }
                 (None, Some(fetched_hints)) => hint_fetch_tasks.push((row_chunk, fetched_hints)),
                 (Some(cached_hints), None) => {
@@ -6796,7 +6836,7 @@ impl LspStore {
                         if for_server.is_none_or(|for_server| for_server == server_id) {
                             cached_inlay_hints
                                 .get_or_insert_with(HashMap::default)
-                                .entry(row_chunk.start..row_chunk.end)
+                                .entry(row_chunk.row_range())
                                 .or_insert_with(HashMap::default)
                                 .entry(server_id)
                                 .or_insert_with(Vec::new)
@@ -6810,7 +6850,7 @@ impl LspStore {
                         if for_server.is_none_or(|for_server| for_server == server_id) {
                             cached_inlay_hints
                                 .get_or_insert_with(HashMap::default)
-                                .entry(row_chunk.start..row_chunk.end)
+                                .entry(row_chunk.row_range())
                                 .or_insert_with(HashMap::default)
                                 .entry(server_id)
                                 .or_insert_with(Vec::new)
@@ -6896,7 +6936,7 @@ impl LspStore {
                 .map(|(row_chunk, hints)| (row_chunk, Task::ready(Ok(hints))))
                 .chain(hint_fetch_tasks.into_iter().map(|(chunk, hints_fetch)| {
                     (
-                        chunk.start..chunk.end,
+                        chunk.row_range(),
                         cx.spawn(async move |_, _| {
                             hints_fetch.await.map_err(|e| {
                                 if e.error_code() != ErrorCode::Internal {
@@ -8114,6 +8154,9 @@ impl LspStore {
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
                         worktree,
+                        binary: None,
+                        configuration: None,
+                        workspace_folders: BTreeSet::new(),
                     },
                 )
             })
@@ -9123,6 +9166,9 @@ impl LspStore {
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                     worktree: server.worktree_id.map(WorktreeId::from_proto),
+                    binary: None,
+                    configuration: None,
+                    workspace_folders: BTreeSet::new(),
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -11139,6 +11185,9 @@ impl LspStore {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: Some(key.worktree_id),
+                binary: Some(language_server.binary().clone()),
+                configuration: Some(language_server.configuration().clone()),
+                workspace_folders: language_server.workspace_folders(),
             },
         );
 

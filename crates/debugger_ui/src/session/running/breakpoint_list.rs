@@ -1407,7 +1407,6 @@ impl RenderOnce for BreakpointOptionsStrip {
 
         h_flex()
             .gap_px()
-            .mr_3() // Space to avoid overlapping with the scrollbar
             .justify_end()
             .when(has_logs || self.is_selected, |this| {
                 this.child(

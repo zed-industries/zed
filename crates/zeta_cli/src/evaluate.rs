@@ -1,40 +1,23 @@
 use std::{
     collections::HashMap,
     io::{IsTerminal, Write},
-    path::PathBuf,
     sync::Arc,
 };
 
 use anyhow::Result;
-use clap::Args;
 use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
 use util::ResultExt as _;
-use zeta2::{Zeta, udiff::DiffLine};
+use zeta::{Zeta, udiff::DiffLine};
 
 use crate::{
-    PromptFormat,
+    EvaluateArguments, PredictionOptions,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
-    predict::{CacheMode, PredictionDetails, zeta2_predict},
+    predict::{PredictionDetails, perform_predict, setup_zeta},
 };
-
-#[derive(Debug, Args)]
-pub struct EvaluateArguments {
-    example_paths: Vec<PathBuf>,
-    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
-    prompt_format: PromptFormat,
-    #[arg(long)]
-    use_expected_context: bool,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
-    #[clap(short, long, default_value_t = 1, alias = "repeat")]
-    repetitions: u16,
-    #[arg(long)]
-    skip_prediction: bool,
-}
 
 #[derive(Debug)]
 pub(crate) struct ExecutionData {
@@ -52,38 +35,45 @@ pub async fn run_evaluate(
         eprintln!("No examples provided");
         return;
     }
+
     let all_tasks = args.example_paths.into_iter().map(|path| {
+        let options = args.options.clone();
         let app_state = app_state.clone();
         let example = NamedExample::load(&path).expect("Failed to load example");
 
         cx.spawn(async move |cx| {
-            let (project, zetas, _edited_buffers) = example
-                .setup_project(&app_state, args.repetitions, cx)
-                .await
-                .unwrap();
+            let project = example.setup_project(&app_state, cx).await.unwrap();
 
-            let tasks = zetas.into_iter().enumerate().map(|(repetition_ix, zeta)| {
-                let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
-                let example = example.clone();
-                let project = project.clone();
+            let providers = (0..args.repetitions)
+                .map(|_| setup_zeta(args.options.provider, &project, &app_state, cx).unwrap())
+                .collect::<Vec<_>>();
 
-                cx.spawn(async move |cx| {
-                    let name = example.name.clone();
-                    run_evaluate_one(
-                        example,
-                        repetition_ix,
-                        project,
-                        zeta,
-                        args.prompt_format,
-                        args.use_expected_context,
-                        !args.skip_prediction,
-                        args.cache,
-                        cx,
-                    )
-                    .await
-                    .map_err(|err| (err, name, repetition_ix))
-                })
-            });
+            let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
+
+            let tasks = providers
+                .into_iter()
+                .enumerate()
+                .map(move |(repetition_ix, zeta)| {
+                    let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
+                    let example = example.clone();
+                    let project = project.clone();
+                    let options = options.clone();
+
+                    cx.spawn(async move |cx| {
+                        let name = example.name.clone();
+                        run_evaluate_one(
+                            example,
+                            repetition_ix,
+                            project,
+                            zeta,
+                            options,
+                            !args.skip_prediction,
+                            cx,
+                        )
+                        .await
+                        .map_err(|err| (err, name, repetition_ix))
+                    })
+                });
             futures::future::join_all(tasks).await
         })
     });
@@ -135,7 +125,6 @@ fn write_aggregated_scores(
             .peekable();
         let has_edit_predictions = edit_predictions.peek().is_some();
         let aggregated_result = EvaluationResult {
-            context: Scores::aggregate(successful.iter().map(|r| &r.context)),
             edit_prediction: has_edit_predictions.then(|| Scores::aggregate(edit_predictions)),
             prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
             generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
@@ -165,20 +154,16 @@ pub async fn run_evaluate_one(
     repetition_ix: Option<u16>,
     project: Entity<Project>,
     zeta: Entity<Zeta>,
-    prompt_format: PromptFormat,
-    use_expected_context: bool,
+    prediction_options: PredictionOptions,
     predict: bool,
-    cache_mode: CacheMode,
     cx: &mut AsyncApp,
 ) -> Result<(EvaluationResult, ExecutionData)> {
-    let predict_result = zeta2_predict(
+    let predict_result = perform_predict(
         example.clone(),
         project,
         zeta,
         repetition_ix,
-        prompt_format,
-        use_expected_context,
-        cache_mode,
+        prediction_options,
         cx,
     )
     .await?;
@@ -265,7 +250,6 @@ fn write_eval_result(
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
     pub edit_prediction: Option<Scores>,
-    pub context: Scores,
     pub prompt_len: usize,
     pub generated_len: usize,
 }
@@ -365,14 +349,6 @@ impl std::fmt::Display for EvaluationResult {
 
 impl EvaluationResult {
     fn fmt_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            r#"
-### Context Scores
-{}
-"#,
-            self.context.to_markdown(),
-        )?;
         if let Some(prediction) = &self.edit_prediction {
             write!(
                 f,
@@ -389,28 +365,16 @@ impl EvaluationResult {
         writeln!(f, "### Scores\n")?;
         writeln!(
             f,
-            "                   Prompt  Generated  TP     FP     FN     Precision   Recall     F1"
+            "                   Prompt  Generated  TP     FP     FN     Precision   Recall      F1"
         )?;
         writeln!(
             f,
-            "────────────────────────────────────────────────────────────────────────────────────"
-        )?;
-        writeln!(
-            f,
-            "Context Retrieval  {:<7} {:<10} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
-            "",
-            "",
-            self.context.true_positives,
-            self.context.false_positives,
-            self.context.false_negatives,
-            self.context.precision() * 100.0,
-            self.context.recall() * 100.0,
-            self.context.f1_score() * 100.0
+            "───────────────────────────────────────────────────────────────────────────────────────────────"
         )?;
         if let Some(edit_prediction) = &self.edit_prediction {
             writeln!(
                 f,
-                "Edit Prediction    {:<7} {:<10} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+                "Edit Prediction    {:<7} {:<9}  {:<6} {:<6} {:<6} {:>9.2} {:>8.2} {:>7.2}",
                 self.prompt_len,
                 self.generated_len,
                 edit_prediction.true_positives,
@@ -425,66 +389,22 @@ impl EvaluationResult {
     }
 }
 
-pub fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> EvaluationResult {
+fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> EvaluationResult {
     let mut eval_result = EvaluationResult {
         prompt_len: preds.prompt_len,
         generated_len: preds.generated_len,
         ..Default::default()
     };
 
-    let actual_context_lines: HashSet<_> = preds
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| format!("{}: {line}", excerpt.path.display()))
-        })
-        .collect();
-
-    let mut false_positive_lines = actual_context_lines.clone();
-
-    for entry in &example.expected_context {
-        let mut best_alternative_score: Option<Scores> = None;
-
-        for alternative in &entry.alternatives {
-            let expected: HashSet<_> = alternative
-                .excerpts
-                .iter()
-                .flat_map(|excerpt| {
-                    excerpt
-                        .text
-                        .lines()
-                        .map(|line| format!("{}: {line}", excerpt.path.display()))
-                })
-                .collect();
-
-            let scores = Scores::new(&expected, &actual_context_lines);
-
-            false_positive_lines.retain(|line| !actual_context_lines.contains(line));
-
-            if best_alternative_score
-                .as_ref()
-                .is_none_or(|best| scores.recall() > best.recall())
-            {
-                best_alternative_score = Some(scores);
-            }
-        }
-
-        let best_alternative = best_alternative_score.unwrap_or_default();
-        eval_result.context.false_negatives += best_alternative.false_negatives;
-        eval_result.context.true_positives += best_alternative.true_positives;
-    }
-
-    eval_result.context.false_positives = false_positive_lines.len();
-
     if predict {
         // todo: alternatives for patches
-        let expected_patch_lines = example
+        let expected_patch = example
             .expected_patch
             .lines()
             .map(DiffLine::parse)
+            .collect::<Vec<_>>();
+        let expected_patch_lines = expected_patch
+            .iter()
             .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
             .map(|line| line.to_string())
             .collect();

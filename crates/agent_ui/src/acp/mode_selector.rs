@@ -11,7 +11,7 @@ use ui::{
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 
-use crate::{CycleModeSelector, ToggleProfileSelector};
+use crate::{CycleModeSelector, ToggleProfileSelector, ui::HoldForDefault};
 
 pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
@@ -54,6 +54,10 @@ impl ModeSelector {
 
         let next_index = (current_index + 1) % all_modes.len();
         self.set_mode(all_modes[next_index].id.clone(), cx);
+    }
+
+    pub fn mode(&self) -> acp::SessionModeId {
+        self.connection.current_mode()
     }
 
     pub fn set_mode(&mut self, mode: acp::SessionModeId, cx: &mut Context<Self>) {
@@ -104,36 +108,11 @@ impl ModeSelector {
                     entry.documentation_aside(side, DocumentationEdge::Bottom, {
                         let description = description.clone();
 
-                        move |cx| {
+                        move |_| {
                             v_flex()
                                 .gap_1()
                                 .child(Label::new(description.clone()))
-                                .child(
-                                    h_flex()
-                                        .pt_1()
-                                        .border_t_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .gap_0p5()
-                                        .text_sm()
-                                        .text_color(Color::Muted.color(cx))
-                                        .child("Hold")
-                                        .child(h_flex().flex_shrink_0().children(
-                                            ui::render_modifiers(
-                                                &gpui::Modifiers::secondary_key(),
-                                                PlatformStyle::platform(),
-                                                None,
-                                                Some(ui::TextSize::Default.rems(cx).into()),
-                                                true,
-                                            ),
-                                        ))
-                                        .child(div().map(|this| {
-                                            if is_default {
-                                                this.child("to also unset as default")
-                                            } else {
-                                                this.child("to also set as default")
-                                            }
-                                        })),
-                                )
+                                .child(HoldForDefault::new(is_default))
                                 .into_any_element()
                         }
                     })

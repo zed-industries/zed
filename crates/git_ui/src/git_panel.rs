@@ -11,9 +11,11 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
+use cloud_llm_client::CompletionIntent;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    Direction, Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks,
+    Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
+    actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
@@ -50,6 +52,7 @@ use panel::{
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
+    project_settings::{GitPathStyle, ProjectSettings},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -66,14 +69,11 @@ use ui::{
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
-
-use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
-
 actions!(
     git_panel,
     [
@@ -273,6 +273,69 @@ impl GitStatusEntry {
     }
 }
 
+struct TruncatedPatch {
+    header: String,
+    hunks: Vec<String>,
+    hunks_to_keep: usize,
+}
+
+impl TruncatedPatch {
+    fn from_unified_diff(patch_str: &str) -> Option<Self> {
+        let lines: Vec<&str> = patch_str.lines().collect();
+        if lines.len() < 2 {
+            return None;
+        }
+        let header = format!("{}\n{}\n", lines[0], lines[1]);
+        let mut hunks = Vec::new();
+        let mut current_hunk = String::new();
+        for line in &lines[2..] {
+            if line.starts_with("@@") {
+                if !current_hunk.is_empty() {
+                    hunks.push(current_hunk);
+                }
+                current_hunk = format!("{}\n", line);
+            } else if !current_hunk.is_empty() {
+                current_hunk.push_str(line);
+                current_hunk.push('\n');
+            }
+        }
+        if !current_hunk.is_empty() {
+            hunks.push(current_hunk);
+        }
+        if hunks.is_empty() {
+            return None;
+        }
+        let hunks_to_keep = hunks.len();
+        Some(TruncatedPatch {
+            header,
+            hunks,
+            hunks_to_keep,
+        })
+    }
+    fn calculate_size(&self) -> usize {
+        let mut size = self.header.len();
+        for (i, hunk) in self.hunks.iter().enumerate() {
+            if i < self.hunks_to_keep {
+                size += hunk.len();
+            }
+        }
+        size
+    }
+    fn to_string(&self) -> String {
+        let mut out = self.header.clone();
+        for (i, hunk) in self.hunks.iter().enumerate() {
+            if i < self.hunks_to_keep {
+                out.push_str(hunk);
+            }
+        }
+        let skipped_hunks = self.hunks.len() - self.hunks_to_keep;
+        if skipped_hunks > 0 {
+            out.push_str(&format!("[...skipped {} hunks...]\n", skipped_hunks));
+        }
+        out
+    }
+}
+
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
@@ -373,6 +436,7 @@ impl GitPanel {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
                     this.entries.clear();
+                    this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = is_sort_by_path
@@ -1550,7 +1614,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let git_commit_language = self.commit_editor.read(cx).language_at(0, cx);
+        let git_commit_language = self
+            .commit_editor
+            .read(cx)
+            .language_at(MultiBufferOffset(0), cx);
         let message = self.commit_editor.read(cx).text(cx);
         if message.is_empty() {
             return self
@@ -1810,6 +1877,96 @@ impl GitPanel {
         self.generate_commit_message(cx);
     }
 
+    fn split_patch(patch: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut current_patch = String::new();
+
+        for line in patch.lines() {
+            if line.starts_with("---") && !current_patch.is_empty() {
+                result.push(current_patch.trim_end_matches('\n').into());
+                current_patch = String::new();
+            }
+            current_patch.push_str(line);
+            current_patch.push('\n');
+        }
+
+        if !current_patch.is_empty() {
+            result.push(current_patch.trim_end_matches('\n').into());
+        }
+
+        result
+    }
+    fn truncate_iteratively(patch: &str, max_bytes: usize) -> String {
+        let mut current_size = patch.len();
+        if current_size <= max_bytes {
+            return patch.to_string();
+        }
+        let file_patches = Self::split_patch(patch);
+        let mut file_infos: Vec<TruncatedPatch> = file_patches
+            .iter()
+            .filter_map(|patch| TruncatedPatch::from_unified_diff(patch))
+            .collect();
+
+        if file_infos.is_empty() {
+            return patch.to_string();
+        }
+
+        current_size = file_infos.iter().map(|f| f.calculate_size()).sum::<usize>();
+        while current_size > max_bytes {
+            let file_idx = file_infos
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.hunks_to_keep > 1)
+                .max_by_key(|(_, f)| f.hunks_to_keep)
+                .map(|(idx, _)| idx);
+            match file_idx {
+                Some(idx) => {
+                    let file = &mut file_infos[idx];
+                    let size_before = file.calculate_size();
+                    file.hunks_to_keep -= 1;
+                    let size_after = file.calculate_size();
+                    let saved = size_before.saturating_sub(size_after);
+                    current_size = current_size.saturating_sub(saved);
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+
+        file_infos
+            .iter()
+            .map(|info| info.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn compress_commit_diff(diff_text: &str, max_bytes: usize) -> String {
+        if diff_text.len() <= max_bytes {
+            return diff_text.to_string();
+        }
+
+        let mut compressed = diff_text
+            .lines()
+            .map(|line| {
+                if line.len() > 256 {
+                    format!("{}...[truncated]\n", &line[..256])
+                } else {
+                    format!("{}\n", line)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        if compressed.len() <= max_bytes {
+            return compressed;
+        }
+
+        compressed = Self::truncate_iteratively(&compressed, max_bytes);
+
+        compressed
+    }
+
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
@@ -1868,10 +2025,8 @@ impl GitPanel {
                     }
                 };
 
-                const ONE_MB: usize = 1_000_000;
-                if diff_text.len() > ONE_MB {
-                    diff_text = diff_text.chars().take(ONE_MB).collect()
-                }
+                const MAX_DIFF_BYTES: usize = 20_000;
+                diff_text = Self::compress_commit_diff(&diff_text, MAX_DIFF_BYTES);
 
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
@@ -1896,6 +2051,7 @@ impl GitPanel {
                         role: Role::User,
                         content: vec![content.into()],
                         cache: false,
+            reasoning_details: None,
                     }],
                     tools: Vec::new(),
                     tool_choice: None,
@@ -2712,26 +2868,19 @@ impl GitPanel {
                     if ops.staged() {
                         self.single_staged_entry = single_staged_entry;
                     }
+                } else {
+                    self.single_staged_entry = single_staged_entry;
                 }
-            } else if repo
-                .pending_ops_by_path
-                .summary()
-                .item_summary
-                .staging_count
-                == 1
+            } else if repo.pending_ops_summary().item_summary.staging_count == 1
+                && let Some(ops) = repo.pending_ops().find(|ops| ops.staging())
             {
-                self.single_staged_entry = repo.pending_ops_by_path.iter().find_map(|ops| {
-                    if ops.staging() {
-                        repo.status_for_path(&ops.repo_path)
-                            .map(|status| GitStatusEntry {
-                                repo_path: ops.repo_path.clone(),
-                                status: status.status,
-                                staging: StageStatus::Staged,
-                            })
-                    } else {
-                        None
-                    }
-                });
+                self.single_staged_entry =
+                    repo.status_for_path(&ops.repo_path)
+                        .map(|status| GitStatusEntry {
+                            repo_path: ops.repo_path.clone(),
+                            status: status.status,
+                            staging: StageStatus::Staged,
+                        });
             }
         }
 
@@ -3955,21 +4104,8 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let path_style = self.project.read(cx).path_style(cx);
+        let git_path_style = ProjectSettings::get_global(cx).git.path_style;
         let display_name = entry.display_name(path_style);
-
-        let active_repo = self
-            .project
-            .read(cx)
-            .active_repository(cx)
-            .expect("active repository must be set");
-        let repo = active_repo.read(cx);
-        let repo_snapshot = repo.snapshot();
-
-        let old_path = if entry.status.is_renamed() {
-            repo_snapshot.renamed_paths.get(&entry.repo_path)
-        } else {
-            None
-        };
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
@@ -3979,16 +4115,15 @@ impl GitPanel {
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
-        let is_renamed = status.is_renamed();
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
+            } else if is_modified {
+                Color::VersionControlModified
             } else if is_deleted {
                 // We don't want a bunch of red labels in the list
                 Color::Disabled
-            } else if is_renamed || is_modified {
-                Color::VersionControlModified
             } else {
                 Color::VersionControlAdded
             }
@@ -4008,6 +4143,12 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
+        let active_repo = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .expect("active repository must be set");
+        let repo = active_repo.read(cx);
         // Checking for current staged/unstaged file status is a chained operation:
         // 1. first, we check for any pending operation recorded in repository
         // 2. if there are no pending ops either running or finished, we then ask the repository
@@ -4063,7 +4204,6 @@ impl GitPanel {
         } else {
             cx.theme().colors().ghost_element_active
         };
-
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -4161,35 +4301,68 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .flex_1()
-                    // .overflow_hidden()
-                    .when_some(old_path.as_ref(), |this, old_path| {
-                        let new_display = old_path.display(path_style).to_string();
-                        let old_display = entry.repo_path.display(path_style).to_string();
-                        this.child(self.entry_label(old_display, Color::Muted).strikethrough())
-                            .child(self.entry_label(" → ", Color::Muted))
-                            .child(self.entry_label(new_display, label_color))
-                    })
-                    .when(old_path.is_none(), |this| {
-                        this.when_some(entry.parent_dir(path_style), |this, parent| {
-                            if !parent.is_empty() {
-                                this.child(
-                                    self.entry_label(
-                                        format!("{parent}{}", path_style.separator()),
-                                        path_color,
-                                    )
-                                    .when(status.is_deleted(), |this| this.strikethrough()),
-                                )
-                            } else {
-                                this
-                            }
-                        })
-                        .child(
-                            self.entry_label(display_name, label_color)
-                                .when(status.is_deleted(), |this| this.strikethrough()),
+                    .child(h_flex().items_center().flex_1().map(|this| {
+                        self.path_formatted(
+                            this,
+                            entry.parent_dir(path_style),
+                            path_color,
+                            display_name,
+                            label_color,
+                            path_style,
+                            git_path_style,
+                            status.is_deleted(),
                         )
-                    }),
+                    })),
             )
             .into_any_element()
+    }
+
+    fn path_formatted(
+        &self,
+        parent: Div,
+        directory: Option<String>,
+        path_color: Color,
+        file_name: String,
+        label_color: Color,
+        path_style: PathStyle,
+        git_path_style: GitPathStyle,
+        strikethrough: bool,
+    ) -> Div {
+        parent
+            .when(git_path_style == GitPathStyle::FileNameFirst, |this| {
+                this.child(
+                    self.entry_label(
+                        match directory.as_ref().is_none_or(|d| d.is_empty()) {
+                            true => file_name.clone(),
+                            false => format!("{file_name} "),
+                        },
+                        label_color,
+                    )
+                    .when(strikethrough, Label::strikethrough),
+                )
+            })
+            .when_some(directory, |this, dir| {
+                match (
+                    !dir.is_empty(),
+                    git_path_style == GitPathStyle::FileNameFirst,
+                ) {
+                    (true, true) => this.child(
+                        self.entry_label(dir, path_color)
+                            .when(strikethrough, Label::strikethrough),
+                    ),
+                    (true, false) => this.child(
+                        self.entry_label(format!("{dir}{}", path_style.separator()), path_color)
+                            .when(strikethrough, Label::strikethrough),
+                    ),
+                    _ => this,
+                }
+            })
+            .when(git_path_style == GitPathStyle::FilePathFirst, |this| {
+                this.child(
+                    self.entry_label(file_name, label_color)
+                        .when(strikethrough, Label::strikethrough),
+                )
+            })
     }
 
     fn has_write_access(&self, cx: &App) -> bool {
@@ -5008,6 +5181,7 @@ mod tests {
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -5706,5 +5880,258 @@ mod tests {
                 expected_path.map(|s| s.to_string())
             );
         }
+    }
+
+    #[test]
+    fn test_compress_diff_no_truncation() {
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+            -old
+            +new
+        "};
+        let result = GitPanel::compress_commit_diff(diff, 1000);
+        assert_eq!(result, diff);
+    }
+
+    #[test]
+    fn test_compress_diff_truncate_long_lines() {
+        let long_line = "a".repeat(300);
+        let diff = indoc::formatdoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             context
+            +{}
+             more context
+        ", long_line};
+        let result = GitPanel::compress_commit_diff(&diff, 100);
+        assert!(result.contains("...[truncated]"));
+        assert!(result.len() < diff.len());
+    }
+
+    #[test]
+    fn test_compress_diff_truncate_hunks() {
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+             context
+            -old1
+            +new1
+            @@ -5,2 +5,2 @@
+             context 2
+            -old2
+            +new2
+            @@ -10,2 +10,2 @@
+             context 3
+            -old3
+            +new3
+        "};
+        let result = GitPanel::compress_commit_diff(diff, 100);
+        let expected = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+             context
+            -old1
+            +new1
+            [...skipped 2 hunks...]
+        "};
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_suggest_commit_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+                "untracked": "\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+
+        // GitPanel
+        // - Tracked:
+        // - [] tracked
+        // - Untracked
+        // - [] untracked
+        //
+        // The commit message should now read:
+        // "Update tracked"
+        let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
+        assert_eq!(message, Some("Update tracked".to_string()));
+
+        let first_status_entry = entries[1].clone();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(&first_status_entry, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // GitPanel
+        // - Tracked:
+        // - [x] tracked
+        // - Untracked
+        // - [] untracked
+        //
+        // The commit message should still read:
+        // "Update tracked"
+        let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
+        assert_eq!(message, Some("Update tracked".to_string()));
+
+        let second_status_entry = entries[3].clone();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // GitPanel
+        // - Tracked:
+        // - [x] tracked
+        // - Untracked
+        // - [x] untracked
+        //
+        // The commit message should now read:
+        // "Enter commit message"
+        // (which means we should see None returned).
+        let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
+        assert!(message.is_none());
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(&first_status_entry, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // GitPanel
+        // - Tracked:
+        // - [] tracked
+        // - Untracked
+        // - [x] untracked
+        //
+        // The commit message should now read:
+        // "Update untracked"
+        let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
+        assert_eq!(message, Some("Create untracked".to_string()));
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // GitPanel
+        // - Tracked:
+        // - [] tracked
+        // - Untracked
+        // - [] untracked
+        //
+        // The commit message should now read:
+        // "Update tracked"
+        let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
+        assert_eq!(message, Some("Update tracked".to_string()));
     }
 }
