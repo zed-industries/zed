@@ -457,7 +457,9 @@ pub fn map_to_language_model_completion_events(
                                 )));
                             }
                             Some("tool_calls") => {
-                                // Emit reasoning details if we have them (e.g. for Gemini 3)
+                                // Gemini 3 models send reasoning_opaque/reasoning_text that must
+                                // be preserved and sent back in subsequent requests. Emit as
+                                // ReasoningDetails so the agent stores it in the message.
                                 if state.reasoning_opaque.is_some()
                                     || state.reasoning_text.is_some()
                                 {
