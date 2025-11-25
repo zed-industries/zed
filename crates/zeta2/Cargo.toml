@@ -65,12 +65,15 @@ worktree.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
+cloud_api_types.workspace = true
 cloud_llm_client = { workspace = true, features = ["test-support"] }
+ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-lsp.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
+parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

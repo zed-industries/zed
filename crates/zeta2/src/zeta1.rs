@@ -24,9 +24,9 @@ const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
-const MAX_EVENT_TOKENS: usize = 500;
+pub(crate) const MAX_CONTEXT_TOKENS: usize = 150;
+pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
+pub(crate) const MAX_EVENT_TOKENS: usize = 500;
 
 pub(crate) fn request_prediction_with_zeta1(
     zeta: &mut Zeta,
@@ -43,9 +43,7 @@ pub(crate) fn request_prediction_with_zeta1(
     let app_version = AppVersion::global(cx);
 
     let zeta_project = zeta.get_or_init_zeta_project(project, cx);
-    let mut events = Vec::with_capacity(zeta_project.events.len());
-    events.extend(zeta_project.events.iter().cloned());
-    let events = Arc::new(events);
+    let events = Arc::new(zeta_project.events(cx));
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
         let can_collect_file = zeta.can_collect_file(project, file, cx);
@@ -89,7 +87,7 @@ pub(crate) fn request_prediction_with_zeta1(
         let included_events = &events[events.len() - included_events_count..events.len()];
         body.can_collect_data = can_collect_file
             && this
-                .read_with(cx, |this, _| this.can_collect_events(included_events))
+                .read_with(cx, |this, _| this.can_collect_events(dbg!(included_events)))
                 .unwrap_or(false);
         if body.can_collect_data {
             body.git_info = git_info;
@@ -495,7 +493,7 @@ pub fn format_event(event: &Event) -> String {
 
 /// Typical number of string bytes per token for the purposes of limiting model input. This is
 /// intentionally low to err on the side of underestimating limits.
-const BYTES_PER_TOKEN_GUESS: usize = 3;
+pub(crate) const BYTES_PER_TOKEN_GUESS: usize = 3;
 
 fn guess_token_count(bytes: usize) -> usize {
     bytes / BYTES_PER_TOKEN_GUESS

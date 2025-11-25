@@ -64,6 +64,9 @@ pub mod udiff;
 mod xml_edits;
 pub mod zeta1;
 
+#[cfg(test)]
+mod zeta_tests;
+
 use crate::assemble_excerpts::assemble_excerpts;
 use crate::license_detection::LicenseDetectionWatcher;
 pub use crate::prediction::EditPrediction;
