@@ -4302,18 +4302,28 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .flex_1()
-                    .child(h_flex().items_center().flex_1().map(|this| {
-                        self.path_formatted(
-                            this,
-                            entry.parent_dir(path_style),
-                            path_color,
-                            display_name,
-                            label_color,
-                            path_style,
-                            git_path_style,
-                            status.is_deleted(),
-                        )
-                    })),
+                    .w_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .flex_1()
+                            .w_full()
+                            .min_w_0()
+                            .map(|this| {
+                                self.path_formatted(
+                                    this,
+                                    entry.parent_dir(path_style),
+                                    path_color,
+                                    display_name,
+                                    label_color,
+                                    path_style,
+                                    git_path_style,
+                                    status.is_deleted(),
+                                )
+                            }),
+                    ),
             )
             .into_any_element()
     }
@@ -4330,16 +4340,19 @@ impl GitPanel {
         strikethrough: bool,
     ) -> Div {
         parent
+            .min_w_0()
             .when(git_path_style == GitPathStyle::FileNameFirst, |this| {
                 this.child(
-                    self.entry_label(
-                        match directory.as_ref().is_none_or(|d| d.is_empty()) {
-                            true => file_name.clone(),
-                            false => format!("{file_name} "),
-                        },
-                        label_color,
-                    )
-                    .when(strikethrough, Label::strikethrough),
+                    div().flex_shrink_0().child(
+                        self.entry_label(
+                            match directory.as_ref().is_none_or(|d| d.is_empty()) {
+                                true => file_name.clone(),
+                                false => format!("{file_name} "),
+                            },
+                            label_color,
+                        )
+                        .when(strikethrough, Label::strikethrough),
+                    ),
                 )
             })
             .when_some(directory, |this, dir| {
@@ -4347,10 +4360,7 @@ impl GitPanel {
                     !dir.is_empty(),
                     git_path_style == GitPathStyle::FileNameFirst,
                 ) {
-                    (true, true) => this.child(
-                        self.entry_label(dir, path_color)
-                            .when(strikethrough, Label::strikethrough),
-                    ),
+                    (true, true) => this.child(TruncateLeft::new(dir).color(path_color)),
                     (true, false) => this.child(
                         self.entry_label(format!("{dir}{}", path_style.separator()), path_color)
                             .when(strikethrough, Label::strikethrough),

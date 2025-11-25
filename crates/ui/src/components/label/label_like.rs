@@ -56,7 +56,7 @@ pub trait LabelCommon {
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
 
-    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    /// Truncates overflowing text with an ellipsis (`…`) at the end if needed.
     fn truncate(self) -> Self;
 
     /// Sets the label to render as a single line.
