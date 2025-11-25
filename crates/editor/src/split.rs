@@ -2,10 +2,7 @@ use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use multi_buffer::{MultiBuffer, MultiBufferFilterMode};
-use ui::{
-    App, Context, InteractiveElement, IntoElement as _, ParentElement as _, Render, SharedString,
-    Window, div,
-};
+use ui::{App, Context, IntoElement as _, Render, SharedString, Window, div};
 use workspace::{
     ActivePaneDecorator, Item, ItemHandle as _, Pane, PaneGroup, SplitDirection, Workspace,
 };

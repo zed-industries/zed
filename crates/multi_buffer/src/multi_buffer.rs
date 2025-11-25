@@ -43,13 +43,13 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{self, Add, AddAssign, Range, RangeBounds, Sub, SubAssign},
+    ops::{self, AddAssign, Range, RangeBounds, Sub, SubAssign},
     rc::Rc,
     str,
     sync::Arc,
     time::Duration,
 };
-use sum_tree::{Bias, Cursor, Dimension, Dimensions, Item, SumTree, TreeMap};
+use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, TreeMap};
 use text::{
     BufferId, Edit, LineIndent, TextSummary,
     locator::Locator,
@@ -1148,7 +1148,7 @@ impl MultiBuffer {
         }
 
         let follower = cx.new(|cx| self.clone(cx));
-        follower.update(cx, |follower, cx| {
+        follower.update(cx, |follower, _cx| {
             follower.capability = Capability::ReadOnly;
         });
         self.follower = Some(follower.clone());
@@ -1169,14 +1169,13 @@ impl MultiBuffer {
                 old: ExcerptDimension(MultiBufferOffset(0))..excerpt_len,
                 new: ExcerptDimension(MultiBufferOffset(0))..excerpt_len,
             }],
-            // FIXME
+            // TODO is this right?
             DiffChangeKind::BufferEdited,
             new_mode,
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
-        // FIXME notify? emit events?
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
@@ -1902,7 +1901,6 @@ impl MultiBuffer {
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
-        // FIXME
         if let Some(follower) = &self.follower {
             follower.update(cx, |follower, cx| {
                 follower.clear(cx);
@@ -6869,7 +6867,6 @@ where
                     has_trailing_newline = excerpt.has_trailing_newline;
                 };
 
-                // FIXME
                 if matches!(transform, DiffTransform::FilteredInsertedHunk { .. }) {
                     buffer_end = buffer_start;
                     end = start;
@@ -7550,7 +7547,7 @@ impl Iterator for MultiBufferRows<'_> {
                     .end
                     .to_point(&last_excerpt.buffer)
                     .row;
-                // FIXME perf
+                // TODO perf
                 let base_text_row = self
                     .cursor
                     .snapshot
@@ -7613,7 +7610,7 @@ impl Iterator for MultiBufferRows<'_> {
             .diff_hunk_status
             .filter(|_| self.point < region.range.end);
         let base_text_row = match diff_status {
-            // FIXME perf
+            // TODO perf
             None => self
                 .cursor
                 .snapshot
@@ -7795,7 +7792,6 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         if self.range.start == self.diff_transforms.end().0 {
             self.diff_transforms.next();
         }
-        // FIXME
         while let Some(DiffTransform::FilteredInsertedHunk { .. }) = self.diff_transforms.item() {
             self.diff_transforms.next();
             let mut range = self.excerpt_offset_range.clone();

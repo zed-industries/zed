@@ -2525,7 +2525,6 @@ impl ReferenceMultibuffer {
                             .iter()
                             .find(|e| e.id == region.excerpt_id.unwrap())
                             .map(|e| e.buffer.clone());
-                        // FIXME
                         let base_text_row = match region.status {
                             None => Some(
                                 main_buffer
@@ -2585,7 +2584,6 @@ impl ReferenceMultibuffer {
                             MultiBufferRow(text[..ix].matches('\n').count() as u32);
                         let mut expand_direction = None;
                         if let Some(buffer) = &main_buffer {
-                            // FIXME wrong in the presence of FilteredInsertedHunk
                             let buffer_row = buffer_row.unwrap();
                             let needs_expand_up = is_excerpt_start && is_start && buffer_row > 0;
                             let needs_expand_down = is_excerpt_end
@@ -3644,16 +3642,10 @@ fn format_diff(
     let has_diff =
         has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
 
-    let mut byte_offset = 0;
     text.split('\n')
         .enumerate()
         .zip(row_infos)
         .map(|((ix, line), info)| {
-            let byte_range_start = byte_offset;
-            byte_offset += line.as_bytes().len();
-            let byte_range_end = byte_offset;
-            byte_offset += 1; // newline
-
             let marker = match info.diff_status.map(|status| status.kind) {
                 Some(DiffHunkStatusKind::Added) => "+ ",
                 Some(DiffHunkStatusKind::Deleted) => "- ",
