@@ -1343,7 +1343,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         .custom
                         .insert(
                             server_name,
-                            settings::CustomAgentServerSettings {
+                            settings::CustomAgentServerSettings::Custom {
                                 path: "path_to_executable".into(),
                                 args: vec![],
                                 env: Some(HashMap::default()),

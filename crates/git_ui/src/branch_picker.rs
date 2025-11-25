@@ -16,7 +16,10 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, ToggleButton, Tooltip, prelude::*};
+use ui::{
+    Divider, HighlightedLabel, ListItem, ListItemSpacing, ToggleButtonGroup, ToggleButtonSimple,
+    Tooltip, prelude::*,
+};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -776,27 +779,53 @@ impl PickerDelegate for BranchListDelegate {
                     .border_color(cx.theme().colors().border_variant)
                     .child(
                         h_flex().gap_0p5().child(
-                            ToggleButton::new("filter-remotes", "Filter remotes")
-                                .style(ButtonStyle::Subtle)
-                                .size(ButtonSize::Default)
-                                .selected_style(ButtonStyle::Filled)
-                                .toggle_state(self.display_remotes)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.delegate.display_remotes = !this.delegate.display_remotes;
-                                    cx.spawn_in(window, async move |this, cx| {
-                                        this.update_in(cx, |this, window, cx| {
-                                            let last_query = this.delegate.last_query.clone();
-                                            this.delegate.update_matches(last_query, window, cx)
-                                        })?
-                                        .await;
+                            ToggleButtonGroup::single_row(
+                                "filter-remotes",
+                                [ToggleButtonSimple::new(
+                                    "Filter remotes",
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.delegate.display_remotes =
+                                            !this.delegate.display_remotes;
+                                        cx.spawn_in(window, async move |this, cx| {
+                                            this.update_in(cx, |this, window, cx| {
+                                                let last_query = this.delegate.last_query.clone();
+                                                this.delegate.update_matches(last_query, window, cx)
+                                            })?
+                                            .await;
 
-                                        Result::Ok::<_, anyhow::Error>(())
-                                    })
-                                    .detach_and_log_err(cx);
-                                    cx.notify();
-                                })),
+                                            Result::Ok::<_, anyhow::Error>(())
+                                        })
+                                        .detach_and_log_err(cx);
+                                        cx.notify();
+                                    }),
+                                )
+                                .selected(self.display_remotes)],
+                            )
+                            .style(ui::ToggleButtonGroupStyle::Outlined),
                         ),
                     )
+                    // .child(
+                    //     h_flex().gap_0p5().child(
+                    //         ToggleButton::new("filter-remotes", "Filter remotes")
+                    //             .style(ButtonStyle::Subtle)
+                    //             .size(ButtonSize::Default)
+                    //             .selected_style(ButtonStyle::Filled)
+                    //             .toggle_state(self.display_remotes)
+                    //             .on_click(cx.listener(move |this, _, window, cx| {
+                    //                 this.delegate.display_remotes = !this.delegate.display_remotes;
+                    //                 cx.spawn_in(window, async move |this, cx| {
+                    //                     this.update_in(cx, |this, window, cx| {
+                    //                         let last_query = this.delegate.last_query.clone();
+                    //                         this.delegate.update_matches(last_query, window, cx)
+                    //                     })?
+                    //                     .await;
+                    //                     Result::Ok::<_, anyhow::Error>(())
+                    //                 })
+                    //                 .detach_and_log_err(cx);
+                    //                 cx.notify();
+                    //             })),
+                    //     ),
+                    // )
                     .into_any(),
             ),
             PickerState::CreateRemote(_) => Some(
