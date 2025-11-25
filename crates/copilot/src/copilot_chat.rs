@@ -294,6 +294,10 @@ pub enum ChatMessage {
         content: ChatMessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_opaque: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_text: Option<String>,
     },
     User {
         content: ChatMessageContent,
@@ -386,6 +390,8 @@ pub struct ResponseDelta {
     pub role: Option<Role>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCallChunk>,
+    pub reasoning_opaque: Option<String>,
+    pub reasoning_text: Option<String>,
 }
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {

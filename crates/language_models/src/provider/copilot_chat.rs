@@ -367,12 +367,16 @@ pub fn map_to_language_model_completion_events(
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
         tool_calls_by_index: HashMap<usize, RawToolCall>,
+        reasoning_opaque: Option<String>,
+        reasoning_text: Option<String>,
     }
 
     futures::stream::unfold(
         State {
             events,
             tool_calls_by_index: HashMap::default(),
+            reasoning_opaque: None,
+            reasoning_text: None,
         },
         move |mut state| async move {
             if let Some(event) = state.events.next().await {
@@ -401,6 +405,14 @@ pub fn map_to_language_model_completion_events(
                         let mut events = Vec::new();
                         if let Some(content) = delta.content.clone() {
                             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                        }
+
+                        // Capture reasoning data from the delta (e.g. for Gemini 3)
+                        if let Some(opaque) = delta.reasoning_opaque.clone() {
+                            state.reasoning_opaque = Some(opaque);
+                        }
+                        if let Some(text) = delta.reasoning_text.clone() {
+                            state.reasoning_text = Some(text);
                         }
 
                         for (index, tool_call) in delta.tool_calls.iter().enumerate() {
@@ -445,6 +457,30 @@ pub fn map_to_language_model_completion_events(
                                 )));
                             }
                             Some("tool_calls") => {
+                                // Emit reasoning details if we have them (e.g. for Gemini 3)
+                                if state.reasoning_opaque.is_some()
+                                    || state.reasoning_text.is_some()
+                                {
+                                    let mut details = serde_json::Map::new();
+                                    if let Some(opaque) = state.reasoning_opaque.take() {
+                                        details.insert(
+                                            "reasoning_opaque".to_string(),
+                                            serde_json::Value::String(opaque),
+                                        );
+                                    }
+                                    if let Some(text) = state.reasoning_text.take() {
+                                        details.insert(
+                                            "reasoning_text".to_string(),
+                                            serde_json::Value::String(text),
+                                        );
+                                    }
+                                    events.push(Ok(
+                                        LanguageModelCompletionEvent::ReasoningDetails(
+                                            serde_json::Value::Object(details),
+                                        ),
+                                    ));
+                                }
+
                                 events.extend(state.tool_calls_by_index.drain().map(
                                     |(_, tool_call)| {
                                         // The model can output an empty string
@@ -807,13 +843,31 @@ fn into_copilot_chat(
                     buffer
                 };
 
+                // Extract reasoning_opaque and reasoning_text from reasoning_details
+                let (reasoning_opaque, reasoning_text) =
+                    if let Some(details) = &message.reasoning_details {
+                        let opaque = details
+                            .get("reasoning_opaque")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let text = details
+                            .get("reasoning_text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        (opaque, text)
+                    } else {
+                        (None, None)
+                    };
+
                 messages.push(ChatMessage::Assistant {
                     content: if text_content.is_empty() {
-                        ChatMessageContent::empty()
+                        None
                     } else {
-                        text_content.into()
+                        Some(text_content.into())
                     },
                     tool_calls,
+                    reasoning_opaque,
+                    reasoning_text,
                 });
             }
             Role::System => messages.push(ChatMessage::System {
