@@ -264,7 +264,10 @@ impl<'a> Matcher<'a> {
 
                     if last == '/' {
                         char_score = 0.9;
-                    } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
+                    } else if (last == '-'
+                        || last == '_'
+                        || last == ' '
+                        || (last.is_numeric() && !curr.is_numeric()))
                         || (last.is_lowercase() && curr.is_uppercase())
                     {
                         char_score = 0.8;
@@ -595,5 +598,26 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn test_numeric_boundary_preserved_for_non_numeric() {
+        let paths = vec!["imgpng", "img2png"];
+        let results = match_single_path_query("p", false, &paths);
+        assert_eq!(
+            results[0].0, "img2png",
+            "A number should act as a boundary for non-numeric character"
+        );
+    }
+
+    #[test]
+    fn test_numeric_boundary_ignored_for_digits() {
+        let paths = vec!["v10", "v.0"];
+        let results = match_single_path_query("0", false, &paths);
+        // v.0 wins over v10 here since the previous character of 0 is a dot
+        assert_eq!(
+            results[0].0, "v.0",
+            "A number should not act as a boundary for other numbers"
+        );
     }
 }
