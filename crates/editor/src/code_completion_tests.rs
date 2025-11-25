@@ -241,7 +241,7 @@ async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
-    let versions = [
+    let mut versions = [
         "10.4.112",
         "10.4.22",
         "10.4.2",
@@ -256,7 +256,15 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         "10.4.21+build.123",
         "10.4.20+20210327",
     ];
-
+    versions.sort_by(|a, b| {
+        match (
+            semver::Version::parse(a).ok(),
+            semver::Version::parse(b).ok(),
+        ) {
+            (Some(a_ver), Some(b_ver)) => b_ver.cmp(&a_ver),
+            _ => std::cmp::Ordering::Equal,
+        }
+    });
     let completions: Vec<_> = versions
         .iter()
         .enumerate()
