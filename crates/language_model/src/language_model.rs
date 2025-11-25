@@ -90,6 +90,7 @@ pub enum LanguageModelCompletionEvent {
     StartMessage {
         message_id: String,
     },
+    ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
 }
 
@@ -638,6 +639,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -992,8 +994,8 @@ mod tests {
         let original = LanguageModelToolUse {
             id: LanguageModelToolUseId::from("no_sig_id"),
             name: "no_sig_tool".into(),
-            raw_input: json!({"key": "value"}).to_string(),
-            input: json!({"key": "value"}),
+            raw_input: json!({"arg": "value"}).to_string(),
+            input: json!({"arg": "value"}),
             is_input_complete: true,
             thought_signature: None,
         };

@@ -1416,6 +1416,7 @@ impl TextThread {
                 role: Role::User,
                 content: vec!["Respond only with OK, nothing else.".into()],
                 cache: false,
+                reasoning_details: None,
             });
             req
         };
@@ -2083,6 +2084,11 @@ impl TextThread {
                                         }
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
+                                    LanguageModelCompletionEvent::ReasoningDetails(_) => {
+                                        // ReasoningDetails are metadata (signatures, encrypted data, format info)
+                                        // used for request/response validation, not UI content.
+                                        // The displayable thinking text is already handled by the Thinking event.
+                                    }
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
@@ -2306,6 +2312,7 @@ impl TextThread {
                 role: message.role,
                 content: Vec::new(),
                 cache: message.cache.as_ref().is_some_and(|cache| cache.is_anchor),
+                reasoning_details: None,
             };
 
             while let Some(content) = contents.peek() {
@@ -2677,6 +2684,7 @@ impl TextThread {
                 role: Role::User,
                 content: vec![SUMMARIZE_THREAD_PROMPT.into()],
                 cache: false,
+                reasoning_details: None,
             });
 
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
