@@ -653,7 +653,6 @@ impl AcpThreadView {
                             mode_selector,
                             _subscriptions: subscriptions,
                         };
-                        this.message_editor.focus_handle(cx).focus(window);
 
                         this.profile_selector = this.as_native_thread(cx).map(|thread| {
                             cx.new(|cx| {
