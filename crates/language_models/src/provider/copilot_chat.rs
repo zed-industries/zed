@@ -861,9 +861,9 @@ fn into_copilot_chat(
 
                 messages.push(ChatMessage::Assistant {
                     content: if text_content.is_empty() {
-                        None
+                        ChatMessageContent::empty()
                     } else {
-                        Some(text_content.into())
+                        text_content.into()
                     },
                     tool_calls,
                     reasoning_opaque,
