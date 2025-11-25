@@ -12290,6 +12290,22 @@ impl Editor {
         self.rewrap_impl(RewrapOptions::default(), cx)
     }
 
+    pub fn commit_rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
+        self.rewrap_impl(
+            RewrapOptions {
+                override_language_settings: false,
+                preserve_existing_whitespace: true,
+            },
+            cx,
+        );
+    }
+
     pub fn rewrap_impl(&mut self, options: RewrapOptions, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
