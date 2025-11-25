@@ -1851,7 +1851,7 @@ impl Editor {
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, _win, cx| {
+                    .on_click(move |_, _window, cx| {
                         editor
                             .update(cx, |editor, cx| {
                                 editor.unfold_ranges(
@@ -6605,7 +6605,7 @@ impl Editor {
             .when(show_tooltip, |this| {
                 this.tooltip({
                     let focus_handle = self.focus_handle.clone();
-                    move |_win, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Toggle Code Actions",
                             &ToggleCodeActions {
@@ -7933,7 +7933,7 @@ impl Editor {
 
     fn update_visible_edit_prediction(
         &mut self,
-        _win: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if DisableAiSettings::get_global(cx).disable_ai {
