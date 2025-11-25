@@ -4095,3 +4095,117 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
         }
     }
 }
+
+/// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)
+#[gpui::test]
+fn test_excerpts_containment_functions(cx: &mut App) {
+    // Multibuffer content for these tests:
+    //    0123
+    // 0: aa0
+    // 1: aa1
+    //    -----
+    // 2: bb0
+    // 3: bb1
+    //    -----MultiBufferOffset(0)..
+    // 4: cc0
+
+    let buffer_1 = cx.new(|cx| Buffer::local("aa0\naa1", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("bb0\nbb1", cx));
+    let buffer_3 = cx.new(|cx| Buffer::local("cc0", cx));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    let (excerpt_1_id, excerpt_2_id, excerpt_3_id) = multibuffer.update(cx, |multibuffer, cx| {
+        let excerpt_1_id = multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            cx,
+        )[0];
+
+        let excerpt_2_id = multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            cx,
+        )[0];
+
+        let excerpt_3_id = multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(0, 3))],
+            cx,
+        )[0];
+
+        (excerpt_1_id, excerpt_2_id, excerpt_3_id)
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+
+    assert_eq!(snapshot.text(), "aa0\naa1\nbb0\nbb1\ncc0");
+
+    //// Test `excerpts_for_range`
+
+    let p00 = snapshot.point_to_offset(Point::new(0, 0));
+    let p10 = snapshot.point_to_offset(Point::new(1, 0));
+    let p20 = snapshot.point_to_offset(Point::new(2, 0));
+    let p23 = snapshot.point_to_offset(Point::new(2, 3));
+    let p13 = snapshot.point_to_offset(Point::new(1, 3));
+    let p40 = snapshot.point_to_offset(Point::new(4, 0));
+    let p43 = snapshot.point_to_offset(Point::new(4, 3));
+
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p00..p00).collect();
+    assert_eq!(excerpts.len(), 1);
+    assert_eq!(excerpts[0].id, excerpt_1_id);
+
+    // Cursor at very end of excerpt 3
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p43..p43).collect();
+    assert_eq!(excerpts.len(), 1);
+    assert_eq!(excerpts[0].id, excerpt_3_id);
+
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p00..p23).collect();
+    assert_eq!(excerpts.len(), 2);
+    assert_eq!(excerpts[0].id, excerpt_1_id);
+    assert_eq!(excerpts[1].id, excerpt_2_id);
+
+    // This range represent an selection with end-point just inside excerpt_2
+    // Today we only expand the first excerpt, but another interpretation that
+    // we could consider is expanding both here
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p10..p20).collect();
+    assert_eq!(excerpts.len(), 1);
+    assert_eq!(excerpts[0].id, excerpt_1_id);
+
+    //// Test that `excerpts_for_range` and `excerpt_containing` agree for all single offsets (cursor positions)
+    for offset in 0..=snapshot.len().0 {
+        let offset = MultiBufferOffset(offset);
+        let excerpts_for_range: Vec<_> = snapshot.excerpts_for_range(offset..offset).collect();
+        assert_eq!(
+            excerpts_for_range.len(),
+            1,
+            "Expected exactly one excerpt for offset {offset}",
+        );
+
+        let excerpt_containing = snapshot.excerpt_containing(offset..offset);
+        assert!(
+            excerpt_containing.is_some(),
+            "Expected excerpt_containing to find excerpt for offset {offset}",
+        );
+
+        assert_eq!(
+            excerpts_for_range[0].id,
+            excerpt_containing.unwrap().id(),
+            "excerpts_for_range and excerpt_containing should agree for offset {offset}",
+        );
+    }
+
+    //// Test `excerpt_containing` behavior with ranges:
+
+    // Ranges intersecting a single-excerpt
+    let containing = snapshot.excerpt_containing(p00..p13);
+    assert!(containing.is_some());
+    assert_eq!(containing.unwrap().id(), excerpt_1_id);
+
+    // Ranges intersecting multiple excerpts (should return None)
+    let containing = snapshot.excerpt_containing(p20..p40);
+    assert!(
+        containing.is_none(),
+        "excerpt_containing should return None for ranges spanning multiple excerpts"
+    );
+}
