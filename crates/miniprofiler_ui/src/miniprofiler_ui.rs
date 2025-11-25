@@ -129,12 +129,12 @@ impl ProfilerWindow {
                     .get_current_thread_timings();
 
                 this.update(cx, |this: &mut ProfilerWindow, cx| {
-                    this.data = DataMode::Realtime(Some(data));
                     let max_offset = this.scroll_handle.max_offset();
                     if !this.autoscroll {
                         let scroll_offset = this.scroll_handle.offset();
                         this.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
                     }
+                    this.data = DataMode::Realtime(Some(data));
 
                     if this.autoscroll {
                         this.scroll_handle
