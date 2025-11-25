@@ -239,6 +239,48 @@ async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
     assert_eq!(matches[2].string, "fetch_code_lens");
 }
 
+#[gpui::test]
+async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
+    let completions = vec![
+        CompletionBuilder::new("10.4.22", None, "00000001", None),
+        CompletionBuilder::new("10.4.2", None, None, None),
+        CompletionBuilder::new("10.4.20", None, None, None),
+        CompletionBuilder::new("10.4.21", None, None, None),
+        CompletionBuilder::new("10.4.12", None, None, None),
+        // Pre-release versions
+        CompletionBuilder::new("10.4.22-alpha", None, None, None),
+        CompletionBuilder::new("10.4.22-alpha.1", None, None, None),
+        CompletionBuilder::new("10.4.22-alpha.2", None, None, None),
+        CompletionBuilder::new("10.4.22-beta", None, None, None),
+        CompletionBuilder::new("10.4.22-beta.1", None, None, None),
+        CompletionBuilder::new("10.4.22-rc.1", None, None, None),
+        CompletionBuilder::new("10.4.20-beta.1", None, None, None),
+        // Build metadata versions
+        CompletionBuilder::new("10.4.21+build.123", None, None, None),
+        CompletionBuilder::new("10.4.21+build.456", None, None, None),
+        CompletionBuilder::new("10.4.20+20210327", None, None, None),
+    ];
+
+    let matches = filter_and_sort_matches("2", &completions, SnippetSortOrder::default(), cx).await;
+
+    // Within pre-releases: rc.1 > beta.1 > beta > alpha.2 > alpha.1 > alpha
+    assert_eq!(matches[0].string, "10.4.22");
+    assert_eq!(matches[1].string, "10.4.22-rc.1");
+    assert_eq!(matches[2].string, "10.4.22-beta.1");
+    assert_eq!(matches[3].string, "10.4.22-beta");
+    assert_eq!(matches[4].string, "10.4.22-alpha.2");
+    assert_eq!(matches[5].string, "10.4.22-alpha.1");
+    assert_eq!(matches[6].string, "10.4.22-alpha");
+    assert_eq!(matches[7].string, "10.4.21+build.456");
+    assert_eq!(matches[8].string, "10.4.21+build.123");
+    assert_eq!(matches[9].string, "10.4.21");
+    assert_eq!(matches[10].string, "10.4.20+20210327");
+    assert_eq!(matches[11].string, "10.4.20");
+    assert_eq!(matches[12].string, "10.4.20-beta.1");
+    assert_eq!(matches[13].string, "10.4.12");
+    assert_eq!(matches[14].string, "10.4.2");
+}
+
 async fn test_for_each_prefix<F>(
     target: &str,
     completions: &Vec<Completion>,
@@ -259,30 +301,55 @@ struct CompletionBuilder;
 
 impl CompletionBuilder {
     fn constant(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
-        Self::new(label, filter_text, sort_text, CompletionItemKind::CONSTANT)
+        Self::new(
+            label,
+            filter_text,
+            sort_text,
+            Some(CompletionItemKind::CONSTANT),
+        )
     }
 
     fn function(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
-        Self::new(label, filter_text, sort_text, CompletionItemKind::FUNCTION)
+        Self::new(
+            label,
+            filter_text,
+            sort_text,
+            Some(CompletionItemKind::FUNCTION),
+        )
     }
 
     fn method(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
-        Self::new(label, filter_text, sort_text, CompletionItemKind::METHOD)
+        Self::new(
+            label,
+            filter_text,
+            sort_text,
+            Some(CompletionItemKind::METHOD),
+        )
     }
 
     fn variable(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
-        Self::new(label, filter_text, sort_text, CompletionItemKind::VARIABLE)
+        Self::new(
+            label,
+            filter_text,
+            sort_text,
+            Some(CompletionItemKind::VARIABLE),
+        )
     }
 
     fn snippet(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
-        Self::new(label, filter_text, sort_text, CompletionItemKind::SNIPPET)
+        Self::new(
+            label,
+            filter_text,
+            sort_text,
+            Some(CompletionItemKind::SNIPPET),
+        )
     }
 
     fn new(
         label: &str,
         filter_text: Option<&str>,
         sort_text: &str,
-        kind: CompletionItemKind,
+        kind: Option<CompletionItemKind>,
     ) -> Completion {
         Completion {
             replace_range: Anchor::MIN..Anchor::MAX,
@@ -294,7 +361,7 @@ impl CompletionBuilder {
                 server_id: LanguageServerId(0),
                 lsp_completion: Box::new(CompletionItem {
                     label: label.to_string(),
-                    kind: Some(kind),
+                    kind: kind,
                     sort_text: Some(sort_text.to_string()),
                     filter_text: filter_text.map(|text| text.to_string()),
                     ..Default::default()
