@@ -119,8 +119,8 @@ impl Anchor {
             && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
         {
             return Self {
-                buffer_id: self.buffer_id,
-                excerpt_id: self.excerpt_id,
+                buffer_id: Some(excerpt.buffer_id),
+                excerpt_id: excerpt.id,
                 text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
                 diff_base_anchor: self.diff_base_anchor.map(|a| {
                     if let Some(base_text) = snapshot
@@ -143,8 +143,8 @@ impl Anchor {
             && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
         {
             return Self {
-                buffer_id: self.buffer_id,
-                excerpt_id: self.excerpt_id,
+                buffer_id: Some(excerpt.buffer_id),
+                excerpt_id: excerpt.id,
                 text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
                 diff_base_anchor: self.diff_base_anchor.map(|a| {
                     if let Some(base_text) = snapshot
@@ -174,6 +174,7 @@ impl Anchor {
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        // todo: this check is not quite right if a we have a weird mixed min / max anchor?
         if *self == Anchor::min() || *self == Anchor::max() {
             true
         } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {

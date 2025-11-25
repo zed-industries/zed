@@ -5076,8 +5076,7 @@ impl MultiBufferSnapshot {
         excerpt_id: ExcerptId,
         text_anchor: Range<text::Anchor>,
     ) -> Option<Range<Anchor>> {
-        let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let excerpt = self.excerpt(excerpt_id)?;
+        let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
 
         Some(
             self.anchor_in_excerpt_(excerpt, text_anchor.start)?
@@ -5092,8 +5091,7 @@ impl MultiBufferSnapshot {
         excerpt_id: ExcerptId,
         text_anchor: text::Anchor,
     ) -> Option<Anchor> {
-        let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let excerpt = self.excerpt(excerpt_id)?;
+        let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
         self.anchor_in_excerpt_(excerpt, text_anchor)
     }
 
@@ -5130,6 +5128,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
+        // todo: this is not quite correct
         if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
             true
         } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
