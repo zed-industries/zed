@@ -1,8 +1,4 @@
-# Collaboration
-
-Only collaborate with people that you trust. Since sharing a project gives them access to your local file system, you should not share projects with people you do not trust; they could potentially do some nasty things.
-
-In the future, we will do more to prevent this type of access beyond the shared project and add more control over what collaborators can do, but for now, only collaborate with people you trust.
+# Private Calls
 
 ## Adding a collaborator to a call
 
