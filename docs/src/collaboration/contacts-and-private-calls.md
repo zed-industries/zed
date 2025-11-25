@@ -1,4 +1,15 @@
-# Private Calls
+# Contacts and Private Calls
+
+In addition to [channels](./channels.md), Zed allows you to have private calls / collaboration sessions with those in your contacts.
+These calls can be one-on-ones or contain any number of users from your contacts.
+
+*You will need to [sign in](../../authentication.md#signing-in) in order to begin using Zed's collaboration features.*
+
+
+## Adding a contact
+
+Open the collaboration panel via {#kb collab_panel::ToggleFocus} or `collab panel: toggle focus` from the command palette.
+
 
 ## Adding a collaborator to a call
 

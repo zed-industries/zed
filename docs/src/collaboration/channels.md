@@ -1,7 +1,5 @@
 # Channels
 
-## Overview
-
 Channels provide a way to streamline collaborating for software engineers in many ways, but particularly:
 
 - Pairing – when working on something together, you both have your own screen, mouse, and keyboard.
@@ -9,9 +7,11 @@ Channels provide a way to streamline collaborating for software engineers in man
 - Refactoring – you can have multiple people join in on large refactoring without fear of conflict.
 - Ambient awareness – you can see what everyone else is working on with no need for status emails or meetings.
 
+You will need to [sign in](../../authentication.md#signing-in) in order to begin using Zed's collaboration features.
+
 ## Channels
 
-To open the collaboration panel hit {#kb collab_panel::ToggleFocus} or `collab panel: toggle focus`.
+Open the collaboration panel via {#kb collab_panel::ToggleFocus} or `collab panel: toggle focus` from the command palette.
 
 Each channel corresponds to an ongoing project or work-stream. You can see who’s in a channel as their avatars will show up in the sidebar. This makes it easy to see what everyone is doing and where to find them if needed.
 
@@ -25,9 +25,9 @@ After joining a channel, you can `Share` a project with the other people there. 
 
 When you are editing someone else’s project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors. This is extremely powerful for pairing, as one of you can be implementing the current method while the other is reading and researching the correct solution to the next problem. And, because you have your own config running, it feels like you’re using your own machine.
 
-See [our collaboration documentation](./private-calls.md) for more details about how this works.
+See [our collaboration documentation](./contacts-and-private-calls.md) for more details about how this works.
 
-## Notes
+## Channel Notes
 
 Each channel has a notes file associated with it to keep track of current status, new ideas, or to collaborate on building out the design for the feature that you’re working on before diving into code.
 
