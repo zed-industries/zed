@@ -1,1 +1,71 @@
     Blocking waiting for file lock on build directory
+   Compiling buffer_diff v0.1.0 (/Users/cole/zed/crates/buffer_diff)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.03s
+     Running unittests src/buffer_diff.rs (target/debug/deps/buffer_diff-308e9b66e898930e)
+
+running 1 test
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(1:0)..Point(2:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:365:13] next_hunk.diff_base_byte_range.start.to_point(self.base_text()) = Point(1:0)
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(1:0)..Point(2:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] position.to_point(buffer) = Point(1:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.start.to_point(buffer) = Point(0:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.end.to_point(buffer) = Point(2:0)
+[crates/buffer_diff/src/buffer_diff.rs:365:13] next_hunk.diff_base_byte_range.start.to_point(self.base_text()) = Point(3:0)
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(1:0)..Point(2:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] position.to_point(buffer) = Point(2:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.start.to_point(buffer) = Point(0:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.end.to_point(buffer) = Point(2:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:21] Point::new(row, 0) = Point(2:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:48] cursor.end().buffer_range.end.to_point(buffer) = Point(2:0)
+[crates/buffer_diff/src/buffer_diff.rs:365:13] next_hunk.diff_base_byte_range.start.to_point(self.base_text()) = Point(3:0)
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(3:0)..Point(4:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] position.to_point(buffer) = Point(3:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.start.to_point(buffer) = Point(0:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.end.to_point(buffer) = Point(4:0)
+[crates/buffer_diff/src/buffer_diff.rs:365:13] next_hunk.diff_base_byte_range.start.to_point(self.base_text()) = Point(6:0)
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(3:0)..Point(4:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] position.to_point(buffer) = Point(4:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.start.to_point(buffer) = Point(0:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.end.to_point(buffer) = Point(4:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:21] Point::new(row, 0) = Point(4:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:48] cursor.end().buffer_range.end.to_point(buffer) = Point(4:0)
+[crates/buffer_diff/src/buffer_diff.rs:365:13] next_hunk.diff_base_byte_range.start.to_point(self.base_text()) = Point(6:0)
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(5:0)..Point(5:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] position.to_point(buffer) = Point(5:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.start.to_point(buffer) = Point(0:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.end.to_point(buffer) = Point(5:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:21] Point::new(row, 0) = Point(5:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:48] cursor.end().buffer_range.end.to_point(buffer) = Point(5:0)
+[crates/buffer_diff/src/buffer_diff.rs:365:13] next_hunk.diff_base_byte_range.start.to_point(self.base_text()) = Point(8:0)
+[crates/buffer_diff/src/buffer_diff.rs:2319:13] "----------" = "----------"
+[crates/buffer_diff/src/buffer_diff.rs:326:9] cursor.item().map(|item| item.buffer_range.to_point(buffer)) = Some(
+    Point(6:0)..Point(6:0),
+)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] position.to_point(buffer) = Point(6:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.start.to_point(buffer) = Point(0:0)
+[crates/buffer_diff/src/buffer_diff.rs:330:13] cursor.end().buffer_range.end.to_point(buffer) = Point(6:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:21] Point::new(row, 0) = Point(6:0)
+[crates/buffer_diff/src/buffer_diff.rs:338:48] cursor.end().buffer_range.end.to_point(buffer) = Point(6:0)
+[crates/buffer_diff/src/buffer_diff.rs:372:13] self.base_text().max_point() = Point(9:0)
+test tests::test_row_to_base_text_row ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.01s
+

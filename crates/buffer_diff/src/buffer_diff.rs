@@ -1,7 +1,7 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
-use language::{Language, LanguageRegistry};
+use language::{BufferRow, Language, LanguageRegistry};
 use rope::Rope;
 use std::{
     cmp::Ordering,
@@ -314,25 +314,57 @@ impl BufferDiffSnapshot {
         new_id == old_id || (new_empty && old_empty)
     }
 
-    pub fn offset_in_base_text(&self, position: Anchor, buffer: &text::BufferSnapshot) -> usize {
-        let mut cursor = self.inner.hunks.cursor(buffer);
+    pub fn row_to_base_text_row(&self, row: BufferRow, buffer: &text::BufferSnapshot) -> u32 {
+        // todo! expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
+        
+        // Find the last hunk that starts before this position.
+        let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
+        let position = buffer.anchor_before(Point::new(row, 0));
         cursor.seek(&position, Bias::Left);
         if cursor.item().is_none() {
             cursor.prev();
         }
-        let Some(item) = cursor.item() else {
-            return position.to_offset(buffer);
-        };
-        if position.cmp(&item.buffer_range.start, buffer).is_lt() {
-            cursor.prev();
-        }
-        if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
-            let overshoot =
-                position.to_offset(buffer) - cursor.end().buffer_range.end.to_offset(buffer);
-            cursor.end().diff_base_byte_range.end + overshoot
+
+        let unclipped_point = if let Some(hunk) = cursor.item()
+            && hunk.buffer_range.start.cmp(&position, buffer).is_le()
+        {
+            let unclipped_point = if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
+                // Position is between this hunk and the next hunk.
+                let overshoot = Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
+                cursor
+                    .end()
+                    .diff_base_byte_range
+                    .end
+                    .to_point(self.base_text())
+                    + overshoot
+            } else {
+                // Position is inside the added region for this hunk.
+                cursor
+                    .end()
+                    .diff_base_byte_range
+                    .end
+                    .to_point(self.base_text())
+            };
+            // Move the cursor so that at the next step we can clip with the start of the next hunk.
+            cursor.next();
+            unclipped_point
         } else {
-            cursor.end().diff_base_byte_range.end
-        }
+            // Position is before the added region for the first hunk.
+            debug_assert!(self.inner.hunks.first().is_none_or(|first_hunk| {
+                position.cmp(&first_hunk.buffer_range.start, buffer).is_lt()
+            }));
+            Point::new(row, 0)
+        };
+
+        let max_point = if let Some(next_hunk) = cursor.item() {
+            next_hunk
+                .diff_base_byte_range
+                .start
+                .to_point(self.base_text())
+        } else {
+            self.base_text().max_point()
+        };
+        unclipped_point.min(max_point).row
     }
 }
 
@@ -2240,8 +2272,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_offset_in_base_text(cx: &mut TestAppContext) {
+    async fn test_row_to_base_text_row(cx: &mut TestAppContext) {
         let base_text = "
+            zero
             one
             two
             three
@@ -2250,64 +2283,37 @@ mod tests {
             six
             seven
             eight
-            nine
         "
         .unindent();
         let buffer_text = "
-            one
-            TWO
-            three
-            TEN
-            six
-            eight
+            zero
+            ONE
+            two
+            NINE
+            five
+            seven
         "
         .unindent();
+
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let buffer_snapshot = buffer.snapshot();
         let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
         let expected_results = [
-            // Unchanged region
-            (Point::new(0, 0), 0),
-            (Point::new(0, 1), 1),
-            (Point::new(0, 2), 2),
-            (Point::new(0, 3), 3),
-            // Added region
-            (Point::new(1, 0), 8),
-            (Point::new(1, 1), 8),
-            (Point::new(1, 2), 8),
-            (Point::new(1, 3), 8),
-            // Unchanged region
-            (Point::new(2, 0), 8),
-            (Point::new(2, 1), 9),
-            (Point::new(2, 2), 10),
-            (Point::new(2, 3), 11),
-            (Point::new(2, 4), 12),
-            (Point::new(2, 5), 13),
-            // Added region
-            (Point::new(3, 0), 24),
-            (Point::new(3, 1), 24),
-            (Point::new(3, 2), 24),
-            (Point::new(3, 3), 24),
-            // Unchanged region
-            (Point::new(4, 0), 24),
-            (Point::new(4, 1), 25),
-            (Point::new(4, 2), 26),
-            (Point::new(4, 3), 27),
-            // Unchanged region (after deletion)
-            (Point::new(5, 0), 34),
-            (Point::new(5, 1), 35),
-            (Point::new(5, 2), 36),
-            (Point::new(5, 3), 37),
-            (Point::new(5, 4), 38),
-            (Point::new(5, 5), 39),
-            // EOF
-            (Point::new(6, 0), 45),
+            // don't format me
+            (0, 0),
+            (1, 2),
+            (2, 2),
+            (3, 5),
+            (4, 5),
+            (5, 7),
+            (6, 9),
         ];
-        for (point, expected) in expected_results {
+        for (buffer_row, expected) in expected_results {
+            dbg!("----------");
             assert_eq!(
-                diff.offset_in_base_text(buffer_snapshot.anchor_before(point), &buffer_snapshot),
+                diff.row_to_base_text_row(buffer_row, &buffer_snapshot),
                 expected,
-                "{point:?}"
+                "{buffer_row}"
             );
         }
     }

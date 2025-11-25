@@ -29,7 +29,7 @@ fn test_empty_singleton(cx: &mut App) {
         [RowInfo {
             buffer_id: Some(buffer_id),
             buffer_row: Some(0),
-            base_text_row: Some(0),
+            base_text_row: Some(BaseTextRow(0)),
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             expand_info: None,
@@ -2510,6 +2510,7 @@ impl ReferenceMultibuffer {
         // Retrieve the row info using the region that contains
         // the start of each multi-buffer line.
         let mut ix = 0;
+        let mut row_delta = 0;
         let row_infos = text
             .split('\n')
             .map(|line| {
@@ -2522,6 +2523,18 @@ impl ReferenceMultibuffer {
                             buffer_range.start.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
+                        // FIXME
+                        let base_text_row = buffer_row
+                            .map(|buffer_row| BaseTextRow(buffer_row.strict_add_signed(row_delta)));
+                        if let Some(status) = region.status {
+                            match status.kind {
+                                DiffHunkStatusKind::Added => row_delta -= 1,
+                                DiffHunkStatusKind::Modified => {
+                                    unreachable!("modified status not allowed here")
+                                }
+                                DiffHunkStatusKind::Deleted => row_delta += 1,
+                            }
+                        }
                         let is_excerpt_start = region_ix == 0
                             || &regions[region_ix - 1].excerpt_id != &region.excerpt_id
                             || regions[region_ix - 1].range.is_empty();
@@ -2572,7 +2585,7 @@ impl ReferenceMultibuffer {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
-                            base_text_row: None, // FIXME
+                            base_text_row,
                             wrapped_buffer_row: None,
 
                             multibuffer_row: Some(MultiBufferRow(
@@ -3802,15 +3815,15 @@ async fn test_base_text_line_numbers(cx: &mut TestAppContext) {
     pretty_assertions::assert_eq!(
         base_text_rows,
         vec![
-            Some(0),
-            Some(1),
-            Some(2),
-            Some(3),
+            Some(BaseTextRow(0)),
+            Some(BaseTextRow(1)),
+            Some(BaseTextRow(2)),
+            Some(BaseTextRow(3)),
             None,
-            Some(4),
-            Some(5),
+            Some(BaseTextRow(4)),
+            Some(BaseTextRow(5)),
             None,
-            Some(6),
+            Some(BaseTextRow(6)),
         ]
     )
 }

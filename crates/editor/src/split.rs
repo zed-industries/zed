@@ -93,7 +93,7 @@ impl SplittableEditor {
                 window,
                 cx,
             );
-            editor.set_show_base_text_line_numbers(true, cx);
+            editor.set_use_base_text_line_numbers(true, cx);
             editor
         });
         let secondary_pane = cx.new(|cx| {

@@ -3182,16 +3182,6 @@ impl ToOffset for Unclipped<PointUtf16> {
     }
 }
 
-impl<K, V> ToOffset for DimensionPair<K, V>
-where
-    K: ToOffset,
-{
-    #[inline]
-    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        self.key.to_offset(snapshot)
-    }
-}
-
 pub trait ToPoint {
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point;
 }

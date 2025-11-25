@@ -63,6 +63,9 @@ pub use self::path_key::PathKey;
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(u32);
 
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BaseTextRow(pub u32);
+
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
 /// See <https://zed.dev/features#multi-buffers>
@@ -656,7 +659,7 @@ pub struct ExpandInfo {
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
-    pub base_text_row: Option<u32>,
+    pub base_text_row: Option<BaseTextRow>,
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
@@ -963,7 +966,6 @@ struct MultiBufferRegion<'a, MBD, BD> {
     diff_hunk_status: Option<DiffHunkStatus>,
     excerpt: &'a Excerpt,
     buffer_range: Range<BD>,
-    base_text_range: Option<Range<BD>>,
     range: Range<MBD>,
     has_trailing_newline: bool,
 }
@@ -4011,8 +4013,7 @@ impl MultiBufferSnapshot {
         MBD::TextDimension: Sub<Output = MBD::TextDimension>
             + ops::Add<Output = MBD::TextDimension>
             + AddAssign<MBD::TextDimension>
-            + Ord
-            + text::ToOffset,
+            + Ord,
     {
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
         let mut cursor = self.cursor::<MBD, MBD::TextDimension>();
@@ -4467,10 +4468,7 @@ impl MultiBufferSnapshot {
     ) -> MBD
     where
         MBD: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBD as Sub>::Output>,
-        BD: TextDimension
-            + Sub<Output = <MBD as Sub>::Output>
-            + AddAssign<<MBD as Sub>::Output>
-            + text::ToOffset,
+        BD: TextDimension + Sub<Output = <MBD as Sub>::Output> + AddAssign<<MBD as Sub>::Output>,
     {
         let mut cursor = self.cursor::<MBD, BD>();
         cursor.seek(&position);
@@ -6598,7 +6596,7 @@ impl MultiBufferSnapshot {
 impl<'a, MBD, BD> MultiBufferCursor<'a, MBD, BD>
 where
     MBD: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBD as Sub>::Output>,
-    BD: TextDimension + AddAssign<<MBD as Sub>::Output> + text::ToOffset,
+    BD: TextDimension + AddAssign<<MBD as Sub>::Output>,
 {
     fn seek(&mut self, position: &MBD) {
         let position = OutputDimension(*position);
@@ -6803,7 +6801,6 @@ where
                         hunk_info.hunk_secondary_status,
                     )),
                     buffer_range: buffer_start..buffer_end,
-                    base_text_range: Some(buffer_start..buffer_end),
                     range: start..end,
                 })
             }
@@ -6847,25 +6844,6 @@ where
                     has_trailing_newline = excerpt.has_trailing_newline;
                 };
 
-                let base_text_range = match transform {
-                    DiffTransform::Unmodified { .. } => {
-                        self.snapshot.diffs.get(&buffer.remote_id()).map(|diff| {
-                            // FIXME we should grab both endpoints at once
-                            let start_offset = diff
-                                .offset_in_base_text(buffer.anchor_before(buffer_start), buffer);
-                            let end_offset =
-                                diff.offset_in_base_text(buffer.anchor_after(buffer_end), buffer);
-                            let mut rope_cursor = diff.base_text().as_rope().cursor(0);
-                            let base_text_start = rope_cursor.summary::<BD>(start_offset);
-                            let len = rope_cursor.summary::<BD>(end_offset);
-                            let mut base_text_end = buffer_start;
-                            TextDimension::add_assign(&mut base_text_end, &len);
-                            base_text_start..base_text_end
-                        })
-                    }
-                    _ => None,
-                };
-
                 // FIXME
                 if matches!(transform, DiffTransform::FilteredInsertedHunk { .. }) {
                     buffer_end = buffer_start;
@@ -6880,7 +6858,6 @@ where
                     is_main_buffer: true,
                     diff_hunk_status,
                     buffer_range: buffer_start..buffer_end,
-                    base_text_range,
                     range: start..end,
                 })
             }
@@ -7521,7 +7498,7 @@ impl Iterator for MultiBufferRows<'_> {
             return Some(RowInfo {
                 buffer_id: None,
                 buffer_row: Some(0),
-                base_text_row: Some(0),
+                base_text_row: Some(BaseTextRow(0)),
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
                 expand_info: None,
@@ -7541,18 +7518,20 @@ impl Iterator for MultiBufferRows<'_> {
                     .excerpts
                     .item()
                     .or(self.cursor.excerpts.prev_item())?;
-                let end_anchor = last_excerpt.range.context.end;
-                let last_row = end_anchor.to_point(&last_excerpt.buffer).row;
-                let base_text_row =
-                    self.cursor
-                        .snapshot
-                        .diffs
-                        .get(&last_excerpt.buffer_id)
-                        .map(|diff| {
-                            diff.offset_in_base_text(end_anchor, &last_excerpt.buffer)
-                                .to_point(diff.base_text())
-                                .row
-                        });
+                let last_row = last_excerpt
+                    .range
+                    .context
+                    .end
+                    .to_point(&last_excerpt.buffer)
+                    .row;
+                // FIXME perf
+                let base_text_row = self
+                    .cursor
+                    .snapshot
+                    .diffs
+                    .get(&last_excerpt.buffer_id)
+                    .map(|diff| diff.row_to_base_text_row(last_row, &last_excerpt.buffer))
+                    .map(BaseTextRow);
 
                 let first_row = last_excerpt
                     .range
@@ -7600,10 +7579,22 @@ impl Iterator for MultiBufferRows<'_> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
-        let base_text_point = region
-            .base_text_range
-            .as_ref()
-            .map(|base_text_range| base_text_range.start + overshoot);
+        let diff_status = region
+            .diff_hunk_status
+            .filter(|_| self.point < region.range.end);
+        let base_text_row = if let Some(diff_status) = diff_status
+            && diff_status.is_added()
+        {
+            None
+        } else {
+            // FIXME 
+            self.cursor
+                .snapshot
+                .diffs
+                .get(&region.excerpt.buffer_id)
+                .map(|diff| diff.row_to_base_text_row(buffer_point.row, &region.buffer))
+                .map(BaseTextRow)
+        };
         let expand_info = if self.is_singleton {
             None
         } else {
@@ -7634,11 +7625,9 @@ impl Iterator for MultiBufferRows<'_> {
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
-            base_text_row: base_text_point.map(|base_text_point| base_text_point.row),
+            base_text_row,
             multibuffer_row: Some(MultiBufferRow(self.point.row)),
-            diff_status: region
-                .diff_hunk_status
-                .filter(|_| self.point < region.range.end),
+            diff_status,
             expand_info,
             wrapped_buffer_row: None,
         });
