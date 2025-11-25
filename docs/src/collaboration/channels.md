@@ -90,7 +90,8 @@ To stop following, simply move your mouse or make and edit via your keyboard.
 
 ### How following works
 
-Following is confined to a particular pane. When a pane is following a collaborator, it is outlined in their cursor color.
+Following is confined to a particular pane.
+When a pane is following a collaborator, it is outlined in their cursor color.
 
 This pane-specific behavior allows you to follow someone in one pane while navigating independently in another and can be an effective layout for some collaboration styles.
 
@@ -109,18 +110,9 @@ Guest users in channels can hear and see everything that is happening, and have 
 
 If you'd like to invite a guest to participate in a channel for the duration of a call you can do so by right clicking on them in the Collaboration Panel. "Allowing Write Access" will allow them to edit any projects shared into the call, and to use their microphone and share their screen if they wish.
 
+## Leave call
 
-## Collaborating on a project
-
-### Share a project
-
-Avatars of collaborators in the same project as you are in color, and have a cursor color.
-Collaborators in other projects are shown in gray.
-Collaborators that have access to the current project will have their own cursor color under their avatar.
-
-We aim to eliminate the distinction between local and remote projects as much as possible.
-Collaborators can open, edit, and save files, perform searches, interact with the language server, etc.
-Guests have a read-only view of the project, including access to language server info.
+You can leave a channel by clicking on the `Leave call` button in the upper right-hand side of the window.
 
 #### Unshared Projects
 
@@ -128,16 +120,8 @@ If a collaborator is currently in a project that is not shared, you will not be 
 
 If you are in a project that isn't shared, others will not be able to join it or see its contents.
 
-### Adding a project
-
-You can add a project to a call by clicking on the `Share` button next to the project name in the title bar.
-
 ### Removing a project
 
 You can remove a project from a call by clicking on the `Unshare` button next to the project name in the title bar.
 
 Collaborators that are currently in that project will be disconnected from the project and will not be able to rejoin it unless you share it again.
-
-### Leave call
-
-You can leave a call by opening the contacts menu in the top right and clicking on the `Leave call` button.
