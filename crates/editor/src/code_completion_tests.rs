@@ -241,39 +241,69 @@ async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
-    let completions = vec![
-        CompletionBuilder::new("10.4.112", None, "00000000", None),
-        CompletionBuilder::new("10.4.22", None, "00000001", None),
-        CompletionBuilder::new("10.4.2", None, "00000015", None),
-        CompletionBuilder::new("10.4.20", None, "00000012", None),
-        CompletionBuilder::new("10.4.21", None, "00000010", None),
-        CompletionBuilder::new("10.4.12", None, "00000014", None),
+    let versions = [
+        "10.4.112",
+        "10.4.22",
+        "10.4.2",
+        "10.4.20",
+        "10.4.21",
+        "10.4.12",
         // Pre-release versions
-        CompletionBuilder::new("10.4.22-alpha", None, "00000007", None),
-        CompletionBuilder::new("10.4.22-beta.1", None, "00000003", None),
-        CompletionBuilder::new("10.4.22-rc.1", None, "00000002", None),
+        "10.4.22-alpha",
+        "10.4.22-beta.1",
+        "10.4.22-rc.1",
         // Build metadata versions
-        CompletionBuilder::new("10.4.21+build.123", None, "00000009", None),
-        CompletionBuilder::new("10.4.20+20210327", None, "00000011", None),
+        "10.4.21+build.123",
+        "10.4.20+20210327",
     ];
 
-    let matches =
-        filter_and_sort_matches("10.4.2", &completions, SnippetSortOrder::default(), cx).await;
+    let completions: Vec<_> = versions
+        .iter()
+        .enumerate()
+        .map(|(i, version)| {
+            // This sort text would come from the LSP
+            let sort_text = format!("{:08}", i);
+            CompletionBuilder::new(version, None, &sort_text, None)
+        })
+        .collect();
 
-    // Exact match comes first
-    assert_eq!(matches[0].string, "10.4.2");
-    // Ordered by recency
-    assert_eq!(matches[1].string, "10.4.112");
-    assert_eq!(matches[2].string, "10.4.22");
-    // Within pre-releases: rc.1 > beta.1 > beta > alpha.2 > alpha.1 > alpha
-    assert_eq!(matches[3].string, "10.4.22-rc.1");
-    assert_eq!(matches[4].string, "10.4.22-beta.1");
-    assert_eq!(matches[8].string, "10.4.22-alpha");
-    assert_eq!(matches[10].string, "10.4.21+build.123");
-    assert_eq!(matches[11].string, "10.4.21");
-    assert_eq!(matches[12].string, "10.4.20+20210327");
-    assert_eq!(matches[13].string, "10.4.20");
-    assert_eq!(matches[15].string, "10.4.12");
+    // Case 1: User types just major and minor version
+    let matches =
+        filter_and_sort_matches("10.4.", &completions, SnippetSortOrder::default(), cx).await;
+    // Versions are ordered by recency
+    let expected_versions = [
+        "10.4.112",
+        "10.4.22",
+        "10.4.22-rc.1",
+        "10.4.22-beta.1",
+        "10.4.22-alpha",
+        "10.4.21+build.123",
+        "10.4.21",
+        "10.4.20+20210327",
+        "10.4.20",
+        "10.4.12",
+        "10.4.2",
+    ];
+
+    // Case 2: User types major, minor and patch version
+    let expected_versions = [
+        // Exact version comes first
+        "10.4.2",
+        // Ordered by recency with exact major, minor and patch versions
+        "10.4.22",
+        "10.4.22-rc.1",
+        "10.4.22-beta.1",
+        "10.4.22-alpha",
+        "10.4.21+build.123",
+        "10.4.21",
+        "10.4.20+20210327",
+        "10.4.20",
+        // Versions with non exact patch version are ordered by fuzzy score
+        // Higher fuzzy score than 112 patch version since 2, comes before than
+        // of 112 version
+        "10.4.12",
+        "10.4.112",
+    ];
 }
 
 async fn test_for_each_prefix<F>(
