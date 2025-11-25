@@ -4,7 +4,7 @@ At Zed, we believe that great things are built by great people working together.
 We have designed Zed to help individuals work faster and help teams of people work together more effectively.
 
 In Zed, all collaboration happens in the collaboration panel, which can be opened via {#kb collab_panel::ToggleFocus} or `collab panel: toggle focus` from the command palette.
-You will need to [sign in](../../authentication.md#signing-in) in order to access features within the collaboration panel.
+You will need to [sign in](../authentication.md#signing-in) in order to access features within the collaboration panel.
 
 ## Collaboration panel
 

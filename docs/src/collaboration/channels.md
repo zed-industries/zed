@@ -7,15 +7,6 @@ Channels provide a way to streamline collaborating for software engineers in man
 - Refactoring – you can have multiple people join in on large refactoring without fear of conflict.
 - Ambient awareness – you can see what everyone else is working on with no need for status emails or meetings.
 
-You will need to [sign in](../../authentication.md#signing-in) in order to begin using Zed's collaboration features.
-
-## Getting Started
-
-Open the collaboration panel via:
-
-- Clicking the people icon in the status bar
-- `collab panel: toggle focus` ({#kb collab_panel::ToggleFocus}) from the command palette
-
 Each channel corresponds to an ongoing project or work-stream.
 You can see who's in a channel as their avatars will show up in the sidebar.
 This makes it easy to see what everyone is doing and where to find them if needed.
