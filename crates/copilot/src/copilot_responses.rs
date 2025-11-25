@@ -356,7 +356,6 @@ pub async fn stream_response(
         // Removes the need of having a method to map StreamEvent and another to map Response to a LanguageCompletionEvent
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        eprintln!("Copilot responses non-streaming response body: {}", body);
 
         match serde_json::from_str::<Response>(&body) {
             Ok(response) => {
