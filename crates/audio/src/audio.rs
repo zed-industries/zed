@@ -156,7 +156,7 @@ impl Audio {
     }
 
     #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
-    pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
+    pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source + Send> {
         let stream = rodio::microphone::MicrophoneBuilder::new()
             .default_device()?
             .default_config()?

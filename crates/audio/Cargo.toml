@@ -21,6 +21,7 @@ gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 rodio = { workspace = true, features = [ "wav", "playback", "wav_output" ] }
+rtrb = "0.3.2"
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true

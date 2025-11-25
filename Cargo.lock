@@ -1409,6 +1409,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rodio",
+ "rtrb",
  "schemars",
  "serde",
  "settings",
