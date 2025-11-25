@@ -18,7 +18,7 @@ You can mix channels for your day job, as well as side-projects in your collab p
 
 Joining a channel adds you to a shared room where you can work on projects together.
 
-_[Join our channel tree to get an idea of how you can organize yours.](https://zed.dev/community-links)_
+_Join [our channel tree](https://zed.dev/channel/zed-283) to get an idea of how you can organize yours._
 
 ## Inviting People
 
@@ -93,9 +93,8 @@ This pane-specific behavior allows you to follow someone in one pane while navig
 
 ### Following a Terminal
 
-You can follow what a collaborator is doing in their terminal by having them share their screen and following it.
-
-In the future, we plan to allow you to collaborate in the terminal directly in a shared project.
+Following is not currently supported in the terminal in the way it is supported in the editor.
+As a workaround, collaborators can share their screen and you can follow that instead.
 
 ## Screen Sharing
 
