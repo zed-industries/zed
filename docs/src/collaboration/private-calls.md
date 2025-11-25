@@ -24,7 +24,7 @@ If someone you want to collaborate with has not yet signed up for Zed, they will
 
 ### Voice chat
 
-When joining a call, Zed will automatically share your microphone with other users in the call, if your OS allows it. This isn't tied to your project. You can disable this for your client via the [`mute_on_join`](./configuring-zed.md#calls) setting.
+When joining a call, Zed will automatically share your microphone with other users in the call, if your OS allows it. This isn't tied to your project. You can disable this for your client via the [`mute_on_join`](../configuring-zed.md#calls) setting.
 
 ## Collaborating on a project
 
