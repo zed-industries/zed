@@ -284,8 +284,13 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         "10.4.12",
         "10.4.2",
     ];
+    for (match_item, expected) in matches.iter().zip(expected_versions.iter()) {
+        assert_eq!(match_item.string.as_ref() as &str, *expected);
+    }
 
     // Case 2: User types major, minor and patch version
+    let matches =
+        filter_and_sort_matches("10.4.2", &completions, SnippetSortOrder::default(), cx).await;
     let expected_versions = [
         // Exact version comes first
         "10.4.2",
@@ -304,6 +309,9 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
         "10.4.12",
         "10.4.112",
     ];
+    for (match_item, expected) in matches.iter().zip(expected_versions.iter()) {
+        assert_eq!(match_item.string.as_ref() as &str, *expected);
+    }
 }
 
 async fn test_for_each_prefix<F>(
