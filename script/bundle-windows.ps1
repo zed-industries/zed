@@ -147,7 +147,20 @@ function UploadToSentry {
         return
     }
     Write-Output "Uploading zed debug symbols to sentry..."
-    sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev $CargoOutDir
+    for ($i = 1; $i -le 3; $i++) {
+        try {
+            sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev $CargoOutDir
+            break
+        }
+        catch {
+            Write-Output "Sentry upload attempt $i failed: $_"
+            if ($i -eq 3) {
+                Write-Output "All sentry upload attempts failed"
+                throw
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
 function MakeAppx {
@@ -189,8 +202,8 @@ function DownloadAMDGpuServices {
 }
 
 function DownloadConpty {
-    $url = "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001"
-    $zipPath = ".\conpty.zip"
+    $url = "https://github.com/microsoft/terminal/releases/download/v1.23.12811.0/Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg"
+    $zipPath = ".\Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg"
     Invoke-WebRequest -Uri $url -OutFile $zipPath
     Expand-Archive -Path $zipPath -DestinationPath ".\conpty" -Force
 }
@@ -204,7 +217,7 @@ function CollectFiles {
     if($Architecture -eq "aarch64") {
         New-Item -Type Directory -Path "$innoDir\arm64" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
-        Move-Item -Path ".\conpty\runtimes\win10-arm64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
+        Move-Item -Path ".\conpty\runtimes\win-arm64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
     }
     else {
         New-Item -Type Directory -Path "$innoDir\x64" -Force
@@ -212,7 +225,7 @@ function CollectFiles {
         Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\x64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
-        Move-Item -Path ".\conpty\runtimes\win10-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
+        Move-Item -Path ".\conpty\runtimes\win-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
     }
 }
 

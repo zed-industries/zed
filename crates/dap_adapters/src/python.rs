@@ -368,6 +368,9 @@ impl PythonDebugAdapter {
                 bail!("Cannot have two different ports in debug configuration")
             }
 
+            if let Some(hostname) = config_host {
+                tcp_connection.host = Some(hostname.parse().context("hostname must be IPv4")?);
+            }
             tcp_connection.port = config_port;
             DebugpyLaunchMode::AttachWithConnect { host: config_host }
         } else {

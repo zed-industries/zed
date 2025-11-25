@@ -46,10 +46,8 @@ use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{
-    ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, DynamicSpacing, FluentBuilder,
-    HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, IndentGuideColors,
-    IndentGuideLayout, Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt,
-    StyledTypography, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+    ContextMenu, FluentBuilder, HighlightedLabel, IconButton, IconButtonShape, IndentGuideColors,
+    IndentGuideLayout, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
@@ -714,7 +712,7 @@ impl OutlinePanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", window, cx);
+                editor.set_placeholder_text("Search buffer symbols…", window, cx);
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(
@@ -986,7 +984,6 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.toggle_expanded(&selected_entry, window, cx);
             self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
         }
     }
@@ -2047,8 +2044,9 @@ impl OutlinePanel {
                 PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
                 PanelEntry::Search(SearchEntry { match_range, .. }) => match_range
                     .start
+                    .text_anchor
                     .buffer_id
-                    .or(match_range.end.buffer_id)
+                    .or(match_range.end.text_anchor.buffer_id)
                     .map(|buffer_id| {
                         outline_panel.update(cx, |outline_panel, cx| {
                             outline_panel
@@ -4554,6 +4552,7 @@ impl OutlinePanel {
 
             v_flex()
                 .id("empty-outline-state")
+                .gap_0p5()
                 .flex_1()
                 .justify_center()
                 .size_full()
@@ -4561,25 +4560,28 @@ impl OutlinePanel {
                     panel
                         .child(h_flex().justify_center().child(Label::new(header)))
                         .when_some(query.clone(), |panel, query| {
-                            panel.child(h_flex().justify_center().child(Label::new(query)))
+                            panel.child(
+                                h_flex()
+                                    .px_0p5()
+                                    .justify_center()
+                                    .bg(cx.theme().colors().element_selected.opacity(0.2))
+                                    .child(Label::new(query)),
+                            )
                         })
-                        .child(
-                            h_flex()
-                                .pt(DynamicSpacing::Base04.rems(cx))
-                                .justify_center()
-                                .child({
-                                    let keystroke =
-                                        match self.position(window, cx) {
-                                            DockPosition::Left => window
-                                                .keystroke_text_for(&workspace::ToggleLeftDock),
-                                            DockPosition::Bottom => window
-                                                .keystroke_text_for(&workspace::ToggleBottomDock),
-                                            DockPosition::Right => window
-                                                .keystroke_text_for(&workspace::ToggleRightDock),
-                                        };
-                                    Label::new(format!("Toggle this panel with {keystroke}"))
-                                }),
-                        )
+                        .child(h_flex().justify_center().child({
+                            let keystroke = match self.position(window, cx) {
+                                DockPosition::Left => {
+                                    window.keystroke_text_for(&workspace::ToggleLeftDock)
+                                }
+                                DockPosition::Bottom => {
+                                    window.keystroke_text_for(&workspace::ToggleBottomDock)
+                                }
+                                DockPosition::Right => {
+                                    window.keystroke_text_for(&workspace::ToggleRightDock)
+                                }
+                            };
+                            Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
+                        }))
                 })
         } else {
             let list_contents = {
@@ -4729,39 +4731,37 @@ impl OutlinePanel {
     }
 
     fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
-        v_flex().flex_none().child(horizontal_separator(cx)).child(
-            h_flex()
-                .p_2()
-                .w_full()
-                .child(self.filter_editor.clone())
-                .child(
-                    div().child(
-                        IconButton::new(
-                            "outline-panel-menu",
-                            if pinned {
-                                IconName::Unpin
-                            } else {
-                                IconName::Pin
-                            },
-                        )
-                        .tooltip(Tooltip::text(if pinned {
-                            "Unpin Outline"
-                        } else {
-                            "Pin Active Outline"
-                        }))
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(
-                            |outline_panel, _, window, cx| {
-                                outline_panel.toggle_active_editor_pin(
-                                    &ToggleActiveEditorPin,
-                                    window,
-                                    cx,
-                                );
-                            },
-                        )),
-                    ),
-                ),
-        )
+        let (icon, icon_tooltip) = if pinned {
+            (IconName::Unpin, "Unpin Outline")
+        } else {
+            (IconName::Pin, "Pin Active Outline")
+        };
+
+        h_flex()
+            .p_2()
+            .h(Tab::container_height(cx))
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.filter_editor.clone()),
+            )
+            .child(
+                IconButton::new("pin_button", icon)
+                    .tooltip(Tooltip::text(icon_tooltip))
+                    .shape(IconButtonShape::Square)
+                    .on_click(cx.listener(|outline_panel, _, window, cx| {
+                        outline_panel.toggle_active_editor_pin(&ToggleActiveEditorPin, window, cx);
+                    })),
+            )
     }
 
     fn buffers_inside_directory(
@@ -4975,6 +4975,8 @@ impl Render for OutlinePanel {
             _ => None,
         };
 
+        let search_query_text = search_query.map(|sq| sq.query.to_string());
+
         v_flex()
             .id("outline-panel")
             .size_full()
@@ -5021,22 +5023,21 @@ impl Render for OutlinePanel {
                 }),
             )
             .track_focus(&self.focus_handle)
-            .when_some(search_query, |outline_panel, search_state| {
+            .child(self.render_filter_footer(pinned, cx))
+            .when_some(search_query_text, |outline_panel, query_text| {
                 outline_panel.child(
                     h_flex()
                         .py_1p5()
                         .px_2()
-                        .h(DynamicSpacing::Base32.px(cx))
-                        .flex_shrink_0()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
+                        .h(Tab::container_height(cx))
                         .gap_0p5()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(search_state.query.to_string())),
+                        .child(Label::new(query_text)),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
-            .child(self.render_filter_footer(pinned, cx))
     }
 }
 
@@ -5213,10 +5214,6 @@ fn empty_icon() -> AnyElement {
         .invisible()
         .flex_none()
         .into_any_element()
-}
-
-fn horizontal_separator(cx: &mut App) -> Div {
-    div().mx_2().border_primary(cx).border_t_1()
 }
 
 #[derive(Debug, Default)]
@@ -5845,7 +5842,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multiple_workrees(cx: &mut TestAppContext) {
+    async fn test_multiple_worktrees(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -5951,7 +5948,7 @@ two/
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5977,7 +5974,7 @@ two/
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -6000,7 +5997,7 @@ two/  <==== selected"#,
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -6619,13 +6616,11 @@ outline: struct OutlineEntryExcerpt
                 format!(
                     r#"frontend-project/
   public/lottie/
-    syntax-tree.json
-      search: {{ "something": "«static»" }}
+    syntax-tree.json  <==== selected
   src/
     app/(site)/
     components/
-      ErrorBoundary.tsx  <==== selected
-        search: «static»"#
+      ErrorBoundary.tsx"#
                 )
             );
         });
@@ -6667,7 +6662,7 @@ outline: struct OutlineEntryExcerpt
                 format!(
                     r#"frontend-project/
   public/lottie/
-    syntax-tree.json
+    syntax-tree.json  <==== selected
       search: {{ "something": "«static»" }}
   src/
     app/(site)/
@@ -6678,7 +6673,7 @@ outline: struct OutlineEntryExcerpt
         page.tsx
           search: «static»
     components/
-      ErrorBoundary.tsx  <==== selected
+      ErrorBoundary.tsx
         search: «static»"#
                 )
             );
@@ -7534,7 +7529,7 @@ outline: fn main()"
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+                outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
             });
         });
 
@@ -7566,7 +7561,7 @@ outline: fn main()"
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+                outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
             });
         });
 

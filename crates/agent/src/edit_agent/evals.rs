@@ -1081,6 +1081,7 @@ fn message(
         role,
         content: contents.into_iter().collect(),
         cache: false,
+        reasoning_details: None,
     }
 }
 
@@ -1108,6 +1109,7 @@ fn tool_use(
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
         input: serde_json::to_value(input).unwrap(),
         is_input_complete: true,
+        thought_signature: None,
     })
 }
 
@@ -1267,6 +1269,7 @@ impl EvalAssertion {
                     role: Role::User,
                     content: vec![prompt.into()],
                     cache: false,
+                    reasoning_details: None,
                 }],
                 thinking_allowed: true,
                 ..Default::default()
@@ -1593,6 +1596,7 @@ impl EditAgentTest {
                 role: Role::System,
                 content: vec![MessageContent::Text(system_prompt)],
                 cache: true,
+                reasoning_details: None,
             }]
             .into_iter()
             .chain(eval.conversation)

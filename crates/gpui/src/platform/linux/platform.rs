@@ -1,7 +1,6 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::Command,
     rc::Rc,
     sync::Arc,
 };
@@ -15,10 +14,10 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
-use async_task::Runnable;
 use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
+use util::command::{new_smol_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -26,7 +25,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
+    PlatformTextSystem, PlatformWindow, Point, Result, RunnableVariant, Task, WindowAppearance,
+    WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -105,8 +105,8 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
-        let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
+    pub fn new(signal: LoopSignal) -> (Self, Channel<RunnableVariant>) {
+        let (main_sender, main_receiver) = calloop::channel::channel::<RunnableVariant>();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());
@@ -215,7 +215,7 @@ impl<P: LinuxClient + 'static> Platform for P {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/usr/bin/env")
+        let restart_process = new_std_command("/usr/bin/env")
             .arg("bash")
             .arg("-c")
             .arg(script)
@@ -422,7 +422,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = smol::process::Command::new("xdg-open")
+                let _ = new_smol_command("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")

@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.213.0"
+version = "0.215.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -29,7 +29,6 @@ assets.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
-backtrace = "0.3"
 bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
@@ -97,9 +96,9 @@ markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
+miniprofiler_ui.workspace = true
 mimalloc = { version = "0.1", optional = true }
 nc.workspace = true
-nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 onboarding.workspace = true
@@ -139,7 +138,6 @@ tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
-telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_extension.workspace = true
@@ -163,12 +161,13 @@ workspace.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
 zeta.workspace = true
-zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
@@ -186,6 +185,7 @@ itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true

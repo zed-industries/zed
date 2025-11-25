@@ -414,7 +414,6 @@ impl ManagedNodeRuntime {
 
         let valid = if fs::metadata(&node_binary).await.is_ok() {
             let result = util::command::new_smol_command(&node_binary)
-                .env_clear()
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
                 .arg("--version")
@@ -557,7 +556,6 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
             let mut command = util::command::new_smol_command(node_binary);
-            command.env_clear();
             command.env("PATH", env_path);
             command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
@@ -702,7 +700,6 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         let mut command = util::command::new_smol_command(self.npm.clone());
         let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
         command
-            .env_clear()
             .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)

@@ -138,7 +138,7 @@ impl WindowsWindowInner {
             // monitor is invalid, we do nothing.
             if !monitor.is_invalid() && lock.display.handle != monitor {
                 // we will get the same monitor if we only have one
-                lock.display = WindowsDisplay::new_with_handle(monitor);
+                lock.display = WindowsDisplay::new_with_handle(monitor).log_err()?;
             }
         }
         if let Some(mut callback) = lock.callbacks.moved.take() {
@@ -201,8 +201,10 @@ impl WindowsWindowInner {
         let new_logical_size = device_size.to_pixels(scale_factor);
         let mut lock = self.state.borrow_mut();
         lock.logical_size = new_logical_size;
-        if should_resize_renderer {
-            lock.renderer.resize(device_size).log_err();
+        if should_resize_renderer && let Err(e) = lock.renderer.resize(device_size) {
+            log::error!("Failed to resize renderer, invalidating devices: {}", e);
+            lock.invalidate_devices
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         if let Some(mut callback) = lock.callbacks.resize.take() {
             drop(lock);
@@ -239,7 +241,7 @@ impl WindowsWindowInner {
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
         } else {
@@ -487,14 +489,12 @@ impl WindowsWindowInner {
         let scale_factor = lock.scale_factor;
         let wheel_scroll_amount = match modifiers.shift {
             true => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_chars
             }
             false => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_lines
             }
@@ -541,8 +541,7 @@ impl WindowsWindowInner {
         };
         let scale_factor = lock.scale_factor;
         let wheel_scroll_chars = self
-            .system_settings
-            .borrow()
+            .system_settings()
             .mouse_wheel_settings
             .wheel_scroll_chars;
         drop(lock);
@@ -677,8 +676,7 @@ impl WindowsWindowInner {
         // used by Chrome. However, it may result in one row of pixels being obscured
         // in our client area. But as Chrome says, "there seems to be no better solution."
         if is_maximized
-            && let Some(ref taskbar_position) =
-                self.system_settings.borrow().auto_hide_taskbar_position
+            && let Some(ref taskbar_position) = self.system_settings().auto_hide_taskbar_position
         {
             // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
             // so the window isn't treated as a "fullscreen app", which would cause
@@ -742,31 +740,58 @@ impl WindowsWindowInner {
         lock.border_offset.update(handle).log_err();
         drop(lock);
 
-        let rect = unsafe { &*(lparam.0 as *const RECT) };
-        let width = rect.right - rect.left;
-        let height = rect.bottom - rect.top;
-        // this will emit `WM_SIZE` and `WM_MOVE` right here
-        // even before this function returns
-        // the new size is handled in `WM_SIZE`
-        unsafe {
-            SetWindowPos(
-                handle,
-                None,
-                rect.left,
-                rect.top,
-                width,
-                height,
-                SWP_NOZORDER | SWP_NOACTIVATE,
-            )
-            .context("unable to set window position after dpi has changed")
-            .log_err();
-        }
-
-        // When maximized, SetWindowPos doesn't send WM_SIZE, so we need to manually
-        // update the size and call the resize callback
         if is_maximized {
-            let device_size = size(DevicePixels(width), DevicePixels(height));
-            self.handle_size_change(device_size, new_scale_factor, true);
+            // Get the monitor and its work area at the new DPI
+            let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST) };
+            let mut monitor_info: MONITORINFO = unsafe { std::mem::zeroed() };
+            monitor_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if unsafe { GetMonitorInfoW(monitor, &mut monitor_info) }.as_bool() {
+                let work_area = monitor_info.rcWork;
+                let width = work_area.right - work_area.left;
+                let height = work_area.bottom - work_area.top;
+
+                // Update the window size to match the new monitor work area
+                // This will trigger WM_SIZE which will handle the size change
+                unsafe {
+                    SetWindowPos(
+                        handle,
+                        None,
+                        work_area.left,
+                        work_area.top,
+                        width,
+                        height,
+                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                    )
+                    .context("unable to set maximized window position after dpi has changed")
+                    .log_err();
+                }
+
+                // SetWindowPos may not send WM_SIZE for maximized windows in some cases,
+                // so we manually update the size to ensure proper rendering
+                let device_size = size(DevicePixels(width), DevicePixels(height));
+                self.handle_size_change(device_size, new_scale_factor, true);
+            }
+        } else {
+            // For non-maximized windows, use the suggested RECT from the system
+            let rect = unsafe { &*(lparam.0 as *const RECT) };
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            // this will emit `WM_SIZE` and `WM_MOVE` right here
+            // even before this function returns
+            // the new size is handled in `WM_SIZE`
+            unsafe {
+                SetWindowPos(
+                    handle,
+                    None,
+                    rect.left,
+                    rect.top,
+                    width,
+                    height,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                )
+                .context("unable to set window position after dpi has changed")
+                .log_err();
+            }
         }
 
         Some(0)
@@ -804,7 +829,7 @@ impl WindowsWindowInner {
             log::error!("No monitor detected!");
             return None;
         }
-        let new_display = WindowsDisplay::new_with_handle(new_monitor);
+        let new_display = WindowsDisplay::new_with_handle(new_monitor).log_err()?;
         self.state.borrow_mut().display = new_display;
         Some(0)
     }
@@ -1072,7 +1097,7 @@ impl WindowsWindowInner {
             lock.border_offset.update(handle).log_err();
             // system settings may emit a window message which wants to take the refcell lock, so drop it
             drop(lock);
-            self.system_settings.borrow_mut().update(display, wparam.0);
+            self.system_settings_mut().update(display, wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };
@@ -1142,12 +1167,19 @@ impl WindowsWindowInner {
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let mut request_frame = self.state.borrow_mut().callbacks.request_frame.take()?;
+
+        // we are instructing gpui to force render a frame, this will
+        // re-populate all the gpu textures for us so we can resume drawing in
+        // case we disabled drawing earlier due to a device loss
+        self.state.borrow_mut().renderer.mark_drawable();
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
         });
+
         self.state.borrow_mut().callbacks.request_frame = Some(request_frame);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+
         Some(0)
     }
 

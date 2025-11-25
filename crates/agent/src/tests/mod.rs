@@ -215,7 +215,8 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
         vec![LanguageModelRequestMessage {
             role: Role::User,
             content: vec!["Message 1".into()],
-            cache: true
+            cache: true,
+            reasoning_details: None,
         }]
     );
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
@@ -239,17 +240,20 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Message 1".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec!["Response to Message 1".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Message 2".into()],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             }
         ]
     );
@@ -274,6 +278,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
+        thought_signature: None,
     };
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
@@ -294,37 +299,44 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Message 1".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec!["Response to Message 1".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Message 2".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec!["Response to Message 2".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Use the echo tool".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result)],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             }
         ]
     );
@@ -461,6 +473,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
@@ -470,6 +483,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -520,6 +534,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -554,6 +569,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -592,6 +608,7 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -621,6 +638,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
         raw_input: "{}".into(),
         input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
         is_input_complete: true,
+        thought_signature: None,
     };
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
@@ -641,25 +659,26 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["abc".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use.clone())],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result.clone())],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             },
         ]
     );
 
     // Simulate reaching tool use limit.
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::StatusUpdate(
-        cloud_llm_client::CompletionRequestStatus::ToolUseLimitReached,
-    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
     fake_model.end_last_completion_stream();
     let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
     assert!(
@@ -677,22 +696,26 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["abc".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             }
         ]
     );
@@ -731,6 +754,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
         raw_input: "{}".into(),
         input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
         is_input_complete: true,
+        thought_signature: None,
     };
     let tool_result = LanguageModelToolResult {
         tool_use_id: "tool_id_1".into(),
@@ -741,9 +765,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
     };
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::StatusUpdate(
-        cloud_llm_client::CompletionRequestStatus::ToolUseLimitReached,
-    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
     fake_model.end_last_completion_stream();
     let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
     assert!(
@@ -765,22 +787,26 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["abc".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["ghi".into()],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             }
         ]
     );
@@ -1037,6 +1063,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
             raw_input: json!({"text": "test"}).to_string(),
             input: json!({"text": "test"}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -1080,6 +1107,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
             raw_input: json!({"text": "mcp"}).to_string(),
             input: json!({"text": "mcp"}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
@@ -1089,6 +1117,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
             raw_input: json!({"text": "native"}).to_string(),
             input: json!({"text": "native"}),
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -1788,6 +1817,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
         raw_input: "{}".into(),
         input: json!({}),
         is_input_complete: true,
+        thought_signature: None,
     };
     let echo_tool_use = LanguageModelToolUse {
         id: "tool_id_2".into(),
@@ -1795,6 +1825,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
+        thought_signature: None,
     };
     fake_model.send_last_completion_stream_text_chunk("Hi!");
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
@@ -1818,7 +1849,8 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Hey!".into()],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
@@ -1826,7 +1858,8 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     MessageContent::Text("Hi!".into()),
                     MessageContent::ToolUse(echo_tool_use.clone())
                 ],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -1837,7 +1870,8 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     content: "test".into(),
                     output: Some("test".into())
                 })],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
         ],
     );
@@ -2000,6 +2034,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             raw_input: input.to_string(),
             input,
             is_input_complete: false,
+            thought_signature: None,
         },
     ));
 
@@ -2012,6 +2047,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             raw_input: input.to_string(),
             input,
             is_input_complete: true,
+            thought_signature: None,
         },
     ));
     fake_model.end_last_completion_stream();
@@ -2214,6 +2250,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
+        thought_signature: None,
     };
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         tool_use_1.clone(),
@@ -2232,12 +2269,14 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Call the echo tool!".into()],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![language_model::MessageContent::ToolUse(tool_use_1.clone())],
-                cache: false
+                cache: false,
+                reasoning_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -2250,7 +2289,8 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
                         output: Some("test".into())
                     }
                 )],
-                cache: true
+                cache: true,
+                reasoning_details: None,
             },
         ]
     );
@@ -2264,7 +2304,8 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
             thread.last_message(),
             Some(Message::Agent(AgentMessage {
                 content: vec![AgentMessageContent::Text("Done".into())],
-                tool_results: IndexMap::default()
+                tool_results: IndexMap::default(),
+                reasoning_details: None,
             }))
         );
     })
@@ -2512,7 +2553,7 @@ fn setup_context_server(
         let mut settings = ProjectSettings::get_global(cx).clone();
         settings.context_servers.insert(
             name.into(),
-            project::project_settings::ContextServerSettings::Custom {
+            project::project_settings::ContextServerSettings::Stdio {
                 enabled: true,
                 command: ContextServerCommand {
                     path: "somebinary".into(),

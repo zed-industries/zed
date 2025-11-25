@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset};
 use gpui::{
     Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task,
     WeakEntity, Window,
@@ -171,14 +171,19 @@ impl DiagnosticIndicator {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let cursor_position = editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx))
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .head();
             (buffer, cursor_position)
         });
         let new_diagnostic = buffer
-            .diagnostics_in_range::<usize>(cursor_position..cursor_position)
+            .diagnostics_in_range::<MultiBufferOffset>(cursor_position..cursor_position)
             .filter(|entry| !entry.range.is_empty())
-            .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
+            .min_by_key(|entry| {
+                (
+                    entry.diagnostic.severity,
+                    entry.range.end - entry.range.start,
+                )
+            })
             .map(|entry| entry.diagnostic);
         if new_diagnostic != self.current_diagnostic.as_ref() {
             let new_diagnostic = new_diagnostic.cloned();

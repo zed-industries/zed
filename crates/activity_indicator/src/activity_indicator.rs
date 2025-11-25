@@ -51,6 +51,7 @@ pub struct ActivityIndicator {
     project: Entity<Project>,
     auto_updater: Option<Entity<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    fs_jobs: Vec<fs::JobInfo>,
 }
 
 #[derive(Debug)]
@@ -92,6 +93,27 @@ impl ActivityIndicator {
                             name,
                             status: LanguageServerStatusUpdate::Binary(binary_status),
                         });
+                        cx.notify();
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+
+            let fs = project.read(cx).fs().clone();
+            let mut job_events = fs.subscribe_to_jobs();
+            cx.spawn(async move |this, cx| {
+                while let Some(job_event) = job_events.next().await {
+                    this.update(cx, |this: &mut ActivityIndicator, cx| {
+                        match job_event {
+                            fs::JobEvent::Started { info } => {
+                                this.fs_jobs.retain(|j| j.id != info.id);
+                                this.fs_jobs.push(info);
+                            }
+                            fs::JobEvent::Completed { id } => {
+                                this.fs_jobs.retain(|j| j.id != id);
+                            }
+                        }
                         cx.notify();
                     })?;
                 }
@@ -201,7 +223,8 @@ impl ActivityIndicator {
                 statuses: Vec::new(),
                 project: project.clone(),
                 auto_updater,
-                context_menu_handle: Default::default(),
+                context_menu_handle: PopoverMenuHandle::default(),
+                fs_jobs: Vec::new(),
             }
         });
 
@@ -430,6 +453,23 @@ impl ActivityIndicator {
                 on_click: None,
                 tooltip_message: None,
             });
+        }
+
+        // Show any long-running fs command
+        for fs_job in &self.fs_jobs {
+            if Instant::now().duration_since(fs_job.start) >= GIT_OPERATION_DELAY {
+                return Some(Content {
+                    icon: Some(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .with_rotate_animation(2)
+                            .into_any_element(),
+                    ),
+                    message: fs_job.message.clone().into(),
+                    on_click: None,
+                    tooltip_message: None,
+                });
+            }
         }
 
         // Show any language server installation info.
@@ -885,15 +925,15 @@ impl StatusItemView for ActivityIndicator {
 
 #[cfg(test)]
 mod tests {
-    use gpui::SemanticVersion;
     use release_channel::AppCommitSha;
+    use semver::Version;
 
     use super::*;
 
     #[test]
     fn test_version_tooltip_message() {
         let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Semantic(
-            SemanticVersion::new(1, 0, 0),
+            Version::new(1, 0, 0),
         ));
 
         assert_eq!(message, "Version: 1.0.0");
