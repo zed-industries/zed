@@ -11,9 +11,7 @@ actions!(
     transcription,
     [
         /// Toggles the speech recognizer on and off.
-        ToggleDictationChannel,
-        /// Toggles piping speech transcriptions to the AI assistant.
-        ToggleSpeechAssistant
+        ToggleDictationChannel
     ]
 );
 

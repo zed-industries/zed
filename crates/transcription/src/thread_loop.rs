@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, num::NonZero, sync::Arc, thread::sleep, time::Duration};
 
-use anyhow::{Context, Ok, Result};
+use anyhow::{Ok, Result};
 use async_channel::Sender;
 use audio::RodioExt;
 use log::{error, info, warn};
@@ -54,8 +54,7 @@ fn open_mic() -> Result<UniformSourceIterator<impl rodio::Source>> {
     let stream = stream
         .possibly_disconnected_channels_to_mono()
         .constant_samplerate(TARGET_SAMPLE_RATE)
-        .denoise()
-        .context("Could not set up transcription denoiser")?
+        // Denoise obliterated the model's accuracy - disable for now
         .constant_params(nz!(1), TARGET_SAMPLE_RATE);
 
     Ok(stream)
