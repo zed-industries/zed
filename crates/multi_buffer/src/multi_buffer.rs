@@ -5129,7 +5129,8 @@ impl MultiBufferSnapshot {
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         if *anchor == Anchor::min() || anchor.excerpt_id == ExcerptId::max() {
-            !self.is_empty()
+            // todo(lw): should be `!self.is_empty()`
+            true
         } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
             excerpt.buffer.can_resolve(&anchor.text_anchor)
         } else {
@@ -5789,8 +5790,8 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, _)| buffer.file())
     }
 
-    pub fn language_at<T: ToOffset>(&self, point: T) -> Option<&Arc<Language>> {
-        self.point_to_buffer_offset(point)
+    pub fn language_at<T: ToOffset>(&self, offset: T) -> Option<&Arc<Language>> {
+        self.point_to_buffer_offset(offset)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
