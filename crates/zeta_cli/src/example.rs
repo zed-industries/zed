@@ -52,7 +52,7 @@ pub struct Example {
     pub cursor_path: PathBuf,
     pub cursor_position: String,
     pub edit_history: String,
-    pub expected_patch: String,
+    pub expected_patches: Vec<ExpectedPatchEntry>,
     pub expected_context: Vec<ExpectedContextEntry>,
 }
 
@@ -62,6 +62,18 @@ pub type ActualExcerpt = Excerpt;
 pub struct Excerpt {
     pub path: PathBuf,
     pub text: String,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedPatchEntry {
+    pub heading: String,
+    pub alternatives: Vec<ExpectedPatch>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ExpectedPatch {
+    pub heading: String,
+    pub patch: String,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -131,7 +143,7 @@ impl NamedExample {
                 cursor_path: PathBuf::new(),
                 cursor_position: String::new(),
                 edit_history: String::new(),
-                expected_patch: String::new(),
+                expected_patches: Vec::new(),
                 expected_context: Vec::new(),
             },
         };
@@ -205,6 +217,12 @@ impl NamedExample {
                                 alternatives: Vec::new(),
                             });
                         }
+                        Section::ExpectedPatch => {
+                            named.example.expected_patches.push(ExpectedPatchEntry {
+                                heading,
+                                alternatives: Vec::new(),
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -217,6 +235,14 @@ impl NamedExample {
                             last_entry.alternatives.push(ExpectedExcerptSet {
                                 heading,
                                 excerpts: Vec::new(),
+                            })
+                        }
+                        Section::ExpectedPatch => {
+                            let expected_patch = &mut named.example.expected_patches;
+                            let last_entry = expected_patch.last_mut().unwrap();
+                            last_entry.alternatives.push(ExpectedPatch {
+                                heading,
+                                patch: String::new(),
                             })
                         }
                         _ => {}
@@ -290,7 +316,25 @@ impl NamedExample {
                             }
                         }
                         Section::ExpectedPatch => {
-                            named.example.expected_patch = mem::take(&mut text);
+                            let patch = mem::take(&mut text);
+
+                            if named.example.expected_patches.is_empty() {
+                                named.example.expected_patches.push(Default::default());
+                            }
+
+                            let alternatives = &mut named
+                                .example
+                                .expected_patches
+                                .last_mut()
+                                .unwrap()
+                                .alternatives;
+
+                            if alternatives.is_empty() {
+                                alternatives.push(ExpectedPatch {
+                                    heading: String::new(),
+                                    patch,
+                                });
+                            }
                         }
                         Section::Other => {}
                     }
@@ -648,14 +692,6 @@ impl Display for NamedExample {
         )?;
         write!(f, "## {EDIT_HISTORY_HEADING}\n\n")?;
 
-        if !self.example.expected_patch.is_empty() {
-            write!(
-                f,
-                "\n## {EXPECTED_PATCH_HEADING}\n\n`````diff\n{}`````\n",
-                self.example.expected_patch
-            )?;
-        }
-
         if !self.example.expected_context.is_empty() {
             write!(f, "\n## {EXPECTED_CONTEXT_HEADING}\n\n")?;
 
@@ -683,6 +719,23 @@ impl Display for NamedExample {
                             excerpt.text
                         )?;
                     }
+                }
+            }
+        }
+
+        if !self.example.expected_patches.is_empty() {
+            for entry in &self.example.expected_patches {
+                write!(f, "\n### {}\n\n", entry.heading)?;
+
+                let skip_h4 =
+                    entry.alternatives.len() == 1 && entry.alternatives[0].heading.is_empty();
+
+                for patch in &entry.alternatives {
+                    if !skip_h4 {
+                        write!(f, "\n#### {}\n\n", patch.heading)?;
+                    }
+
+                    write!(f, "`````diff\n{}`````\n", patch.patch)?;
                 }
             }
         }
