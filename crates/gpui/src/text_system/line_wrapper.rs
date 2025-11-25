@@ -58,19 +58,27 @@ impl LineWrapper {
                             continue;
                         }
 
+                        let mut candidate = false;
                         if Self::is_word_char(c) {
                             if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                                last_candidate_ix = ix;
-                                last_candidate_width = width;
+                                candidate = true;
                             }
                         } else {
-                            if c == ' ' || first_non_whitespace_ix.is_some() {
-                                // 1. For english, the space to as a splitter to wrap, e.g.: `Hello world `,
-                                // 2. For CJK, may not be space separated, e.g.: `Hello world你好世界`,
-                                // when `ix` is `你`, we can also need to wrap here.
-                                last_candidate_ix = ix;
-                                last_candidate_width = width;
+                            if c != ' ' && first_non_whitespace_ix.is_some() {
+                                // For CJK, may not be space separated, e.g.: `Hello world你好世界`,
+                                // when `ix` is `你`, we can wrap here.
+                                candidate = true;
+                            } else if c == ' ' && prev_c != ' ' && first_non_whitespace_ix.is_some()
+                            {
+                                // For continue spaces, we can wrap at the space
+                                // if the previous character is not a space.
+                                candidate = true;
                             }
+                        }
+
+                        if candidate {
+                            last_candidate_ix = ix;
+                            last_candidate_width = width;
                         }
 
                         if c != ' ' && first_non_whitespace_ix.is_none() {
