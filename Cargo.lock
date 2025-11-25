@@ -21631,6 +21631,7 @@ dependencies = [
 name = "zeta2"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anyhow",
  "arrayvec",
  "brotli",
@@ -21641,6 +21642,7 @@ dependencies = [
  "cloud_llm_client",
  "cloud_zeta2_prompt",
  "collections",
+ "copilot",
  "ctor",
  "db",
  "edit_prediction",
@@ -21682,6 +21684,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zed_actions",
  "zlog",
 ]
 

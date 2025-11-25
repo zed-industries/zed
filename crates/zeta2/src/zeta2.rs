@@ -55,6 +55,7 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 
 pub mod assemble_excerpts;
 mod license_detection;
+mod onboarding_modal;
 mod prediction;
 mod provider;
 mod rate_prediction_modal;
@@ -69,6 +70,7 @@ mod zeta_tests;
 
 use crate::assemble_excerpts::assemble_excerpts;
 use crate::license_detection::LicenseDetectionWatcher;
+use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 pub use crate::prediction::EditPredictionInputs;
@@ -2877,17 +2879,17 @@ pub fn init(cx: &mut App) {
             }
         });
 
-        // workspace.register_action(
-        //     move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
-        //         ZedPredictModal::toggle(
-        //             workspace,
-        //             workspace.user_store().clone(),
-        //             workspace.client().clone(),
-        //             window,
-        //             cx,
-        //         )
-        //     },
-        // );
+        workspace.register_action(
+            move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
+                ZedPredictModal::toggle(
+                    workspace,
+                    workspace.user_store().clone(),
+                    workspace.client().clone(),
+                    window,
+                    cx,
+                )
+            },
+        );
 
         workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
             update_settings_file(workspace.app_state().fs.clone(), cx, move |settings, _| {

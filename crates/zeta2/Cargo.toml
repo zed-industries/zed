@@ -15,6 +15,7 @@ path = "src/zeta2.rs"
 eval-support = []
 
 [dependencies]
+ai_onboarding.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
 brotli.workspace = true
@@ -22,6 +23,7 @@ buffer_diff.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 cloud_zeta2_prompt.workspace = true
+copilot.workspace = true
 collections.workspace = true
 db.workspace = true
 edit_prediction.workspace = true
@@ -62,6 +64,7 @@ ui.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
