@@ -115,7 +115,7 @@ impl ModalLayer {
             previous_focus_handle: window.focused(cx),
             focus_handle,
         });
-        cx.on_next_frame(window, move |_, window, cx| {
+        cx.defer_in(window, move |_, window, cx| {
             window.focus(&new_modal.focus_handle(cx));
         });
         cx.notify();
