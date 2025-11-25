@@ -2444,7 +2444,9 @@ impl BufferSnapshot {
         } else if bias == Bias::Right && offset == self.len() {
             Anchor::MAX
         } else {
-            if offset > self.visible_text.len() {
+            if cfg!(debug_assertions) {
+                self.visible_text.assert_char_boundary(offset);
+            } else if offset > self.visible_text.len() {
                 panic!("offset {} is out of bounds", offset)
             }
             let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);

@@ -5992,13 +5992,27 @@ impl MultiBufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
         let anchor = self.anchor_before(offset);
-        let excerpt_id = anchor.excerpt_id;
-        let excerpt = self.excerpt(excerpt_id)?;
-        let buffer_id = excerpt.buffer_id;
+        let excerpt @ &Excerpt {
+            id: excerpt_id,
+            buffer_id,
+            ref buffer,
+            ..
+        } = self.excerpt(anchor.excerpt_id)?;
+        if cfg!(debug_assertions) {
+            match anchor.buffer_id {
+                // we clearly are hitting this according to sentry, but in what situations can this occur?
+                Some(anchor_buffer_id) => {
+                    assert_eq!(
+                        anchor_buffer_id, buffer_id,
+                        "anchor {anchor:?} does not match with resolved excerpt {excerpt:?}"
+                    )
+                }
+                None => assert_eq!(anchor, Anchor::max()),
+            }
+        };
         Some((
             buffer_id,
-            excerpt
-                .buffer
+            buffer
                 .symbols_containing(anchor.text_anchor, theme)
                 .into_iter()
                 .flat_map(|item| {
@@ -6114,6 +6128,12 @@ impl MultiBufferSnapshot {
         }
     }
 
+    /// Returns the excerpt for the given id. The returned excerpt is guaranteed
+    /// to have the same excerpt id as the one passed in, with the exception of
+    /// `ExcerptId::max()`.
+    ///
+    /// Callers of this function should generally use the resulting excerpt's `id` field
+    /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
