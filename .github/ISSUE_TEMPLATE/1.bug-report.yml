@@ -48,6 +48,22 @@ body:
       required: false
   - type: textarea
     attributes:
+      label: If applicable, attach your relevant Zed settings fields to this issue.
+      description: |
+        Open the command palette in Zed, then type `zed: open settings` and copy/paste any relevant (e.g., LSP specific) settings.
+      value: |
+        <details><summary>settings.json</summary>
+
+        <!-- Paste your `settings.json` inside the code block. -->
+        ```json
+
+        ```
+
+        </details>
+    validations:
+      required: false
+  - type: textarea
+    attributes:
       label: If applicable, provide details about your model provider
       placeholder: |
         - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc.)
@@ -68,3 +84,17 @@ body:
         Architecture: aarch64
     validations:
       required: true
+  - type: dropdown
+    attributes:
+      label: If you are using WSL on Windows, which Linux are you using?
+      description: Select one.
+      multiple: false
+      options:
+        - Ubuntu
+        - Fedora
+        - NixOs
+        - Arch
+        - Mint
+        - PopOs
+        - Other
+      default: 0
