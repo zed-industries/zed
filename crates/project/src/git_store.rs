@@ -4591,7 +4591,6 @@ impl Repository {
                     path.as_unix_str()
                 );
 
-               
                 match git_repo {
                     RepositoryState::Local {
                         fs,
@@ -4599,7 +4598,7 @@ impl Repository {
                         environment,
                         ..
                     } => {
-                         let executable = match fs.metadata(&abs_path).await {
+                        let executable = match fs.metadata(&abs_path).await {
                             Ok(Some(meta)) => meta.is_executable,
                             Ok(None) => false,
                             Err(_err) => false,

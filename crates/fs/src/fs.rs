@@ -32,6 +32,7 @@ use std::mem::MaybeUninit;
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
+use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
@@ -44,8 +45,6 @@ use std::{
 };
 use tempfile::TempDir;
 use text::LineEnding;
-use is_executable::IsExecutable;
-
 
 #[cfg(any(test, feature = "test-support"))]
 mod fake_git_repo;
@@ -898,7 +897,7 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
-       let is_executable = path.is_executable();
+        let is_executable = path.is_executable();
 
         Ok(Some(Metadata {
             inode,
