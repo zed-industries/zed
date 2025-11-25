@@ -365,16 +365,16 @@ impl EvaluationResult {
         writeln!(f, "### Scores\n")?;
         writeln!(
             f,
-            "                   Prompt  Generated      TP     FP     FN     Precision   Recall     F1"
+            "                   Prompt  Generated  TP     FP     FN     Precision   Recall      F1"
         )?;
         writeln!(
             f,
-            "─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            "───────────────────────────────────────────────────────────────────────────────────────────────"
         )?;
         if let Some(edit_prediction) = &self.edit_prediction {
             writeln!(
                 f,
-                "Edit Prediction    {:<7} {:<9} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+                "Edit Prediction    {:<7} {:<9}  {:<6} {:<6} {:<6} {:>9.2} {:>8.2} {:>7.2}",
                 self.prompt_len,
                 self.generated_len,
                 edit_prediction.true_positives,
