@@ -256,6 +256,7 @@ pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
+    pub(crate) old_path: Option<RepoPath>,
 }
 
 impl GitStatusEntry {
@@ -2827,6 +2828,7 @@ impl GitPanel {
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
                 staging,
+                old_path: entry.old_path.clone(),
             };
 
             if staging.has_staged() {
@@ -2877,6 +2879,7 @@ impl GitPanel {
                                 repo_path: ops.repo_path.clone(),
                                 status: status.status,
                                 staging: StageStatus::Staged,
+                                old_path: status.old_path,
                             })
                     } else {
                         None
@@ -4297,7 +4300,13 @@ impl GitPanel {
                             }),
                     ),
             )
-            .child(git_status_icon(status))
+            .child(if entry.old_path.is_some() {
+                Icon::new(IconName::ArrowRight)
+                    .color(Color::Custom(cx.theme().colors().version_control_modified))
+                    .into_any_element()
+            } else {
+                git_status_icon(status).into_any_element()
+            })
             .child(
                 h_flex()
                     .items_center()
@@ -4313,7 +4322,14 @@ impl GitPanel {
                             git_path_style,
                             status.is_deleted(),
                         )
-                    })),
+                    }))
+                    .when_some(entry.old_path.as_ref(), |this, old_path| {
+                        this.child(
+                            Label::new(format!(" ← {}", old_path.display(path_style)))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -5274,11 +5290,13 @@ mod tests {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    old_path: None,
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    old_path: None,
                 },),
             ],
         );
@@ -5299,11 +5317,13 @@ mod tests {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    old_path: None,
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    old_path: None,
                 },),
             ],
         );

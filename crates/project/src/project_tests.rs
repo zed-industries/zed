@@ -8373,14 +8373,17 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
+                    old_path: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    old_path: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
+                    old_path: None,
                 },
             ]
         );
@@ -8402,18 +8405,22 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
+                    old_path: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    old_path: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
                     status: StatusCode::Modified.worktree(),
+                    old_path: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
+                    old_path: None,
                 },
             ]
         );
@@ -8447,6 +8454,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
+                old_path: None,
             }]
         );
     });
@@ -8511,6 +8519,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                     worktree_status: StatusCode::Added
                 }
                 .into(),
+                old_path: None,
             }]
         )
     });
@@ -8713,6 +8722,7 @@ async fn test_repository_pending_ops_staging(
                     worktree_status: StatusCode::Unmodified
                 }
                 .into(),
+                old_path: None,
             }]
         );
     });
@@ -8819,6 +8829,7 @@ async fn test_repository_pending_ops_long_running_staging(
                     worktree_status: StatusCode::Unmodified
                 }
                 .into(),
+                old_path: None,
             }]
         );
     });
@@ -8943,10 +8954,12 @@ async fn test_repository_pending_ops_stage_all(
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
+                    old_path: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
+                    old_path: None,
                 },
             ]
         );
@@ -10301,6 +10314,163 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
         assert_eq!(
             base_text, file_2_committed,
             "Uncommitted diff should compare against file_2 committed content"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_renamed_file_diff_uses_old_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let old_content = String::from("original content");
+    let new_content = String::from("modified content");
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "src": {
+                "new_name.rs": new_content.clone(),
+            }
+        }),
+    )
+    .await;
+
+    // Set up: HEAD has content at old path, index has content at new path
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/old_name.rs", old_content.clone())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/new_name.rs", new_content.clone())],
+    );
+
+    // Set up renamed_paths: new_name.rs was renamed from old_name.rs
+    fs.set_renamed_paths_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/new_name.rs", "src/old_name.rs")],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/src/new_name.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff.update(cx, |uncommitted_diff, _cx| {
+        let base_text = uncommitted_diff.base_text_string().unwrap();
+        assert_eq!(
+            base_text, old_content,
+            "Uncommitted diff should load HEAD content from old path for renamed file"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_renamed_file_diff_cache_invalidates_on_rename_status_change(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let content = String::from("file content");
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "src": {
+                "file.rs": content.clone(),
+            }
+        }),
+    )
+    .await;
+
+    // Initially: file exists in both HEAD and index at same path (not renamed)
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/file.rs", content.clone())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/file.rs", content.clone())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/src/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // First open: not renamed, should cache with diff_base_path = None
+    let uncommitted_diff_1 = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff_1.update(cx, |uncommitted_diff, _cx| {
+        let base_text = uncommitted_diff.base_text_string().unwrap();
+        assert_eq!(base_text, content, "First diff should use current path");
+    });
+
+    // Now simulate a rename: update HEAD to have content at old path
+    let old_content = String::from("old content from different path");
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/old_file.rs", old_content.clone())],
+        "deadbeef2",
+    );
+
+    // Set up renamed_paths: file.rs was renamed from old_file.rs
+    fs.set_renamed_paths_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("src/file.rs", "src/old_file.rs")],
+    );
+
+    cx.run_until_parked();
+
+    // Second open: file is now renamed, cache should invalidate and use old path
+    let uncommitted_diff_2 = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff_2.update(cx, |uncommitted_diff, _cx| {
+        let base_text = uncommitted_diff.base_text_string().unwrap();
+        assert_eq!(
+            base_text, old_content,
+            "Second diff should use old path after rename status changed"
         );
     });
 }

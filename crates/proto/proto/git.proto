@@ -290,6 +290,7 @@ message StatusEntry {
     // Can be removed once collab's min version is >=0.171.0.
     GitStatus simple_status = 2;
     GitFileStatus status = 3;
+    optional string old_path = 4;
 }
 
 message StashEntry {
