@@ -77,7 +77,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         let zeta = self.zeta.read(cx);
         if zeta.edit_prediction_model == ZetaEditPredictionModel::Sweep {
-            zeta.sweep_api_token.is_some()
+            zeta.sweep_ai.api_token.is_some()
         } else {
             true
         }
