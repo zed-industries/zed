@@ -192,6 +192,8 @@ pub struct CopyOptions {
 pub struct RenameOptions {
     pub overwrite: bool,
     pub ignore_if_exists: bool,
+    /// Whether to create parent directories if they do not exist.
+    pub create_parents: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -574,6 +576,12 @@ impl Fs for RealFs {
                 return Ok(());
             } else {
                 anyhow::bail!("{target:?} already exists");
+            }
+        }
+
+        if options.create_parents {
+            if let Some(parent) = target.parent() {
+                self.create_dir(parent).await?;
             }
         }
 

@@ -3028,6 +3028,7 @@ impl LocalLspStore {
                             .map(|options| fs::RenameOptions {
                                 overwrite: options.overwrite.unwrap_or(false),
                                 ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                                create_parents: true,
                             })
                             .unwrap_or_default(),
                     )
