@@ -13,8 +13,6 @@ The collaboration panel is broken down into two sections:
 1. [Channels](./channels.md): Ongoing project rooms where team members can share projects, collaborate on code, and maintain ambient awareness of what everyone is working on.
 1. [Contacts](./contacts-and-private-calls.md): Ad-hoc private collaboration with those in your contacts list.
 
-
-
 ---
 
 > Note: Only collaborate with people that you trust.
