@@ -452,6 +452,7 @@ impl CodegenAlternative {
                 role: Role::User,
                 content: Vec::new(),
                 cache: false,
+                reasoning_details: None,
             };
 
             if let Some(context_task) = context_task {
