@@ -23907,6 +23907,10 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
+    pub fn scroll_near_end(&self) -> bool {
+        self.scroll_anchor.near_end(&self.display_snapshot)
+    }
+
     fn gutter_dimensions(
         &self,
         font_id: FontId,

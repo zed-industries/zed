@@ -46,12 +46,20 @@ impl ScrollAnchor {
         }
     }
 
+    pub fn near_end(&self, snapshot: &DisplaySnapshot) -> bool {
+        let editor_length = snapshot.max_point().row().as_f64();
+        let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
+        (scroll_top - editor_length).abs() < 300.0
+    }
+
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
             if self.anchor == Anchor::min() {
                 0.
             } else {
+                dbg!(snapshot.max_point().row().as_f64());
                 let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
+                dbg!(scroll_top, offset);
                 (offset + scroll_top).max(0.)
             }
         })
@@ -243,6 +251,11 @@ impl ScrollManager {
                 }
             }
         };
+        let near_end = self.anchor.near_end(map);
+        // TODO decounce here
+        if near_end {
+            cx.read();
+        }
 
         let scroll_top_row = DisplayRow(scroll_top as u32);
         let scroll_top_buffer_point = map

@@ -9055,6 +9055,9 @@ impl Element for EditorElement {
                         )
                     });
 
+                    if snapshot.scroll_near_end() {
+                        dbg!("near end!");
+                    }
                     let mut scroll_position = snapshot.scroll_position();
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.

@@ -753,6 +753,7 @@ impl ProjectDiff {
         })?;
 
         // add the new buffers as they are parsed
+        let mut last_notify = Instant::now();
         while let Some((res, path_key, file_status)) = tasks.next().await {
             if let Some((buffer, diff)) = res.log_err() {
                 cx.update(|window, cx| {
@@ -760,6 +761,11 @@ impl ProjectDiff {
                         this.register_buffer(path_key, file_status, buffer, diff, window, cx)
                     });
                 })?;
+            }
+
+            if last_notify.elapsed().as_millis() > 100 {
+                cx.notify();
+                last_notify = Instant::now();
             }
         }
 
