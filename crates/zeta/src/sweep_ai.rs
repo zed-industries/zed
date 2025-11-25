@@ -2,7 +2,6 @@ use std::fmt;
 use std::{path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AutocompleteRequest {
@@ -91,34 +90,24 @@ pub struct AdditionalCompletion {
     pub finish_reason: Option<String>,
 }
 
-pub(crate) fn write_event(event: crate::Event, f: &mut impl fmt::Write) -> fmt::Result {
+pub(crate) fn write_event(
+    event: &cloud_llm_client::predict_edits_v3::Event,
+    f: &mut impl fmt::Write,
+) -> fmt::Result {
     match event {
-        crate::Event::BufferChange {
-            old_snapshot,
-            new_snapshot,
+        cloud_llm_client::predict_edits_v3::Event::BufferChange {
+            old_path,
+            path,
+            diff,
             ..
         } => {
-            let old_path = old_snapshot
-                .file()
-                .map(|f| f.path().as_ref())
-                .unwrap_or(RelPath::unix("untitled").unwrap());
-            let new_path = new_snapshot
-                .file()
-                .map(|f| f.path().as_ref())
-                .unwrap_or(RelPath::unix("untitled").unwrap());
-            if old_path != new_path {
+            if old_path != path {
                 // TODO confirm how to do this for sweep
                 // writeln!(f, "User renamed {:?} to {:?}\n", old_path, new_path)?;
             }
 
-            let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
             if !diff.is_empty() {
-                write!(
-                    f,
-                    "File: {}:\n{}\n",
-                    new_path.display(util::paths::PathStyle::Posix),
-                    diff
-                )?
+                write!(f, "File: {}:\n{}\n", path.display(), diff)?
             }
 
             fmt::Result::Ok(())
