@@ -76,6 +76,7 @@ fn check_bump_needed() -> (NamedJob, StepOutput) {
 
     let job = Job::default()
         .with_repository_owner_guard()
+        .outputs([(version_changed.name.to_owned(), version_changed.to_string())])
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(steps::checkout_repo().add_with(("fetch-depth", 10)))

@@ -77,6 +77,8 @@ jobs:
           echo "needs_bump=false" >> "$GITHUB_OUTPUT"
 
       shell: bash -euxo pipefail {0}
+    outputs:
+      needs_bump: ${{ steps.compare-versions-check.outputs.needs_bump }}
     timeout-minutes: 1
   bump_extension_version:
     needs:

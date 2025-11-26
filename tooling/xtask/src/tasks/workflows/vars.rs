@@ -135,7 +135,7 @@ impl PathCondition {
 }
 
 pub(crate) struct StepOutput {
-    name: &'static str,
+    pub name: &'static str,
     step_id: String,
 }
 
