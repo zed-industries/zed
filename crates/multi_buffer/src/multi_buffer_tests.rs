@@ -4103,14 +4103,6 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
     let settings_store = cx.update(|cx| SettingsStore::test(cx));
     cx.set_global(settings_store);
 
-    cx.update(|cx| {
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.word_diff_enabled = Some(true);
-            });
-        });
-    });
-
     log::info!("Starting word diff test iteration");
     let word_count = rng.random_range(5..30);
     let mut base_text = String::new();
