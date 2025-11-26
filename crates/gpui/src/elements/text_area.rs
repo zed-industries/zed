@@ -13,10 +13,7 @@ use crate::{
     Window, colors, fill, point, px, relative, size,
 };
 
-/// Width of the cursor in pixels.
 const CURSOR_WIDTH: f32 = 2.0;
-
-/// Thickness of the underline for marked (IME composition) text.
 const MARKED_TEXT_UNDERLINE_THICKNESS: f32 = 2.0;
 
 /// Creates a new `TextArea` element for the given `Input` entity.
@@ -34,16 +31,6 @@ pub fn text_area(input: &Entity<Input>) -> TextArea {
 }
 
 /// A multi-line text editing element.
-///
-/// `TextArea` renders an [`Input`] entity and provides:
-/// - Text display with wrapping
-/// - Selection highlighting
-/// - Cursor rendering
-/// - Scrolling for overflow content
-/// - Keyboard navigation and editing
-/// - Mouse selection
-///
-/// Use the [`text_area`] function to create a `TextArea`.
 pub struct TextArea {
     input: Entity<Input>,
     interactivity: Interactivity,
@@ -287,23 +274,23 @@ impl Element for TextArea {
             |_style, window, cx| {
                 register_mouse_handlers(&input, bounds, window, cx);
 
-                let paint_state = PaintState::from_input(&input, &focus_handle, bounds, window, cx);
+                let state = PaintState::from_input(&input, &focus_handle, bounds, window, cx);
                 let colors = colors.clone();
 
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    if !paint_state.selected_range.is_empty() {
+                    if !state.selected_range.is_empty() {
                         paint_selection(
-                            &paint_state.line_layouts,
-                            &paint_state.selected_range,
+                            &state.line_layouts,
+                            &state.selected_range,
                             bounds,
-                            paint_state.scroll_offset,
-                            paint_state.line_height,
+                            state.scroll_offset,
+                            state.line_height,
                             colors.selection,
                             window,
                         );
                     }
 
-                    if paint_state.content.is_empty() {
+                    if state.content.is_empty() {
                         if let Some(placeholder_str) = placeholder.as_ref() {
                             if !placeholder_str.is_empty() {
                                 paint_placeholder(placeholder_str, bounds, &text_style, window, cx);
@@ -311,37 +298,37 @@ impl Element for TextArea {
                         }
                     } else {
                         paint_text(
-                            &paint_state.line_layouts,
+                            &state.line_layouts,
                             bounds,
-                            paint_state.scroll_offset,
-                            paint_state.line_height,
+                            state.scroll_offset,
+                            state.line_height,
                             window,
                             cx,
                         );
                     }
 
-                    if let Some(marked_range) = &paint_state.marked_range {
+                    if let Some(marked_range) = &state.marked_range {
                         if !marked_range.is_empty() {
                             paint_marked_text_underline(
-                                &paint_state.line_layouts,
+                                &state.line_layouts,
                                 marked_range,
                                 bounds,
-                                paint_state.scroll_offset,
-                                paint_state.line_height,
+                                state.scroll_offset,
+                                state.line_height,
                                 colors.cursor,
                                 window,
                             );
                         }
                     }
 
-                    if paint_state.is_focused && paint_state.selected_range.is_empty() {
+                    if state.is_focused && state.selected_range.is_empty() {
                         paint_cursor(
-                            &paint_state.line_layouts,
-                            paint_state.cursor_offset,
-                            &paint_state.content,
+                            &state.line_layouts,
+                            state.cursor_offset,
+                            &state.content,
                             bounds,
-                            paint_state.scroll_offset,
-                            paint_state.line_height,
+                            state.scroll_offset,
+                            state.line_height,
                             colors.cursor,
                             window,
                         );
@@ -444,6 +431,8 @@ fn register_mouse_down_handler(input: Entity<Input>, bounds: Bounds<Pixels>, win
         });
     });
 }
+
+// todo: basically all of these below can move to TextArea, likely meaning we need to pass less around
 
 fn register_mouse_up_handler(input: Entity<Input>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
@@ -941,20 +930,8 @@ fn paint_cursor(
     cursor_color: Hsla,
     window: &mut Window,
 ) {
-    eprintln!(
-        "[paint_cursor] cursor_offset={}, content.len()={}, num_lines={}",
-        cursor_offset,
-        content.len(),
-        line_layouts.len()
-    );
-
-    for (line_idx, line) in line_layouts.iter().enumerate() {
+    for line in line_layouts.iter() {
         let line_y = line.y_offset - scroll_offset;
-
-        eprintln!(
-            "[paint_cursor] line {}: text_range={:?}, y_offset={:?}, line_y={:?}, visual_line_count={}",
-            line_idx, line.text_range, line.y_offset, line_y, line.visual_line_count
-        );
 
         if !is_line_visible(
             line_y,
@@ -962,19 +939,14 @@ fn paint_cursor(
             line.visual_line_count,
             bounds.size.height,
         ) {
-            eprintln!("[paint_cursor] -> line not visible, skipping");
             continue;
         }
 
-        let in_line = is_cursor_in_line(cursor_offset, &line.text_range, content.len());
-        eprintln!("[paint_cursor] -> is_cursor_in_line={}", in_line);
-
-        if !in_line {
+        if !is_cursor_in_line(cursor_offset, &line.text_range, content.len()) {
             continue;
         }
 
         let cursor_position = compute_cursor_position(line, cursor_offset, line_height);
-        eprintln!("[paint_cursor] -> cursor_position={:?}", cursor_position);
 
         paint_cursor_at_position(
             bounds,
@@ -994,24 +966,12 @@ fn is_cursor_in_line(
     text_range: &std::ops::Range<usize>,
     _content_len: usize,
 ) -> bool {
-    // A cursor belongs to a line if:
-    // 1. It's within the line's text range (start <= cursor < end), OR
-    // 2. It's at text_range.end (cursor is at the end of this line, before the newline)
-    // 3. For empty lines, cursor must equal the start position
     let result = if text_range.is_empty() {
         cursor_offset == text_range.start
     } else {
+        // since range is non-inclusive of the end value we need to check for it explicitly
         text_range.contains(&cursor_offset) || cursor_offset == text_range.end
     };
-
-    eprintln!(
-        "[is_cursor_in_line] cursor_offset={}, text_range={:?}, contains={}, at_line_end={}, result={}",
-        cursor_offset,
-        text_range,
-        text_range.contains(&cursor_offset),
-        cursor_offset == text_range.end,
-        result
-    );
 
     result
 }
@@ -1026,18 +986,8 @@ fn compute_cursor_position(
         let local_offset = cursor_offset.saturating_sub(line.text_range.start);
         let position_result = wrapped.position_for_index(local_offset, line_height);
 
-        eprintln!(
-            "[compute_cursor_position] cursor_offset={}, line.text_range={:?}, local_offset={}, wrapped.text.len()={}, position_for_index={:?}",
-            cursor_offset,
-            line.text_range,
-            local_offset,
-            wrapped.text.len(),
-            position_result
-        );
-
         position_result.unwrap_or(point(px(0.), px(0.)))
     } else {
-        eprintln!("[compute_cursor_position] no wrapped line, returning (0, 0)");
         point(px(0.), px(0.))
     }
 }
