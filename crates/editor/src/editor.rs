@@ -21565,12 +21565,22 @@ impl Editor {
             return Vec::new();
         }
 
-        theme::ThemeSettings::get_global(cx)
+        let theme_settings = theme::ThemeSettings::get_global(cx);
+
+        theme_settings
             .theme_overrides
             .get(cx.theme().name.as_ref())
             .map(|theme_style| &theme_style.accents)
             .into_iter()
             .flatten()
+            .chain(
+                theme_settings
+                    .experimental_theme_overrides
+                    .as_ref()
+                    .map(|overrides| &overrides.accents)
+                    .into_iter()
+                    .flatten(),
+            )
             .flat_map(|accent| accent.0.clone())
             .collect()
     }
