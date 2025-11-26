@@ -33,6 +33,7 @@ image.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
+offline_mode.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rodio.workspace = true

@@ -7,6 +7,7 @@ use futures::{SinkExt, channel::mpsc};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
 use log::info;
+use offline_mode::OfflineModeSetting;
 use playback::capture_local_video_track;
 use settings::Settings;
 
@@ -54,6 +55,12 @@ impl Room {
         token: String,
         cx: &mut AsyncApp,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>)> {
+        // Guard: Check if offline mode is enabled
+        let is_offline = cx.update(|cx| OfflineModeSetting::get_global(cx).0).ok().unwrap_or(false);
+        if is_offline {
+            anyhow::bail!("Audio/video calls unavailable in offline mode");
+        }
+
         let connector =
             tokio_tungstenite::Connector::Rustls(Arc::new(http_client_tls::tls_config()));
         let mut config = livekit::RoomOptions::default();

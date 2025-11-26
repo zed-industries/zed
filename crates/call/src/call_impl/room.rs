@@ -20,6 +20,7 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
+use offline_mode::OfflineModeSetting;
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
@@ -170,6 +171,12 @@ impl Room {
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
+            // Guard: Check if offline mode is enabled
+            let is_offline = cx.update(|cx| OfflineModeSetting::get_global(cx).0).ok().unwrap_or(false);
+            if is_offline {
+                anyhow::bail!("Audio/video calls unavailable in offline mode");
+            }
+
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.context("invalid room")?;
             let room = cx.new(|cx| {
@@ -217,6 +224,12 @@ impl Room {
         user_store: Entity<UserStore>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
+        // Guard: Check if offline mode is enabled
+        let is_offline = cx.update(|cx| OfflineModeSetting::get_global(cx).0).ok().unwrap_or(false);
+        if is_offline {
+            anyhow::bail!("Audio/video calls unavailable in offline mode");
+        }
+
         Self::from_join_response(
             client
                 .request(proto::JoinChannel {
@@ -235,6 +248,12 @@ impl Room {
         user_store: Entity<UserStore>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
+        // Guard: Check if offline mode is enabled
+        let is_offline = cx.update(|cx| OfflineModeSetting::get_global(cx).0).ok().unwrap_or(false);
+        if is_offline {
+            anyhow::bail!("Audio/video calls unavailable in offline mode");
+        }
+
         Self::from_join_response(
             client.request(proto::JoinRoom { id: room_id }).await?,
             client,

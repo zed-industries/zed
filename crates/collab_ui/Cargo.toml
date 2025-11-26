@@ -43,6 +43,7 @@ gpui.workspace = true
 log.workspace = true
 menu.workspace = true
 notifications.workspace = true
+offline_mode.workspace = true
 picker.workspace = true
 project.workspace = true
 release_channel.workspace = true

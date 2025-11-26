@@ -23,6 +23,7 @@ use futures::{
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
+use offline_mode::OfflineModeSetting;
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -1261,6 +1262,12 @@ impl Client {
         let system_id = self.telemetry.system_id();
         let metrics_id = self.telemetry.metrics_id();
         cx.spawn(async move |cx| {
+            // Guard: Check if offline mode is enabled
+            let is_offline = cx.update(|cx| OfflineModeSetting::get_global(cx).0).ok().unwrap_or(false);
+            if is_offline {
+                return Err(anyhow!("Collaboration unavailable in offline mode").into());
+            }
+
             use HttpOrHttps::*;
 
             #[derive(Debug)]

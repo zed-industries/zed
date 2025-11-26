@@ -33,6 +33,7 @@ feature_flags.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 language.workspace = true
 log.workspace = true
+offline_mode.workspace = true
 postage.workspace = true
 project.workspace = true
 serde.workspace = true

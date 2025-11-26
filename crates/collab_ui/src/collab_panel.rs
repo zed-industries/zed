@@ -20,6 +20,7 @@ use gpui::{
     anchored, canvas, deferred, div, fill, list, point, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
+use offline_mode::OfflineModeSetting;
 use project::{Fs, Project};
 use rpc::{
     ErrorCode, ErrorExt,
@@ -2410,9 +2411,26 @@ impl CollabPanel {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
+
+        let is_offline = OfflineModeSetting::get_global(cx).0;
+
         v_flex()
             .size_full()
             .gap_1()
+            .when(is_offline, |this| {
+                this.child(
+                    div()
+                        .p_2()
+                        .bg(cx.theme().colors().status_bar_background)
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Label::new("Offline - Collaboration unavailable")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .p_2()

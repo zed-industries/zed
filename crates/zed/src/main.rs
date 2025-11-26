@@ -26,6 +26,7 @@ use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use offline_mode::OfflineModeSetting;
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_remote_project};
@@ -499,6 +500,26 @@ pub fn main() {
         );
 
         Client::set_global(client.clone(), cx);
+
+        // Observe offline mode changes to gracefully disconnect collaboration when offline
+        cx.observe_global::<SettingsStore>({
+            let client = client.clone();
+            move |cx| {
+                let is_offline = OfflineModeSetting::get_global(cx).0;
+                let is_connected = client.status().borrow().is_connected();
+
+                if is_offline && is_connected {
+                    // Gracefully disconnect from collaboration when toggling to offline mode
+                    let client = client.clone();
+                    cx.spawn(async move |cx| {
+                        client.disconnect(&cx);
+                        log::info!("Disconnected from collaboration due to offline mode");
+                    })
+                    .detach();
+                }
+            }
+        })
+        .detach();
 
         zed::init(cx);
         project::Project::init(&client, cx);
