@@ -86,7 +86,8 @@ fn compare_versions() -> (Step<Run>, StepOutput) {
         "#
         },
         VERSION_CHECK, VERSION_CHECK
-    ));
+    ))
+    .id("compare-versions-check");
 
     let needs_bump = StepOutput::new(&check_needs_bump, "needs_bump");
 

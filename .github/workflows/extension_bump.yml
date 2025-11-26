@@ -47,9 +47,33 @@ jobs:
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
       shell: bash -euxo pipefail {0}
     timeout-minutes: 1
+  check_bump_needed:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - id: compare-versions-check
+      name: extension_bump::compare_versions
+      run: |+
+        CURRENT_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+
+        git checkout HEAD~1
+
+        PREV_COMMIT_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+
+        [[ "$CURRENT_VERSION" == "$PREV_COMMIT_VERSION" ]] && \
+          echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
+          echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 1
   bump_extension_version:
     needs:
     - check_extension
+    - check_bump_needed
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
@@ -81,8 +105,8 @@ jobs:
 
         EOF
 
-        bump2version --verbose ${{ inputs.bump-type }}
-        NEW_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+        bump2version --verbose cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p'
+        NEW_VERSION="$(${{ inputs.bump-type }})"
         cargo update --workspace
 
         rm .bumpversion.cfg
