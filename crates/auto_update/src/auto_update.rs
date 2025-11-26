@@ -717,9 +717,12 @@ impl AutoUpdater {
     }
 
     fn check_if_fetched_version_is_newer_non_nightly(
-        installed_version: Version,
+        mut installed_version: Version,
         fetched_version: Version,
     ) -> Result<Option<VersionCheckType>> {
+        // For non-nightly releases, ignore build and pre-release fields as they're not provided by our endpoints right now.
+        installed_version.build = semver::BuildMetadata::EMPTY;
+        installed_version.pre = semver::Prerelease::EMPTY;
         let should_download = fetched_version > installed_version;
         let newer_version = should_download.then(|| VersionCheckType::Semantic(fetched_version));
         Ok(newer_version)
