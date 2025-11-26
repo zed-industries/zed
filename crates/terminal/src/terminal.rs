@@ -992,6 +992,9 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                if !self.matches.is_empty() {
+                    cx.emit(Event::Wakeup);
+                }
             }
             InternalEvent::Clear => {
                 trace!("Clearing");
