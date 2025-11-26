@@ -297,24 +297,22 @@ impl Search {
                 };
 
                 let should_find_all_matches = !tx.is_closed();
+                let num_cpus = executor.num_cpus();
 
-                let worker_pool = executor.scoped(|scope| {
-                    let num_cpus = executor.num_cpus();
-
-                    assert!(num_cpus > 0);
-                    for _ in 0..executor.num_cpus() - 1 {
+                assert!(num_cpus > 0);
+                let worker_pool = (0..num_cpus - 1)
+                    .map(|_| {
                         let worker = Worker {
                             query: query.clone(),
                             open_buffers: open_buffers.clone(),
                             candidates: candidate_searcher.clone(),
                             find_all_matches_rx: find_all_matches_rx.clone(),
                         };
-                        scope.spawn(worker.run());
-                    }
-
-                    drop(find_all_matches_rx);
-                    drop(candidate_searcher);
-                });
+                        executor.spawn(worker.run()).boxed_local()
+                    })
+                    .collect::<Vec<_>>();
+                drop(find_all_matches_rx);
+                drop(candidate_searcher);
 
                 let (sorted_matches_tx, sorted_matches_rx) = unbounded();
                 // The caller of `into_handle` decides whether they're interested in all matches (files that matched + all matching ranges) or
@@ -349,7 +347,7 @@ impl Search {
                 };
 
                 futures::future::join_all(
-                    [worker_pool.boxed_local()]
+                    worker_pool
                         .into_iter()
                         .chain(buffer_snapshots)
                         .chain(ensure_matches_are_reported_in_order)
