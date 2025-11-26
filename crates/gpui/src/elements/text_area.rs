@@ -33,8 +33,8 @@ use crate::{
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Length,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, StyleRefinement, Styled, TextRun, TextStyle, Window, fill, point, px, relative,
-    rgba, size,
+    SharedString, StyleRefinement, Styled, TextRun, TextStyle, Window, colors, fill, point, px,
+    relative, size,
 };
 
 use super::input::{Input, InputLineLayout};
@@ -98,6 +98,17 @@ impl TextArea {
     pub fn cursor_color(mut self, color: impl Into<Hsla>) -> Self {
         self.cursor_color = Some(color.into());
         self
+    }
+
+    fn color(&self, window: &Window) -> PaintColors {
+        let default_colors = colors::Colors::for_appearance(window);
+
+        PaintColors {
+            selection: self
+                .selection_color
+                .unwrap_or(default_colors.selected.into()),
+            cursor: self.cursor_color.unwrap_or(default_colors.cursor.into()),
+        }
     }
 
     fn register_actions(&mut self) {
@@ -279,6 +290,7 @@ impl Element for TextArea {
         cx: &mut App,
     ) {
         let focus_handle = self.input.focus_handle(cx);
+        let colors = self.color(window);
 
         if let Some(hitbox) = &prepaint_state.hitbox {
             window.set_cursor_style(CursorStyle::IBeam, hitbox);
@@ -292,8 +304,6 @@ impl Element for TextArea {
 
         let input = self.input.clone();
         let placeholder = self.placeholder.clone();
-        let selection_color = self.selection_color;
-        let cursor_color = self.cursor_color;
         let text_style = layout_state.text_style.clone();
 
         self.interactivity.paint(
@@ -307,7 +317,7 @@ impl Element for TextArea {
                 register_mouse_handlers(&input, bounds, window, cx);
 
                 let paint_state = PaintState::from_input(&input, &focus_handle, bounds, window, cx);
-                let colors = PaintColors::new(text_style.color, selection_color, cursor_color);
+                let colors = colors.clone();
 
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     if !paint_state.selected_range.is_empty() {
@@ -406,18 +416,10 @@ impl PaintState {
 }
 
 /// Colors used for painting.
+#[derive(Clone)]
 struct PaintColors {
-    selection: Hsla,
-    cursor: Hsla,
-}
-
-impl PaintColors {
-    fn new(text_color: Hsla, selection_color: Option<Hsla>, cursor_color: Option<Hsla>) -> Self {
-        Self {
-            selection: selection_color.unwrap_or_else(|| rgba(DEFAULT_SELECTION_COLOR).into()),
-            cursor: cursor_color.unwrap_or(text_color),
-        }
-    }
+    pub selection: Hsla,
+    pub cursor: Hsla,
 }
 
 /// Registers all mouse event handlers for the text area.

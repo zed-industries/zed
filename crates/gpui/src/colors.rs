@@ -23,6 +23,8 @@ pub struct Colors {
     pub separator: Rgba,
     /// Container color
     pub container: Rgba,
+    /// Cursor color
+    pub cursor: Rgba,
 }
 
 impl Default for Colors {
@@ -51,6 +53,7 @@ impl Colors {
             border: rgb(0x000000),
             separator: rgb(0xd9d9d9),
             container: rgb(0x262626),
+            cursor: rgb(0x3378F6),
         }
     }
 
@@ -65,6 +68,7 @@ impl Colors {
             border: rgb(0xd9d9d9),
             separator: rgb(0xe6e6e6),
             container: rgb(0xf4f5f5),
+            cursor: rgb(0x3378F6),
         }
     }
 
