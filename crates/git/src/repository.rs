@@ -1821,8 +1821,8 @@ impl GitRepository for RealGitRepository {
                     .lines()
                     .filter(|line| !line.is_empty())
                     .filter_map(|line| {
-                        let mut splitted_line = line.split_whitespace();
-                        let remote_name = splitted_line.next()?;
+                        let mut split_line = line.split_whitespace();
+                        let remote_name = split_line.next()?;
 
                         Some(Remote {
                             name: remote_name.trim().to_string().into(),
