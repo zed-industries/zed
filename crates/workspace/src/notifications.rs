@@ -789,7 +789,7 @@ pub mod simple_message_notification {
                                 .track_scroll(&self.scroll_handle.clone())
                                 .child((self.build_content)(window, cx)),
                         )
-                        .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                 )
                 .show_close_button(self.show_close_button)
                 .show_suppress_button(self.show_suppress_button)
