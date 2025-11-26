@@ -226,6 +226,12 @@ impl X11ClientStatePtr {
         self.0.upgrade().map(X11Client)
     }
 
+    pub(crate) fn update_gpu_context(&self, context: BladeContext) {
+        if let Some(client) = self.get_client() {
+            client.0.borrow_mut().gpu_context = context;
+        }
+    }
+
     pub fn drop_window(&self, x_window: u32) {
         let Some(client) = self.get_client() else {
             return;

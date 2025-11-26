@@ -901,7 +901,11 @@ impl X11Window {
         };
         state
             .renderer
-            .recreate_after_device_loss(&new_context, &raw_window)
+            .recreate_after_device_loss(&new_context, &raw_window)?;
+
+        state.client.update_gpu_context(new_context);
+
+        Ok(())
     }
 
     fn send_force_update(&self, force_update_atom: xproto::Atom) {
