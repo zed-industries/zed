@@ -304,7 +304,7 @@ where
 }
 
 /// Combined capabilities of the server and the adapter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdapterServerCapabilities {
     // Reported capabilities by the server
     pub server_capabilities: ServerCapabilities,

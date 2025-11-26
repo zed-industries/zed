@@ -136,7 +136,7 @@ impl LspStore {
         task
     }
 
-    fn fetch_semantic_tokens_for_buffer(
+    pub(crate) fn fetch_semantic_tokens_for_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
         for_server: Option<LanguageServerId>,
@@ -199,33 +199,43 @@ impl LspStore {
                     for_server.is_none_or(|for_server_id| for_server_id == server_id)
                 })
                 .filter_map(|server_id| {
-                    let server_capabilities = self.lsp_server_capabilities.get(&server_id)?.clone();
+                    let capabilities = AdapterServerCapabilities {
+                        server_capabilities: self.lsp_server_capabilities.get(&server_id)?.clone(),
+                        code_action_kinds: None,
+                    };
                     let request_task = match self.semantic_tokens_result_id(server_id, buffer, cx) {
                         Some(result_id) => {
-                            let request = SemanticTokensDelta {
+                            let delta_request = SemanticTokensDelta {
                                 previous_result_id: result_id,
                             };
-                            if !request.check_capabilities(AdapterServerCapabilities {
-                                server_capabilities,
-                                code_action_kinds: None,
-                            }) {
-                                return None;
+                            if !delta_request.check_capabilities(capabilities.clone()) {
+                                let full_request = SemanticTokensFull {
+                                    for_server: Some(server_id),
+                                };
+                                if !full_request.check_capabilities(capabilities) {
+                                    return None;
+                                }
+
+                                self.request_lsp(
+                                    buffer.clone(),
+                                    LanguageServerToQuery::Other(server_id),
+                                    full_request,
+                                    cx,
+                                )
+                            } else {
+                                self.request_lsp(
+                                    buffer.clone(),
+                                    LanguageServerToQuery::Other(server_id),
+                                    delta_request,
+                                    cx,
+                                )
                             }
-                            self.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(server_id),
-                                request,
-                                cx,
-                            )
                         }
                         None => {
                             let request = SemanticTokensFull {
                                 for_server: Some(server_id),
                             };
-                            if !request.check_capabilities(AdapterServerCapabilities {
-                                server_capabilities,
-                                code_action_kinds: None,
-                            }) {
+                            if !request.check_capabilities(capabilities) {
                                 return None;
                             }
                             self.request_lsp(

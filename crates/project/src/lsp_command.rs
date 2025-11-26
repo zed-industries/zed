@@ -3733,7 +3733,7 @@ impl LspCommand for SemanticTokensDelta {
     }
 
     fn to_proto(&self, _: u64, _: &Buffer) -> proto::SemanticTokens {
-        unimplemented!("Delta requests are not sent over collab")
+        unimplemented!("Delta requests are never initialted on the remote client side")
     }
 
     async fn from_proto(
@@ -3742,27 +3742,56 @@ impl LspCommand for SemanticTokensDelta {
         _: Entity<Buffer>,
         _: AsyncApp,
     ) -> Result<Self> {
-        unimplemented!("Delta requests are not sent over collab")
+        unimplemented!("Delta requests are never initialted on the remote client side")
     }
 
     fn response_to_proto(
-        _: SemanticTokensResponse,
+        response: SemanticTokensResponse,
         _: &mut LspStore,
         _: PeerId,
-        _: &clock::Global,
+        buffer_version: &clock::Global,
         _: &mut App,
     ) -> proto::SemanticTokensResponse {
-        unimplemented!("Delta requests are not sent over collab")
+        match response {
+            SemanticTokensResponse::Full { data, result_id } => proto::SemanticTokensResponse {
+                data,
+                edits: Vec::new(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+            SemanticTokensResponse::Delta { edits, result_id } => proto::SemanticTokensResponse {
+                data: Vec::new(),
+                edits: edits
+                    .into_iter()
+                    .map(|edit| proto::SemanticTokensEdit {
+                        start: edit.start,
+                        delete_count: edit.delete_count,
+                        data: edit.data,
+                    })
+                    .collect(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+        }
     }
 
     async fn response_from_proto(
         self,
-        _: proto::SemanticTokensResponse,
+        message: proto::SemanticTokensResponse,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<SemanticTokensResponse> {
-        unimplemented!("Delta requests are not sent over collab")
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        Ok(SemanticTokensResponse::Full {
+            data: message.data,
+            result_id: message.result_id.map(SharedString::new),
+        })
     }
 
     fn buffer_id_from_proto(message: &proto::SemanticTokens) -> Result<BufferId> {
