@@ -295,7 +295,7 @@ pub fn theme_colors_refinement(
         .search_active_match_background
         .as_ref()
         .and_then(|color| try_parse_color(color).ok())
-        .or(search_match_background.clone());
+        .or(search_match_background);
     ThemeColorsRefinement {
         border,
         border_variant: this
