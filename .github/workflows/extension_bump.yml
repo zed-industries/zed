@@ -115,8 +115,8 @@ jobs:
 
         rm .bumpversion.cfg
 
-        echo "old_version=${OLD_VERSION}" >> $GITHUB_OUTPUT
-        echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+        echo "old_version=${OLD_VERSION}" >> "$GITHUB_OUTPUT"
+        echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v7

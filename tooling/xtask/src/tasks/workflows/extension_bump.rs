@@ -170,8 +170,8 @@ fn bump_version(bump_type: &WorkflowInput) -> (Step<Run>, StepOutput, StepOutput
 
             rm .bumpversion.cfg
 
-            echo "old_version=${{OLD_VERSION}}" >> $GITHUB_OUTPUT
-            echo "new_version=${{NEW_VERSION}}" >> $GITHUB_OUTPUT
+            echo "old_version=${{OLD_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
             "#
         },
         VERSION_CHECK, BUMPVERSION_CONFIG, bump_type, VERSION_CHECK
