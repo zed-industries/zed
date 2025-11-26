@@ -13,8 +13,6 @@ path = "src/eval_utils.rs"
 doctest = false
 
 [dependencies]
-anyhow.workspace = true
-futures.workspace = true
 gpui.workspace = true
 serde.workspace = true
 smol.workspace = true

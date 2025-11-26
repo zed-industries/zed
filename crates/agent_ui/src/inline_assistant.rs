@@ -2010,11 +2010,8 @@ pub mod test {
             cx.set_http_client(http);
             Client::production(cx)
         });
-        let mut inline_assistant = InlineAssistant::new(
-            fs.clone(),
-            prompt_builder.clone(),
-            client.telemetry().clone(),
-        );
+        let mut inline_assistant =
+            InlineAssistant::new(fs.clone(), prompt_builder, client.telemetry().clone());
 
         let (tx, mut completion_rx) = mpsc::unbounded();
         inline_assistant.set_completion_receiver(tx);
