@@ -139,6 +139,7 @@ impl TextArea {
         register_action(&mut self.interactivity, &self.input, Input::backspace);
         register_action(&mut self.interactivity, &self.input, Input::delete);
         register_action(&mut self.interactivity, &self.input, Input::enter);
+        register_action(&mut self.interactivity, &self.input, Input::tab);
         register_action(&mut self.interactivity, &self.input, Input::paste);
         register_action(&mut self.interactivity, &self.input, Input::copy);
         register_action(&mut self.interactivity, &self.input, Input::cut);

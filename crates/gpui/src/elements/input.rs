@@ -13,6 +13,8 @@ actions!(
         Backspace,
         /// Delete the character after the cursor.
         Delete,
+        /// Insert a tab character at the cursor position.
+        Tab,
         /// Move the cursor one character to the left.
         Left,
         /// Move the cursor one character to the right.
@@ -382,6 +384,10 @@ impl Input {
 
     pub(crate) fn enter(&mut self, _: &Enter, window: &mut Window, cx: &mut Context<Self>) {
         self.replace_text_in_range(None, "\n", window, cx);
+    }
+
+    pub(crate) fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        self.replace_text_in_range(None, "\t", window, cx);
     }
 
     pub(crate) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
