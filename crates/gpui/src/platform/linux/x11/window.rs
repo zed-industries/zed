@@ -890,7 +890,6 @@ impl X11Window {
         xcb: &XCBConnection,
         x_main_screen_index: usize,
     ) -> anyhow::Result<()> {
-        std::thread::sleep(std::time::Duration::from_millis(500));
         let new_context = BladeContext::new()?;
         let visual_set = find_visuals(xcb, x_main_screen_index);
         let visual = visual_set.transparent.unwrap_or(visual_set.inherit);
@@ -921,11 +920,15 @@ impl X11Window {
     fn handle_draw_failure(&self, err: anyhow::Error) {
         log::error!("Renderer draw failed: {}", err);
         let mut inner = self.0.state.borrow_mut();
+        let screen_index = inner.display.id().0 as usize;
         if let Err(recovery_err) =
-            Self::attempt_gpu_recovery(&mut inner, self.0.x_window, &self.0.xcb, 0)
+            Self::attempt_gpu_recovery(&mut inner, self.0.x_window, &self.0.xcb, screen_index)
         {
-            log::error!("GPU recovery failed: {}", recovery_err);
-            std::process::exit(1);
+            panic!(
+                "GPU recovery failed after device loss. This may be a driver issue. \
+                 Please try restarting Zed. Error: {}",
+                recovery_err
+            );
         }
         log::info!("GPU recovery successful");
         let force_update_atom = inner.atoms._GPUI_FORCE_UPDATE_WINDOW;

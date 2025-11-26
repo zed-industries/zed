@@ -653,7 +653,6 @@ impl BladeRenderer {
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    /// Used to recover from GPU hangs caused by suspend/resume or driver issues.
     pub fn recreate_after_device_loss<
         I: raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle,
     >(
@@ -839,7 +838,9 @@ impl BladeRenderer {
                     texture_id,
                     sprites,
                 } => {
-                    let tex_info = self.atlas.get_texture_info(texture_id);
+                    let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+                        continue;
+                    };
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.mono_sprites);
@@ -862,7 +863,9 @@ impl BladeRenderer {
                     texture_id,
                     sprites,
                 } => {
-                    let tex_info = self.atlas.get_texture_info(texture_id);
+                    let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+                        continue;
+                    };
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.poly_sprites);

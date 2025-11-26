@@ -64,8 +64,11 @@ impl BladeAtlas {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) fn handle_device_lost(&self) {
         let mut lock = self.0.lock();
-        lock.storage = BladeAtlasStorage::default();
+        let gpu = Arc::clone(&lock.gpu);
+        lock.storage.clear_and_reuse(&gpu);
         lock.tiles_by_key.clear();
+        lock.initializations.clear();
+        lock.uploads.clear();
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -89,12 +92,13 @@ impl BladeAtlas {
         lock.upload_belt.flush(sync_point);
     }
 
-    pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
+    pub fn get_texture_info(&self, id: AtlasTextureId) -> Option<BladeTextureInfo> {
         let lock = self.0.lock();
-        let texture = &lock.storage[id];
-        BladeTextureInfo {
+        let textures = &lock.storage[id.kind];
+        let texture = textures.textures.get(id.index as usize)?.as_ref()?;
+        Some(BladeTextureInfo {
             raw_view: texture.raw_view,
-        }
+        })
     }
 }
 
@@ -322,6 +326,18 @@ impl BladeAtlasStorage {
         for mut texture in self.polychrome_textures.drain().flatten() {
             texture.destroy(gpu);
         }
+    }
+
+    fn clear_and_reuse(&mut self, gpu: &gpu::Context) {
+        for mut texture in self.monochrome_textures.textures.drain(..).flatten() {
+            texture.destroy(gpu);
+        }
+        for mut texture in self.polychrome_textures.textures.drain(..).flatten() {
+            texture.destroy(gpu);
+        }
+
+        self.monochrome_textures.free_list.clear();
+        self.polychrome_textures.free_list.clear();
     }
 }
 
