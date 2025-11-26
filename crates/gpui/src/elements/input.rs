@@ -214,16 +214,7 @@ impl Input {
 
     pub(crate) fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            let mut new_pos = self.previous_boundary(self.cursor_offset());
-
-            if new_pos < self.content.len() {
-                if let Some(ch) = self.content[new_pos..].chars().next() {
-                    if ch == '\n' {
-                        new_pos = self.previous_boundary(new_pos);
-                    }
-                }
-            }
-
+            let new_pos = self.previous_boundary(self.cursor_offset());
             self.move_to(new_pos, cx);
         } else {
             self.move_to(self.selected_range.start, cx);
@@ -232,16 +223,7 @@ impl Input {
 
     pub(crate) fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            let mut new_pos = self.next_boundary(self.selected_range.end);
-
-            if new_pos < self.content.len() {
-                if let Some(ch) = self.content[new_pos..].chars().next() {
-                    if ch == '\n' {
-                        new_pos = self.next_boundary(new_pos);
-                    }
-                }
-            }
-
+            let new_pos = self.next_boundary(self.cursor_offset());
             self.move_to(new_pos, cx);
         } else {
             self.move_to(self.selected_range.end, cx);
@@ -1164,12 +1146,14 @@ mod tests {
     }
 
     #[crate::test]
-    fn test_left_skips_newline_character(cx: &mut TestAppContext) {
+    fn test_left_stops_at_end_of_line(cx: &mut TestAppContext) {
+        // "ab\ncd" - cursor at position 3 (start of "cd", after newline)
+        // Pressing left should move to position 2 (end of "ab", before newline)
         let view = create_test_input(cx, "ab\ncd", 3..3);
         view.update(cx, |view, window, cx| {
             view.input.update(cx, |input, cx| {
                 input.left(&Left, window, cx);
-                assert_eq!(input.selected_range, 1..1);
+                assert_eq!(input.selected_range, 2..2); // cursor at end of line 1
             });
         })
         .unwrap();
@@ -1212,12 +1196,42 @@ mod tests {
     }
 
     #[crate::test]
-    fn test_right_skips_newline_character(cx: &mut TestAppContext) {
+    fn test_right_stops_at_end_of_line(cx: &mut TestAppContext) {
+        // "ab\ncd" - cursor at position 1 (after 'a')
+        // Pressing right should move to position 2 (end of "ab", before newline)
         let view = create_test_input(cx, "ab\ncd", 1..1);
         view.update(cx, |view, window, cx| {
             view.input.update(cx, |input, cx| {
                 input.right(&Right, window, cx);
-                assert_eq!(input.selected_range, 3..3);
+                assert_eq!(input.selected_range, 2..2); // cursor at end of line 1
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_right_crosses_newline(cx: &mut TestAppContext) {
+        // "ab\ncd" - cursor at position 2 (end of "ab", before newline)
+        // Pressing right should move to position 3 (after newline, start of "cd")
+        let view = create_test_input(cx, "ab\ncd", 2..2);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx);
+                assert_eq!(input.selected_range, 3..3); // cursor at start of line 2
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_left_crosses_newline(cx: &mut TestAppContext) {
+        // "ab\ncd" - cursor at position 2 (end of "ab", before newline)
+        // Pressing left should move to position 1 (after 'a')
+        let view = create_test_input(cx, "ab\ncd", 2..2);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.left(&Left, window, cx);
+                assert_eq!(input.selected_range, 1..1);
             });
         })
         .unwrap();
