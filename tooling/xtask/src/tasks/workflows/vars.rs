@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Concurrency, Env, Expression, Step, WorkflowDispatchInput};
+use gh_workflow::{Concurrency, Env, Expression, Step, WorkflowCallInput, WorkflowDispatchInput};
 
 use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
@@ -151,6 +151,13 @@ impl StepOutput {
     pub fn expr(&self) -> String {
         format!("steps.{}.outputs.{}", self.step_id, self.name)
     }
+
+    pub fn as_job_output(self, job: &NamedJob) -> JobOutput {
+        JobOutput {
+            job_name: job.name.clone(),
+            name: self.name,
+        }
+    }
 }
 
 impl serde::Serialize for StepOutput {
@@ -168,13 +175,37 @@ impl std::fmt::Display for StepOutput {
     }
 }
 
-pub struct Input {
+pub(crate) struct JobOutput {
+    job_name: String,
+    name: &'static str,
+}
+
+impl serde::Serialize for JobOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl std::fmt::Display for JobOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "${{{{ needs.{}.outputs.{} }}}}",
+            self.job_name, self.name
+        )
+    }
+}
+
+pub struct WorkflowInput {
     pub input_type: &'static str,
     pub name: &'static str,
     pub default: Option<String>,
 }
 
-impl Input {
+impl WorkflowInput {
     pub fn string(name: &'static str, default: Option<String>) -> Self {
         Self {
             input_type: "string",
@@ -191,15 +222,24 @@ impl Input {
             default: self.default.clone(),
         }
     }
+
+    pub fn call_input(&self) -> WorkflowCallInput {
+        WorkflowCallInput {
+            description: self.name.to_owned(),
+            required: self.default.is_none(),
+            input_type: self.input_type.to_owned(),
+            default: self.default.clone(),
+        }
+    }
 }
 
-impl std::fmt::Display for Input {
+impl std::fmt::Display for WorkflowInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "${{{{ inputs.{} }}}}", self.name)
     }
 }
 
-impl serde::Serialize for Input {
+impl serde::Serialize for WorkflowInput {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

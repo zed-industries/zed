@@ -1,14 +1,24 @@
-# Generated from xtask::workflows::extension_release
+# Generated from xtask::workflows::extension_bump
 # Rebuild with `cargo xtask workflows`.
-name: extension_release
+name: extension_bump
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
   ZED_EXTENSION_CLI_SHA: 7cfce605704d41ca247e3f84804bf323f6c6caaf
 on:
-  workflow_call: {}
-  workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      bump-type:
+        description: bump-type
+        type: string
+        default: patch
+  workflow_dispatch:
+    inputs:
+      bump-type:
+        description: bump-type
+        type: string
+        default: patch
 jobs:
   check_extension:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -44,7 +54,7 @@ jobs:
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
-      name: extension_release::generate_token
+      name: extension_bump::generate_token
       uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
@@ -53,15 +63,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-    - name: extension_release::install_bump_2_version
+    - name: extension_bump::install_bump_2_version
       run: pip install bump2version
       shell: bash -euxo pipefail {0}
     - id: bump-version
-      name: extension_release::bump_version
+      name: extension_bump::bump_version
       run: |
         OLD_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
 
@@ -72,23 +78,26 @@ jobs:
         [bumpversion:file:Cargo.toml]
 
         [bumpversion:file:extension.toml]
+
         EOF
 
-        bump2version --verbose minor
+        bump2version --verbose ${{ inputs.bump-type }}
         NEW_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
-        cargo b
+        cargo update --workspace
 
         rm .bumpversion.cfg
 
+        echo "old_version=${OLD_VERSION}" >> $GITHUB_OUTPUT
         echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
       shell: bash -euxo pipefail {0}
-    - name: extension_release::create_pull_request
+    - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v6
       with:
-        title: Bump to v${{ steps.bump-version.outputs.new_version }}
+        title: Bump version to ${{ steps.bump-version.outputs.new_version }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
         commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
-        branch: v${{ steps.bump-version.outputs.new_version }}
+        branch: bump-from-${{ steps.bump-version.outputs.old_version }}
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
