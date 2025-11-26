@@ -454,6 +454,7 @@ async fn zeta1_context(
             &snapshot,
             clipped_cursor,
             prompt_for_events,
+            cloud_llm_client::PredictEditsRequestTrigger::Cli,
             cx,
         )
     })?

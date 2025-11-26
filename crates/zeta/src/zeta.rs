@@ -5,7 +5,8 @@ use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat, Signature};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason,
     EditPredictionRejection, MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST,
-    MINIMUM_REQUIRED_VERSION_HEADER_NAME, RejectEditPredictionsBody, ZED_VERSION_HEADER_NAME,
+    MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBody,
+    ZED_VERSION_HEADER_NAME,
 };
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
@@ -1016,7 +1017,13 @@ impl Zeta {
         self.queue_prediction_refresh(project.clone(), buffer.entity_id(), cx, move |this, cx| {
             let Some(request_task) = this
                 .update(cx, |this, cx| {
-                    this.request_prediction(&project, &buffer, position, cx)
+                    this.request_prediction(
+                        &project,
+                        &buffer,
+                        position,
+                        PredictEditsRequestTrigger::Other,
+                        cx,
+                    )
                 })
                 .log_err()
             else {
@@ -1083,7 +1090,13 @@ impl Zeta {
 
                 let Some(prediction_result) = this
                     .update(cx, |this, cx| {
-                        this.request_prediction(&project, &jump_buffer, jump_position, cx)
+                        this.request_prediction(
+                            &project,
+                            &jump_buffer,
+                            jump_position,
+                            PredictEditsRequestTrigger::Diagnostics,
+                            cx,
+                        )
                     })?
                     .await?
                 else {
@@ -1264,12 +1277,14 @@ impl Zeta {
         project: &Entity<Project>,
         active_buffer: &Entity<Buffer>,
         position: language::Anchor,
+        trigger: PredictEditsRequestTrigger,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         self.request_prediction_internal(
             project.clone(),
             active_buffer.clone(),
             position,
+            trigger,
             cx.has_flag::<Zeta2FeatureFlag>(),
             cx,
         )
@@ -1280,6 +1295,7 @@ impl Zeta {
         project: Entity<Project>,
         active_buffer: Entity<Buffer>,
         position: language::Anchor,
+        trigger: PredictEditsRequestTrigger,
         allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
@@ -1305,6 +1321,7 @@ impl Zeta {
                 snapshot.clone(),
                 position,
                 events,
+                trigger,
                 cx,
             ),
             ZetaEditPredictionModel::Zeta2 => self.request_prediction_with_zeta2(
@@ -1313,6 +1330,7 @@ impl Zeta {
                 snapshot.clone(),
                 position,
                 events,
+                trigger,
                 cx,
             ),
             ZetaEditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(
@@ -1349,6 +1367,7 @@ impl Zeta {
                                 project,
                                 jump_buffer,
                                 jump_position,
+                                trigger,
                                 false,
                                 cx,
                             )
@@ -1449,6 +1468,7 @@ impl Zeta {
         active_snapshot: BufferSnapshot,
         position: language::Anchor,
         events: Vec<Arc<Event>>,
+        trigger: PredictEditsRequestTrigger,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let project_state = self.projects.get(&project.entity_id());
@@ -1621,6 +1641,7 @@ impl Zeta {
                             signatures: vec![],
                             excerpt_parent: None,
                             git_info: None,
+                            trigger,
                         }
                     }
                     ContextMode::Syntax(context_options) => {
@@ -1647,6 +1668,7 @@ impl Zeta {
                             index_state.as_deref(),
                             Some(options.max_prompt_bytes),
                             options.prompt_format,
+                            trigger,
                         )
                     }
                 };
@@ -2416,6 +2438,7 @@ impl Zeta {
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
                     options.prompt_format,
+                    PredictEditsRequestTrigger::Other,
                 )
             })
         })
@@ -2574,6 +2597,7 @@ fn make_syntax_context_cloud_request(
     index_state: Option<&SyntaxIndexState>,
     prompt_max_bytes: Option<usize>,
     prompt_format: PromptFormat,
+    trigger: PredictEditsRequestTrigger,
 ) -> predict_edits_v3::PredictEditsRequest {
     let mut signatures = Vec::new();
     let mut declaration_to_signature_index = HashMap::default();
@@ -2653,6 +2677,7 @@ fn make_syntax_context_cloud_request(
         debug_info,
         prompt_max_bytes,
         prompt_format,
+        trigger,
     }
 }
 
@@ -3072,7 +3097,7 @@ mod tests {
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
         let prediction_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &buffer, position, cx)
+            zeta.request_prediction(&project, &buffer, position, Default::default(), cx)
         });
 
         let (_, respond_tx) = requests.predict.next().await.unwrap();
@@ -3145,7 +3170,7 @@ mod tests {
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
         let prediction_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &buffer, position, cx)
+            zeta.request_prediction(&project, &buffer, position, Default::default(), cx)
         });
 
         let (request, respond_tx) = requests.predict.next().await.unwrap();
