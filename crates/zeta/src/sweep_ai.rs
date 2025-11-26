@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use cloud_llm_client::predict_edits_v3::Event;
 use futures::AsyncReadExt as _;
 use gpui::{
@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use util::ResultExt as _;
 
 use crate::{EditPrediction, EditPredictionId, EditPredictionInputs};
 
@@ -31,9 +30,7 @@ pub struct SweepAi {
 impl SweepAi {
     pub fn new(cx: &App) -> Self {
         SweepAi {
-            api_token: std::env::var("SWEEP_AI_TOKEN")
-                .context("No SWEEP_AI_TOKEN environment variable set")
-                .log_err(),
+            api_token: std::env::var("SWEEP_AI_TOKEN").ok(),
             debug_info: debug_info(cx),
         }
     }
