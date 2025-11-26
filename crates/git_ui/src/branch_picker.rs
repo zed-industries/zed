@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
-use git::repository::Branch;
+use git::repository::{Branch, Worktree as GitWorktree};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
@@ -12,6 +12,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
+use std::path::PathBuf;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
@@ -94,6 +95,9 @@ impl BranchList {
         let default_branch_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+        let worktrees_request = repository
+            .clone()
+            .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
@@ -106,6 +110,10 @@ impl BranchList {
                 .ok()
                 .flatten()
                 .flatten();
+            let worktrees = match worktrees_request {
+                Some(request) => request.await?.unwrap_or_default(),
+                None => Vec::new(),
+            };
 
             let all_branches = cx
                 .background_spawn(async move {
@@ -140,6 +148,7 @@ impl BranchList {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.default_branch = default_branch;
                     picker.delegate.all_branches = Some(all_branches);
+                    picker.delegate.all_worktrees = Some(worktrees);
                     picker.refresh(window, cx);
                 })
             });
@@ -203,11 +212,13 @@ struct BranchEntry {
     branch: Branch,
     positions: Vec<usize>,
     is_new: bool,
+    worktree_path: Option<PathBuf>,
 }
 
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Option<Vec<Branch>>,
+    all_worktrees: Option<Vec<GitWorktree>>,
     default_branch: Option<SharedString>,
     repo: Option<Entity<Repository>>,
     style: BranchListStyle,
@@ -223,6 +234,7 @@ impl BranchListDelegate {
             repo,
             style,
             all_branches: None,
+            all_worktrees: None,
             default_branch: None,
             selected_index: 0,
             last_query: Default::default(),
@@ -297,18 +309,38 @@ impl PickerDelegate for BranchListDelegate {
         let Some(all_branches) = self.all_branches.clone() else {
             return Task::ready(());
         };
+        let all_worktrees = self.all_worktrees.clone().unwrap_or_default();
 
         const RECENT_BRANCHES_COUNT: usize = 10;
         cx.spawn_in(window, async move |picker, cx| {
+            let worktree_map: collections::HashMap<SharedString, PathBuf> = all_worktrees
+                .into_iter()
+                .filter_map(|wt| {
+                    if wt.ref_name.as_ref().starts_with("refs/heads/") {
+                        Some((wt.ref_name, wt.path))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             let mut matches: Vec<BranchEntry> = if query.is_empty() {
                 all_branches
                     .into_iter()
                     .filter(|branch| !branch.is_remote())
                     .take(RECENT_BRANCHES_COUNT)
-                    .map(|branch| BranchEntry {
-                        branch,
-                        positions: Vec::new(),
-                        is_new: false,
+                    .map(|branch| {
+                        let worktree_path = if !branch.is_head {
+                            worktree_map.get(&branch.ref_name).cloned()
+                        } else {
+                            None
+                        };
+                        BranchEntry {
+                            branch,
+                            positions: Vec::new(),
+                            is_new: false,
+                            worktree_path,
+                        }
                     })
                     .collect()
             } else {
@@ -328,10 +360,19 @@ impl PickerDelegate for BranchListDelegate {
                 )
                 .await
                 .into_iter()
-                .map(|candidate| BranchEntry {
-                    branch: all_branches[candidate.candidate_id].clone(),
-                    positions: candidate.positions,
-                    is_new: false,
+                .map(|candidate| {
+                    let branch = all_branches[candidate.candidate_id].clone();
+                    let worktree_path = if !branch.is_head {
+                        worktree_map.get(&branch.ref_name).cloned()
+                    } else {
+                        None
+                    };
+                    BranchEntry {
+                        branch,
+                        positions: candidate.positions,
+                        is_new: false,
+                        worktree_path,
+                    }
                 })
                 .collect()
             };
@@ -352,6 +393,7 @@ impl PickerDelegate for BranchListDelegate {
                             },
                             positions: Vec::new(),
                             is_new: true,
+                            worktree_path: None,
                         })
                     }
                     let delegate = &mut picker.delegate;
@@ -372,6 +414,11 @@ impl PickerDelegate for BranchListDelegate {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
+
+        if entry.worktree_path.is_some() {
+            return;
+        }
+
         if entry.is_new {
             let from_branch = if secondary {
                 self.default_branch.clone()
@@ -472,6 +519,8 @@ impl PickerDelegate for BranchListDelegate {
             None
         };
 
+        let is_disabled = entry.worktree_path.is_some();
+
         let branch_name = if entry.is_new {
             h_flex()
                 .gap_1()
@@ -491,7 +540,8 @@ impl PickerDelegate for BranchListDelegate {
                 .max_w_48()
                 .child(
                     HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
-                        .truncate(),
+                        .truncate()
+                        .when(is_disabled, |label| label.color(Color::Disabled)),
                 )
                 .into_any_element()
         };
@@ -501,10 +551,17 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
+                .disabled(is_disabled)
                 .tooltip({
                     let branch_name = entry.branch.name().to_string();
                     if entry.is_new {
                         Tooltip::text(format!("Create branch \"{}\"", branch_name))
+                    } else if let Some(worktree_path) = &entry.worktree_path {
+                        Tooltip::text(format!(
+                            "Branch \"{}\" is already checked out at:\n{}\n\nUse the worktree picker to switch to this worktree",
+                            branch_name,
+                            worktree_path.display()
+                        ))
                     } else {
                         Tooltip::text(branch_name)
                     }
