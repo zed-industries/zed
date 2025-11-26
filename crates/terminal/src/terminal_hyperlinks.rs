@@ -149,7 +149,7 @@ fn sanitize_url_punctuation<T: EventListener>(
     let mut chars_trimmed = 0;
 
     // Count parentheses in the URL
-    let (open_parens, mut close_parens) =
+    let (mut open_parens, mut close_parens) =
         sanitized_url
             .chars()
             .fold((0, 0), |(opens, closes), c| match c {
@@ -165,6 +165,7 @@ fn sanitize_url_punctuation<T: EventListener>(
             // doesn't allow them, but they are frequently used in plain text as delimiters
             // where they're not meant to be part of the URL.
             '?' | '!' | '.' | ',' | ':' | ';' | '*' => true,
+            '(' => true,
             ')' if close_parens > open_parens => {
                 close_parens -= 1;
 
@@ -380,6 +381,8 @@ mod tests {
             ("https://www.google.com/)", "https://www.google.com/"),
             ("https://example.com/path)", "https://example.com/path"),
             ("https://test.com/))", "https://test.com/"),
+            ("https://test.com/(((", "https://test.com/"),
+            ("https://test.com/(test)(", "https://test.com/(test)"),
             // Cases that should NOT be sanitized (balanced parentheses)
             (
                 "https://en.wikipedia.org/wiki/Example_(disambiguation)",
