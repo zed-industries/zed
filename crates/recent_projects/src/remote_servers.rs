@@ -40,8 +40,9 @@ use std::{
     },
 };
 use ui::{
-    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Section, Tooltip, WithScrollbar, prelude::*,
+    CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
+    ModalHeader, Navigable, NavigableEntry, Section, SpinnerLabel, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::{
     ResultExt,
@@ -1524,6 +1525,46 @@ impl RemoteServerProjects {
         });
     }
 
+    fn edit_in_dev_container_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            cx.emit(DismissEvent);
+            cx.notify();
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+
+            let worktree = project
+                .read(cx)
+                .visible_worktrees(cx)
+                .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+
+            if let Some(worktree) = worktree {
+                let tree_id = worktree.read(cx).id();
+                let devcontainer_path = RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                cx.spawn_in(window, async move |workspace, cx| {
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_path(
+                                (tree_id, devcontainer_path),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                })
+                .detach();
+            } else {
+                return;
+            }
+        });
+        cx.emit(DismissEvent);
+        cx.notify();
+    }
+
     fn render_create_dev_container(
         &self,
         state: &CreateRemoteDevContainer,
@@ -1593,39 +1634,69 @@ impl RemoteServerProjects {
             }
         });
 
-        if state.progress == DevContainerCreationProgress::Creating {
-            println!("Creating...");
-            // TODO, make this UI identical to the remote connection delegate's UI
-            let view = div().track_focus(&self.focus_handle(cx)).size_full().child(
-                v_flex()
-                    .child(Label::new("Loading Title..."))
-                    .child(ListSeparator)
-                    .child(
-                        ListItem::new("Creating...")
-                            .inset(true)
-                            .spacing(ui::ListItemSpacing::Sparse)
-                            .child(Label::new("Creating...")),
-                    ),
-            );
-            // self.focus_handle(cx).focus(window);
-            return view.into_any_element();
-        }
-
         match &state.progress {
             DevContainerCreationProgress::Error(message) => {
-                let view = div().track_focus(&self.focus_handle(cx)).size_full().child(
-                    v_flex().child(ListSeparator).child(
-                        ListItem::new("Error")
-                            .inset(true)
-                            .spacing(ui::ListItemSpacing::Sparse)
-                            .child(Label::new(format!(
-                                "Error creating dev container: {}",
-                                message
-                            ))),
-                    ),
-                );
                 self.focus_handle(cx).focus(window);
-                return view.into_any_element();
+                return div()
+                    .track_focus(&self.focus_handle(cx))
+                    .size_full()
+                    .child(
+                        v_flex()
+                            .py_1()
+                            .child(
+                                ListItem::new("Error")
+                                    .inset(true)
+                                    .selectable(false)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::XCircle).color(Color::Error))
+                                    .child(Label::new("Error Creating Dev Container:"))
+                                    .child(Label::new(format!("{}", message)).buffer_font(cx)),
+                            )
+                            .child(ListSeparator)
+                            .child(
+                                div()
+                                    .id("devcontainer-go-back")
+                                    .track_focus(&state.entries[0].focus_handle)
+                                    .on_action(cx.listener(
+                                        |this, _: &menu::Confirm, window, cx| {
+                                            this.mode =
+                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            cx.focus_self(window);
+                                            cx.notify();
+                                        },
+                                    ))
+                                    .child(
+                                        ListItem::new("li-devcontainer-go-back")
+                                            .toggle_state(
+                                                state.entries[0]
+                                                    .focus_handle
+                                                    .contains_focused(window, cx),
+                                            )
+                                            .inset(true)
+                                            .spacing(ui::ListItemSpacing::Sparse)
+                                            .start_slot(
+                                                Icon::new(IconName::ArrowLeft).color(Color::Muted),
+                                            )
+                                            .child(Label::new("Go Back"))
+                                            .end_slot(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Cancel,
+                                                    &self.focus_handle,
+                                                    cx,
+                                                )
+                                                .size(rems_from_px(12.)),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                let state =
+                                                    CreateRemoteDevContainer::new(window, cx);
+                                                this.mode = Mode::CreateRemoteDevContainer(state);
+
+                                                cx.notify();
+                                            })),
+                                    ),
+                            ),
+                    )
+                    .into_any_element();
             }
             _ => {}
         };
@@ -1636,75 +1707,93 @@ impl RemoteServerProjects {
                 .size_full()
                 .child(
                     v_flex()
+                        .pb_1()
+                        .child(
+                            ModalHeader::new()
+                                .child(Headline::new("Dev Containers").size(HeadlineSize::XSmall)),
+                        )
                         .child(ListSeparator)
                         .child(
                             div()
                                 .id("confirm-create-from-devcontainer-json")
                                 .track_focus(&state.entries[0].focus_handle)
-                                .on_action(cx.listener(
+                                .on_action(cx.listener({
+                                    let callback = callback.clone();
                                     move |this, _: &menu::Confirm, window, cx| {
                                         callback(this, window, cx);
                                         this.view_in_progress_dev_container(window, cx);
-                                    },
-                                ))
-                                .child(
-                                    ListItem::new("li-confirm-create-from-devcontainer-json")
-                                        .toggle_state(
-                                            state.entries[0]
-                                                .focus_handle
-                                                .contains_focused(window, cx),
+                                    }
+                                }))
+                                .map(|this| {
+                                    if state.progress == DevContainerCreationProgress::Creating {
+                                        this.child(
+                                            ListItem::new("creating")
+                                                .inset(true)
+                                                .spacing(ui::ListItemSpacing::Sparse)
+                                                .disabled(true)
+                                                .start_slot(
+                                                    Icon::new(IconName::ArrowCircle)
+                                                        .color(Color::Muted)
+                                                        .with_rotate_animation(2),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .opacity(0.6)
+                                                        .gap_1()
+                                                        .child(Label::new("Creating From"))
+                                                        .child(
+                                                            Label::new("devcontainer.json")
+                                                                .buffer_font(cx),
+                                                        )
+                                                        .child(LoadingLabel::new("")),
+                                                ),
                                         )
-                                        .inset(true)
-                                        .spacing(ui::ListItemSpacing::Sparse)
-                                        .child(Label::new("Create from devcontainer.json")),
-                                ),
+                                    } else {
+                                        this.child(
+                                            ListItem::new(
+                                                "li-confirm-create-from-devcontainer-json",
+                                            )
+                                            .toggle_state(
+                                                state.entries[0]
+                                                    .focus_handle
+                                                    .contains_focused(window, cx),
+                                            )
+                                            .inset(true)
+                                            .spacing(ui::ListItemSpacing::Sparse)
+                                            .start_slot(
+                                                Icon::new(IconName::Plus).color(Color::Muted),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Create New From"))
+                                                    .child(
+                                                        Label::new("devcontainer.json")
+                                                            .buffer_font(cx),
+                                                    ),
+                                            )
+                                            .on_click(
+                                                cx.listener({
+                                                    let callback = callback.clone();
+                                                    move |this, _, window, cx| {
+                                                        callback(this, window, cx);
+                                                        this.view_in_progress_dev_container(
+                                                            window, cx,
+                                                        );
+                                                        cx.notify();
+                                                    }
+                                                }),
+                                            ),
+                                        )
+                                    }
+                                }),
                         )
                         .child(
                             div()
                                 .id("edit-devcontainer-json")
                                 .track_focus(&state.entries[1].focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    let Some(workspace) = this.workspace.upgrade() else {
-                                        cx.emit(DismissEvent);
-                                        cx.notify();
-                                        return;
-                                    };
-
-                                    workspace.update(cx, |workspace, cx| {
-                                        let project = workspace.project().clone();
-
-                                        let worktree = project
-                                            .read(cx)
-                                            .visible_worktrees(cx)
-                                            .find_map(|tree| {
-                                                tree.read(cx).root_entry()?.is_dir().then_some(tree)
-                                            });
-
-                                        if let Some(worktree) = worktree {
-                                            let tree_id = worktree.read(cx).id();
-                                            let devcontainer_path =
-                                                RelPath::unix(".devcontainer/devcontainer.json")
-                                                    .unwrap();
-                                            cx.spawn_in(window, async move |workspace, cx| {
-                                                workspace
-                                                    .update_in(cx, |workspace, window, cx| {
-                                                        workspace.open_path(
-                                                            (tree_id, devcontainer_path),
-                                                            None,
-                                                            true,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })?
-                                                    .await
-                                            })
-                                            .detach();
-                                        } else {
-                                            return;
-                                        }
-                                    });
-                                    cx.emit(DismissEvent);
-                                    cx.notify();
+                                    this.edit_in_dev_container_json(window, cx);
                                 }))
                                 .child(
                                     ListItem::new("li-edit-devcontainer-json")
@@ -1715,9 +1804,18 @@ impl RemoteServerProjects {
                                         )
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
-                                        .child(Label::new("Edit devcontainer.json")),
+                                        .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                        .child(
+                                            h_flex().gap_1().child(Label::new("Edit")).child(
+                                                Label::new("devcontainer.json").buffer_font(cx),
+                                            ),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.edit_in_dev_container_json(window, cx);
+                                        })),
                                 ),
                         )
+                        .child(ListSeparator)
                         .child(
                             div()
                                 .id("devcontainer-go-back")
@@ -1736,12 +1834,30 @@ impl RemoteServerProjects {
                                         )
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
-                                        .child(Label::new("Go Back")),
+                                        .start_slot(
+                                            Icon::new(IconName::ArrowLeft).color(Color::Muted),
+                                        )
+                                        .child(Label::new("Go Back"))
+                                        .end_slot(
+                                            KeyBinding::for_action_in(
+                                                &menu::Cancel,
+                                                &self.focus_handle,
+                                                cx,
+                                            )
+                                            .size(rems_from_px(12.)),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.mode =
+                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            cx.focus_self(window);
+                                            cx.notify()
+                                        })),
                                 ),
                         ),
                 )
                 .into_any_element(),
         );
+
         view = view.entry(state.entries[0].clone());
         view = view.entry(state.entries[1].clone());
         view = view.entry(state.entries[2].clone());
