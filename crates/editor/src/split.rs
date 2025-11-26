@@ -2,7 +2,10 @@ use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use multi_buffer::{MultiBuffer, MultiBufferFilterMode};
-use ui::{App, Context, IntoElement as _, Render, SharedString, Window, div};
+use ui::{
+    App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
+    SharedString, Styled as _, Window, div,
+};
 use workspace::{
     ActivePaneDecorator, Item, ItemHandle as _, Pane, PaneGroup, SplitDirection, Workspace,
 };
@@ -17,7 +20,7 @@ pub(crate) struct SplitDiff;
 #[action(namespace = editor)]
 pub(crate) struct UnsplitDiff;
 
-pub(crate) struct SplittableEditor {
+pub struct SplittableEditor {
     primary: Entity<Editor>,
     secondary: Option<(Entity<Editor>, Entity<Pane>)>,
     panes: PaneGroup,
@@ -26,7 +29,11 @@ pub(crate) struct SplittableEditor {
 }
 
 impl SplittableEditor {
-    pub(crate) fn new_unsplit(
+    pub fn primary(&self) -> &Entity<Editor> {
+        &self.primary
+    }
+
+    pub fn new_unsplit(
         buffer: Entity<MultiBuffer>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -51,6 +58,7 @@ impl SplittableEditor {
             pane
         });
         let panes = PaneGroup::new(pane);
+        // TODO we might want to subscribe to both editors and emit a tagged union of their events
         let subscriptions = vec![cx.subscribe(&primary, |_, _, event: &EditorEvent, cx| {
             cx.emit(event.clone())
         })];
@@ -63,7 +71,7 @@ impl SplittableEditor {
         }
     }
 
-    pub(crate) fn split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
         if self.secondary.is_some() {
             return;
         }
@@ -116,11 +124,16 @@ impl SplittableEditor {
         cx.notify();
     }
 
-    pub(crate) fn unsplit(&mut self, _: &UnsplitDiff, cx: &mut Context<Self>) {
+    pub(crate) fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
         let Some((_, secondary_pane)) = self.secondary.take() else {
             return;
         };
         self.panes.remove(&secondary_pane).unwrap();
+        self.primary.update(cx, |primary, cx| {
+            primary.buffer().update(cx, |buffer, _| {
+                buffer.set_filter_mode(None);
+            });
+        });
         cx.notify();
     }
 }
@@ -141,13 +154,17 @@ impl Render for SplittableEditor {
         let Some(active) = self.panes.panes().into_iter().next() else {
             return div().into_any_element();
         };
-        self.panes
-            .render(
+        div()
+            .id("splittable-editor")
+            .on_action(cx.listener(Self::split))
+            .on_action(cx.listener(Self::unsplit))
+            .size_full()
+            .child(self.panes.render(
                 None,
                 &ActivePaneDecorator::new(active, &self.workspace),
                 window,
                 cx,
-            )
+            ))
             .into_any_element()
     }
 }
