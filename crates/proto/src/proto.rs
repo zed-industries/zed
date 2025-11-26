@@ -133,10 +133,8 @@ messages!(
     (IncomingCall, Foreground),
     (InlayHints, Background),
     (InlayHintsResponse, Background),
-    (SemanticTokensFull, Background),
-    (SemanticTokensFullResponse, Background),
-    (SemanticTokensDelta, Background),
-    (SemanticTokensDeltaResponse, Background),
+    (SemanticTokens, Background),
+    (SemanticTokensResponse, Background),
     (InstallExtension, Background),
     (InviteChannelMember, Foreground),
     (JoinChannel, Foreground),
@@ -393,8 +391,7 @@ request_messages!(
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
-    (SemanticTokensFull, SemanticTokensFullResponse),
-    (SemanticTokensDelta, SemanticTokensDeltaResponse),
+    (SemanticTokens, SemanticTokensResponse),
     (GetCodeLens, GetCodeLensResponse),
     (InviteChannelMember, Ack),
     (JoinChannel, JoinRoomResponse),
@@ -544,6 +541,7 @@ lsp_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
     (InlayHints, InlayHintsResponse, false),
+    (SemanticTokens, SemanticTokensResponse, true)
 );
 
 entity_messages!(
@@ -586,8 +584,7 @@ entity_messages!(
     OpenUncommittedDiff,
     GetTypeDefinition,
     InlayHints,
-    SemanticTokensFull,
-    SemanticTokensDelta,
+    SemanticTokens,
     JoinProject,
     LeaveProject,
     LinkedEditingRange,
@@ -886,8 +883,7 @@ impl LspQuery {
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
             Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
-            Some(lsp_query::Request::SemanticTokensFull(_)) => ("SemanticTokensFull", false),
-            Some(lsp_query::Request::SemanticTokensDelta(_)) => ("SemanticTokensDelta", false),
+            Some(lsp_query::Request::SemanticTokens(_)) => ("SemanticTokens", false),
             None => ("<unknown>", true),
         }
     }

@@ -366,10 +366,7 @@ impl AnyProtoClient {
                             Response::InlayHintsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
-                            Response::SemanticTokensFullResponse(response) => {
-                                to_any_envelope(&envelope, response)
-                            }
-                            Response::SemanticTokensDeltaResponse(response) => {
+                            Response::SemanticTokensResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };

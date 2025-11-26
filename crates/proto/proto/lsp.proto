@@ -146,27 +146,16 @@ message InlayHintsResponse {
     repeated VectorClockEntry version = 2;
 }
 
-message SemanticTokensFull {
+message SemanticTokens {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    repeated VectorClockEntry version = 3;
-}
-
-message SemanticTokensFullResponse {
-    repeated uint32 data = 1;
-    optional string result_id = 2;
-    repeated VectorClockEntry version = 3;
-}
-
-message SemanticTokensDelta {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    string previous_result_id = 3;
+    optional uint64 for_server = 3;
     repeated VectorClockEntry version = 4;
 }
 
-message SemanticTokensDeltaResponse {
+message SemanticTokensResponse {
     // Only `data` or `edits` may be set.
+    // `oneof` does not allow `repeated` fields.
     repeated uint32 data = 1;
     repeated SemanticTokensEdit edits = 2;
     optional string result_id = 3;
@@ -856,8 +845,7 @@ message LspQuery {
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
         InlayHints inlay_hints = 14;
-        SemanticTokensFull semantic_tokens_full = 16;
-        SemanticTokensDelta semantic_tokens_delta = 17;
+        SemanticTokens semantic_tokens = 16;
     }
 }
 
@@ -881,8 +869,7 @@ message LspResponse {
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
         InlayHintsResponse inlay_hints_response = 13;
-        SemanticTokensFullResponse semantic_tokens_full_response = 14;
-        SemanticTokensDeltaResponse semantic_tokens_delta_response = 15;
+        SemanticTokensResponse semantic_tokens_response = 14;
     }
     uint64 server_id = 7;
 }

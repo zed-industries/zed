@@ -240,22 +240,18 @@ pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct SemanticTokensFull;
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SemanticTokensFull {
+    pub for_server: Option<LanguageServerId>,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct SemanticTokensDelta {
     pub previous_result_id: SharedString,
 }
 
-#[derive(Default, Debug)]
-pub(crate) struct SemanticTokensFullResponse {
-    pub data: Vec<u32>,
-    pub result_id: Option<SharedString>,
-}
-
 #[derive(Debug)]
-pub(crate) enum SemanticTokensDeltaResponse {
+pub(crate) enum SemanticTokensResponse {
     Full {
         data: Vec<u32>,
         result_id: Option<SharedString>,
@@ -266,9 +262,9 @@ pub(crate) enum SemanticTokensDeltaResponse {
     },
 }
 
-impl Default for SemanticTokensDeltaResponse {
+impl Default for SemanticTokensResponse {
     fn default() -> Self {
-        SemanticTokensDeltaResponse::Delta {
+        Self::Delta {
             edits: Vec::new(),
             result_id: None,
         }
@@ -3497,9 +3493,9 @@ impl LspCommand for InlayHints {
 
 #[async_trait(?Send)]
 impl LspCommand for SemanticTokensFull {
-    type Response = SemanticTokensFullResponse;
+    type Response = SemanticTokensResponse;
     type LspRequest = lsp_semantic_tokens::SemanticTokensFullRequest;
-    type ProtoRequest = proto::SemanticTokensFull;
+    type ProtoRequest = proto::SemanticTokens;
 
     fn display_name(&self) -> &str {
         "Semantic tokens full"
@@ -3549,10 +3545,10 @@ impl LspCommand for SemanticTokensFull {
         _: Entity<Buffer>,
         _: LanguageServerId,
         _: AsyncApp,
-    ) -> anyhow::Result<SemanticTokensFullResponse> {
+    ) -> anyhow::Result<SemanticTokensResponse> {
         match message {
             Some(lsp_semantic_tokens::SemanticTokensFullResult::Tokens(tokens)) => {
-                Ok(SemanticTokensFullResponse {
+                Ok(SemanticTokensResponse::Full {
                     data: tokens.data,
                     result_id: tokens.result_id.map(SharedString::new),
                 })
@@ -3566,16 +3562,17 @@ impl LspCommand for SemanticTokensFull {
         }
     }
 
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::SemanticTokensFull {
-        proto::SemanticTokensFull {
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::SemanticTokens {
+        proto::SemanticTokens {
             project_id,
             buffer_id: buffer.remote_id().into(),
             version: serialize_version(&buffer.version()),
+            for_server: self.for_server.map(|id| id.to_proto()),
         }
     }
 
     async fn from_proto(
-        message: proto::SemanticTokensFull,
+        message: proto::SemanticTokens,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
@@ -3586,52 +3583,72 @@ impl LspCommand for SemanticTokensFull {
             })?
             .await?;
 
-        Ok(Self)
+        Ok(Self {
+            for_server: message
+                .for_server
+                .map(|id| LanguageServerId::from_proto(id)),
+        })
     }
 
     fn response_to_proto(
-        response: SemanticTokensFullResponse,
+        response: SemanticTokensResponse,
         _: &mut LspStore,
         _: PeerId,
         buffer_version: &clock::Global,
         _: &mut App,
-    ) -> proto::SemanticTokensFullResponse {
-        proto::SemanticTokensFullResponse {
-            data: response.data,
-            result_id: response.result_id.map(|s| s.to_string()),
-            version: serialize_version(buffer_version),
+    ) -> proto::SemanticTokensResponse {
+        match response {
+            SemanticTokensResponse::Full { data, result_id } => proto::SemanticTokensResponse {
+                data,
+                edits: Vec::new(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
+            SemanticTokensResponse::Delta { edits, result_id } => proto::SemanticTokensResponse {
+                data: Vec::new(),
+                edits: edits
+                    .into_iter()
+                    .map(|edit| proto::SemanticTokensEdit {
+                        start: edit.start,
+                        delete_count: edit.delete_count,
+                        data: edit.data,
+                    })
+                    .collect(),
+                result_id: result_id.map(|s| s.to_string()),
+                version: serialize_version(buffer_version),
+            },
         }
     }
 
     async fn response_from_proto(
         self,
-        message: proto::SemanticTokensFullResponse,
+        message: proto::SemanticTokensResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
-    ) -> anyhow::Result<SemanticTokensFullResponse> {
+    ) -> anyhow::Result<SemanticTokensResponse> {
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
 
-        Ok(SemanticTokensFullResponse {
+        Ok(SemanticTokensResponse::Full {
             data: message.data,
             result_id: message.result_id.map(SharedString::new),
         })
     }
 
-    fn buffer_id_from_proto(message: &proto::SemanticTokensFull) -> Result<BufferId> {
+    fn buffer_id_from_proto(message: &proto::SemanticTokens) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
 
 #[async_trait(?Send)]
 impl LspCommand for SemanticTokensDelta {
-    type Response = SemanticTokensDeltaResponse;
+    type Response = SemanticTokensResponse;
     type LspRequest = lsp_semantic_tokens::SemanticTokensFullDeltaRequest;
-    type ProtoRequest = proto::SemanticTokensDelta;
+    type ProtoRequest = proto::SemanticTokens;
 
     fn display_name(&self) -> &str {
         "Semantic tokens delta"
@@ -3682,16 +3699,16 @@ impl LspCommand for SemanticTokensDelta {
         _: Entity<Buffer>,
         _: LanguageServerId,
         _: AsyncApp,
-    ) -> anyhow::Result<SemanticTokensDeltaResponse> {
+    ) -> anyhow::Result<SemanticTokensResponse> {
         match message {
             Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::Tokens(tokens)) => {
-                Ok(SemanticTokensDeltaResponse::Full {
+                Ok(SemanticTokensResponse::Full {
                     data: tokens.data,
                     result_id: tokens.result_id.map(SharedString::new),
                 })
             }
             Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
-                Ok(SemanticTokensDeltaResponse::Delta {
+                Ok(SemanticTokensResponse::Delta {
                     edits: delta
                         .edits
                         .into_iter()
@@ -3715,101 +3732,40 @@ impl LspCommand for SemanticTokensDelta {
         }
     }
 
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::SemanticTokensDelta {
-        proto::SemanticTokensDelta {
-            project_id,
-            buffer_id: buffer.remote_id().into(),
-            previous_result_id: self.previous_result_id.clone().map(|s| s.to_string()),
-            version: serialize_version(&buffer.version()),
-        }
+    fn to_proto(&self, _: u64, _: &Buffer) -> proto::SemanticTokens {
+        unimplemented!("Delta requests are not sent over collab")
     }
 
     async fn from_proto(
-        message: proto::SemanticTokensDelta,
+        _: proto::SemanticTokens,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
-
-        Ok(SemanticTokensDelta {
-            previous_result_id: SharedString::new(message.previous_result_id),
-        })
+        unimplemented!("Delta requests are not sent over collab")
     }
 
     fn response_to_proto(
-        response: SemanticTokensDeltaResponse,
+        _: SemanticTokensResponse,
         _: &mut LspStore,
         _: PeerId,
-        buffer_version: &clock::Global,
+        _: &clock::Global,
         _: &mut App,
-    ) -> proto::SemanticTokensDeltaResponse {
-        match response {
-            SemanticTokensDeltaResponse::Full { data, result_id } => {
-                proto::SemanticTokensDeltaResponse {
-                    data,
-                    edits: Vec::new(),
-                    result_id: result_id.map(|s| s.to_string()),
-                    version: serialize_version(buffer_version),
-                }
-            }
-            SemanticTokensDeltaResponse::Delta { edits, result_id } => {
-                proto::SemanticTokensDeltaResponse {
-                    data: Vec::new(),
-                    edits: edits
-                        .into_iter()
-                        .map(|edit| proto::SemanticTokensEdit {
-                            start: edit.start,
-                            delete_count: edit.delete_count,
-                            data: edit.data,
-                        })
-                        .collect(),
-                    result_id: result_id.map(|s| s.to_string()),
-                    version: serialize_version(buffer_version),
-                }
-            }
-        }
+    ) -> proto::SemanticTokensResponse {
+        unimplemented!("Delta requests are not sent over collab")
     }
 
     async fn response_from_proto(
         self,
-        message: proto::SemanticTokensDeltaResponse,
+        _: proto::SemanticTokensResponse,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
-    ) -> anyhow::Result<SemanticTokensDeltaResponse> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
-
-        if !message.data.is_empty() {
-            Ok(SemanticTokensDeltaResponse::Full {
-                data: message.data,
-                result_id: message.result_id.map(SharedString::new),
-            })
-        } else {
-            Ok(SemanticTokensDeltaResponse::Delta {
-                edits: message
-                    .edits
-                    .into_iter()
-                    .map(|edit| SemanticTokensEdit {
-                        start: edit.start,
-                        delete_count: edit.delete_count,
-                        data: edit.data,
-                    })
-                    .collect(),
-                result_id: message.result_id.map(SharedString::new),
-            })
-        }
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensResponse> {
+        unimplemented!("Delta requests are not sent over collab")
     }
 
-    fn buffer_id_from_proto(message: &proto::SemanticTokensDelta) -> Result<BufferId> {
+    fn buffer_id_from_proto(message: &proto::SemanticTokens) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

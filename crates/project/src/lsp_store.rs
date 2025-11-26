@@ -8938,13 +8938,8 @@ impl LspStore {
                 .await
                 .context("querying for inlay hints")?
             }
-            Request::SemanticTokensFull(semantic_tokens_full) => {
-                //
-                todo!("TODO kb")
-            }
-            Request::SemanticTokensDelta(semantic_tokens_delta) => {
-                //
-                todo!("TODO kb")
+            Request::SemanticTokens(semantic_tokens) => {
+                // TODO kb actually handle the tokens"
             }
         }
         Ok(proto::Ack {})

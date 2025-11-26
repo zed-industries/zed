@@ -107,7 +107,7 @@ impl Editor {
 
             let all_semantic_tokens = join_all(all_semantic_tokens_task).await;
             editor.update(cx, |editor, cx| {
-                editor.display_map.update(cx, |display_map, cx| {
+                editor.display_map.update(cx, |display_map, _| {
                     for buffer_id in invalidate_semantic_highlgights_for_buffers {
                         display_map.invalidate_semantic_highlights(buffer_id);
                     }
