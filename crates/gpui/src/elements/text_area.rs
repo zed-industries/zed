@@ -45,6 +45,9 @@ const DEFAULT_SELECTION_COLOR: u32 = 0x3584e488;
 /// Width of the cursor in pixels.
 const CURSOR_WIDTH: f32 = 2.0;
 
+/// Thickness of the underline for marked (IME composition) text.
+const MARKED_TEXT_UNDERLINE_THICKNESS: f32 = 2.0;
+
 /// Creates a new `TextArea` element for the given `Input` entity.
 #[track_caller]
 pub fn text_area(input: &Entity<Input>) -> TextArea {
@@ -335,6 +338,20 @@ impl Element for TextArea {
                         );
                     }
 
+                    if let Some(marked_range) = &paint_state.marked_range {
+                        if !marked_range.is_empty() {
+                            paint_marked_text_underline(
+                                &paint_state.line_layouts,
+                                marked_range,
+                                bounds,
+                                paint_state.scroll_offset,
+                                paint_state.line_height,
+                                colors.cursor,
+                                window,
+                            );
+                        }
+                    }
+
                     if paint_state.is_focused && paint_state.selected_range.is_empty() {
                         paint_cursor(
                             &paint_state.line_layouts,
@@ -357,6 +374,7 @@ impl Element for TextArea {
 struct PaintState {
     content: String,
     selected_range: std::ops::Range<usize>,
+    marked_range: Option<std::ops::Range<usize>>,
     cursor_offset: usize,
     line_layouts: Vec<InputLineLayout>,
     scroll_offset: Pixels,
@@ -376,6 +394,7 @@ impl PaintState {
         Self {
             content: input_state.content().to_string(),
             selected_range: input_state.selected_range().clone(),
+            marked_range: input_state.marked_range().cloned(),
             cursor_offset: input_state.cursor_offset(),
             line_layouts: input_state.line_layouts.clone(),
             scroll_offset: input_state.scroll_offset,
@@ -737,6 +756,146 @@ fn paint_multi_visual_line_selection(
         ),
         selection_color,
     ));
+}
+
+/// Paints an underline beneath marked (IME composition) text.
+fn paint_marked_text_underline(
+    line_layouts: &[InputLineLayout],
+    marked_range: &std::ops::Range<usize>,
+    bounds: Bounds<Pixels>,
+    scroll_offset: Pixels,
+    line_height: Pixels,
+    underline_color: Hsla,
+    window: &mut Window,
+) {
+    for line in line_layouts {
+        let line_y = line.y_offset - scroll_offset;
+
+        if !is_line_visible(
+            line_y,
+            line_height,
+            line.visual_line_count,
+            bounds.size.height,
+        ) {
+            continue;
+        }
+
+        if !line_intersects_range(&line.text_range, marked_range) {
+            continue;
+        }
+
+        if line.text_range.is_empty() {
+            continue;
+        }
+
+        if let Some(wrapped) = &line.wrapped_line {
+            paint_wrapped_line_underline(
+                wrapped,
+                line,
+                marked_range,
+                bounds,
+                line_y,
+                line_height,
+                underline_color,
+                window,
+            );
+        }
+    }
+}
+
+/// Paints underline for marked text within a wrapped line.
+fn paint_wrapped_line_underline(
+    wrapped: &crate::WrappedLine,
+    line: &InputLineLayout,
+    marked_range: &std::ops::Range<usize>,
+    bounds: Bounds<Pixels>,
+    line_y: Pixels,
+    line_height: Pixels,
+    underline_color: Hsla,
+    window: &mut Window,
+) {
+    let line_start = line.text_range.start;
+    let line_end = line.text_range.end;
+
+    let mark_start = marked_range.start.max(line_start) - line_start;
+    let mark_end = marked_range.end.min(line_end) - line_start;
+
+    let start_pos = wrapped
+        .position_for_index(mark_start, line_height)
+        .unwrap_or(point(px(0.), px(0.)));
+    let end_pos = wrapped
+        .position_for_index(mark_end, line_height)
+        .unwrap_or_else(|| {
+            let last_line_y = line_height * (line.visual_line_count - 1) as f32;
+            point(wrapped.width(), last_line_y)
+        });
+
+    let start_visual_line = compute_visual_line_index(start_pos.y, line_height);
+    let end_visual_line = compute_visual_line_index(end_pos.y, line_height);
+
+    let underline_thickness = px(MARKED_TEXT_UNDERLINE_THICKNESS);
+    let underline_offset = line_height - underline_thickness;
+
+    if start_visual_line == end_visual_line {
+        window.paint_quad(fill(
+            Bounds::from_corners(
+                point(
+                    bounds.left() + start_pos.x,
+                    bounds.top() + line_y + start_pos.y + underline_offset,
+                ),
+                point(
+                    bounds.left() + end_pos.x,
+                    bounds.top() + line_y + start_pos.y + line_height,
+                ),
+            ),
+            underline_color,
+        ));
+    } else {
+        // First visual line
+        window.paint_quad(fill(
+            Bounds::from_corners(
+                point(
+                    bounds.left() + start_pos.x,
+                    bounds.top() + line_y + start_pos.y + underline_offset,
+                ),
+                point(
+                    bounds.left() + wrapped.width(),
+                    bounds.top() + line_y + start_pos.y + line_height,
+                ),
+            ),
+            underline_color,
+        ));
+
+        // Middle visual lines
+        for visual_line in (start_visual_line + 1)..end_visual_line {
+            let y = line_height * visual_line as f32;
+            window.paint_quad(fill(
+                Bounds::from_corners(
+                    point(bounds.left(), bounds.top() + line_y + y + underline_offset),
+                    point(
+                        bounds.left() + wrapped.width(),
+                        bounds.top() + line_y + y + line_height,
+                    ),
+                ),
+                underline_color,
+            ));
+        }
+
+        // Last visual line
+        window.paint_quad(fill(
+            Bounds::from_corners(
+                point(
+                    bounds.left(),
+                    bounds.top() + line_y + end_pos.y + underline_offset,
+                ),
+                point(
+                    bounds.left() + end_pos.x,
+                    bounds.top() + line_y + end_pos.y + line_height,
+                ),
+            ),
+            underline_color,
+        ));
+    }
 }
 
 fn paint_placeholder(
