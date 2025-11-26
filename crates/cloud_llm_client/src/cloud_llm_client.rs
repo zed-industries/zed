@@ -169,6 +169,17 @@ pub struct PredictEditsBody {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
+    /// The trigger for this request.
+    #[serde(default)]
+    pub trigger: PredictEditsRequestTrigger,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum PredictEditsRequestTrigger {
+    Diagnostics,
+    Cli,
+    #[default]
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

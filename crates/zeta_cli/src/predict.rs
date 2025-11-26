@@ -226,7 +226,13 @@ pub async fn perform_predict(
 
     let prediction = zeta
         .update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
+            zeta.request_prediction(
+                &project,
+                &cursor_buffer,
+                cursor_anchor,
+                cloud_llm_client::PredictEditsRequestTrigger::Cli,
+                cx,
+            )
         })?
         .await?;
 

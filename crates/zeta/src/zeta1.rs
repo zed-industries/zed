@@ -8,7 +8,8 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::{
-    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, predict_edits_v3::Event,
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger, PredictEditsResponse,
+    predict_edits_v3::Event,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use input_excerpt::excerpt_for_cursor_position;
@@ -35,6 +36,7 @@ pub(crate) fn request_prediction_with_zeta1(
     snapshot: BufferSnapshot,
     position: language::Anchor,
     events: Vec<Arc<Event>>,
+    trigger: PredictEditsRequestTrigger,
     cx: &mut Context<Zeta>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer = buffer.clone();
@@ -70,6 +72,7 @@ pub(crate) fn request_prediction_with_zeta1(
         &snapshot,
         cursor_point,
         prompt_for_events,
+        trigger,
         cx,
     );
 
@@ -402,6 +405,7 @@ pub fn gather_context(
     snapshot: &BufferSnapshot,
     cursor_point: language::Point,
     prompt_for_events: impl FnOnce() -> (String, usize) + Send + 'static,
+    trigger: PredictEditsRequestTrigger,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     cx.background_spawn({
@@ -425,6 +429,7 @@ pub fn gather_context(
                 git_info: None,
                 outline: None,
                 speculated_output: None,
+                trigger,
             };
 
             Ok(GatherContextOutput {
