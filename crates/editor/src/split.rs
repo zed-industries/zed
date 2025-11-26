@@ -21,16 +21,33 @@ pub(crate) struct SplitDiff;
 pub(crate) struct UnsplitDiff;
 
 pub struct SplittableEditor {
-    primary: Entity<Editor>,
-    secondary: Option<(Entity<Editor>, Entity<Pane>)>,
+    primary_editor: Entity<Editor>,
+    secondary: Option<SecondaryEditor>,
     panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
 }
 
+struct SecondaryEditor {
+    editor: Entity<Editor>,
+    pane: Entity<Pane>,
+    has_latest_selection: bool,
+    _subscriptions: Vec<Subscription>,
+}
+
 impl SplittableEditor {
-    pub fn primary(&self) -> &Entity<Editor> {
-        &self.primary
+    pub fn primary_editor(&self) -> &Entity<Editor> {
+        &self.primary_editor
+    }
+
+    pub fn last_selected_editor(&self) -> &Entity<Editor> {
+        if let Some(secondary) = &self.secondary
+            && secondary.has_latest_selection
+        {
+            &secondary.editor
+        } else {
+            &self.primary_editor
+        }
     }
 
     pub fn new_unsplit(
@@ -40,7 +57,7 @@ impl SplittableEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.read(cx).project().clone();
-        let primary =
+        let primary_editor =
             cx.new(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), window, cx));
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(
@@ -54,16 +71,24 @@ impl SplittableEditor {
                 cx,
             );
             pane.set_should_display_tab_bar(|_, _| false);
-            pane.add_item(primary.boxed_clone(), true, true, None, window, cx);
+            pane.add_item(primary_editor.boxed_clone(), true, true, None, window, cx);
             pane
         });
         let panes = PaneGroup::new(pane);
-        // TODO we might want to subscribe to both editors and emit a tagged union of their events
-        let subscriptions = vec![cx.subscribe(&primary, |_, _, event: &EditorEvent, cx| {
-            cx.emit(event.clone())
-        })];
+        // TODO we might want to tag editor events with whether they came from primary/secondary
+        let subscriptions =
+            vec![
+                cx.subscribe(&primary_editor, |this, _, event: &EditorEvent, cx| {
+                    if let EditorEvent::SelectionsChanged { .. } = event
+                        && let Some(secondary) = &mut this.secondary
+                    {
+                        secondary.has_latest_selection = false;
+                    }
+                    cx.emit(event.clone())
+                }),
+            ];
         Self {
-            primary,
+            primary_editor,
             secondary: None,
             panes,
             workspace: workspace.downgrade(),
@@ -78,7 +103,7 @@ impl SplittableEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let follower = self.primary.update(cx, |primary, cx| {
+        let follower = self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, cx| {
                 let follower = buffer.get_or_create_follower(cx);
                 buffer.set_all_diff_hunks_expanded(cx);
@@ -91,7 +116,7 @@ impl SplittableEditor {
             follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
             // FIXME set readonly here too?
         });
-        let secondary = cx.new(|cx| {
+        let secondary_editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(
                 follower,
                 Some(workspace.read(cx).project().clone()),
@@ -113,10 +138,34 @@ impl SplittableEditor {
                 cx,
             );
             pane.set_should_display_tab_bar(|_, _| false);
-            pane.add_item(secondary.boxed_clone(), false, false, None, window, cx);
+            pane.add_item(
+                secondary_editor.boxed_clone(),
+                false,
+                false,
+                None,
+                window,
+                cx,
+            );
             pane
         });
-        self.secondary = Some((secondary.clone(), secondary_pane.clone()));
+
+        let subscriptions =
+            vec![
+                cx.subscribe(&secondary_editor, |this, _, event: &EditorEvent, cx| {
+                    if let EditorEvent::SelectionsChanged { .. } = event
+                        && let Some(secondary) = &mut this.secondary
+                    {
+                        secondary.has_latest_selection = true;
+                    }
+                    cx.emit(event.clone())
+                }),
+            ];
+        self.secondary = Some(SecondaryEditor {
+            editor: secondary_editor,
+            pane: secondary_pane.clone(),
+            has_latest_selection: false,
+            _subscriptions: subscriptions,
+        });
         let primary_pane = self.panes.first_pane();
         self.panes
             .split(&primary_pane, &secondary_pane, SplitDirection::Left)
@@ -125,11 +174,11 @@ impl SplittableEditor {
     }
 
     pub(crate) fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, secondary_pane)) = self.secondary.take() else {
+        let Some(secondary) = self.secondary.take() else {
             return;
         };
-        self.panes.remove(&secondary_pane).unwrap();
-        self.primary.update(cx, |primary, cx| {
+        self.panes.remove(&secondary.pane).unwrap();
+        self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, _| {
                 buffer.set_filter_mode(None);
             });
@@ -141,7 +190,7 @@ impl SplittableEditor {
 impl EventEmitter<EditorEvent> for SplittableEditor {}
 impl Focusable for SplittableEditor {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.primary.read(cx).focus_handle(cx)
+        self.primary_editor.read(cx).focus_handle(cx)
     }
 }
 
@@ -173,6 +222,6 @@ impl Item for SplittableEditor {
     type Event = EditorEvent;
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
-        self.primary.read(cx).tab_content_text(detail, cx)
+        self.primary_editor.read(cx).tab_content_text(detail, cx)
     }
 }
