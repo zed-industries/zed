@@ -58,7 +58,7 @@ impl Rope {
         match item {
             Some(chunk) => {
                 let chunk_offset = offset - start;
-                chunk.assert_char_boundary(chunk_offset);
+                chunk.assert_char_boundary::<true>(chunk_offset);
             }
             None => {
                 panic!(
