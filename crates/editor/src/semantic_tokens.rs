@@ -19,23 +19,6 @@ use ui::ActiveTheme as _;
 use crate::{Editor, display_map::SemanticTokenHighlight};
 
 impl Editor {
-    pub fn toggle_semantic_tokens(&mut self, cx: &mut Context<Self>) {
-        self.semantic_tokens_enabled = !self.semantic_tokens_enabled;
-        self.update_semantic_tokens(None, false, cx);
-    }
-
-    pub fn semantic_tokens_available(&self, cx: &App) -> bool {
-        self.buffer.read(cx).all_buffers().iter().any(|buffer| {
-            let buffer = buffer.read(cx);
-            let file = buffer.file();
-            language_settings(buffer.language().map(|l| l.name()), file, cx).semantic_tokens
-        })
-    }
-
-    pub fn semantic_tokens_enabled(&self) -> bool {
-        self.semantic_tokens_enabled
-    }
-
     pub(crate) fn update_semantic_tokens(
         &mut self,
         buffer_id: Option<BufferId>,

@@ -17762,6 +17762,7 @@ async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
 }
 
 // TODO kb make a visual test instead?
+// TODO kb test multi buffers either, similar to what inlays do
 fn extract_semantic_highlights(
     editor: &Entity<Editor>,
     cx: &TestAppContext,
