@@ -38,7 +38,7 @@ use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
-use rand::{Rng as _, rand_core::le, rngs::StdRng};
+use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
@@ -8230,10 +8230,11 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
 
     cx.run_until_parked();
 
-    let output = std::process::Command::new("git")
+    let output = smol::process::Command::new("git")
         .current_dir(&work_dir)
         .args(["diff", "--staged"])
         .output()
+        .await
         .unwrap();
 
     let staged_diff = String::from_utf8_lossy(&output.stdout);
