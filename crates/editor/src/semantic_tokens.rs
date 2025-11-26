@@ -7,7 +7,7 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
-use project::project_settings::ProjectSettings;
+use project::{lsp_store::RefreshForServer, project_settings::ProjectSettings};
 use settings::{
     SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
     SemanticTokenRules, Settings as _,
@@ -22,7 +22,7 @@ impl Editor {
     pub(crate) fn update_semantic_tokens(
         &mut self,
         buffer_id: Option<BufferId>,
-        refresh: bool,
+        for_server: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) {
         if !self.mode().is_full() || !self.semantic_tokens_enabled {
@@ -34,7 +34,7 @@ impl Editor {
             return;
         }
 
-        if refresh {
+        if for_server.is_some() {
             self.semantic_tokens_fetched_for_buffers.clear();
         }
 
@@ -89,7 +89,7 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                let task = sema.semantic_tokens(buffer, refresh, cx);
+                                let task = sema.semantic_tokens(buffer, for_server, cx);
                                 Some(async move { (buffer_id, query_version, task.await) })
                             }
                         })

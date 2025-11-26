@@ -156,8 +156,8 @@ use project::{
     },
     git_store::GitStoreEvent,
     lsp_store::{
-        CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
-        OpenLspBufferHandle, BufferSemanticTokens,
+        BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
+        LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -1926,8 +1926,18 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::RefreshSemanticTokens { .. } => {
-                        editor.update_semantic_tokens(None, true, cx);
+                    project::Event::RefreshSemanticTokens {
+                        server_id,
+                        request_id,
+                    } => {
+                        editor.update_semantic_tokens(
+                            None,
+                            Some(RefreshForServer {
+                                server_id: *server_id,
+                                request_id: *request_id,
+                            }),
+                            cx,
+                        );
                     }
                     project::Event::LanguageServerRemoved(..) => {
                         if editor.tasks_update_task.is_none() {
@@ -21713,7 +21723,7 @@ impl Editor {
                 )),
                 cx,
             );
-            self.update_semantic_tokens(None, false, cx);
+            self.update_semantic_tokens(None, None, cx);
         }
 
         cx.notify();
@@ -22586,7 +22596,7 @@ impl Editor {
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
-        self.update_semantic_tokens(for_buffer, false, cx);
+        self.update_semantic_tokens(for_buffer, None, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
@@ -23340,7 +23350,7 @@ pub trait SemanticsProvider {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: bool,
+        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
 
@@ -23924,7 +23934,7 @@ impl SemanticsProvider for Entity<Project> {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: bool,
+        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>> {
         self.read(cx).lsp_store().update(cx, |lsp_store, cx| {

@@ -24,6 +24,12 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone, Copy)]
+pub struct RefreshForServer {
+    pub server_id: LanguageServerId,
+    pub request_id: Option<usize>,
+}
+
 impl LspStore {
     pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<BufferSemanticTokens> {
         Some(
@@ -39,7 +45,7 @@ impl LspStore {
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
-        refresh: bool,
+        refresh: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
@@ -53,7 +59,7 @@ impl LspStore {
         }
 
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
-        if refresh {
+        if refresh.is_some() {
             latest_lsp_data.semantic_tokens = None;
         }
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
