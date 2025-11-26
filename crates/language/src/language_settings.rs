@@ -13,7 +13,7 @@ use itertools::{Either, Itertools};
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordDiffMaxLines, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
@@ -153,14 +153,13 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
-    /// Maximum number of lines in a diff section before word diff highlighting is disabled.
+    /// Whether to enable word diff highlighting in the editor.
     ///
-    /// If either the deleted or added section of a diff exceeds this line count,
-    /// no word/character diff will be generated for that section. This improves
-    /// performance for large diffs.
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
     ///
-    /// Default: `1`
-    pub word_diff_max_lines: WordDiffMaxLines,
+    /// Default: `true`
+    pub word_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -603,7 +602,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
-                word_diff_max_lines: settings.word_diff_max_lines.unwrap(),
+                word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
 

@@ -1,7 +1,10 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
-use language::{DiffOptions, Language, LanguageRegistry, word_diff_ranges};
+use language::{
+    DiffOptions, File, Language, LanguageName, LanguageRegistry,
+    language_settings::language_settings, word_diff_ranges,
+};
 use rope::Rope;
 use std::{
     cmp::Ordering,
@@ -15,6 +18,7 @@ use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
 
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
+pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
@@ -210,11 +214,12 @@ impl BufferDiffSnapshot {
         let base_text_pair;
         let base_text_exists;
         let base_text_snapshot;
-        let diff_options = DiffOptions {
-            language_scope: language.as_ref().map(|lang| lang.default_scope()),
-            max_word_diff_line_count: 5,
-            ..Default::default()
-        };
+        let diff_options = build_diff_options(
+            None,
+            language.as_ref().map(|l| l.name()),
+            language.as_ref().map(|l| l.default_scope()),
+            cx,
+        );
 
         if let Some(text) = &base_text {
             let base_text_rope = Rope::from(text.as_str());
@@ -256,13 +261,12 @@ impl BufferDiffSnapshot {
         base_text_snapshot: language::BufferSnapshot,
         cx: &App,
     ) -> impl Future<Output = Self> + use<> {
-        let diff_options = DiffOptions {
-            language_scope: base_text_snapshot
-                .language()
-                .map(|lang| lang.default_scope()),
-            max_word_diff_line_count: 5,
-            ..Default::default()
-        };
+        let diff_options = build_diff_options(
+            base_text_snapshot.file(),
+            base_text_snapshot.language().map(|l| l.name()),
+            base_text_snapshot.language().map(|l| l.default_scope()),
+            cx,
+        );
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| {
             debug_assert_eq!(&*text, &base_text_snapshot.text());
@@ -773,10 +777,36 @@ impl BufferDiffInner {
     }
 }
 
+fn build_diff_options(
+    file: Option<&Arc<dyn File>>,
+    language: Option<LanguageName>,
+    language_scope: Option<language::LanguageScope>,
+    cx: &App,
+) -> Option<DiffOptions> {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        if !cx.has_global::<settings::SettingsStore>() {
+            return Some(DiffOptions {
+                language_scope,
+                max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+                ..Default::default()
+            });
+        }
+    }
+
+    language_settings(language, file, cx)
+        .word_diff_enabled
+        .then_some(DiffOptions {
+            language_scope,
+            max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+            ..Default::default()
+        })
+}
+
 fn compute_hunks(
     diff_base: Option<(Arc<String>, Rope)>,
     buffer: text::BufferSnapshot,
-    diff_options: DiffOptions,
+    diff_options: Option<DiffOptions>,
 ) -> SumTree<InternalDiffHunk> {
     let mut tree = SumTree::new(&buffer);
 
@@ -819,7 +849,7 @@ fn compute_hunks(
                     &diff_base_rope,
                     &buffer,
                     &mut divergence,
-                    &diff_options,
+                    diff_options.as_ref(),
                 );
                 tree.push(hunk, &buffer);
             }
@@ -845,7 +875,7 @@ fn process_patch_hunk(
     diff_base: &Rope,
     buffer: &text::BufferSnapshot,
     buffer_row_divergence: &mut i64,
-    diff_options: &DiffOptions,
+    diff_options: Option<&DiffOptions>,
 ) -> InternalDiffHunk {
     let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
     assert!(line_item_count > 0);
@@ -915,9 +945,10 @@ fn process_patch_hunk(
         .len()
         .max(line_item_count.saturating_sub(buffer_row_range.len()));
 
-    let (base_word_diffs, buffer_word_diffs) = if (!diff_base_byte_range.is_empty()
-        && !buffer_row_range.is_empty())
-        && (diff_options.max_word_diff_line_count >= largest_diff_line_count)
+    let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
+        && !diff_base_byte_range.is_empty()
+        && !buffer_row_range.is_empty()
+        && diff_options.max_word_diff_line_count >= largest_diff_line_count
     {
         let base_text: String = diff_base
             .chunks_in_range(diff_base_byte_range.clone())

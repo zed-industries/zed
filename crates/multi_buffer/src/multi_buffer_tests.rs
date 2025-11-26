@@ -4106,8 +4106,7 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.word_diff_max_lines =
-                    Some(settings::WordDiffMaxLines(10));
+                settings.project.all_languages.defaults.word_diff_enabled = Some(true);
             });
         });
     });
