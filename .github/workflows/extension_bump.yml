@@ -15,6 +15,9 @@ on:
         default: patch
     secrets:
       app-id:
+        description: The app ID used to create the PR
+        required: true
+      app-secret:
         description: The app secret for the corresponding app ID
         required: true
   workflow_dispatch:
@@ -87,7 +90,7 @@ jobs:
       uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ secrets.app-id }}
-        private-key: ${{ secrets.app-id }}
+        private-key: ${{ secrets.app-secret }}
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:

@@ -27,7 +27,8 @@ pub(crate) fn extension_bump() -> Workflow {
     let bump_type = WorkflowInput::string("bump-type", Some("patch".to_owned()));
 
     let app_id = WorkflowSecret::new("app-id", "The app ID used to create the PR");
-    let app_secret = WorkflowSecret::new("app-id", "The app secret for the corresponding app ID");
+    let app_secret =
+        WorkflowSecret::new("app-secret", "The app secret for the corresponding app ID");
 
     let test_extension = extension_tests::check_extension();
     let (check_bump_needed, needs_bump) = check_bump_needed();
