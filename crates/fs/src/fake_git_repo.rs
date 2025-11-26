@@ -138,6 +138,7 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         content: Option<String>,
         _env: Arc<HashMap<String, String>>,
+        _is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
             if let Some(message) = &state.simulated_index_write_error_message {
