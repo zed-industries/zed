@@ -3,7 +3,7 @@ use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSpecification, NativeRunningKernel, KernelSession},
+    kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
 use anyhow::Context as _;
@@ -486,7 +486,6 @@ impl Session {
             });
         }
     }
-
 
     pub fn interrupt(&mut self, cx: &mut Context<Self>) {
         match &mut self.kernel {

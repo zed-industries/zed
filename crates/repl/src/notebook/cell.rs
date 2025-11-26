@@ -170,7 +170,7 @@ impl Cell {
                         cx,
                     )
                 }))
-            },
+            }
             nbformat::v4::Cell::Raw {
                 id,
                 metadata,

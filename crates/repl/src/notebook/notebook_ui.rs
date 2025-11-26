@@ -153,7 +153,7 @@ impl NotebookEditor {
             languages: languages.clone(),
             focus_handle,
             notebook_item,
-            notebook_language: notebook_language.clone(),
+            notebook_language,
             remote_id: None,
             cell_list,
             selected_cell_index: 0,
@@ -257,8 +257,7 @@ impl NotebookEditor {
         let message: JupyterMessage = request.into();
         let msg_id = message.header.msg_id.clone();
 
-        self.execution_requests
-            .insert(msg_id.clone(), cell_id.clone());
+        self.execution_requests.insert(msg_id, cell_id.clone());
 
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.request_tx().try_send(message).ok();
@@ -626,7 +625,7 @@ impl NotebookEditor {
     }
 
     fn cell_list(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let view = cx.entity().clone();
+        let view = cx.entity();
         list(self.cell_list.clone(), move |index, window, cx| {
             view.update(cx, |this, cx| {
                 let cell_id = &this.cell_order[index];

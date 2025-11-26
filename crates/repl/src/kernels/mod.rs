@@ -15,11 +15,11 @@ use project::{Project, ProjectPath, Toolchains, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
+use gpui::Context;
 use jupyter_protocol::JupyterKernelspec;
 use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
 use util::rel_path::RelPath;
-use gpui::Context;
 
 pub trait KernelSession: Sized {
     fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>);
