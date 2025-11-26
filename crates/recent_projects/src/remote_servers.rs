@@ -41,8 +41,7 @@ use std::{
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalHeader, Navigable, NavigableEntry, Section, SpinnerLabel, Tooltip, WithScrollbar,
-    prelude::*,
+    ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,

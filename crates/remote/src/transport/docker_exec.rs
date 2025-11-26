@@ -431,7 +431,7 @@ impl RemoteConnection for DockerExecConnection {
     fn start_proxy(
         &self,
         unique_identifier: String,
-        reconnect: bool,
+        _reconnect: bool,
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,

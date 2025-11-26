@@ -10,9 +10,9 @@ use crate::remote_connections::Connection;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerUp {
-    outcome: String,
+    _outcome: String,
     container_id: String,
-    remote_user: String,
+    _remote_user: String,
     remote_workspace_folder: String,
 }
 
