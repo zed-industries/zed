@@ -4542,12 +4542,10 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let contents = if self.cached_entries.is_empty() {
-            let header = if self.updating_fs_entries || self.updating_cached_entries {
-                None
-            } else if query.is_some() {
-                Some("No matches for query")
+            let header = if query.is_some() {
+                "No matches for query"
             } else {
-                Some("No outlines available")
+                "No outlines available"
             };
 
             v_flex()
@@ -4556,33 +4554,28 @@ impl OutlinePanel {
                 .flex_1()
                 .justify_center()
                 .size_full()
-                .when_some(header, |panel, header| {
-                    panel
-                        .child(h_flex().justify_center().child(Label::new(header)))
-                        .when_some(query.clone(), |panel, query| {
-                            panel.child(
-                                h_flex()
-                                    .px_0p5()
-                                    .justify_center()
-                                    .bg(cx.theme().colors().element_selected.opacity(0.2))
-                                    .child(Label::new(query)),
-                            )
-                        })
-                        .child(h_flex().justify_center().child({
-                            let keystroke = match self.position(window, cx) {
-                                DockPosition::Left => {
-                                    window.keystroke_text_for(&workspace::ToggleLeftDock)
-                                }
-                                DockPosition::Bottom => {
-                                    window.keystroke_text_for(&workspace::ToggleBottomDock)
-                                }
-                                DockPosition::Right => {
-                                    window.keystroke_text_for(&workspace::ToggleRightDock)
-                                }
-                            };
-                            Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
-                        }))
+                .child(h_flex().justify_center().child(Label::new(header)))
+                .when_some(query, |panel, query| {
+                    panel.child(
+                        h_flex()
+                            .px_0p5()
+                            .justify_center()
+                            .bg(cx.theme().colors().element_selected.opacity(0.2))
+                            .child(Label::new(query)),
+                    )
                 })
+                .child(h_flex().justify_center().child({
+                    let keystroke = match self.position(window, cx) {
+                        DockPosition::Left => window.keystroke_text_for(&workspace::ToggleLeftDock),
+                        DockPosition::Bottom => {
+                            window.keystroke_text_for(&workspace::ToggleBottomDock)
+                        }
+                        DockPosition::Right => {
+                            window.keystroke_text_for(&workspace::ToggleRightDock)
+                        }
+                    };
+                    Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
+                }))
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
