@@ -8247,10 +8247,11 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
             staged_diff
         );
 
-        let output = std::process::Command::new("git")
+        let output = smol::process::Command::new("git")
             .current_dir(&work_dir)
             .args(["ls-files", "-s"])
             .output()
+            .await
             .unwrap();
         let index_contents = String::from_utf8_lossy(&output.stdout);
 
