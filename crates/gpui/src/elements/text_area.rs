@@ -39,9 +39,6 @@ use crate::{
 
 use super::input::{Input, InputLineLayout};
 
-/// Default selection highlight color (blue with transparency).
-const DEFAULT_SELECTION_COLOR: u32 = 0x3584e488;
-
 /// Width of the cursor in pixels.
 const CURSOR_WIDTH: f32 = 2.0;
 
