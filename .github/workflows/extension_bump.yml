@@ -60,7 +60,7 @@ jobs:
       run: |+
         CURRENT_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
 
-        git checkout HEAD~1
+        git checkout $(git log -1 --format=%H)~1
 
         PREV_COMMIT_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
 

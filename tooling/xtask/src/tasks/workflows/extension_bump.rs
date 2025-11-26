@@ -75,7 +75,7 @@ fn compare_versions() -> (Step<Run>, StepOutput) {
             r#"
         CURRENT_VERSION="$({})"
 
-        git checkout HEAD~1
+        git checkout $(git log -1 --format=%H)~1
 
         PREV_COMMIT_VERSION="$({})"
 
