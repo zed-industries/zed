@@ -353,6 +353,8 @@ pub enum ToolCallContent {
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -396,6 +398,7 @@ pub struct ToolCallChunk {
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Deserialize)]

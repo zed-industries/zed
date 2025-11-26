@@ -12,7 +12,9 @@ use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
-    env, fs, io,
+    env,
+    ffi::OsStr,
+    fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
@@ -129,37 +131,177 @@ struct Args {
     askpass: Option<String>,
 }
 
+/// Parses a path containing a position (e.g. `path:line:column`)
+/// and returns its canonicalized string representation.
+///
+/// If a part of path doesn't exist, it will canonicalize the
+/// existing part and append the non-existing part.
+///
+/// This method must return an absolute path, as many zed
+/// crates assume absolute paths.
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
-    let canonicalized = match Path::new(argument_str).canonicalize() {
-        Ok(existing_path) => PathWithPosition::from_path(existing_path),
-        Err(_) => {
-            let path = PathWithPosition::parse_str(argument_str);
+    match Path::new(argument_str).canonicalize() {
+        Ok(existing_path) => Ok(PathWithPosition::from_path(existing_path)),
+        Err(_) => PathWithPosition::parse_str(argument_str).map_path(|mut path| {
             let curdir = env::current_dir().context("retrieving current directory")?;
-            path.map_path(|path| match fs::canonicalize(&path) {
-                Ok(path) => Ok(path),
-                Err(e) => {
-                    if let Some(mut parent) = path.parent() {
-                        if parent == Path::new("") {
-                            parent = &curdir
-                        }
-                        match fs::canonicalize(parent) {
-                            Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
-                            Err(_) => Err(e),
-                        }
-                    } else {
-                        Err(e)
-                    }
+            let mut children = Vec::new();
+            let root;
+            loop {
+                // canonicalize handles './', and '/'.
+                if let Ok(canonicalized) = fs::canonicalize(&path) {
+                    root = canonicalized;
+                    break;
                 }
-            })
-        }
-        .with_context(|| format!("parsing as path with position {argument_str}"))?,
-    };
-    Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
+                // The comparison to `curdir` is just a shortcut
+                // since we know it is canonical. The other one
+                // is if `argument_str` is a string that starts
+                // with a name (e.g. "foo/bar").
+                if path == curdir || path == Path::new("") {
+                    root = curdir;
+                    break;
+                }
+                children.push(
+                    path.file_name()
+                        .with_context(|| format!("parsing as path with position {argument_str}"))?
+                        .to_owned(),
+                );
+                if !path.pop() {
+                    unreachable!("parsing as path with position {argument_str}");
+                }
+            }
+            Ok(children.iter().rev().fold(root, |mut path, child| {
+                path.push(child);
+                path
+            }))
+        }),
+    }
+    .map(|path_with_pos| path_with_pos.to_string(|path| path.to_string_lossy().into_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use util::path;
+    use util::paths::SanitizedPath;
+    use util::test::TempTree;
+
+    macro_rules! assert_path_eq {
+        ($left:expr, $right:expr) => {
+            assert_eq!(
+                SanitizedPath::new(Path::new(&$left)),
+                SanitizedPath::new(Path::new(&$right))
+            )
+        };
+    }
+
+    fn cwd() -> PathBuf {
+        env::current_dir().unwrap()
+    }
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_cwd<T>(path: &Path, f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+        let _lock = CWD_LOCK.lock();
+        let old_cwd = cwd();
+        env::set_current_dir(path)?;
+        let result = f();
+        env::set_current_dir(old_cwd)?;
+        result
+    }
+
+    #[test]
+    fn test_parse_non_existing_path() {
+        // Absolute path
+        let result = parse_path_with_position(path!("/non/existing/path.txt")).unwrap();
+        assert_path_eq!(result, path!("/non/existing/path.txt"));
+
+        // Absolute path in cwd
+        let path = cwd().join(path!("non/existing/path.txt"));
+        let expected = path.to_string_lossy().to_string();
+        let result = parse_path_with_position(&expected).unwrap();
+        assert_path_eq!(result, expected);
+
+        // Relative path
+        let result = parse_path_with_position(path!("non/existing/path.txt")).unwrap();
+        assert_path_eq!(result, expected)
+    }
+
+    #[test]
+    fn test_parse_existing_path() {
+        let temp_tree = TempTree::new(json!({
+            "file.txt": "",
+        }));
+        let file_path = temp_tree.path().join("file.txt");
+        let expected = file_path.to_string_lossy().to_string();
+
+        // Absolute path
+        let result = parse_path_with_position(file_path.to_str().unwrap()).unwrap();
+        assert_path_eq!(result, expected);
+
+        // Relative path
+        let result = with_cwd(temp_tree.path(), || parse_path_with_position("file.txt")).unwrap();
+        assert_path_eq!(result, expected);
+    }
+
+    // NOTE:
+    // While POSIX symbolic links are somewhat supported on Windows, they are an opt in by the user, and thus
+    // we assume that they are not supported out of the box.
+    #[cfg(not(windows))]
+    #[test]
+    fn test_parse_symlink_file() {
+        let temp_tree = TempTree::new(json!({
+            "target.txt": "",
+        }));
+        let target_path = temp_tree.path().join("target.txt");
+        let symlink_path = temp_tree.path().join("symlink.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).unwrap();
+
+        // Absolute path
+        let result = parse_path_with_position(symlink_path.to_str().unwrap()).unwrap();
+        assert_eq!(result, target_path.to_string_lossy());
+
+        // Relative path
+        let result =
+            with_cwd(temp_tree.path(), || parse_path_with_position("symlink.txt")).unwrap();
+        assert_eq!(result, target_path.to_string_lossy());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_parse_symlink_dir() {
+        let temp_tree = TempTree::new(json!({
+            "some": {
+                "dir": { // symlink target
+                    "ec": {
+                        "tory": {
+                            "file.txt": "",
+        }}}}}));
+
+        let target_file_path = temp_tree.path().join("some/dir/ec/tory/file.txt");
+        let expected = target_file_path.to_string_lossy();
+
+        let dir_path = temp_tree.path().join("some/dir");
+        let symlink_path = temp_tree.path().join("symlink");
+        std::os::unix::fs::symlink(&dir_path, &symlink_path).unwrap();
+
+        // Absolute path
+        let result =
+            parse_path_with_position(symlink_path.join("ec/tory/file.txt").to_str().unwrap())
+                .unwrap();
+        assert_eq!(result, expected);
+
+        // Relative path
+        let result = with_cwd(temp_tree.path(), || {
+            parse_path_with_position("symlink/ec/tory/file.txt")
+        })
+        .unwrap();
+        assert_eq!(result, expected);
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let mut source = PathWithPosition::parse_str(source);
-    let mut command = util::command::new_std_command("wsl.exe");
 
     let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
         if user.is_empty() {
@@ -170,22 +312,35 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
         (None, wsl)
     };
 
+    let mut args = vec!["--distribution", distro_name];
     if let Some(user) = user {
-        command.arg("--user").arg(user);
+        args.push("--user");
+        args.push(user);
     }
 
-    let output = command
-        .arg("--distribution")
-        .arg(distro_name)
-        .arg("--exec")
-        .arg("wslpath")
-        .arg("-m")
-        .arg(&source.path)
-        .output()?;
+    let command = [
+        OsStr::new("realpath"),
+        OsStr::new("-s"),
+        source.path.as_ref(),
+    ];
 
-    let result = String::from_utf8_lossy(&output.stdout);
-    let prefix = format!("//wsl.localhost/{}", distro_name);
-    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
+    let output = util::command::new_std_command("wsl.exe")
+        .args(&args)
+        .arg("--exec")
+        .args(&command)
+        .output()?;
+    let result = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    } else {
+        let fallback = util::command::new_std_command("wsl.exe")
+            .args(&args)
+            .arg("--")
+            .args(&command)
+            .output()?;
+        String::from_utf8_lossy(&fallback.stdout).to_string()
+    };
+
+    source.path = Path::new(result.trim()).to_owned();
 
     Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
 }

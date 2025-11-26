@@ -2051,6 +2051,7 @@ impl GitPanel {
                         role: Role::User,
                         content: vec![content.into()],
                         cache: false,
+            reasoning_details: None,
                     }],
                     tools: Vec::new(),
                     tool_choice: None,

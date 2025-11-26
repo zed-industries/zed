@@ -4,8 +4,7 @@ use collections::HashMap;
 use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::FontFamilyName;
 
@@ -30,9 +29,44 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: on
     pub detect_venv: Option<VenvSettings>,
+    /// Regexes used to identify paths for hyperlink navigation.
+    ///
+    /// Default: [
+    ///   // Python-style diagnostics
+    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+    ///   // Common path syntax with optional line, column, description, trailing punctuation, or
+    ///   // surrounding symbols or quotes
+    ///   [
+    ///     "(?x)",
+    ///     "# optionally starts with 0-2 opening prefix symbols",
+    ///     "[({\\[<]{0,2}",
+    ///     "# which may be followed by an opening quote",
+    ///     "(?<quote>[\"'`])?",
+    ///     "# `path` is the shortest sequence of any non-space character",
+    ///     "(?<link>(?<path>[^ ]+?",
+    ///     "    # which may end with a line and optionally a column,",
+    ///     "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+    ///     "))",
+    ///     "# which must be followed by a matching quote",
+    ///     "(?(<quote>)\\k<quote>)",
+    ///     "# and optionally a single closing symbol",
+    ///     "[)}\\]>]?",
+    ///     "# if line/column matched, may be followed by a description",
+    ///     "(?(<line_column>):[^ 0-9][^ ]*)?",
+    ///     "# which may be followed by trailing punctuation",
+    ///     "[.,:)}\\]>]*",
+    ///     "# and always includes trailing whitespace or end of line",
+    ///     "([ ]+|$)"
+    ///   ]
+    /// ]
+    pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 1
+    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
     #[serde(flatten)]
@@ -188,10 +222,11 @@ pub enum Shell {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
-    /// Use the current file's project directory.  Will Fallback to the
+    /// Use the current file's project directory. Fallback to the
     /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
-    /// Use the first project in this workspace's directory.
+    /// Use the first project in this workspace's directory. Fallback to using
+    /// this platform's home directory.
     FirstProjectDirectory,
     /// Always use this platform's home directory (if it can be found).
     AlwaysHome,
@@ -201,7 +236,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
@@ -339,7 +374,7 @@ pub enum AlternateScroll {
 }
 
 // Toolbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
@@ -386,7 +421,7 @@ pub enum VenvSettings {
         conda_manager: Option<CondaManager>,
     },
 }
-#[skip_serializing_none]
+#[with_fallible_options]
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
     pub venv_name: &'a str,
@@ -411,6 +446,13 @@ impl VenvSettings {
             }),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum PathHyperlinkRegex {
+    SingleLine(String),
+    MultiLine(Vec<String>),
 }
 
 #[derive(

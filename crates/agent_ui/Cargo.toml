@@ -69,7 +69,6 @@ postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
-ref-cast.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 rules_library.workspace = true
@@ -93,7 +92,6 @@ time_format.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 url.workspace = true
-urlencoding.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true
@@ -115,6 +113,7 @@ languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 rand.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true

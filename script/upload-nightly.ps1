@@ -12,10 +12,8 @@ ParseZedWorkspace
 Write-Host "Uploading nightly for target: $target"
 
 $bucketName = "zed-nightly-host"
-
-# Get current git SHA
-$sha = git rev-parse HEAD
-$sha | Out-File -FilePath "target/latest-sha" -NoNewline
+$releaseVersion = & "$PSScriptRoot\get-crate-version.ps1" zed
+$version = "$releaseVersion-$env:GITHUB_RUN_NUMBER+$env:GITHUB_SHA"
 
 # TODO:
 # Upload remote server files
@@ -26,7 +24,10 @@ $sha | Out-File -FilePath "target/latest-sha" -NoNewline
 # }
 
 UploadToBlobStore -BucketName $bucketName -FileToUpload "target/Zed-$Architecture.exe" -BlobStoreKey "nightly/Zed-$Architecture.exe"
-UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha-windows"
+UploadToBlobStore -BucketName $bucketName -FileToUpload "target/Zed-$Architecture.exe" -BlobStoreKey "$version/Zed-$Architecture.exe"
 
 Remove-Item -Path "target/Zed-$Architecture.exe" -ErrorAction SilentlyContinue
+
+$version | Out-File -FilePath "target/latest-sha" -NoNewline
+UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha-windows"
 Remove-Item -Path "target/latest-sha" -ErrorAction SilentlyContinue

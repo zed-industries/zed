@@ -28,7 +28,7 @@ use lsp::LanguageServerName;
 use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -68,7 +68,7 @@ pub struct WasmExtension {
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
     #[allow(unused)]
-    pub zed_api_version: SemanticVersion,
+    pub zed_api_version: Version,
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
@@ -630,7 +630,7 @@ impl WasmHost {
                 &executor,
                 &mut store,
                 this.release_channel,
-                zed_api_version,
+                zed_api_version.clone(),
                 &component,
             )
             .await?;
@@ -713,10 +713,7 @@ impl WasmHost {
     }
 }
 
-pub fn parse_wasm_extension_version(
-    extension_id: &str,
-    wasm_bytes: &[u8],
-) -> Result<SemanticVersion> {
+pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Result<Version> {
     let mut version = None;
 
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
@@ -743,9 +740,9 @@ pub fn parse_wasm_extension_version(
     version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
 }
 
-fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
+fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<Version> {
     if data.len() == 6 {
-        Some(SemanticVersion::new(
+        Some(Version::new(
             u16::from_be_bytes([data[0], data[1]]) as _,
             u16::from_be_bytes([data[2], data[3]]) as _,
             u16::from_be_bytes([data[4], data[5]]) as _,

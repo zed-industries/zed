@@ -48,7 +48,7 @@ pub async fn get_buffer_content_or_outline(
         if outline_items.is_empty() {
             let text = buffer.read_with(cx, |buffer, _| {
                 let snapshot = buffer.snapshot();
-                let len = snapshot.len().min(1024);
+                let len = snapshot.len().min(snapshot.as_rope().floor_char_boundary(1024));
                 let content = snapshot.text_for_range(0..len).collect::<String>();
                 if let Some(path) = path {
                     format!("# First 1KB of {path} (file too large to show full content, and no outline available)\n\n{content}")
@@ -178,7 +178,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        let content = "A".repeat(100 * 1024); // 100KB
+        let content = "⚡".repeat(100 * 1024); // 100KB
         let content_len = content.len();
         let buffer = project
             .update(cx, |project, cx| project.create_buffer(true, cx))
@@ -194,7 +194,7 @@ mod tests {
 
         // Should contain some of the actual file content
         assert!(
-            result.text.contains("AAAAAAAAAA"),
+            result.text.contains("⚡⚡⚡⚡⚡⚡⚡"),
             "Result did not contain content subset"
         );
 

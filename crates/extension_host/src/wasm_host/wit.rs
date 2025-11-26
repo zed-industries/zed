@@ -19,7 +19,7 @@ use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequ
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
-use semantic_version::SemanticVersion;
+use semver::Version;
 use since_v0_6_0 as latest;
 use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 use wasmtime::{
@@ -54,16 +54,13 @@ fn wasi_view(state: &mut WasmState) -> &mut WasmState {
 }
 
 /// Returns whether the given Wasm API version is supported by the Wasm host.
-pub fn is_supported_wasm_api_version(
-    release_channel: ReleaseChannel,
-    version: SemanticVersion,
-) -> bool {
+pub fn is_supported_wasm_api_version(release_channel: ReleaseChannel, version: Version) -> bool {
     wasm_api_version_range(release_channel).contains(&version)
 }
 
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
-pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
+pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<Version> {
     // Note: The release channel can be used to stage a new version of the extension API.
     let _ = release_channel;
 
@@ -114,7 +111,7 @@ impl Extension {
         executor: &BackgroundExecutor,
         store: &mut Store<WasmState>,
         release_channel: ReleaseChannel,
-        version: SemanticVersion,
+        version: Version,
         component: &Component,
     ) -> Result<Self> {
         // Note: The release channel can be used to stage a new version of the extension API.

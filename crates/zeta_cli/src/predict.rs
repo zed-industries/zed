@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use zeta2::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
+use zeta::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
 
 pub async fn run_predict(
     args: PredictArguments,
@@ -47,12 +47,13 @@ pub fn setup_zeta(
     cx: &mut AsyncApp,
 ) -> Result<Entity<Zeta>> {
     let zeta =
-        cx.new(|cx| zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
+        cx.new(|cx| zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
 
     zeta.update(cx, |zeta, _cx| {
         let model = match provider {
-            PredictionProvider::Zeta2 => zeta2::ZetaEditPredictionModel::ZedCloud,
-            PredictionProvider::Sweep => zeta2::ZetaEditPredictionModel::Sweep,
+            PredictionProvider::Zeta1 => zeta::ZetaEditPredictionModel::Zeta1,
+            PredictionProvider::Zeta2 => zeta::ZetaEditPredictionModel::Zeta2,
+            PredictionProvider::Sweep => zeta::ZetaEditPredictionModel::Sweep,
         };
         zeta.set_edit_prediction_model(model);
     })?;
@@ -142,25 +143,25 @@ pub async fn perform_predict(
                 let mut search_queries_executed_at = None;
                 while let Some(event) = debug_rx.next().await {
                     match event {
-                        zeta2::ZetaDebugInfo::ContextRetrievalStarted(info) => {
+                        zeta::ZetaDebugInfo::ContextRetrievalStarted(info) => {
                             start_time = Some(info.timestamp);
                             fs::write(
                                 example_run_dir.join("search_prompt.md"),
                                 &info.search_prompt,
                             )?;
                         }
-                        zeta2::ZetaDebugInfo::SearchQueriesGenerated(info) => {
+                        zeta::ZetaDebugInfo::SearchQueriesGenerated(info) => {
                             search_queries_generated_at = Some(info.timestamp);
                             fs::write(
                                 example_run_dir.join("search_queries.json"),
                                 serde_json::to_string_pretty(&info.search_queries).unwrap(),
                             )?;
                         }
-                        zeta2::ZetaDebugInfo::SearchQueriesExecuted(info) => {
+                        zeta::ZetaDebugInfo::SearchQueriesExecuted(info) => {
                             search_queries_executed_at = Some(info.timestamp);
                         }
-                        zeta2::ZetaDebugInfo::ContextRetrievalFinished(_info) => {}
-                        zeta2::ZetaDebugInfo::EditPredictionRequested(request) => {
+                        zeta::ZetaDebugInfo::ContextRetrievalFinished(_info) => {}
+                        zeta::ZetaDebugInfo::EditPredictionRequested(request) => {
                             let prediction_started_at = Instant::now();
                             start_time.get_or_insert(prediction_started_at);
                             let prompt = request.local_prompt.unwrap_or_default();
@@ -170,9 +171,9 @@ pub async fn perform_predict(
                                 let mut result = result.lock().unwrap();
                                 result.prompt_len = prompt.chars().count();
 
-                                for included_file in request.request.included_files {
+                                for included_file in request.inputs.included_files {
                                     let insertions =
-                                        vec![(request.request.cursor_point, CURSOR_MARKER)];
+                                        vec![(request.inputs.cursor_point, CURSOR_MARKER)];
                                     result.excerpts.extend(included_file.excerpts.iter().map(
                                         |excerpt| ActualExcerpt {
                                             path: included_file.path.components().skip(1).collect(),
@@ -182,7 +183,7 @@ pub async fn perform_predict(
                                     write_codeblock(
                                         &included_file.path,
                                         included_file.excerpts.iter(),
-                                        if included_file.path == request.request.excerpt_path {
+                                        if included_file.path == request.inputs.cursor_path {
                                             &insertions
                                         } else {
                                             &[]
@@ -196,7 +197,7 @@ pub async fn perform_predict(
 
                             let response =
                                 request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
-                            let response = zeta2::text_from_response(response).unwrap_or_default();
+                            let response = zeta::text_from_response(response).unwrap_or_default();
                             let prediction_finished_at = Instant::now();
                             fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 
@@ -267,20 +268,7 @@ pub async fn perform_predict(
     let mut result = Arc::into_inner(result).unwrap().into_inner().unwrap();
 
     result.diff = prediction
-        .map(|prediction| {
-            let old_text = prediction.snapshot.text();
-            let new_text = prediction
-                .buffer
-                .update(cx, |buffer, cx| {
-                    let branch = buffer.branch(cx);
-                    branch.update(cx, |branch, cx| {
-                        branch.edit(prediction.edits.iter().cloned(), None, cx);
-                        branch.text()
-                    })
-                })
-                .unwrap();
-            language::unified_diff(&old_text, &new_text)
-        })
+        .and_then(|prediction| prediction.edit_preview.as_unified_diff(&prediction.edits))
         .unwrap_or_default();
 
     anyhow::Ok(result)

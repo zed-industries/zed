@@ -2,45 +2,64 @@ use alacritty_terminal::{
     Term,
     event::EventListener,
     grid::Dimensions,
-    index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
-    term::search::{Match, RegexIter, RegexSearch},
+    index::{Boundary, Column, Direction as AlacDirection, Point as AlacPoint},
+    term::{
+        cell::Flags,
+        search::{Match, RegexIter, RegexSearch},
+    },
 };
-use regex::Regex;
-use std::{ops::Index, sync::LazyLock};
+use fancy_regex::Regex;
+use log::{info, warn};
+use std::{
+    ops::{Index, Range},
+    time::{Duration, Instant},
+};
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
-// https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-const WORD_REGEX: &str =
-    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
-
-const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
-
-static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(PYTHON_FILE_LINE_REGEX).unwrap());
-
-fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
-    if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
-        let path_part = captures.name("file")?.as_str();
-
-        let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
-        return Some((path_part, line_number));
-    }
-    None
-}
+const WIDE_CHAR_SPACERS: Flags =
+    Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
+        .unwrap();
 
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
-    word_regex: RegexSearch,
-    python_file_line_regex: RegexSearch,
+    path_hyperlink_regexes: Vec<Regex>,
+    path_hyperlink_timeout: Duration,
 }
 
-impl RegexSearches {
-    pub(super) fn new() -> Self {
+impl Default for RegexSearches {
+    fn default() -> Self {
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
-            python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
+            path_hyperlink_regexes: Vec::default(),
+            path_hyperlink_timeout: Duration::default(),
+        }
+    }
+}
+impl RegexSearches {
+    pub(super) fn new(
+        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
+        path_hyperlink_timeout_ms: u64,
+    ) -> Self {
+        Self {
+            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            path_hyperlink_regexes: path_hyperlink_regexes
+                .into_iter()
+                .filter_map(|regex| {
+                    Regex::new(regex.as_ref())
+                        .inspect_err(|error| {
+                            warn!(
+                                concat!(
+                                    "Ignoring path hyperlink regex specified in ",
+                                    "`terminal.path_hyperlink_regexes`:\n\n\t{}\n\nError: {}",
+                                ),
+                                regex.as_ref(),
+                                error
+                            );
+                        })
+                        .ok()
+                })
+                .collect(),
+            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
         }
     }
 }
@@ -77,76 +96,32 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let url_match = min_index..=max_index;
 
         Some((url, true, url_match))
-    } else if let Some(url_match) = regex_match_at(term, point, &mut regex_searches.url_regex) {
-        let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-        let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
-        Some((sanitized_url, true, sanitized_match))
-    } else if let Some(python_match) =
-        regex_match_at(term, point, &mut regex_searches.python_file_line_regex)
-    {
-        let matching_line = term.bounds_to_string(*python_match.start(), *python_match.end());
-        python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
-            (format!("{file_path}:{line_number}"), false, python_match)
-        })
-    } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
-        let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
-
-        let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
-            let mut file_path = file_path;
-
-            if is_path_surrounded_by_common_symbols(&file_path) {
-                word_match = Match::new(
-                    word_match.start().add(term, Boundary::Grid, 1),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
-                file_path = file_path[1..file_path.len() - 1].to_owned();
-            }
-
-            while file_path.ends_with(':') {
-                file_path.pop();
-                word_match = Match::new(
-                    *word_match.start(),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
-            }
-            let mut colon_count = 0;
-            for c in file_path.chars() {
-                if c == ':' {
-                    colon_count += 1;
-                }
-            }
-            // strip trailing comment after colon in case of
-            // file/at/path.rs:row:column:description or error message
-            // so that the file path is `file/at/path.rs:row:column`
-            if colon_count > 2 {
-                let last_index = file_path.rfind(':').unwrap();
-                let prev_is_digit = last_index > 0
-                    && file_path
-                        .chars()
-                        .nth(last_index - 1)
-                        .is_some_and(|c| c.is_ascii_digit());
-                let next_is_digit = last_index < file_path.len() - 1
-                    && file_path
-                        .chars()
-                        .nth(last_index + 1)
-                        .is_none_or(|c| c.is_ascii_digit());
-                if prev_is_digit && !next_is_digit {
-                    let stripped_len = file_path.len() - last_index;
-                    word_match = Match::new(
-                        *word_match.start(),
-                        word_match.end().sub(term, Boundary::Grid, stripped_len),
-                    );
-                    file_path = file_path[0..last_index].to_owned();
-                }
-            }
-
-            break 'sanitize (word_match, file_path);
-        };
-
-        Some((sanitized_word, false, sanitized_match))
     } else {
-        None
+        let (line_start, line_end) = (term.line_search_left(point), term.line_search_right(point));
+        if let Some((url, url_match)) = RegexIter::new(
+            line_start,
+            line_end,
+            AlacDirection::Right,
+            term,
+            &mut regex_searches.url_regex,
+        )
+        .find(|rm| rm.contains(&point))
+        .map(|url_match| {
+            let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+            sanitize_url_punctuation(url, url_match, term)
+        }) {
+            Some((url, true, url_match))
+        } else {
+            path_match(
+                &term,
+                line_start,
+                line_end,
+                point,
+                &mut regex_searches.path_hyperlink_regexes,
+                regex_searches.path_hyperlink_timeout,
+            )
+            .map(|(path, path_match)| (path, false, path_match))
+        }
     };
 
     found_word.map(|(maybe_url_or_path, is_url, word_match)| {
@@ -222,58 +197,171 @@ fn sanitize_url_punctuation<T: EventListener>(
     }
 }
 
-fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
-    // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
-    path.len() > 2
-        // The rest of the brackets and various quotes cannot be matched by the [`WORD_REGEX`] hence not checked for.
-        && (path.starts_with('[') && path.ends_with(']')
-            || path.starts_with('(') && path.ends_with(')'))
-}
+fn path_match<T>(
+    term: &Term<T>,
+    line_start: AlacPoint,
+    line_end: AlacPoint,
+    hovered: AlacPoint,
+    path_hyperlink_regexes: &mut Vec<Regex>,
+    path_hyperlink_timeout: Duration,
+) -> Option<(String, Match)> {
+    if path_hyperlink_regexes.is_empty() || path_hyperlink_timeout.as_millis() == 0 {
+        return None;
+    }
 
-/// Based on alacritty/src/display/hint.rs > regex_match_at
-/// Retrieve the match, if the specified point is inside the content matching the regex.
-fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
-    visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
-}
+    let search_start_time = Instant::now();
 
-/// Copied from alacritty/src/display/hint.rs:
-/// Iterate over all visible regex matches.
-fn visible_regex_match_iter<'a, T>(
-    term: &'a Term<T>,
-    regex: &'a mut RegexSearch,
-) -> impl Iterator<Item = Match> + 'a {
-    const MAX_SEARCH_LINES: usize = 100;
+    let timed_out = || {
+        let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
+        (elapsed_time > path_hyperlink_timeout)
+            .then_some((elapsed_time.as_millis(), path_hyperlink_timeout.as_millis()))
+    };
 
-    let viewport_start = Line(-(term.grid().display_offset() as i32));
-    let viewport_end = viewport_start + term.bottommost_line();
-    let mut start = term.line_search_left(AlacPoint::new(viewport_start, Column(0)));
-    let mut end = term.line_search_right(AlacPoint::new(viewport_end, Column(0)));
-    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
+    // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
+    // api compresses tab characters into a single space, whereas we require a cell accurate
+    // string representation of the line. The below algorithm does this, but seems a bit odd.
+    // Maybe there is a clean api for doing this, but I couldn't find it.
+    let mut line = String::with_capacity(
+        (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
+    );
+    line.push(term.grid()[line_start].c);
+    for cell in term.grid().iter_from(line_start) {
+        if cell.point > line_end {
+            break;
+        }
 
-    RegexIter::new(start, end, AlacDirection::Right, term, regex)
-        .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
+        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+            line.push(match cell.c {
+                '\t' => ' ',
+                c @ _ => c,
+            });
+        }
+    }
+    let line = line.trim_ascii_end();
+
+    let found_from_range = |path_range: Range<usize>,
+                            link_range: Range<usize>,
+                            position: Option<(u32, Option<u32>)>| {
+        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
+            for _ in s.chars() {
+                point = term
+                    .expand_wide(point, AlacDirection::Right)
+                    .add(term, Boundary::Grid, 1);
+            }
+
+            // There does not appear to be an alacritty api that is
+            // "move to start of current wide char", so we have to do it ourselves.
+            let flags = term.grid().index(point).flags;
+            if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                AlacPoint::new(point.line + 1, Column(0))
+            } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
+                AlacPoint::new(point.line, point.column - 1)
+            } else {
+                point
+            }
+        };
+
+        let link_start = advance_point_by_str(line_start, &line[..link_range.start]);
+        let link_end = advance_point_by_str(link_start, &line[link_range]);
+        let link_match = link_start
+            ..=term
+                .expand_wide(link_end, AlacDirection::Left)
+                .sub(term, Boundary::Grid, 1);
+
+        Some((
+            {
+                let mut path = line[path_range].to_string();
+                position.inspect(|(line, column)| {
+                    path += &format!(":{line}");
+                    column.inspect(|column| path += &format!(":{column}"));
+                });
+                path
+            },
+            link_match,
+        ))
+    };
+
+    for regex in path_hyperlink_regexes {
+        let mut path_found = false;
+
+        for captures in regex.captures_iter(&line) {
+            let captures = match captures {
+                Ok(captures) => captures,
+                Err(error) => {
+                    warn!("Error '{error}' searching for path hyperlinks in line: {line}");
+                    info!(
+                        "Skipping match from path hyperlinks with regex: {}",
+                        regex.as_str()
+                    );
+                    continue;
+                }
+            };
+
+            let match_range = captures.get(0).unwrap().range();
+            let (path_range, line_column) = if let Some(path) = captures.name("path") {
+                let parse = |name: &str| {
+                    captures
+                        .name(name)
+                        .and_then(|capture| capture.as_str().parse().ok())
+                };
+
+                (
+                    path.range(),
+                    parse("line").map(|line| (line, parse("column"))),
+                )
+            } else {
+                (match_range.clone(), None)
+            };
+            let link_range = captures
+                .name("link")
+                .map_or(match_range, |link| link.range());
+            let found = found_from_range(path_range, link_range, line_column);
+
+            if let Some(found) = found {
+                path_found = true;
+                if found.1.contains(&hovered) {
+                    return Some(found);
+                }
+            }
+        }
+
+        if path_found {
+            return None;
+        }
+
+        if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+            warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+            info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
+            return None;
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::terminal_settings::TerminalSettings;
+
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
-        index::{Boundary, Point as AlacPoint},
+        grid::Dimensions,
+        index::{Boundary, Column, Line, Point as AlacPoint},
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
-    use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
+    use fancy_regex::Regex;
+    use settings::{self, Settings, SettingsContent};
+    use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf, rc::Rc};
     use url::Url;
     use util::paths::PathWithPosition;
 
     fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
-        let results: Vec<_> = regex::Regex::new(re)
+        let results: Vec<_> = Regex::new(re)
             .unwrap()
             .find_iter(hay)
-            .map(|m| m.as_str())
+            .map(|m| m.unwrap().as_str())
             .collect();
         assert_eq!(results, expected);
     }
@@ -376,78 +464,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_word_regex() {
-        re_test(
-            WORD_REGEX,
-            "hello, world! \"What\" is this?",
-            vec!["hello", "world", "What", "is", "this"],
-        );
-    }
-
-    #[test]
-    fn test_word_regex_with_linenum() {
-        // filename(line) and filename(line,col) as used in MSBuild output
-        // should be considered a single "word", even though comma is
-        // usually a word separator
-        re_test(WORD_REGEX, "a Main.cs(20) b", vec!["a", "Main.cs(20)", "b"]);
-        re_test(
-            WORD_REGEX,
-            "Main.cs(20,5) Error desc",
-            vec!["Main.cs(20,5)", "Error", "desc"],
-        );
-        // filename:line:col is a popular format for unix tools
-        re_test(
-            WORD_REGEX,
-            "a Main.cs:20:5 b",
-            vec!["a", "Main.cs:20:5", "b"],
-        );
-        // Some tools output "filename:line:col:message", which currently isn't
-        // handled correctly, but might be in the future
-        re_test(
-            WORD_REGEX,
-            "Main.cs:20:5:Error desc",
-            vec!["Main.cs:20:5:Error", "desc"],
-        );
-    }
-
-    #[test]
-    fn test_python_file_line_regex() {
-        re_test(
-            PYTHON_FILE_LINE_REGEX,
-            "hay File \"/zed/bad_py.py\", line 8 stack",
-            vec!["File \"/zed/bad_py.py\", line 8"],
-        );
-        re_test(PYTHON_FILE_LINE_REGEX, "unrelated", vec![]);
-    }
-
-    #[test]
-    fn test_python_file_line() {
-        let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
-            (
-                "File \"/zed/bad_py.py\", line 8",
-                Some(("/zed/bad_py.py", 8u32)),
-            ),
-            ("File \"path/to/zed/bad_py.py\"", None),
-            ("unrelated", None),
-            ("", None),
-        ];
-        let actual = inputs
-            .iter()
-            .map(|input| python_extract_path_and_line(input.0))
-            .collect::<Vec<_>>();
-        let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
-        assert_eq!(actual, expected);
-    }
-
-    // We use custom columns in many tests to workaround this issue by ensuring a wrapped
-    // line never ends on a wide char:
-    //
-    // <https://github.com/alacritty/alacritty/issues/8586>
-    //
-    // This issue was recently fixed, as soon as we update to a version containing the fix we
-    // can remove all the custom columns from these tests.
-    //
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::line_cells_count;
@@ -458,21 +474,28 @@ mod tests {
                 test_lines.iter().copied()
                     .map(line_cells_count)
                     .fold((0, 0), |state, cells| (state.0 + cells, cmp::max(state.1, cells)));
-
-            test_hyperlink!(
+            let contains_tab_char = test_lines.iter().copied()
+                .map(str::chars).flatten().find(|&c| c == '\t');
+            let columns = if contains_tab_char.is_some() {
+                // This avoids tabs at end of lines causing whitespace-eating line wraps...
+                vec![longest_line_cells + 1]
+            } else {
                 // Alacritty has issues with 2 columns, use 3 as the minimum for now.
-                [3, longest_line_cells / 2, longest_line_cells + 1];
+                vec![3, longest_line_cells / 2, longest_line_cells + 1]
+            };
+            test_hyperlink!(
+                columns;
                 total_cells;
                 test_lines.iter().copied();
                 $hyperlink_kind
             )
         } };
 
-        ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
+        ($columns:expr; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
 
             let source_location = format!("{}:{}", std::file!(), std::line!());
-            for columns in vec![ $($columns),+] {
+            for columns in $columns {
                 test_hyperlink(columns, $total_cells, $lines, HyperlinkKind::$hyperlink_kind,
                     &source_location);
             }
@@ -522,24 +545,80 @@ mod tests {
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›:");
+            test_path!("‹«/👉test/cool.rs»:(«4»,«2»)›:");
+            test_path!("‹«/test/cool.rs»:(«4»,«2»👉)›:");
+            test_path!("‹«/👉test/cool.rs»:(«4»:«2»)›:");
+            test_path!("‹«/test/cool.rs»:(«4»:«2»👉)›:");
+            test_path!("/test/cool.rs:4:2👉:", "What is this?");
+            test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
-            test_path!("‹«/test/cool.rs»:«4»:«2»›👉:Error!");
-            test_path!("‹«/test/cool.rs»:«4»:«2»›:👉Error!");
+            test_path!("/test/cool.rs:4:2👉:Error!");
+            test_path!("/test/cool.rs:4:2:👉Error!");
+            test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
             // Cargo output
-            test_path!("    Compiling Cool 👉(‹«/test/Cool»›)");
+            test_path!("    Compiling Cool 👉(/test/Cool)");
             test_path!("    Compiling Cool (‹«/👉test/Cool»›)");
-            test_path!("    Compiling Cool (‹«/test/Cool»›👉)");
+            test_path!("    Compiling Cool (/test/Cool👉)");
 
             // Python
             test_path!("‹«awe👉some.py»›");
 
             test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awe👉some.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awe👉some.py»\", line «42»›");
             test_path!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
+            test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›");
+        }
+
+        #[test]
+        fn simple_with_descriptions() {
+            // path, line, column and description
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
+            test_path!("/test/cool.rs:4:2:例Desc例👉例例");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
+            test_path!("/test/cool.rs(4,2):例Desc例👉例例");
+
+            // path, line, column and description w/extra colons
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»›::例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»›::例Desc例例例");
+            test_path!("/test/cool.rs:4:2::例Desc例👉例例");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»)›::例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»,«2»👉)›::例Desc例例例");
+            test_path!("/test/cool.rs(4,2)::例Desc例👉例例");
+        }
+
+        #[test]
+        fn multiple_same_line() {
+            test_path!("‹«/👉test/cool.rs»› /test/cool.rs");
+            test_path!("/test/cool.rs ‹«/👉test/cool.rs»›");
+
+            test_path!(
+                "‹«🦀 multiple_👉same_line 🦀» 🚣«4» 🏛️«2»›: 🦀 multiple_same_line 🦀 🚣4 🏛️2:"
+            );
+            test_path!(
+                "🦀 multiple_same_line 🦀 🚣4 🏛️2 ‹«🦀 multiple_👉same_line 🦀» 🚣«4» 🏛️«2»›:"
+            );
+
+            // ls output (tab separated)
+            test_path!(
+                "‹«Carg👉o.toml»›\t\texperiments\t\tnotebooks\t\trust-toolchain.toml\ttooling"
+            );
+            test_path!(
+                "Cargo.toml\t\t‹«exper👉iments»›\t\tnotebooks\t\trust-toolchain.toml\ttooling"
+            );
+            test_path!(
+                "Cargo.toml\t\texperiments\t\t‹«note👉books»›\t\trust-toolchain.toml\ttooling"
+            );
+            test_path!(
+                "Cargo.toml\t\texperiments\t\tnotebooks\t\t‹«rust-t👉oolchain.toml»›\ttooling"
+            );
+            test_path!(
+                "Cargo.toml\t\texperiments\t\tnotebooks\t\trust-toolchain.toml\t‹«too👉ling»›"
+            );
         }
 
         #[test]
@@ -555,6 +634,7 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»::«42»›");
             test_path!("‹«/test/co👉ol.rs»::«42»›:");
             test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
+            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
         }
 
@@ -570,7 +650,58 @@ mod tests {
             test_path!("<‹«/test/co👉ol.rs»:«4»›>");
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
-            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
+            test_path!("'‹«(/test/co👉ol.rs:4)»›'");
+
+            test_path!("\"‹«/test/co👉ol.rs»:«4»:«2»›\"");
+            test_path!("'‹«/test/co👉ol.rs»:«4»:«2»›'");
+            test_path!("`‹«/test/co👉ol.rs»:«4»:«2»›`");
+
+            test_path!("[‹«/test/co👉ol.rs»:«4»:«2»›]");
+            test_path!("(‹«/test/co👉ol.rs»:«4»:«2»›)");
+            test_path!("{‹«/test/co👉ol.rs»:«4»:«2»›}");
+            test_path!("<‹«/test/co👉ol.rs»:«4»:«2»›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»:«2»›\"]");
+
+            test_path!("\"‹«/test/co👉ol.rs»(«4»)›\"");
+            test_path!("'‹«/test/co👉ol.rs»(«4»)›'");
+            test_path!("`‹«/test/co👉ol.rs»(«4»)›`");
+
+            test_path!("[‹«/test/co👉ol.rs»(«4»)›]");
+            test_path!("(‹«/test/co👉ol.rs»(«4»)›)");
+            test_path!("{‹«/test/co👉ol.rs»(«4»)›}");
+            test_path!("<‹«/test/co👉ol.rs»(«4»)›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»(«4»)›\"]");
+
+            test_path!("\"‹«/test/co👉ol.rs»(«4»,«2»)›\"");
+            test_path!("'‹«/test/co👉ol.rs»(«4»,«2»)›'");
+            test_path!("`‹«/test/co👉ol.rs»(«4»,«2»)›`");
+
+            test_path!("[‹«/test/co👉ol.rs»(«4»,«2»)›]");
+            test_path!("(‹«/test/co👉ol.rs»(«4»,«2»)›)");
+            test_path!("{‹«/test/co👉ol.rs»(«4»,«2»)›}");
+            test_path!("<‹«/test/co👉ol.rs»(«4»,«2»)›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»(«4»,«2»)›\"]");
+
+            // Imbalanced
+            test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
+            test_path!("('‹«/test/co👉ol.rs»:«4»›' was here...)");
+            test_path!("[Here's `‹«/test/co👉ol.rs»:«4»›`]");
+        }
+
+        #[test]
+        fn trailing_punctuation() {
+            test_path!("‹«/test/co👉ol.rs»›:,..");
+            test_path!("/test/cool.rs:,👉..");
+            test_path!("‹«/test/co👉ol.rs»:«4»›:,");
+            test_path!("/test/cool.rs:4:👉,");
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
+            test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
+            test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
 
         #[test]
@@ -584,6 +715,20 @@ mod tests {
             // Cargo output
             test_path!("    Compiling Cool (‹«/👉例/Cool»›)");
             test_path!("    Compiling Cool (‹«/例👈/Cool»›)");
+
+            test_path!("    Compiling Cool (‹«/👉例/Cool Spaces»›)");
+            test_path!("    Compiling Cool (‹«/例👈/Cool Spaces»›)");
+            test_path!("    Compiling Cool (‹«/👉例/Cool Spaces»:«4»:«2»›)");
+            test_path!("    Compiling Cool (‹«/例👈/Cool Spaces»(«4»,«2»)›)");
+
+            test_path!("    --> ‹«/👉例/Cool Spaces»›");
+            test_path!("    ::: ‹«/例👈/Cool Spaces»›");
+            test_path!("    --> ‹«/👉例/Cool Spaces»:«4»:«2»›");
+            test_path!("    ::: ‹«/例👈/Cool Spaces»(«4»,«2»)›");
+            test_path!("    panicked at ‹«/👉例/Cool Spaces»:«4»:«2»›:");
+            test_path!("    panicked at ‹«/例👈/Cool Spaces»(«4»,«2»)›:");
+            test_path!("    at ‹«/👉例/Cool Spaces»:«4»:«2»›");
+            test_path!("    at ‹«/例👈/Cool Spaces»(«4»,«2»)›");
 
             // Python
             test_path!("‹«👉例wesome.py»›");
@@ -624,7 +769,14 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "No hyperlink found")]
+            // <https://github.com/zed-industries/zed/issues/12338>
+            fn issue_12338_regex() {
+                // Issue #12338
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«'test file 👉1.txt'»›");
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«👉'test file 1.txt'»›");
+            }
+
+            #[test]
             // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338() {
                 // Issue #12338
@@ -659,29 +811,47 @@ mod tests {
             }
 
             #[test]
-            #[cfg_attr(
-                not(target_os = "windows"),
-                should_panic(
-                    expected = "Path = «test/controllers/template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(17, 1)"
-                )
-            )]
-            #[cfg_attr(
-                target_os = "windows",
-                should_panic(
-                    expected = r#"Path = «test\\controllers\\template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(17, 1)"#
-                )
-            )]
+            // <https://github.com/zed-industries/zed/issues/40202>
+            fn issue_40202() {
+                // Elixir
+                test_path!("[‹«lib/blitz_apex_👉server/stats/aggregate_rank_stats.ex»:«35»›: BlitzApexServer.Stats.AggregateRankStats.update/2]
+                1 #=> 1");
+            }
+
+            #[test]
             // <https://github.com/zed-industries/zed/issues/28194>
-            //
-            // #28194 was closed, but the link includes the description part (":in" here), which
-            // seems wrong...
             fn issue_28194() {
                 test_path!(
                     "‹«test/c👉ontrollers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
                 );
                 test_path!(
-                    "‹«test/controllers/template_items_controller_test.rb»:«19»›:i👉n 'block in <class:TemplateItemsControllerTest>'"
+                    "test/controllers/template_items_controller_test.rb:19:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
+            }
+
+            #[test]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(
+                    expected = "Path = «/test/cool.rs:4:NotDesc», at grid cells (0, 1)..=(7, 2)"
+                )
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(
+                    expected = r#"Path = «C:\\test\\cool.rs:4:NotDesc», at grid cells (0, 1)..=(8, 1)"#
+                )
+            )]
+            // PathWithPosition::parse_str considers "/test/co👉ol.rs:4:NotDesc" invalid input, but
+            // still succeeds and truncates the part after the position. Ideally this would be
+            // parsed as the path "/test/co👉ol.rs:4:NotDesc" with no position.
+            fn path_with_position_parse_str() {
+                test_path!("`‹«/test/co👉ol.rs:4:NotDesc»›`");
+                test_path!("<‹«/test/co👉ol.rs:4:NotDesc»›>");
+
+                test_path!("'‹«(/test/co👉ol.rs:4:2)»›'");
+                test_path!("'‹«(/test/co👉ol.rs(4))»›'");
+                test_path!("'‹«(/test/co👉ol.rs(4,2))»›'");
             }
         }
 
@@ -716,33 +886,36 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "Path = «»")]
-            fn colon_suffix_succeeds_in_finding_an_empty_maybe_path() {
-                test_path!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
-                test_path!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
-            }
-
-            #[test]
             #[cfg_attr(
                 not(target_os = "windows"),
-                should_panic(expected = "Path = «/test/cool.rs»")
+                should_panic(expected = "Path = «/te:st/co:ol.r:s:4:2::::::»")
             )]
             #[cfg_attr(
                 target_os = "windows",
-                should_panic(expected = r#"Path = «C:\\test\\cool.rs»"#)
+                should_panic(expected = r#"Path = «C:\\te:st\\co:ol.r:s:4:2::::::»"#)
             )]
             fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
-                test_path!("‹«/test/cool.rs:::👉:»›");
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
+                test_path!("/test/cool.rs:::👉:");
             }
         }
 
-        #[cfg(target_os = "windows")]
         mod windows {
             // Lots of fun to be had with long file paths (verbatim) and UNC paths on Windows.
             // See <https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation>
             // See <https://users.rust-lang.org/t/understanding-windows-paths/58583>
             // See <https://github.com/rust-lang/cargo/issues/13919>
+
+            #[test]
+            fn default_prompts() {
+                // Windows command prompt
+                test_path!(r#"‹«C:\Users\someone\👉test»›>"#);
+                test_path!(r#"C:\Users\someone\test👉>"#);
+
+                // Windows PowerShell
+                test_path!(r#"PS ‹«C:\Users\someone\👉test\cool.rs»›>"#);
+                test_path!(r#"PS C:\Users\someone\test\cool.rs👉>"#);
+            }
 
             #[test]
             fn unc() {
@@ -752,22 +925,114 @@ mod tests {
 
             mod issues {
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «C:\\test\\cool.rs», at grid cells (0, 0)..=(6, 0)"#
-                )]
                 fn issue_verbatim() {
                     test_path!(r#"‹«\\?\C:\👉test\cool.rs»›"#);
                     test_path!(r#"‹«\\?\C:\test\cool👉.rs»›"#);
                 }
 
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «\\\\server\\share\\test\\cool.rs», at grid cells (0, 0)..=(10, 2)"#
-                )]
                 fn issue_verbatim_unc() {
                     test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
                     test_path!(r#"‹«\\?\UNC\server\share\test\cool👉.rs»›"#);
                 }
+            }
+        }
+
+        mod perf {
+            use super::super::*;
+            use crate::TerminalSettings;
+            use alacritty_terminal::{
+                event::VoidListener,
+                grid::Dimensions,
+                index::{Column, Point as AlacPoint},
+                term::test::mock_term,
+                term::{Term, search::Match},
+            };
+            use settings::{self, Settings, SettingsContent};
+            use std::{cell::RefCell, rc::Rc};
+            use util_macros::perf;
+
+            fn build_test_term(line: &str) -> (Term<VoidListener>, AlacPoint) {
+                let content = line.repeat(500);
+                let term = mock_term(&content);
+                let point = AlacPoint::new(
+                    term.grid().bottommost_line() - 1,
+                    Column(term.grid().last_column().0 / 2),
+                );
+
+                (term, point)
+            }
+
+            #[perf]
+            pub fn cargo_hyperlink_benchmark() {
+                const LINE: &str = "    Compiling terminal v0.1.0 (/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal)\r\n";
+                thread_local! {
+                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                        build_test_term(LINE);
+                }
+                TEST_TERM_AND_POINT.with(|(term, point)| {
+                    assert!(
+                        find_from_grid_point_bench(term, *point).is_some(),
+                        "Hyperlink should have been found"
+                    );
+                });
+            }
+
+            #[perf]
+            pub fn rust_hyperlink_benchmark() {
+                const LINE: &str = "    --> /Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal/terminal.rs:1000:42\r\n";
+                thread_local! {
+                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                        build_test_term(LINE);
+                }
+                TEST_TERM_AND_POINT.with(|(term, point)| {
+                    assert!(
+                        find_from_grid_point_bench(term, *point).is_some(),
+                        "Hyperlink should have been found"
+                    );
+                });
+            }
+
+            #[perf]
+            pub fn ls_hyperlink_benchmark() {
+                const LINE: &str = "Cargo.toml        experiments        notebooks        rust-toolchain.toml    tooling\r\n";
+                thread_local! {
+                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                        build_test_term(LINE);
+                }
+                TEST_TERM_AND_POINT.with(|(term, point)| {
+                    assert!(
+                        find_from_grid_point_bench(term, *point).is_some(),
+                        "Hyperlink should have been found"
+                    );
+                });
+            }
+
+            pub fn find_from_grid_point_bench(
+                term: &Term<VoidListener>,
+                point: AlacPoint,
+            ) -> Option<(String, bool, Match)> {
+                const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+
+                thread_local! {
+                    static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
+                        RefCell::new({
+                            let default_settings_content: Rc<SettingsContent> =
+                                settings::parse_json_with_comments(&settings::default_settings())
+                                    .unwrap();
+                            let default_terminal_settings =
+                                TerminalSettings::from_settings(&default_settings_content);
+
+                            RegexSearches::new(
+                                &default_terminal_settings.path_hyperlink_regexes,
+                                PATH_HYPERLINK_TIMEOUT_MS
+                            )
+                        });
+                }
+
+                TEST_REGEX_SEARCHES.with(|regex_searches| {
+                    find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
+                })
             }
         }
     }
@@ -821,11 +1086,12 @@ mod tests {
                 }
 
                 // See https://en.wikipedia.org/wiki/File_URI_scheme
+                // https://github.com/zed-industries/zed/issues/39189
                 #[test]
                 #[should_panic(
                     expected = r#"Path = «C:\\test\\cool\\index.rs», at grid cells (0, 0)..=(9, 1)"#
                 )]
-                fn issue_absolute_file_iri() {
+                fn issue_39189() {
                     test_file_iri!("file:///C:/test/cool/index.rs");
                     test_file_iri!("file:///C:/test/cool/");
                 }
@@ -981,7 +1247,7 @@ mod tests {
             let mut point = cursor.point;
 
             if !cursor.input_needs_wrap {
-                point.column -= 1;
+                point = point.sub(term, Boundary::Grid, 1);
             }
 
             if grid.index(point).flags.contains(Flags::WIDE_CHAR_SPACER) {
@@ -1004,6 +1270,13 @@ mod tests {
                 prev_input_point.add(term, Boundary::Grid, 1)
             } else {
                 prev_input_point
+            }
+        }
+
+        fn process_input(term: &mut Term<VoidListener>, c: char) {
+            match c {
+                '\t' => term.put_tab(1),
+                c @ _ => term.input(c),
             }
         }
 
@@ -1098,9 +1371,9 @@ mod tests {
                             term.input('C');
                             prev_input_point = prev_input_point_from_term(&term);
                             term.input(':');
-                            term.input(c);
+                            process_input(&mut term, c);
                         } else {
-                            term.input(c);
+                            process_input(&mut term, c);
                             prev_input_point = prev_input_point_from_term(&term);
                         }
 
@@ -1130,15 +1403,6 @@ mod tests {
             iri_or_path = path.to_string_lossy().into_owned();
         }
 
-        if cfg!(windows) {
-            // Handle verbatim and UNC paths for Windows
-            if let Some(stripped) = iri_or_path.strip_prefix(r#"\\?\UNC\"#) {
-                iri_or_path = format!(r#"\\{stripped}"#);
-            } else if let Some(stripped) = iri_or_path.strip_prefix(r#"\\?\"#) {
-                iri_or_path = stripped.to_string();
-            }
-        }
-
         let hovered_grid_point = hovered_grid_point.expect("Missing hovered point (👉 or 👈)");
         let hovered_char = term.grid().index(hovered_grid_point).c;
         (
@@ -1161,6 +1425,7 @@ mod tests {
             match c {
                 // Fullwidth unicode characters used in tests
                 '例' | '🏃' | '🦀' | '🔥' => 2,
+                '\t' => 8, // it's really 0-8, use the max always
                 _ => 1,
             }
         }
@@ -1283,11 +1548,9 @@ mod tests {
             let mut marker_header_row = String::new();
             for index in 0..self.term.columns() {
                 let remainder = index % 10;
-                first_header_row.push_str(
-                    &(index > 0 && remainder == 0)
-                        .then_some((index / 10).to_string())
-                        .unwrap_or(" ".into()),
-                );
+                if index > 0 && remainder == 0 {
+                    first_header_row.push_str(&format!("{:>10}", (index / 10)));
+                }
                 second_header_row += &remainder.to_string();
                 if index == self.expected_hyperlink.hovered_grid_point.column.0 {
                     marker_header_row.push('↓');
@@ -1296,16 +1559,20 @@ mod tests {
                 }
             }
 
-            result += &format!("\n      [{}]\n", first_header_row);
+            let remainder = (self.term.columns() - 1) % 10;
+            if remainder != 0 {
+                first_header_row.push_str(&" ".repeat(remainder));
+            }
+
+            result += &format!("\n      [ {}]\n", first_header_row);
             result += &format!("      [{}]\n", second_header_row);
             result += &format!("       {}", marker_header_row);
 
-            let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
             for cell in self
                 .term
                 .renderable_content()
                 .display_iter
-                .filter(|cell| !cell.flags.intersects(spacers))
+                .filter(|cell| !cell.flags.intersects(WIDE_CHAR_SPACERS))
             {
                 if cell.point.column.0 == 0 {
                     let prefix =
@@ -1317,7 +1584,10 @@ mod tests {
                     result += &format!("\n{prefix}[{:>3}] ", cell.point.line.to_string());
                 }
 
-                result.push(cell.c);
+                match cell.c {
+                    '\t' => result.push(' '),
+                    c @ _ => result.push(c),
+                }
             }
 
             result
@@ -1331,8 +1601,34 @@ mod tests {
         hyperlink_kind: HyperlinkKind,
         source_location: &str,
     ) {
+        const CARGO_DIR_REGEX: &str =
+            r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<link>(?<path>.+))\)"#;
+        const RUST_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)"#;
+        const ISSUE_12338_REGEX: &str =
+            r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<link>(?<path>.+))"#;
+        const MULTIPLE_SAME_LINE_REGEX: &str =
+            r#"(?<link>(?<path>🦀 multiple_same_line 🦀) 🚣(?<line>[0-9]+) 🏛(?<column>[0-9]+)):"#;
+        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+
         thread_local! {
-            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> = RefCell::new(RegexSearches::new());
+            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
+                RefCell::new({
+                    let default_settings_content: Rc<SettingsContent> =
+                        settings::parse_json_with_comments(&settings::default_settings()).unwrap();
+                    let default_terminal_settings = TerminalSettings::from_settings(&default_settings_content);
+
+                    RegexSearches::new([
+                        RUST_DIAGNOSTIC_REGEX,
+                        CARGO_DIR_REGEX,
+                        ISSUE_12338_REGEX,
+                        MULTIPLE_SAME_LINE_REGEX,
+                    ]
+                        .into_iter()
+                        .chain(default_terminal_settings.path_hyperlink_regexes
+                            .iter()
+                            .map(AsRef::as_ref)),
+                    PATH_HYPERLINK_TIMEOUT_MS)
+                });
         }
 
         let term_size = TermSize::new(columns, total_cells / columns + 2);
@@ -1357,12 +1653,16 @@ mod tests {
             Some((hyperlink_word, true, hyperlink_match)) => {
                 check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
             }
-            _ => {
-                assert!(
-                    false,
-                    "No hyperlink found\n     at {source_location}:\n{}",
-                    check_hyperlink_match.format_renderable_content()
-                )
+            None => {
+                if expected_hyperlink.hyperlink_match.start()
+                    != expected_hyperlink.hyperlink_match.end()
+                {
+                    assert!(
+                        false,
+                        "No hyperlink found\n     at {source_location}:\n{}",
+                        check_hyperlink_match.format_renderable_content()
+                    )
+                }
             }
         }
     }

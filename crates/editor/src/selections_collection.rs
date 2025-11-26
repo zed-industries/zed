@@ -415,6 +415,29 @@ impl SelectionsCollection {
             !mutable_collection.disjoint.is_empty() || mutable_collection.pending.is_some(),
             "There must be at least one selection"
         );
+        if cfg!(debug_assertions) {
+            mutable_collection.disjoint.iter().for_each(|selection| {
+                assert!(
+                    snapshot.can_resolve(&selection.start),
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}",
+                );
+                assert!(
+                    snapshot.can_resolve(&selection.end),
+                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}",
+                );
+            });
+            if let Some(pending) = &mutable_collection.pending {
+                let selection = &pending.selection;
+                assert!(
+                    snapshot.can_resolve(&selection.start),
+                    "pending selection start is not resolvable for the given snapshot: {pending:?}",
+                );
+                assert!(
+                    snapshot.can_resolve(&selection.end),
+                    "pending selection end is not resolvable for the given snapshot: {pending:?}",
+                );
+            }
+        }
         (mutable_collection.selections_changed, result)
     }
 

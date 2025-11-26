@@ -7,14 +7,17 @@ use collections::IndexMap;
 use fs::Fs;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
-use gpui::{AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, WeakEntity};
+use gpui::{
+    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Task, WeakEntity,
+};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{
-    DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, ListItem,
+    DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, KeyBinding, ListItem,
     ListItemSpacing, prelude::*,
 };
 use util::ResultExt;
+use zed_actions::agent::OpenSettings;
 
 use crate::ui::HoldForDefault;
 
@@ -24,10 +27,12 @@ pub fn acp_model_selector(
     selector: Rc<dyn AgentModelSelector>,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
+    focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut Context<AcpModelSelector>,
 ) -> AcpModelSelector {
-    let delegate = AcpModelPickerDelegate::new(selector, agent_server, fs, window, cx);
+    let delegate =
+        AcpModelPickerDelegate::new(selector, agent_server, fs, focus_handle, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems(20.))
@@ -49,6 +54,7 @@ pub struct AcpModelPickerDelegate {
     selected_description: Option<(usize, SharedString, bool)>,
     selected_model: Option<AgentModelInfo>,
     _refresh_models_task: Task<()>,
+    focus_handle: FocusHandle,
 }
 
 impl AcpModelPickerDelegate {
@@ -56,6 +62,7 @@ impl AcpModelPickerDelegate {
         selector: Rc<dyn AgentModelSelector>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
+        focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<AcpModelSelector>,
     ) -> Self {
@@ -104,6 +111,7 @@ impl AcpModelPickerDelegate {
             selected_index: 0,
             selected_description: None,
             _refresh_models_task: refresh_models_task,
+            focus_handle,
         }
     }
 
@@ -330,6 +338,39 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     }),
                 )
             })
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let focus_handle = self.focus_handle.clone();
+
+        if !self.selector.should_render_footer() {
+            return None;
+        }
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("configure", "Configure")
+                        .full_width()
+                        .style(ButtonStyle::Outlined)
+                        .key_binding(
+                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(OpenSettings.boxed_clone(), cx);
+                        }),
+                )
+                .into_any(),
+        )
     }
 }
 

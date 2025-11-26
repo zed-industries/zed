@@ -553,6 +553,7 @@ impl ExampleInstance {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
                     cache: false,
+                    reasoning_details: None,
                 }],
                 temperature: None,
                 tools: Vec::new(),
@@ -1255,7 +1256,8 @@ pub fn response_events_to_markdown(
                 | LanguageModelCompletionEvent::StartMessage { .. }
                 | LanguageModelCompletionEvent::UsageUpdated { .. }
                 | LanguageModelCompletionEvent::Queued { .. }
-                | LanguageModelCompletionEvent::Started,
+                | LanguageModelCompletionEvent::Started
+                | LanguageModelCompletionEvent::ReasoningDetails(_),
             ) => {}
             Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                 json_parse_error, ..
@@ -1341,6 +1343,7 @@ impl ThreadDialog {
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
                 | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
+                | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
                 | Ok(LanguageModelCompletionEvent::Stop(_))
                 | Ok(LanguageModelCompletionEvent::Queued { .. })
                 | Ok(LanguageModelCompletionEvent::Started)
@@ -1372,6 +1375,7 @@ impl ThreadDialog {
                 role: Role::Assistant,
                 content,
                 cache: false,
+                reasoning_details: None,
             })
         } else {
             None

@@ -25,7 +25,7 @@ use ui::{
     Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Render, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::{Workspace, client_side_decorations};
+use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -122,7 +122,10 @@ pub fn open_rules_library(
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
                 Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-                _ => gpui::WindowDecorations::Client,
+                _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                    settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                    settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+                },
             };
             cx.open_window(
                 WindowOptions {
@@ -1069,6 +1072,7 @@ impl RulesLibrary {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
                                         cache: false,
+                                        reasoning_details: None,
                                     }],
                                     tools: Vec::new(),
                                     tool_choice: None,

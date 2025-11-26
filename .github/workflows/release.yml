@@ -33,7 +33,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -80,7 +80,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -112,7 +112,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()

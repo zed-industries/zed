@@ -882,6 +882,7 @@ mod tests {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
                 cache: false,
+                reasoning_details: None,
             }],
             tools: vec![],
             tool_choice: None,

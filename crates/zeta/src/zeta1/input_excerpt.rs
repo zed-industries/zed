@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER, START_OF_FILE_MARKER,
     guess_token_count,
 };
@@ -7,6 +7,7 @@ use std::{fmt::Write, ops::Range};
 
 #[derive(Debug)]
 pub struct InputExcerpt {
+    pub context_range: Range<Point>,
     pub editable_range: Range<Point>,
     pub prompt: String,
 }
@@ -63,6 +64,7 @@ pub fn excerpt_for_cursor_position(
     write!(prompt, "\n```").unwrap();
 
     InputExcerpt {
+        context_range,
         editable_range,
         prompt,
     }
@@ -124,7 +126,7 @@ mod tests {
     use super::*;
     use gpui::{App, AppContext};
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher};
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use std::sync::Arc;
 
     #[gpui::test]

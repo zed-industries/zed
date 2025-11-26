@@ -250,7 +250,6 @@ impl PasswordProxy {
             .await
             .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
         make_file_executable(&askpass_script_path).await?;
-        // todo(shell): There might be no powershell on the system
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
             "powershell.exe -ExecutionPolicy Bypass -File {}",
@@ -375,7 +374,7 @@ fn generate_askpass_script(
     Ok(format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & {askpass_program} --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
     ))
 }

@@ -961,6 +961,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn watch(&self, cx: &mut App) -> Option<watch::Receiver<()>> {
         Some(self.connection.0.read(cx).models.watch())
     }
+
+    fn should_render_footer(&self) -> bool {
+        true
+    }
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

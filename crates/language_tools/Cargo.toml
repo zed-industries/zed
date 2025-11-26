@@ -39,5 +39,6 @@ zed_actions.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

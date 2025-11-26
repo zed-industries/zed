@@ -3616,27 +3616,10 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn excerpt_ids_for_range<T: ToOffset>(
+    fn excerpts_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = ExcerptId> + '_ {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
-        cursor.seek(&range.start);
-        std::iter::from_fn(move || {
-            let region = cursor.region()?;
-            if region.range.start >= range.end {
-                return None;
-            }
-            cursor.next_excerpt();
-            Some(region.excerpt.id)
-        })
-    }
-
-    pub fn buffer_ids_for_range<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = BufferId> + '_ {
+    ) -> impl Iterator<Item = &Excerpt> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&range.start);
@@ -3648,8 +3631,23 @@ impl MultiBufferSnapshot {
                 return None;
             }
             cursor.next_excerpt();
-            Some(region.excerpt.buffer_id)
+            Some(region.excerpt)
         })
+    }
+
+    pub fn excerpt_ids_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = ExcerptId> + '_ {
+        self.excerpts_for_range(range).map(|excerpt| excerpt.id)
+    }
+
+    pub fn buffer_ids_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = BufferId> + '_ {
+        self.excerpts_for_range(range)
+            .map(|excerpt| excerpt.buffer_id)
     }
 
     pub fn ranges_to_buffer_ranges<T: ToOffset>(
@@ -5078,8 +5076,7 @@ impl MultiBufferSnapshot {
         excerpt_id: ExcerptId,
         text_anchor: Range<text::Anchor>,
     ) -> Option<Range<Anchor>> {
-        let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let excerpt = self.excerpt(excerpt_id)?;
+        let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
 
         Some(
             self.anchor_in_excerpt_(excerpt, text_anchor.start)?
@@ -5094,8 +5091,7 @@ impl MultiBufferSnapshot {
         excerpt_id: ExcerptId,
         text_anchor: text::Anchor,
     ) -> Option<Anchor> {
-        let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let excerpt = self.excerpt(excerpt_id)?;
+        let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
         self.anchor_in_excerpt_(excerpt, text_anchor)
     }
 
@@ -5132,7 +5128,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
+        if *anchor == Anchor::min() || anchor.excerpt_id == ExcerptId::max() {
+            // todo(lw): should be `!self.is_empty()`
             true
         } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
             excerpt.buffer.can_resolve(&anchor.text_anchor)
@@ -5793,8 +5790,8 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, _)| buffer.file())
     }
 
-    pub fn language_at<T: ToOffset>(&self, point: T) -> Option<&Arc<Language>> {
-        self.point_to_buffer_offset(point)
+    pub fn language_at<T: ToOffset>(&self, offset: T) -> Option<&Arc<Language>> {
+        self.point_to_buffer_offset(offset)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
@@ -5994,13 +5991,27 @@ impl MultiBufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
         let anchor = self.anchor_before(offset);
-        let excerpt_id = anchor.excerpt_id;
-        let excerpt = self.excerpt(excerpt_id)?;
-        let buffer_id = excerpt.buffer_id;
+        let excerpt @ &Excerpt {
+            id: excerpt_id,
+            buffer_id,
+            ref buffer,
+            ..
+        } = self.excerpt(anchor.excerpt_id)?;
+        if cfg!(debug_assertions) {
+            match anchor.buffer_id {
+                // we clearly are hitting this according to sentry, but in what situations can this occur?
+                Some(anchor_buffer_id) => {
+                    assert_eq!(
+                        anchor_buffer_id, buffer_id,
+                        "anchor {anchor:?} does not match with resolved excerpt {excerpt:?}"
+                    )
+                }
+                None => assert_eq!(anchor, Anchor::max()),
+            }
+        };
         Some((
             buffer_id,
-            excerpt
-                .buffer
+            buffer
                 .symbols_containing(anchor.text_anchor, theme)
                 .into_iter()
                 .flat_map(|item| {
@@ -6116,6 +6127,12 @@ impl MultiBufferSnapshot {
         }
     }
 
+    /// Returns the excerpt for the given id. The returned excerpt is guaranteed
+    /// to have the same excerpt id as the one passed in, with the exception of
+    /// `ExcerptId::max()`.
+    ///
+    /// Callers of this function should generally use the resulting excerpt's `id` field
+    /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);

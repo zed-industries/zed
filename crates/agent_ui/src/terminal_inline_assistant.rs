@@ -1,6 +1,5 @@
 use crate::{
     context::load_context,
-    context_store::ContextStore,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
     },
@@ -73,8 +72,8 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
+        thread_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -87,7 +86,6 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let context_store = cx.new(|_cx| ContextStore::new(project));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -97,10 +95,10 @@ impl TerminalInlineAssistant {
                 prompt_buffer.clone(),
                 codegen,
                 self.fs.clone(),
-                context_store.clone(),
-                workspace.clone(),
                 thread_store.clone(),
-                prompt_store.as_ref().map(|s| s.downgrade()),
+                prompt_store.clone(),
+                project.clone(),
+                workspace.clone(),
                 window,
                 cx,
             )
@@ -119,8 +117,6 @@ impl TerminalInlineAssistant {
             terminal_view,
             prompt_editor,
             workspace.clone(),
-            context_store,
-            prompt_store,
             window,
             cx,
         );
@@ -227,6 +223,10 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
+        let ConfiguredModel { model, .. } = LanguageModelRegistry::read_global(cx)
+            .inline_assistant_model()
+            .context("No inline assistant model")?;
+
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
         let shell = std::env::var("SHELL").ok();
@@ -243,45 +243,31 @@ impl TerminalInlineAssistant {
             .ok()
             .unwrap_or_default();
 
+        let prompt_editor = assist.prompt_editor.clone().context("invalid assist")?;
+
         let prompt = self.prompt_builder.generate_terminal_assistant_prompt(
-            &assist
-                .prompt_editor
-                .clone()
-                .context("invalid assist")?
-                .read(cx)
-                .prompt(cx),
+            &prompt_editor.read(cx).prompt(cx),
             shell.as_deref(),
             working_directory.as_deref(),
             &latest_output,
         )?;
 
-        let contexts = assist
-            .context_store
-            .read(cx)
-            .context()
-            .cloned()
-            .collect::<Vec<_>>();
-        let context_load_task = assist.workspace.update(cx, |workspace, cx| {
-            let project = workspace.project();
-            load_context(contexts, project, &assist.prompt_store, cx)
-        })?;
-
-        let ConfiguredModel { model, .. } = LanguageModelRegistry::read_global(cx)
-            .inline_assistant_model()
-            .context("No inline assistant model")?;
-
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+
+        let mention_set = prompt_editor.read(cx).mention_set().clone();
+        let load_context_task = load_context(&mention_set, cx);
 
         Ok(cx.background_spawn(async move {
             let mut request_message = LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![],
                 cache: false,
+                reasoning_details: None,
             };
 
-            context_load_task
-                .await
-                .add_to_request_message(&mut request_message);
+            if let Some(context) = load_context_task.await {
+                context.add_to_request_message(&mut request_message);
+            }
 
             request_message.content.push(prompt.into());
 
@@ -409,8 +395,6 @@ struct TerminalInlineAssist {
     prompt_editor: Option<Entity<PromptEditor<TerminalCodegen>>>,
     codegen: Entity<TerminalCodegen>,
     workspace: WeakEntity<Workspace>,
-    context_store: Entity<ContextStore>,
-    prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -420,8 +404,6 @@ impl TerminalInlineAssist {
         terminal: &Entity<TerminalView>,
         prompt_editor: Entity<PromptEditor<TerminalCodegen>>,
         workspace: WeakEntity<Workspace>,
-        context_store: Entity<ContextStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -431,8 +413,6 @@ impl TerminalInlineAssist {
             prompt_editor: Some(prompt_editor.clone()),
             codegen: codegen.clone(),
             workspace,
-            context_store,
-            prompt_store,
             _subscriptions: vec![
                 window.subscribe(&prompt_editor, cx, |prompt_editor, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {

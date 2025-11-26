@@ -3,11 +3,11 @@ use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::WorktreeDelegate;
 use gpui::BackgroundExecutor;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
+pub const MIN_VERSION: Version = Version::new(0, 0, 4);
 
 wasmtime::component::bindgen!({
     async: true,

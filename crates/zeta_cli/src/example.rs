@@ -26,7 +26,7 @@ use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 use util::{paths::PathStyle, rel_path::RelPath};
-use zeta2::udiff::OpenedBuffers;
+use zeta::udiff::OpenedBuffers;
 
 use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
@@ -557,7 +557,7 @@ impl NamedExample {
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<OpenedBuffers<'_>> {
-        zeta2::udiff::apply_diff(&self.example.edit_history, project, cx).await
+        zeta::udiff::apply_diff(&self.example.edit_history, project, cx).await
     }
 }
 

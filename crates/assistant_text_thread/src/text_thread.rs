@@ -16,6 +16,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
     Task,
 };
+use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
@@ -1417,6 +1418,7 @@ impl TextThread {
                 role: Role::User,
                 content: vec!["Respond only with OK, nothing else.".into()],
                 cache: false,
+                reasoning_details: None,
             });
             req
         };
@@ -1852,14 +1854,17 @@ impl TextThread {
                         }
 
                         if ensure_trailing_newline
-                            && buffer.contains_str_at(command_range_end, "\n")
+                            && buffer
+                                .chars_at(command_range_end)
+                                .next()
+                                .is_some_and(|c| c == '\n')
                         {
-                            let newline_offset = insert_position.saturating_sub(1);
-                            if buffer.contains_str_at(newline_offset, "\n")
+                            if let Some((prev_char, '\n')) =
+                                buffer.reversed_chars_at(insert_position).next_tuple()
                                 && last_section_range.is_none_or(|last_section_range| {
                                     !last_section_range
                                         .to_offset(buffer)
-                                        .contains(&newline_offset)
+                                        .contains(&(insert_position - prev_char.len_utf8()))
                                 })
                             {
                                 deletions.push((command_range_end..command_range_end + 1, ""));
@@ -2085,6 +2090,11 @@ impl TextThread {
                                         );
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
+                                    LanguageModelCompletionEvent::ReasoningDetails(_) => {
+                                        // ReasoningDetails are metadata (signatures, encrypted data, format info)
+                                        // used for request/response validation, not UI content.
+                                        // The displayable thinking text is already handled by the Thinking event.
+                                    }
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
@@ -2308,6 +2318,7 @@ impl TextThread {
                 role: message.role,
                 content: Vec::new(),
                 cache: message.cache.as_ref().is_some_and(|cache| cache.is_anchor),
+                reasoning_details: None,
             };
 
             while let Some(content) = contents.peek() {
@@ -2679,6 +2690,7 @@ impl TextThread {
                 role: Role::User,
                 content: vec![SUMMARIZE_THREAD_PROMPT.into()],
                 cache: false,
+                reasoning_details: None,
             });
 
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can

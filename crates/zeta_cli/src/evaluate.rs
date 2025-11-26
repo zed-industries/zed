@@ -9,7 +9,7 @@ use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
 use util::ResultExt as _;
-use zeta2::{Zeta, udiff::DiffLine};
+use zeta::{Zeta, udiff::DiffLine};
 
 use crate::{
     EvaluateArguments, PredictionOptions,

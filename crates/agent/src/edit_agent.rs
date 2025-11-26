@@ -703,6 +703,7 @@ impl EditAgent {
             role: Role::User,
             content: vec![MessageContent::Text(prompt)],
             cache: false,
+            reasoning_details: None,
         });
 
         // Include tools in the request so that we can take advantage of

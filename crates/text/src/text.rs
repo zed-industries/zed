@@ -2444,7 +2444,9 @@ impl BufferSnapshot {
         } else if bias == Bias::Right && offset == self.len() {
             Anchor::MAX
         } else {
-            if offset > self.visible_text.len() {
+            if cfg!(debug_assertions) {
+                self.visible_text.assert_char_boundary(offset);
+            } else if offset > self.visible_text.len() {
                 panic!("offset {} is out of bounds", offset)
             }
             let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
@@ -3137,12 +3139,9 @@ impl ToOffset for Point {
 
 impl ToOffset for usize {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        assert!(
-            *self <= snapshot.len(),
-            "offset {} is out of range, snapshot length is {}",
-            self,
-            snapshot.len()
-        );
+        if cfg!(debug_assertions) {
+            snapshot.as_rope().assert_char_boundary(*self);
+        }
         *self
     }
 }
