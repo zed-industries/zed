@@ -145,3 +145,133 @@ impl VirtualDocumentStore {
         &self.handlers
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn make_config(scheme: &str) -> VirtualDocumentConfig {
+        VirtualDocumentConfig {
+            scheme: scheme.to_string(),
+            content_request_method: format!("{}/getContents", scheme),
+            language_name: "TestLanguage".to_string(),
+            language_id: "test".to_string(),
+        }
+    }
+
+    #[gpui::test]
+    fn test_register_handler(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            // Initially empty
+            assert!(store.handlers().is_empty());
+
+            // Register a handler
+            let config = make_config("jdt");
+            store.register_handler(config);
+
+            assert_eq!(store.handlers().len(), 1);
+            assert!(store.handlers().contains_key("jdt"));
+        });
+    }
+
+    #[gpui::test]
+    fn test_handler_for_scheme(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            // No handler registered
+            assert!(store.handler_for_scheme("jdt").is_none());
+
+            // Register handler
+            let config = make_config("jdt");
+            store.register_handler(config);
+
+            // Now it should be found
+            let handler = store.handler_for_scheme("jdt");
+            assert!(handler.is_some());
+            assert_eq!(handler.unwrap().scheme, "jdt");
+            assert_eq!(handler.unwrap().content_request_method, "jdt/getContents");
+
+            // Other schemes still not found
+            assert!(store.handler_for_scheme("rust-analyzer").is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_register_multiple_handlers(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            store.register_handler(make_config("jdt"));
+            store.register_handler(make_config("rust-analyzer"));
+            store.register_handler(make_config("dap-browser"));
+
+            assert_eq!(store.handlers().len(), 3);
+            assert!(store.handler_for_scheme("jdt").is_some());
+            assert!(store.handler_for_scheme("rust-analyzer").is_some());
+            assert!(store.handler_for_scheme("dap-browser").is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn test_handler_replacement(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            // Register initial handler
+            let config1 = VirtualDocumentConfig {
+                scheme: "jdt".to_string(),
+                content_request_method: "java/classFileContents".to_string(),
+                language_name: "Java".to_string(),
+                language_id: "java".to_string(),
+            };
+            store.register_handler(config1);
+
+            assert_eq!(
+                store
+                    .handler_for_scheme("jdt")
+                    .unwrap()
+                    .content_request_method,
+                "java/classFileContents"
+            );
+
+            // Replace with new handler
+            let config2 = VirtualDocumentConfig {
+                scheme: "jdt".to_string(),
+                content_request_method: "java/newMethod".to_string(),
+                language_name: "Java".to_string(),
+                language_id: "java".to_string(),
+            };
+            store.register_handler(config2);
+
+            // Should still have only one handler, but with updated method
+            assert_eq!(store.handlers().len(), 1);
+            assert_eq!(
+                store
+                    .handler_for_scheme("jdt")
+                    .unwrap()
+                    .content_request_method,
+                "java/newMethod"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_process_uri_no_handler(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = VirtualDocumentStore::new(cx);
+
+            // Create a URI with unregistered scheme
+            let uri = lsp::Uri::from_str("jdt://contents/some/path").unwrap();
+
+            // This requires a language server, but we can test the None case
+            // when no handler is registered - process_uri should return None
+            // We can't easily test with a real LanguageServer here, but we verify
+            // the handler lookup path
+            assert!(store.handler_for_scheme(uri.scheme()).is_none());
+        });
+    }
+}
