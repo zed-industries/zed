@@ -24,7 +24,7 @@ use git::{
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
 };
-use ignore::IgnoreStack;
+use ignore::{IgnoreStack, IgnoreStackEntry};
 use language::DiskState;
 
 use parking_lot::Mutex;
@@ -64,7 +64,7 @@ use std::{
 use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt, debug_panic, maybe,
+    ResultExt, command::new_smol_command, debug_panic, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
     rel_path::RelPath,
 };
@@ -236,6 +236,9 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
+    /// Files tracked by git in each repository, indexed by the repository's root absolute path.
+    /// These files should not be treated as ignored even if they match gitignore patterns.
+    tracked_files_by_repo_root: HashMap<Arc<Path>, Arc<HashSet<Arc<RelPath>>>>,
     /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
@@ -390,6 +393,7 @@ impl Worktree {
                 ignores_by_parent_abs_path: Default::default(),
                 global_gitignore: Default::default(),
                 git_repositories: Default::default(),
+                tracked_files_by_repo_root: Default::default(),
                 snapshot: Snapshot::new(
                     cx.entity_id().as_u64(),
                     abs_path
@@ -2554,10 +2558,22 @@ impl LocalSnapshot {
         } else {
             IgnoreStack::none()
         };
-        ignore_stack.repo_root = repo_root;
+        ignore_stack.repo_root = repo_root.clone();
+
+        // Set tracked files for this repository so that tracked files aren't treated as ignored
+        if let Some(ref repo_root) = repo_root {
+            if let Some(tracked_files) = self.tracked_files_by_repo_root.get(repo_root) {
+                ignore_stack.tracked_paths = tracked_files.clone();
+            }
+        }
+
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
-                ignore_stack = IgnoreStack::all();
+                ignore_stack = IgnoreStack {
+                    repo_root: ignore_stack.repo_root.clone(),
+                    top: Arc::new(IgnoreStackEntry::All),
+                    tracked_paths: ignore_stack.tracked_paths.clone(),
+                };
                 break;
             } else if let Some(ignore) = ignore {
                 ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
@@ -2565,7 +2581,11 @@ impl LocalSnapshot {
         }
 
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
-            ignore_stack = IgnoreStack::all();
+            ignore_stack = IgnoreStack {
+                repo_root: ignore_stack.repo_root.clone(),
+                top: Arc::new(IgnoreStackEntry::All),
+                tracked_paths: ignore_stack.tracked_paths.clone(),
+            };
         }
 
         ignore_stack
@@ -2972,6 +2992,11 @@ impl BackgroundScannerState {
             .git_repositories
             .insert(work_directory_id, local_repository.clone());
 
+        // Fetch and store tracked files for this repository
+        let tracked_files = get_tracked_files(&work_directory_abs_path).await;
+        self.snapshot.tracked_files_by_repo_root
+            .insert(work_directory_abs_path.into(), Arc::new(tracked_files));
+
         log::trace!("inserting new local git repository");
         Ok(local_repository)
     }
@@ -3006,6 +3031,32 @@ async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
         builder.add_line(Some(abs_path.into()), line)?;
     }
     Ok(builder.build()?)
+}
+
+/// Get the list of files tracked by git in a repository.
+/// This runs `git ls-files` to get all tracked files.
+async fn get_tracked_files(repo_root: &Path) -> HashSet<Arc<RelPath>> {
+    let output = new_smol_command("git")
+        .current_dir(repo_root)
+        .args(["ls-files", "-z"])
+        .output()
+        .await;
+
+    let mut tracked_files = HashSet::default();
+    if let Ok(output) = output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for path_str in stdout.split('\0') {
+                if !path_str.is_empty() {
+                    // git ls-files outputs unix-style paths
+                    if let Ok(rel_path) = RelPath::unix(path_str) {
+                        tracked_files.insert(Arc::from(rel_path));
+                    }
+                }
+            }
+        }
+    }
+    tracked_files
 }
 
 impl Deref for Worktree {
@@ -4219,6 +4270,8 @@ impl BackgroundScanner {
             && path.ends_with(DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            let tracked_files = get_tracked_files(&job.abs_path).await;
+            ignore_stack.tracked_paths = Arc::new(tracked_files);
         }
 
         for child_abs_path in child_paths {

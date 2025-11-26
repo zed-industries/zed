@@ -2268,3 +2268,83 @@ fn init_test(cx: &mut gpui::TestAppContext) {
         cx.set_global(settings_store);
     });
 }
+
+#[gpui::test]
+async fn test_tracked_files_not_ignored(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    // Create a temp directory with a git repo where .gitignore contains "*" (ignore all)
+    // but some files are explicitly tracked (added via git add -f)
+    let dir = TempTree::new(json!({
+        "tracked.txt": "tracked content",
+        "untracked.txt": "untracked content",
+    }));
+
+    // Initialize a git repository
+    let repo = git2::Repository::init(dir.path()).expect("Failed to initialize git repository");
+
+    // Create .gitignore that ignores everything
+    std::fs::write(dir.path().join(".gitignore"), "*\n!.gitignore\n")
+        .expect("Failed to write .gitignore");
+
+    // Add .gitignore and tracked.txt to git (force add tracked.txt since it matches ignore pattern)
+    let mut index = repo.index().expect("Failed to get index");
+    index.add_path(Path::new(".gitignore")).expect("Failed to add .gitignore");
+    index.add_path(Path::new("tracked.txt")).expect("Failed to add tracked.txt");
+    index.write().expect("Failed to write index");
+
+    // Commit the tracked files
+    let tree_id = index.write_tree().expect("Failed to write tree");
+    let tree = repo.find_tree(tree_id).expect("Failed to find tree");
+    let sig = git2::Signature::now("Test", "test@example.com").expect("Failed to create signature");
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+        .expect("Failed to commit");
+
+    // Now create the worktree
+    let worktree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    #[cfg(not(target_os = "macos"))]
+    fs::fs_watcher::global(|_| {}).unwrap();
+
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    worktree.flush_fs_events(cx).await;
+
+    worktree.read_with(cx, |tree, _| {
+        // tracked.txt should NOT be ignored because it's tracked by git
+        let tracked_entry = tree
+            .entry_for_path(rel_path("tracked.txt"))
+            .expect("tracked.txt should exist");
+        assert!(
+            !tracked_entry.is_ignored,
+            "tracked.txt should NOT be ignored because it's tracked by git, even though it matches .gitignore pattern"
+        );
+
+        // untracked.txt SHOULD be ignored because it matches .gitignore and is not tracked
+        let untracked_entry = tree
+            .entry_for_path(rel_path("untracked.txt"))
+            .expect("untracked.txt should exist");
+        assert!(
+            untracked_entry.is_ignored,
+            "untracked.txt should be ignored because it matches .gitignore and is not tracked"
+        );
+
+        // .gitignore should NOT be ignored (it's negated in the pattern and tracked)
+        let gitignore_entry = tree
+            .entry_for_path(rel_path(".gitignore"))
+            .expect(".gitignore should exist");
+        assert!(
+            !gitignore_entry.is_ignored,
+            ".gitignore should NOT be ignored because it's negated in the pattern"
+        );
+    });
+}

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/opt/homebrew/bin/cargo check -p worktree)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH:/usr/bin:/bin\")",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(/opt/homebrew/bin/cargo test:*)",
+      "Bash(echo $HOME/.cargo/bin/cargo)",
+      "Bash($HOME/.cargo/bin/cargo test:*)",
+      "Bash(~/.cargo/bin/cargo test:*)",
+      "Bash(RUST_LOG=trace ~/.cargo/bin/cargo test:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,10 +1,15 @@
+use collections::HashSet;
 use ignore::gitignore::Gitignore;
 use std::{ffi::OsStr, path::Path, sync::Arc};
+use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone, Debug)]
 pub struct IgnoreStack {
     pub repo_root: Option<Arc<Path>>,
     pub top: Arc<IgnoreStackEntry>,
+    /// Files tracked by git in this repository. These should not be treated as ignored
+    /// even if they match gitignore patterns.
+    pub tracked_paths: Arc<HashSet<Arc<RelPath>>>,
 }
 
 #[derive(Debug)]
@@ -26,6 +31,7 @@ impl IgnoreStack {
         Self {
             repo_root: None,
             top: Arc::new(IgnoreStackEntry::None),
+            tracked_paths: Arc::new(HashSet::default()),
         }
     }
 
@@ -33,6 +39,7 @@ impl IgnoreStack {
         Self {
             repo_root: None,
             top: Arc::new(IgnoreStackEntry::All),
+            tracked_paths: Arc::new(HashSet::default()),
         }
     }
 
@@ -40,6 +47,7 @@ impl IgnoreStack {
         Self {
             repo_root: None,
             top: Arc::new(IgnoreStackEntry::Global { ignore }),
+            tracked_paths: Arc::new(HashSet::default()),
         }
     }
 
@@ -55,12 +63,25 @@ impl IgnoreStack {
         Self {
             repo_root: self.repo_root,
             top,
+            tracked_paths: self.tracked_paths,
         }
     }
 
     pub fn is_abs_path_ignored(&self, abs_path: &Path, is_dir: bool) -> bool {
         if is_dir && abs_path.file_name() == Some(OsStr::new(".git")) {
             return true;
+        }
+
+        // Check if this path is tracked by git. Tracked files are never ignored,
+        // even if they match gitignore patterns.
+        if let Some(repo_root) = &self.repo_root {
+            if let Ok(relative_path) = abs_path.strip_prefix(repo_root) {
+                if let Ok(rel_path) = RelPath::new(relative_path, PathStyle::local()) {
+                    if self.tracked_paths.contains(rel_path.as_ref()) {
+                        return false;
+                    }
+                }
+            }
         }
 
         match self.top.as_ref() {
@@ -92,6 +113,7 @@ impl IgnoreStack {
                 ignore::Match::None => IgnoreStack {
                     repo_root: self.repo_root.clone(),
                     top: prev.clone(),
+                    tracked_paths: self.tracked_paths.clone(),
                 }
                 .is_abs_path_ignored(abs_path, is_dir),
                 ignore::Match::Ignore(_) => true,
@@ -99,4 +121,5 @@ impl IgnoreStack {
             },
         }
     }
+
 }
