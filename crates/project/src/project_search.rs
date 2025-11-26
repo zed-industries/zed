@@ -168,6 +168,7 @@ impl Search {
                 unnamed_buffers.push(handle)
             };
         }
+        let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
@@ -303,8 +304,8 @@ impl Search {
                     assert!(num_cpus > 0);
                     for _ in 0..executor.num_cpus() - 1 {
                         let worker = Worker {
-                            query: &query,
-                            open_buffers: &open_buffers,
+                            query: query.clone(),
+                            open_buffers: open_buffers.clone(),
                             candidates: candidate_searcher.clone(),
                             find_all_matches_rx: find_all_matches_rx.clone(),
                         };
@@ -578,9 +579,9 @@ impl Search {
     }
 }
 
-struct Worker<'search> {
-    query: &'search SearchQuery,
-    open_buffers: &'search HashSet<ProjectEntryId>,
+struct Worker {
+    query: Arc<SearchQuery>,
+    open_buffers: Arc<HashSet<ProjectEntryId>>,
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
@@ -591,7 +592,7 @@ struct Worker<'search> {
     )>,
 }
 
-impl Worker<'_> {
+impl Worker {
     async fn run(self) {
         let (
             input_paths_rx,
@@ -629,7 +630,7 @@ impl Worker<'_> {
 
         loop {
             let handler = RequestHandler {
-                query: self.query,
+                query: &self.query,
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
