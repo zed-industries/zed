@@ -113,8 +113,8 @@ jobs:
 
         EOF
 
-        bump2version --verbose cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p'
-        NEW_VERSION="$(${{ inputs.bump-type }})"
+        bump2version --verbose ${{ inputs.bump-type }}
+        NEW_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
         cargo update --workspace
 
         rm .bumpversion.cfg

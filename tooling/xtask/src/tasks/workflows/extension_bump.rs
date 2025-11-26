@@ -178,7 +178,7 @@ fn bump_version(bump_type: &WorkflowInput) -> (Step<Run>, StepOutput, StepOutput
             echo "new_version=${{NEW_VERSION}}" >> $GITHUB_OUTPUT
             "#
         },
-        VERSION_CHECK, BUMPVERSION_CONFIG, VERSION_CHECK, bump_type
+        VERSION_CHECK, BUMPVERSION_CONFIG, bump_type, VERSION_CHECK
     ))
     .id("bump-version");
 
