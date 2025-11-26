@@ -8174,8 +8174,11 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     });
 }
 
+// TODO: Should we test this on Windows also?
 #[gpui::test]
+#[cfg(not(windows))]
 async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
     init_test(cx);
     cx.executor().allow_parking();
     let committed_contents = "bar\n";
@@ -8189,13 +8192,9 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
     let work_dir = root.path().join("project");
     let file_path = work_dir.join("foo");
     let repo = git_init(work_dir.as_path());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&file_path, perms).unwrap();
-    }
+    let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&file_path, perms).unwrap();
     git_add("foo", &repo);
     git_commit("Initial commit", &repo);
     std::fs::write(&file_path, file_contents).unwrap();
@@ -8230,37 +8229,34 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
 
     cx.run_until_parked();
 
-    #[cfg(unix)]
-    {
-        let output = smol::process::Command::new("git")
-            .current_dir(&work_dir)
-            .args(["diff", "--staged"])
-            .output()
-            .await
-            .unwrap();
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["diff", "--staged"])
+        .output()
+        .await
+        .unwrap();
 
-        let staged_diff = String::from_utf8_lossy(&output.stdout);
+    let staged_diff = String::from_utf8_lossy(&output.stdout);
 
-        assert!(
-            !staged_diff.contains("new mode 100644"),
-            "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
-            staged_diff
-        );
+    assert!(
+        !staged_diff.contains("new mode 100644"),
+        "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
+        staged_diff
+    );
 
-        let output = smol::process::Command::new("git")
-            .current_dir(&work_dir)
-            .args(["ls-files", "-s"])
-            .output()
-            .await
-            .unwrap();
-        let index_contents = String::from_utf8_lossy(&output.stdout);
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["ls-files", "-s"])
+        .output()
+        .await
+        .unwrap();
+    let index_contents = String::from_utf8_lossy(&output.stdout);
 
-        assert!(
-            index_contents.contains("100755"),
-            "Index should show file as executable (100755).\ngit ls-files -s:\n{}",
-            index_contents
-        );
-    }
+    assert!(
+        index_contents.contains("100755"),
+        "Index should show file as executable (100755).\ngit ls-files -s:\n{}",
+        index_contents
+    );
 }
 
 #[gpui::test]
