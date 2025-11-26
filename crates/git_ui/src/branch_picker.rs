@@ -6,9 +6,9 @@ use collections::HashSet;
 use git::repository::Branch;
 use gpui::http_client::Url;
 use gpui::{
-    App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    App, AppContext, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window, rems,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
@@ -222,6 +222,7 @@ pub struct BranchListDelegate {
     modifiers: Modifiers,
     display_remotes: bool,
     state: PickerState,
+    loading: bool,
 }
 
 #[derive(Debug)]
@@ -249,6 +250,7 @@ impl BranchListDelegate {
             modifiers: Default::default(),
             display_remotes: false,
             state: PickerState::List,
+            loading: false,
         }
     }
 
@@ -288,15 +290,32 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-
         cx.spawn(async move |this, cx| {
-            repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url))?
-                .await??;
+            this.update(cx, |picker, cx| {
+                picker.delegate.loading = true;
+                cx.notify();
+            })
+            .log_err();
 
-            // this.update(cx, |picker, cx| {
-            //     picker.delegate.loading = false;
-            // })?;
-
+            let stop_loader = |this: &WeakEntity<Picker<BranchListDelegate>>, cx: &mut AsyncApp| {
+                this.update(cx, |picker, cx| {
+                    picker.delegate.loading = false;
+                    cx.notify();
+                })
+                .log_err();
+            };
+            repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url))
+                .inspect_err(|_err| {
+                    stop_loader(&this, cx);
+                })?
+                .await
+                .inspect_err(|_err| {
+                    stop_loader(&this, cx);
+                })?
+                .inspect_err(|_err| {
+                    stop_loader(&this, cx);
+                })?;
+            stop_loader(&this, cx);
             Ok(())
         })
         .detach_and_prompt_err("Failed to create remote", window, cx, |e, _, _cx| {
@@ -780,6 +799,19 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.loading {
+            return Some(
+                h_flex()
+                    .w_full()
+                    .p_1p5()
+                    .gap_1()
+                    .justify_end()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.loader())
+                    .into_any(),
+            );
+        }
         match self.state {
             PickerState::List => Some(
                 h_flex()
@@ -816,6 +848,7 @@ impl PickerDelegate for BranchListDelegate {
                             .style(ui::ToggleButtonGroupStyle::Transparent),
                         ),
                     )
+                    .when(self.loading, |this| this.child(self.loader()))
                     .into_any(),
             ),
             PickerState::CreateRemote(_) => Some(
@@ -846,4 +879,12 @@ impl PickerDelegate for BranchListDelegate {
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         None
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_name() {}
 }
