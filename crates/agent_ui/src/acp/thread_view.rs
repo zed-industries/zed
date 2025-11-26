@@ -3989,7 +3989,7 @@ impl AcpThreadView {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();
                 let path_style = file.path_style(cx);
-                let separator = file.path_style(cx).separator();
+                let separator = file.path_style(cx).primary_separator();
 
                 let file_path = path.parent().and_then(|parent| {
                     if parent.is_empty() {

@@ -4351,8 +4351,11 @@ impl GitPanel {
                             .when(strikethrough, Label::strikethrough),
                     ),
                     (true, false) => this.child(
-                        self.entry_label(format!("{dir}{}", path_style.separator()), path_color)
-                            .when(strikethrough, Label::strikethrough),
+                        self.entry_label(
+                            format!("{dir}{}", path_style.primary_separator()),
+                            path_color,
+                        )
+                        .when(strikethrough, Label::strikethrough),
                     ),
                     _ => this,
                 }
