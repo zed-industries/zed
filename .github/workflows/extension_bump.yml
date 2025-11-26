@@ -139,8 +139,6 @@ jobs:
     - check_bump_needed
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'false'
     runs-on: namespace-profile-8x16-ubuntu-2204
-    permissions:
-      contents: write
     steps:
     - id: generate-token
       name: extension_bump::generate_token
