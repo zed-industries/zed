@@ -80,6 +80,7 @@ impl LineWrapper {
                             if candidate {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
+                                dbg!(c);
                             }
                         }
 
@@ -107,6 +108,8 @@ impl LineWrapper {
                         element_width
                     }
                 };
+
+                dbg!(&item_width);
 
                 width += item_width;
                 if width > wrap_width && ix > last_wrap_ix {
@@ -358,6 +361,10 @@ mod tests {
 
     #[test]
     fn test_wrap_line() {
+        // NOTE:
+        // In this case (Used .ZedMono and 16px text size),
+        // 1 char is `9.6px` width, so 72px can fit 7 chars.
+        const WRAP_WIDTH: Pixels = px(72.);
         let mut wrapper = build_wrapper();
 
         assert_eq!(
@@ -365,28 +372,37 @@ mod tests {
                 .wrap_line(&[LineFragment::text("aa bbb cccc ddddd eeee")], px(72.))
                 .collect::<Vec<_>>(),
             &[
+                // "aa bbb "
                 Boundary::new(7, 0),
+                // "cccc "
                 Boundary::new(12, 0),
+                // "ddddd "
                 Boundary::new(18, 0)
             ],
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
+                .wrap_line(&[LineFragment::text("aaa bbbbbbbcccccccaaaa")], px(72.0))
                 .collect::<Vec<_>>(),
             &[
+                // "aaa "
                 Boundary::new(4, 0),
+                // "bbbbbbb"
                 Boundary::new(11, 0),
+                // "ccccccc"
                 Boundary::new(18, 0)
             ],
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("     aaaaaaa")], px(72.))
+                .wrap_line(&[LineFragment::text("     aabbccd")], px(72.))
                 .collect::<Vec<_>>(),
             &[
+                // "     aa"
                 Boundary::new(7, 5),
+                // "     bb"
                 Boundary::new(9, 5),
+                // "     cc"
                 Boundary::new(11, 5),
             ]
         );
@@ -394,7 +410,7 @@ mod tests {
             wrapper
                 .wrap_line(
                     &[LineFragment::text("                            ")],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -405,27 +421,40 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("          aaaaaaaaaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("          aaaabbbbccccdd")],
+                    WRAP_WIDTH
+                )
                 .collect::<Vec<_>>(),
             &[
+                // "       "
                 Boundary::new(7, 0),
+                // "   aaaa"
                 Boundary::new(14, 3),
+                // "   bbbb"
                 Boundary::new(18, 3),
+                // "   cccc"
                 Boundary::new(22, 3),
             ]
         );
         assert_eq!(
             wrapper
                 .wrap_line(
-                    &[LineFragment::text("aa bbb cccc ddddd eeeeee    ")],
-                    px(72.)
+                    &[LineFragment::text("aa bbb cccc ddddd eeeeee          ")],
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "aa bbb "
                 Boundary::new(7, 0),
+                // "cccc "
                 Boundary::new(12, 0),
+                // "ddddd "
                 Boundary::new(18, 0),
+                // "eeeeee "
                 Boundary::new(25, 0),
+                // "       "
+                Boundary::new(32, 0),
             ]
         );
 
@@ -437,14 +466,35 @@ mod tests {
                         LineFragment::text("aa bbb "),
                         LineFragment::text("cccc ddddd eeee")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "aa bbb "
                 Boundary::new(7, 0),
+                // "cccc "
                 Boundary::new(12, 0),
+                // "ddddd "
                 Boundary::new(18, 0)
             ],
+        );
+
+        // Test with CJK characters
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("aaaaa bbb你好世界cccccdd")],
+                    WRAP_WIDTH
+                )
+                .collect::<Vec<_>>(),
+            &[
+                // "aaaaa "
+                Boundary::new(6, 0),
+                // "bbb你好世"
+                Boundary::new(18, 0),
+                // "界ccccc"
+                Boundary::new(27, 0),
+            ]
         );
 
         // Test wrapping with a mix of text and element fragments
@@ -458,10 +508,17 @@ mod tests {
                         LineFragment::element(px(30.), 1),
                         LineFragment::text(" cccc")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
-            &[Boundary::new(5, 0), Boundary::new(10, 0)],
+            &[
+                // "aa [el] "
+                Boundary::new(5, 0),
+                // "bbb [el] "
+                // - "bbb [el]" (4 * 9.6 + 30 = 68.4px)
+                // - Adding last space to avoid line starting with space
+                Boundary::new(10, 0),
+            ],
         );
 
         // Test with element at the beginning and text afterward
@@ -472,13 +529,17 @@ mod tests {
                         LineFragment::element(px(50.), 1),
                         LineFragment::text(" aaaa bbbb cccc dddd")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "[element] "
                 Boundary::new(2, 0),
+                // "aaaa "
                 Boundary::new(7, 0),
+                // "bbbb "
                 Boundary::new(12, 0),
+                // "cccc "
                 Boundary::new(17, 0)
             ],
         );
@@ -492,13 +553,17 @@ mod tests {
                         LineFragment::element(px(100.), 1),
                         LineFragment::text(" more text")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "short "
                 Boundary::new(6, 0),
+                // "text "
                 Boundary::new(11, 0),
+                // "[el]"
                 Boundary::new(12, 0),
+                // " more "
                 Boundary::new(18, 0)
             ],
         );
