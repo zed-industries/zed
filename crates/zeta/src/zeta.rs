@@ -3237,7 +3237,7 @@ mod tests {
             );
         });
 
-        // second is reported as rejected
+        // prediction is reported as rejected
         let (reject_request, _) = requests.reject.next().await.unwrap();
 
         assert_eq!(
@@ -3245,6 +3245,65 @@ mod tests {
             &[EditPredictionRejection {
                 request_id: id,
                 reason: EditPredictionRejectReason::Empty,
+                was_shown: false
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_interpolated_empty(cx: &mut TestAppContext) {
+        let (zeta, mut requests) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md":  "Hello!\nHow\nBye\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        });
+
+        let (_, respond_tx) = requests.predict.next().await.unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("Hello!\nHow are you?\nBye", cx);
+        });
+
+        let response = model_response(SIMPLE_DIFF);
+        let id = response.id.clone();
+        respond_tx.send(response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            assert!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .is_none()
+            );
+        });
+
+        // prediction is reported as rejected
+        let (reject_request, _) = requests.reject.next().await.unwrap();
+
+        assert_eq!(
+            &reject_request.rejections,
+            &[EditPredictionRejection {
+                request_id: id,
+                reason: EditPredictionRejectReason::InterpolatedEmpty,
                 was_shown: false
             }]
         );
