@@ -1023,11 +1023,11 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for lock modifiers (Caps Lock, Num Lock, etc.)
-                    // Modifiers on regular keyboards should work fine either way but
+                    // Never update xkb state for Caps Lock and Num Lock
+                    // Regular modifiers on regular keyboards should work fine either way but
                     // custom macros on some Linux distributions require the state to be updated
                     // to prevent race conditions and occasional unexpected inputs
-                    if !is_lock_modifier(keysym) {
+                    if matches!(keysym, Keysym::Caps_Lock | Keysym::Num_Lock) {
                         state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     }
 
@@ -1093,11 +1093,11 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for lock modifiers (Caps Lock, Num Lock, etc.)
-                    // Modifiers on regular keyboards should work fine either way but
+                    // Never update xkb state for Caps Lock and Num Lock
+                    // Regular modifiers on regular keyboards should work fine either way but
                     // custom macros on some Linux distributions require the state to be updated
                     // to prevent race conditions and occasional unexpected inputs
-                    if !is_lock_modifier(keysym) {
+                    if matches!(keysym, Keysym::Caps_Lock | Keysym::Num_Lock) {
                         state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     }
 
@@ -2525,12 +2525,4 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
-}
-
-#[inline]
-fn is_lock_modifier(keysym: Keysym) -> bool {
-    matches!(
-        keysym,
-        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Scroll_Lock | Keysym::Shift_Lock
-    )
 }
