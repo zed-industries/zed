@@ -856,6 +856,8 @@ message LspQuery {
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
         InlayHints inlay_hints = 14;
+        SemanticTokensFull semantic_tokens_full = 16;
+        SemanticTokensDelta semantic_tokens_delta = 17;
     }
 }
 
@@ -879,6 +881,8 @@ message LspResponse {
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
         InlayHintsResponse inlay_hints_response = 13;
+        SemanticTokensFullResponse semantic_tokens_full_response = 14;
+        SemanticTokensDeltaResponse semantic_tokens_delta_response = 15;
     }
     uint64 server_id = 7;
 }

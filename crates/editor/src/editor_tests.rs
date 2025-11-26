@@ -27348,7 +27348,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             let buffer_result_id = project
                 .lsp_store()
                 .read(cx)
-                .result_id(server_id, buffer_id, cx);
+                .pull_diagnostics_result_id(server_id, buffer_id, cx);
             assert_eq!(expected, buffer_result_id);
         });
     };

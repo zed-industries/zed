@@ -14,7 +14,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future;
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -240,37 +240,37 @@ pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct SemanticTokensFull;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct SemanticTokensDelta {
-    pub previous_result_id: String,
+    pub previous_result_id: SharedString,
 }
 
 #[derive(Default, Debug)]
 pub(crate) struct SemanticTokensFullResponse {
     pub data: Vec<u32>,
-    pub id: Option<String>,
+    pub result_id: Option<SharedString>,
 }
 
 #[derive(Debug)]
 pub(crate) enum SemanticTokensDeltaResponse {
     Full {
         data: Vec<u32>,
-        id: Option<String>,
+        result_id: Option<SharedString>,
     },
     Delta {
         edits: Vec<SemanticTokensEdit>,
-        id: Option<String>,
+        result_id: Option<SharedString>,
     },
 }
 
 impl Default for SemanticTokensDeltaResponse {
     fn default() -> Self {
         SemanticTokensDeltaResponse::Delta {
-            edits: vec![],
-            id: None,
+            edits: Vec::new(),
+            result_id: None,
         }
     }
 }
@@ -308,7 +308,7 @@ pub(crate) struct GetDocumentDiagnostics {
     /// We cannot blindly rely on server's capabilities.diagnostic_provider, as they're a singular field, whereas
     /// a server can register multiple diagnostic providers post-mortem.
     pub dynamic_caps: DiagnosticServerCapabilities,
-    pub previous_result_id: Option<String>,
+    pub previous_result_id: Option<SharedString>,
 }
 
 #[async_trait(?Send)]
@@ -3554,7 +3554,7 @@ impl LspCommand for SemanticTokensFull {
             Some(lsp_semantic_tokens::SemanticTokensFullResult::Tokens(tokens)) => {
                 Ok(SemanticTokensFullResponse {
                     data: tokens.data,
-                    id: tokens.result_id,
+                    result_id: tokens.result_id.map(SharedString::new),
                 })
             }
             Some(lsp_semantic_tokens::SemanticTokensFullResult::Partial(_)) => {
@@ -3598,7 +3598,7 @@ impl LspCommand for SemanticTokensFull {
     ) -> proto::SemanticTokensFullResponse {
         proto::SemanticTokensFullResponse {
             data: response.data,
-            result_id: response.id,
+            result_id: response.result_id.map(|s| s.to_string()),
             version: serialize_version(buffer_version),
         }
     }
@@ -3618,7 +3618,7 @@ impl LspCommand for SemanticTokensFull {
 
         Ok(SemanticTokensFullResponse {
             data: message.data,
-            id: message.result_id,
+            result_id: message.result_id.map(SharedString::new),
         })
     }
 
@@ -3669,7 +3669,7 @@ impl LspCommand for SemanticTokensDelta {
             text_document: lsp::TextDocumentIdentifier {
                 uri: file_path_to_lsp_url(path)?,
             },
-            previous_result_id: self.previous_result_id.clone(),
+            previous_result_id: self.previous_result_id.clone().map(|s| s.to_string()),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
@@ -3687,7 +3687,7 @@ impl LspCommand for SemanticTokensDelta {
             Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::Tokens(tokens)) => {
                 Ok(SemanticTokensDeltaResponse::Full {
                     data: tokens.data,
-                    id: tokens.result_id,
+                    result_id: tokens.result_id.map(SharedString::new),
                 })
             }
             Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
@@ -3701,7 +3701,7 @@ impl LspCommand for SemanticTokensDelta {
                             data: e.data.unwrap_or_default(),
                         })
                         .collect(),
-                    id: delta.result_id,
+                    result_id: delta.result_id.map(SharedString::new),
                 })
             }
             Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::PartialTokensDelta {
@@ -3719,7 +3719,7 @@ impl LspCommand for SemanticTokensDelta {
         proto::SemanticTokensDelta {
             project_id,
             buffer_id: buffer.remote_id().into(),
-            previous_result_id: self.previous_result_id.clone(),
+            previous_result_id: self.previous_result_id.clone().map(|s| s.to_string()),
             version: serialize_version(&buffer.version()),
         }
     }
@@ -3737,7 +3737,7 @@ impl LspCommand for SemanticTokensDelta {
             .await?;
 
         Ok(SemanticTokensDelta {
-            previous_result_id: message.previous_result_id,
+            previous_result_id: SharedString::new(message.previous_result_id),
         })
     }
 
@@ -3749,15 +3749,17 @@ impl LspCommand for SemanticTokensDelta {
         _: &mut App,
     ) -> proto::SemanticTokensDeltaResponse {
         match response {
-            SemanticTokensDeltaResponse::Full { data, id } => proto::SemanticTokensDeltaResponse {
-                data,
-                edits: vec![],
-                result_id: id,
-                version: serialize_version(buffer_version),
-            },
-            SemanticTokensDeltaResponse::Delta { edits, id } => {
+            SemanticTokensDeltaResponse::Full { data, result_id } => {
                 proto::SemanticTokensDeltaResponse {
-                    data: vec![],
+                    data,
+                    edits: Vec::new(),
+                    result_id: result_id.map(|s| s.to_string()),
+                    version: serialize_version(buffer_version),
+                }
+            }
+            SemanticTokensDeltaResponse::Delta { edits, result_id } => {
+                proto::SemanticTokensDeltaResponse {
+                    data: Vec::new(),
                     edits: edits
                         .into_iter()
                         .map(|edit| proto::SemanticTokensEdit {
@@ -3766,7 +3768,7 @@ impl LspCommand for SemanticTokensDelta {
                             data: edit.data,
                         })
                         .collect(),
-                    result_id: id,
+                    result_id: result_id.map(|s| s.to_string()),
                     version: serialize_version(buffer_version),
                 }
             }
@@ -3789,7 +3791,7 @@ impl LspCommand for SemanticTokensDelta {
         if !message.data.is_empty() {
             Ok(SemanticTokensDeltaResponse::Full {
                 data: message.data,
-                id: message.result_id,
+                result_id: message.result_id.map(SharedString::new),
             })
         } else {
             Ok(SemanticTokensDeltaResponse::Delta {
@@ -3802,7 +3804,7 @@ impl LspCommand for SemanticTokensDelta {
                         data: edit.data,
                     })
                     .collect(),
-                id: message.result_id,
+                result_id: message.result_id.map(SharedString::new),
             })
         }
     }
@@ -4421,7 +4423,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 uri: file_path_to_lsp_url(path)?,
             },
             identifier,
-            previous_result_id: self.previous_result_id.clone(),
+            previous_result_id: self.previous_result_id.as_ref().map(ToString::to_string),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })

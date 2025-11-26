@@ -1,6 +1,6 @@
 // TODO kb move impl LspStore here all semantic token-related methods
 
-use std::{iter::Peekable, slice::ChunksExact, sync::Arc};
+use std::{collections::hash_map, iter::Peekable, slice::ChunksExact, sync::Arc};
 
 use anyhow::{Context as _, Result};
 
@@ -10,7 +10,7 @@ use futures::{
     FutureExt as _,
     future::{Shared, join_all},
 };
-use gpui::{AsyncApp, Context, Entity, Task};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task};
 use language::Buffer;
 use lsp::{AdapterServerCapabilities, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
@@ -50,19 +50,32 @@ impl LspStore {
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        // TODO kb this won't work on remote, cannot make accents on server_id
-        let server_ids = self.local_lsp_servers_for_buffer(&buffer, cx);
-
-        // If there are no servers yet, don't try and debounce. This makes startup quicker.
-        if server_ids.is_empty() {
-            return Task::ready(Ok(Default::default())).shared();
-        }
-
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
-        if refresh.is_some() {
-            latest_lsp_data.semantic_tokens = None;
-        }
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
+        if let Some(refresh) = refresh {
+            let invalidate_cache = true;
+            match semantic_tokens_data
+                .latest_invalidation_requests
+                .entry(refresh.server_id)
+            {
+                hash_map::Entry::Occupied(mut o) => {
+                    if refresh.request_id > *o.get() {
+                        o.insert(refresh.request_id);
+                    } else {
+                        invalidate_cache = false;
+                    }
+                }
+                hash_map::Entry::Vacant(v) => {
+                    v.insert(refresh.request_id);
+                }
+            }
+
+            if invalidate_cache {
+                let old_data = std::mem::take(semantic_tokens_data);
+                semantic_tokens_data.latest_invalidation_requests =
+                    old_data.latest_invalidation_requests;
+            }
+        }
 
         if let Some((updating_for, task)) = &semantic_tokens_data.update
             && !version_queried_for.changed_since(updating_for)
@@ -70,7 +83,7 @@ impl LspStore {
             return task.clone();
         }
 
-        let request_ids = semantic_tokens_data
+        let result_ids = semantic_tokens_data
             .buffer_tokens
             .servers
             .iter()
@@ -78,7 +91,7 @@ impl LspStore {
             .collect::<HashMap<_, _>>();
 
         let tasks = join_all(server_ids.into_iter().map(|server_id| {
-            if let Some(result_id) = request_ids.get(&server_id).cloned() {
+            if let Some(result_id) = result_ids.get(&server_id).cloned() {
                 let request = SemanticTokensDelta {
                     previous_result_id: result_id,
                 };
@@ -123,18 +136,17 @@ impl LspStore {
                                 .buffer_tokens
                                 .clone()
                         } else {
-                            Default::default()
+                            BufferSemanticTokens::default()
                         }
                     })
                     .map_err(Arc::new)
             })
             .shared();
 
-        let semantic_tokens_data = self
-            .latest_lsp_data(&buffer, cx)
+        self.latest_lsp_data(&buffer, cx)
             .semantic_tokens
-            .get_or_insert_default();
-        semantic_tokens_data.update = Some((version_queried_for, task.clone()));
+            .get_or_insert_default()
+            .update = Some((version_queried_for, task.clone()));
 
         task
     }
@@ -149,16 +161,16 @@ impl LspStore {
 
         self.send_semantic_tokens_request(
             buffer,
-            cx,
             server,
             SemanticTokensFull,
+            cx,
             move |response, store| {
                 // TODO kb here and below: this is racy, as the document version could have changed already
                 if let Some(lsp_data) = store.current_lsp_data(buffer_id) {
                     let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
 
                     let semantic_tokens =
-                        ServerSemanticTokens::from_full(response.data, response.id);
+                        ServerSemanticTokens::from_full(response.data, response.result_id);
 
                     semantic_tokens_data
                         .buffer_tokens
@@ -178,24 +190,24 @@ impl LspStore {
     ) -> Task<Result<()>> {
         let buffer_id = buffer.read(cx).remote_id();
 
-        self.send_semantic_tokens_request(buffer, cx, server, request, move |response, store| {
+        self.send_semantic_tokens_request(buffer, server, request, cx, move |response, store| {
             if let Some(lsp_data) = store.current_lsp_data(buffer_id) {
                 let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
 
                 match response {
-                    SemanticTokensDeltaResponse::Full { data, id } => {
+                    SemanticTokensDeltaResponse::Full { data, result_id } => {
                         semantic_tokens_data
                             .buffer_tokens
                             .servers
-                            .insert(server, ServerSemanticTokens::from_full(data, id));
+                            .insert(server, ServerSemanticTokens::from_full(data, result_id));
                     }
-                    SemanticTokensDeltaResponse::Delta { edits, id } => {
+                    SemanticTokensDeltaResponse::Delta { edits, result_id } => {
                         // If we don't have tokens for this server, we shouldn't have sent the request
                         // in the first place.
                         if let Some(tokens) =
                             semantic_tokens_data.buffer_tokens.servers.get_mut(&server)
                         {
-                            tokens.result_id = id;
+                            tokens.result_id = result_id;
                             tokens.apply(&edits);
                         }
                     }
@@ -204,18 +216,20 @@ impl LspStore {
         })
     }
 
-    pub(crate) fn send_semantic_tokens_request<R: LspCommand>(
+    pub(crate) fn send_semantic_tokens_request<R: LspCommand + Clone>(
         &mut self,
         buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
         server: LanguageServerId,
         request: R,
+        cx: &mut Context<Self>,
         handle_response: impl FnOnce(<R as LspCommand>::Response, &mut LspStore) + 'static,
     ) -> Task<anyhow::Result<()>> {
         if self.upstream_client().is_some() {
             // TODO kb Semantic tokens on remote servers.
             return Task::ready(Ok(()));
         } else {
+            let a = self.request_multiple_lsp_locally(&buffer, None, request, cx);
+
             let lsp_request_task =
                 self.request_lsp(buffer, LanguageServerToQuery::Other(server), request, cx);
             cx.spawn(async move |store, cx| {
@@ -243,6 +257,22 @@ impl LspStore {
         })?;
         Ok(proto::Ack {})
     }
+
+    fn semantic_tokens_result_id(
+        &mut self,
+        server_id: LanguageServerId,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<SharedString> {
+        self.latest_lsp_data(buffer, cx)
+            .semantic_tokens
+            .as_ref()?
+            .buffer_tokens
+            .servers
+            .get(&server_id)?
+            .result_id
+            .clone()
+    }
 }
 
 pub type SemanticTokensTask =
@@ -251,6 +281,7 @@ pub type SemanticTokensTask =
 #[derive(Default, Debug)]
 pub struct SemanticTokensData {
     pub(super) buffer_tokens: BufferSemanticTokens,
+    pub(super) latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
     update: Option<(Global, SemanticTokensTask)>,
 }
 
@@ -281,7 +312,7 @@ pub struct ServerSemanticTokens {
     /// See https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/ for more.
     data: Vec<u32>,
 
-    pub(crate) result_id: Option<String>,
+    pub(crate) result_id: Option<SharedString>,
 }
 
 pub struct SemanticTokensIter<'a> {
@@ -321,7 +352,7 @@ impl BufferSemanticTokens {
 }
 
 impl ServerSemanticTokens {
-    pub fn from_full(data: Vec<u32>, result_id: Option<String>) -> Self {
+    pub fn from_full(data: Vec<u32>, result_id: Option<SharedString>) -> Self {
         ServerSemanticTokens { data, result_id }
     }
 

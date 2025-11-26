@@ -886,6 +886,8 @@ impl LspQuery {
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
             Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
+            Some(lsp_query::Request::SemanticTokensFull(_)) => ("SemanticTokensFull", false),
+            Some(lsp_query::Request::SemanticTokensDelta(_)) => ("SemanticTokensDelta", false),
             None => ("<unknown>", true),
         }
     }

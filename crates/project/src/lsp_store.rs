@@ -232,7 +232,7 @@ struct LanguageServerSeed {
 #[derive(Debug)]
 pub struct DocumentDiagnosticsUpdate<'a, D> {
     pub diagnostics: D,
-    pub result_id: Option<String>,
+    pub result_id: Option<SharedString>,
     pub server_id: LanguageServerId,
     pub disk_based_sources: Cow<'a, [String]>,
 }
@@ -286,7 +286,8 @@ pub struct LocalLspStore {
     lsp_tree: LanguageServerTree,
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
-    buffer_pull_diagnostics_result_ids: HashMap<LanguageServerId, HashMap<PathBuf, Option<String>>>,
+    buffer_pull_diagnostics_result_ids:
+        HashMap<LanguageServerId, HashMap<PathBuf, Option<SharedString>>>,
 }
 
 impl LocalLspStore {
@@ -2320,7 +2321,7 @@ impl LocalLspStore {
         &mut self,
         buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         version: Option<i32>,
         new_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         reused_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -3677,6 +3678,9 @@ impl BufferLspData {
                 .buffer_tokens
                 .servers
                 .swap_remove(&for_server);
+            semantic_tokens
+                .latest_invalidation_requests
+                .remove(&for_server);
         }
     }
 
@@ -6732,7 +6736,8 @@ impl LspStore {
                             providers_with_identifiers
                                 .into_iter()
                                 .map(|dynamic_caps| {
-                                    let result_id = self.result_id(server_id, buffer_id, cx);
+                                    let result_id =
+                                        self.pull_diagnostics_result_id(server_id, buffer_id, cx);
                                     self.request_lsp(
                                         buffer.clone(),
                                         LanguageServerToQuery::Other(server_id),
@@ -7147,7 +7152,7 @@ impl LspStore {
                                         diagnostics,
                                         version: None,
                                     },
-                                    result_id,
+                                    result_id: result_id.map(SharedString::new),
                                     disk_based_sources,
                                 },
                             );
@@ -8185,7 +8190,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
@@ -8932,6 +8937,14 @@ impl LspStore {
                 )
                 .await
                 .context("querying for inlay hints")?
+            }
+            Request::SemanticTokensFull(semantic_tokens_full) => {
+                //
+                todo!("TODO kb")
+            }
+            Request::SemanticTokensDelta(semantic_tokens_delta) => {
+                //
+                todo!("TODO kb")
             }
         }
         Ok(proto::Ack {})
@@ -10958,7 +10971,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         diagnostics: lsp::PublishDiagnosticsParams,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
@@ -11868,12 +11881,12 @@ impl LspStore {
         }
     }
 
-    pub fn result_id(
+    pub fn pull_diagnostics_result_id(
         &self,
         server_id: LanguageServerId,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Option<String> {
+    ) -> Option<SharedString> {
         let abs_path = self
             .buffer_store
             .read(cx)
@@ -11887,7 +11900,7 @@ impl LspStore {
             .clone()
     }
 
-    pub fn all_result_ids(&self, server_id: LanguageServerId) -> HashMap<PathBuf, String> {
+    pub fn all_result_ids(&self, server_id: LanguageServerId) -> HashMap<PathBuf, SharedString> {
         let Some(local) = self.as_local() else {
             return HashMap::default();
         };
@@ -11991,7 +12004,7 @@ impl LspStore {
                                 diagnostics,
                                 version,
                             },
-                            result_id,
+                            result_id: result_id.map(SharedString::new),
                             disk_based_sources,
                         });
                     acc
@@ -12881,7 +12894,7 @@ fn lsp_workspace_diagnostics_refresh(
                             let uri = file_path_to_lsp_url(&abs_path).ok()?;
                             Some(lsp::PreviousResultId {
                                 uri,
-                                value: result_id,
+                                value: result_id.to_string(),
                             })
                         })
                         .collect()
