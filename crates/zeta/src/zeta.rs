@@ -289,6 +289,7 @@ struct ZetaProject {
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2>,
     last_prediction_refresh: Option<(EntityId, Instant)>,
+    cancelled_predictions: HashSet<usize>,
     context: Option<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>>,
     refresh_context_task: Option<LogErrorFuture<Task<Result<()>>>>,
     refresh_context_debounce_task: Option<Task<Option<()>>>,
@@ -601,6 +602,7 @@ impl Zeta {
                 recent_paths: VecDeque::new(),
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
+                cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
                 next_pending_prediction_id: 0,
                 last_prediction_refresh: None,
@@ -1132,11 +1134,23 @@ impl Zeta {
                 cx.background_executor().timer(timeout).await;
             }
 
+            // If this task was cancelled before the throttle timeout expired,
+            // do not perform a request.
+            let mut is_cancelled = true;
             this.update(cx, |this, cx| {
-                this.get_or_init_zeta_project(&project, cx)
-                    .last_prediction_refresh = Some((throttle_entity, Instant::now()));
+                let project_state = this.get_or_init_zeta_project(&project, cx);
+                if !project_state
+                    .cancelled_predictions
+                    .remove(&pending_prediction_id)
+                {
+                    project_state.last_prediction_refresh = Some((throttle_entity, Instant::now()));
+                    is_cancelled = false;
+                }
             })
             .ok();
+            if is_cancelled {
+                return None;
+            }
 
             let edit_prediction_id = do_refresh(this.clone(), cx).await.log_err().flatten();
 
@@ -1144,6 +1158,10 @@ impl Zeta {
             // any pending predictions that were enqueued before it.
             this.update(cx, |this, cx| {
                 let zeta_project = this.get_or_init_zeta_project(&project, cx);
+                zeta_project
+                    .cancelled_predictions
+                    .remove(&pending_prediction_id);
+
                 let mut pending_predictions = mem::take(&mut zeta_project.pending_predictions);
                 for (ix, pending_prediction) in pending_predictions.iter().enumerate() {
                     if pending_prediction.id == pending_prediction_id {
@@ -1174,6 +1192,9 @@ impl Zeta {
                 id: pending_prediction_id,
                 task,
             });
+            zeta_project
+                .cancelled_predictions
+                .insert(pending_prediction.id);
             self.cancel_pending_prediction(pending_prediction, cx);
         }
     }
