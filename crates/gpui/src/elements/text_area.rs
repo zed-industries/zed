@@ -1101,19 +1101,3 @@ impl IntoElement for TextArea {
         self
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // TODO: Add tests for `is_cursor_in_line` to prevent regression of cursor-at-line-end bug.
-    //
-    // The bug: Rust ranges are exclusive on the end, so `0..13.contains(13)` returns false.
-    // A cursor at the end of a line (e.g., offset 13 for line with text_range 0..13) was not
-    // being recognized as belonging to that line, causing the cursor to disappear.
-    //
-    // Test cases to cover:
-    // - cursor_offset=13, text_range=0..13 -> should return true (cursor at line end)
-    // - cursor_offset=12, text_range=0..13 -> should return true (cursor within line)
-    // - cursor_offset=14, text_range=0..13 -> should return false (cursor past line)
-    // - cursor_offset=14, text_range=14..14 -> should return true (empty line)
-    // - cursor_offset=89, text_range=47..89 -> should return true (cursor at end of last line)
-}
