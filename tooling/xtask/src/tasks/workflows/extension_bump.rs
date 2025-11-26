@@ -124,7 +124,7 @@ fn bump_extension_version(
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && {} == 'true'",
-            needs_bump,
+            needs_bump.expr(),
         )))
         .runs_on(runners::LINUX_LARGE)
         .timeout_minutes(1u32)

@@ -174,13 +174,19 @@ impl serde::Serialize for StepOutput {
 
 impl std::fmt::Display for StepOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "${{{{ steps.{}.outputs.{} }}}}", self.step_id, self.name)
+        write!(f, "${{{{ {} }}}}", self.expr())
     }
 }
 
 pub(crate) struct JobOutput {
     job_name: String,
     name: &'static str,
+}
+
+impl JobOutput {
+    pub fn expr(&self) -> String {
+        format!("needs.{}.outputs.{}", self.job_name, self.name)
+    }
 }
 
 impl serde::Serialize for JobOutput {
@@ -194,11 +200,7 @@ impl serde::Serialize for JobOutput {
 
 impl std::fmt::Display for JobOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "${{{{ needs.{}.outputs.{} }}}}",
-            self.job_name, self.name
-        )
+        write!(f, "${{{{ {} }}}}", self.expr())
     }
 }
 
