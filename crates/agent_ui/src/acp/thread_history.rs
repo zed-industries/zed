@@ -548,6 +548,7 @@ impl Render for AcpThreadHistory {
                                 Button::new("delete_history", "Delete All History")
                                     .full_width()
                                     .style(ButtonStyle::Outlined)
+                                    .label_size(LabelSize::Small)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.prompt_delete_history(window, cx);
                                     })),
