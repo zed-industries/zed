@@ -120,6 +120,7 @@ pub fn line_match_score(expected_patch: &[DiffLine], actual_patch: &[DiffLine]) 
         .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
         .map(|line| line.to_string())
         .collect();
+
     let actual_change_lines = actual_patch
         .iter()
         .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
@@ -132,42 +133,21 @@ pub fn line_match_score(expected_patch: &[DiffLine], actual_patch: &[DiffLine]) 
 pub fn chr_f(expected: &str, actual: &str) -> f64 {
     const CHAR_ORDER: usize = 6;
     const BETA: f64 = 2.0;
-    const IGNORE_WHITESPACE: bool = true;
-
-    // Ignore whitespace. The original chrF implementation skips all
-    // whitespace. We should consider compressing multiple consecutive
-    // spaces into one -- this may reflect our task more closely.
-    let expected = if IGNORE_WHITESPACE {
-        expected
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-    } else {
-        expected.to_string()
-    };
-
-    let actual = if IGNORE_WHITESPACE {
-        actual
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-    } else {
-        actual.to_string()
-    };
 
     // Special case: empty strings
     if expected.is_empty() && actual.is_empty() {
         return 100.0;
     }
 
+    let expected_ngrams = chr_f_ngram_counts(expected);
+    let actual_ngrams = chr_f_ngram_counts(actual);
+
     // Compute precision and recall for each n-gram order, then average
     let mut total_precision = 0.0;
     let mut total_recall = 0.0;
 
-    for order in 1..=CHAR_ORDER {
-        let expected_ngrams = get_ngram_counts(&expected, order);
-        let actual_ngrams = get_ngram_counts(&actual, order);
-        let score = Scores::from_counts(&expected_ngrams, &actual_ngrams);
+    for order in 0..CHAR_ORDER {
+        let score = Scores::from_counts(&expected_ngrams[order], &actual_ngrams[order]);
 
         total_precision += score.precision();
         total_recall += score.recall();
@@ -183,6 +163,27 @@ pub fn chr_f(expected: &str, actual: &str) -> f64 {
     };
 
     f_score * 100.0
+}
+
+/// Compute character n-gram counts to be used in chrF computation
+pub fn chr_f_ngram_counts(text: &str) -> Vec<Counts> {
+    const CHAR_ORDER: usize = 6;
+    const IGNORE_WHITESPACE: bool = true;
+
+    // Ignore whitespace. The original chrF implementation skips all
+    // whitespace. We should consider compressing multiple consecutive
+    // spaces into one -- this may reflect our task more closely.
+    let text = if IGNORE_WHITESPACE {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    } else {
+        text.to_string()
+    };
+
+    (1..=CHAR_ORDER)
+        .map(|order| get_ngram_counts(&text, order))
+        .collect()
 }
 
 /// Computes a diff-aware chrF score for comparing predicted edits
@@ -204,6 +205,36 @@ pub fn chr_f(expected: &str, actual: &str) -> f64 {
 /// deletions but misses insertions (or vice versa) will be penalized
 /// appropriately.
 pub fn patch_chr_f(expected: &[DiffLine], actual: &[DiffLine]) -> f64 {
+    let mut expected_ins = String::default();
+    let mut expected_del = String::default();
+    let mut actual_ins = String::default();
+    let mut actual_del = String::default();
+
+    for line in expected {
+        match line {
+            DiffLine::Deletion(s) => expected_del.push_str(s),
+            DiffLine::Addition(s) => expected_ins.push_str(s),
+            _ => (),
+        };
+    }
+
+    for line in actual {
+        match line {
+            DiffLine::Deletion(s) => actual_del.push_str(s),
+            DiffLine::Addition(s) => actual_ins.push_str(s),
+            _ => (),
+        };
+    }
+
+    let score_del = chr_f(&expected_del, &actual_del);
+    let score_ins = chr_f(&expected_ins, &actual_ins);
+
+    let score = 2.0 * score_del * score_ins / (score_del + score_ins + 0.00001);
+
+    score
+}
+
+pub fn delta_chr_f(expected: &[DiffLine], actual: &[DiffLine]) -> f64 {
     let mut expected_ins = String::default();
     let mut expected_del = String::default();
     let mut actual_ins = String::default();
