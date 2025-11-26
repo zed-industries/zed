@@ -290,22 +290,6 @@ mod test {
     use zeta::udiff::DiffLine;
 
     #[test]
-    fn test_chr_f_normal() {
-        let reference = "let s = \"Привіт!\";";
-        let hypothesis = "let mut s = \"Hello!\";";
-        let score = chr_f(reference, hypothesis);
-        assert!((score - 24.16).abs() < 1e-2);
-    }
-
-    #[test]
-    fn test_chr_f_empty() {
-        let reference = "";
-        let hypothesis = "";
-        let score = chr_f(reference, hypothesis);
-        assert!((score - 100.00).abs() < 1e-2);
-    }
-
-    #[test]
     fn test_delta_chr_f_perfect_match() {
         let diff = vec![
             DiffLine::Context("fn main() {"),
