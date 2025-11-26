@@ -8230,17 +8230,17 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
 
     cx.run_until_parked();
 
-    let output = smol::process::Command::new("git")
-        .current_dir(&work_dir)
-        .args(["diff", "--staged"])
-        .output()
-        .await
-        .unwrap();
-
-
     #[cfg(unix)]
     {
+        let output = smol::process::Command::new("git")
+            .current_dir(&work_dir)
+            .args(["diff", "--staged"])
+            .output()
+            .await
+            .unwrap();
+
         let staged_diff = String::from_utf8_lossy(&output.stdout);
+
         assert!(
             !staged_diff.contains("new mode 100644"),
             "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
