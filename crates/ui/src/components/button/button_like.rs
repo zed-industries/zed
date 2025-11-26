@@ -735,9 +735,7 @@ impl RenderOnce for ButtonLike {
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
                     this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(move |event, window, cx| {
-                            (on_click)(event, window, cx)
-                        })
+                        .on_click(move |event, window, cx| (on_click)(event, window, cx))
                 },
             )
             .when_some(self.tooltip, |this, tooltip| {

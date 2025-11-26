@@ -1756,12 +1756,12 @@ impl App {
     pub fn propagate(&mut self) {
         self.propagate_event = true;
     }
-    
+
     /// Check if propagation has been stopped.
     pub fn propagation_stopped(&mut self) -> bool {
         !self.propagate_event
     }
-    
+
     /// Build an action from some arbitrary data, typically a keymap entry.
     pub fn build_action(
         &self,
