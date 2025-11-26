@@ -113,7 +113,6 @@ impl Render for TextAreaExample {
 fn main() {
     Application::new().run(|cx: &mut App| {
         cx.bind_keys([
-            KeyBinding::new("backspace", Backspace, None),
             KeyBinding::new("delete", Delete, None),
             KeyBinding::new("left", Left, None),
             KeyBinding::new("right", Right, None),
@@ -137,10 +136,18 @@ fn main() {
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-x", Cut, None),
             KeyBinding::new("cmd-v", Paste, None),
+            // Enter variants - default is to insert newline
             KeyBinding::new("enter", Enter, None),
             KeyBinding::new("shift-enter", Enter, None),
+            KeyBinding::new("alt-enter", Enter, None),
+            KeyBinding::new("ctrl-enter", Enter, None),
+            // Tab
             KeyBinding::new("tab", Tab, None),
+            // Backspace variants - default is to delete backward
+            KeyBinding::new("backspace", Backspace, None),
             KeyBinding::new("shift-backspace", Backspace, None),
+            KeyBinding::new("alt-backspace", Backspace, None),
+            KeyBinding::new("ctrl-backspace", Backspace, None),
         ]);
 
         let bounds = Bounds::centered(None, size(px(600.), px(400.)), cx);
