@@ -3,6 +3,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -402,6 +403,8 @@ impl PathStyle {
             .find_map(|sep| stripped.strip_prefix(sep))
         {
             RelPath::new(relative.as_ref(), *self).ok()
+        } else if stripped.is_empty() {
+            Some(Cow::Borrowed(RelPath::empty()))
         } else {
             None
         }
@@ -2540,6 +2543,12 @@ mod tests {
             (PathStyle::Posix, "/a/b/c", "", None),
             (PathStyle::Posix, "/a/b//c", "/a/b/", None),
             (PathStyle::Posix, "/a/bc", "/a/b", None),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/c",
+                Some(rel_path("").into_arc()),
+            ),
             (
                 PathStyle::Windows,
                 "C:\\a\\b\\c",
