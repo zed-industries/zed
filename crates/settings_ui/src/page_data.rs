@@ -4183,6 +4183,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tree View",
+                    description: "Show Git panel entries in a tree instead of a flat list.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git_panel.tree_view"),
+                        pick: |settings_content| settings_content.git_panel.as_ref()?.tree_view.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git_panel.get_or_insert_default().tree_view = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Collapse Untracked Diff",
                     description: "Whether to collapse untracked files in the diff panel.",
                     field: Box::new(SettingField {
