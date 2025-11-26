@@ -7,6 +7,7 @@ use gpui::HitboxBehavior;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use ui::Checkbox;
 
 use std::borrow::Cow;
 use std::iter;
@@ -948,10 +949,31 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_4(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
+                            let source = &parsed_markdown.source()[range.clone()];
                             let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
-                                format!("{}.", bullet_index)
+                                div().child(format!("{}.", bullet_index)).into_any_element()
+                            } else if source.starts_with("- [ ]") {
+                                div()
+                                    .child(
+                                        Checkbox::new(
+                                            ElementId::Name(source.to_string().into()),
+                                            ToggleState::Unselected,
+                                        )
+                                        .disabled(true),
+                                    )
+                                    .into_any_element()
+                            } else if source.starts_with("- [x]") {
+                                div()
+                                    .child(
+                                        Checkbox::new(
+                                            ElementId::Name(source.to_string().into()),
+                                            ToggleState::Selected,
+                                        )
+                                        .disabled(true),
+                                    )
+                                    .into_any_element()
                             } else {
-                                "•".to_string()
+                                div().child("•").into_any_element()
                             };
                             builder.push_div(
                                 div()
