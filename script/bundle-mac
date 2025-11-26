@@ -113,6 +113,8 @@ if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n 
     security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
     security default-keychain -s zed.keychain
     security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+    # Calling set-keychain-settings without `-t` disables the auto-lock timeout
+    security set-keychain-settings zed.keychain
     echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
     security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
@@ -298,8 +300,21 @@ function upload_debug_symbols() {
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
         sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "target/${target_triple}/${target_dir}/zed.dwarf" \
-            "target/${target_triple}/${target_dir}/remote_server.dwarf"
+        # Try uploading up to 3 times
+        for attempt in 1 2 3; do
+            echo "Sentry upload attempt $attempt..."
+            if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+                "target/${target_triple}/${target_dir}/zed.dwarf" \
+                "target/${target_triple}/${target_dir}/remote_server.dwarf"; then
+                break
+            else
+                echo "Sentry upload failed on attempt $attempt"
+                if [ $attempt -eq 3 ]; then
+                    echo "All sentry upload attempts failed"
+                    exit 1
+                fi
+            fi
+        done
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi

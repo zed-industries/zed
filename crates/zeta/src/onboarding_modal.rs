@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{ZedPredictUpsell, onboarding_event};
+use crate::ZedPredictUpsell;
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
 use db::kvp::Dismissable;
@@ -13,6 +13,16 @@ use language::language_settings::EditPredictionProvider;
 use settings::update_settings_file;
 use ui::{Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
+
+#[macro_export]
+macro_rules! onboarding_event {
+    ($name:expr) => {
+        telemetry::event!($name, source = "Edit Prediction Onboarding");
+    };
+    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {
+        telemetry::event!($name, source = "Edit Prediction Onboarding", $($key $(= $value)?),+);
+    };
+}
 
 /// Introduces user to Zed's Edit Prediction feature
 pub struct ZedPredictModal {
