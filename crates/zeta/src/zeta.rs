@@ -3261,92 +3261,6 @@ mod tests {
     "};
 
     #[gpui::test]
-    async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
-        let (zeta, mut requests) = init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "foo.md":  "Hello!\nHow\nBye\n"
-            }),
-        )
-        .await;
-        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
-
-        let buffer = project
-            .update(cx, |project, cx| {
-                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-        let position = snapshot.anchor_before(language::Point::new(1, 3));
-
-        zeta.update(cx, |zeta, cx| {
-            // start two refresh tasks
-            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
-
-            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
-        });
-
-        let (_, respond_first) = requests.predict.next().await.unwrap();
-        let (_, respond_second) = requests.predict.next().await.unwrap();
-
-        // wait for throttle
-        cx.run_until_parked();
-
-        // second responds first
-        let second_response = model_response(SIMPLE_DIFF);
-        let second_id = second_response.id.clone();
-        respond_second.send(second_response).unwrap();
-
-        cx.run_until_parked();
-
-        zeta.read_with(cx, |zeta, cx| {
-            // current prediction is second
-            assert_eq!(
-                zeta.current_prediction_for_buffer(&buffer, &project, cx)
-                    .unwrap()
-                    .id
-                    .0,
-                second_id
-            );
-        });
-
-        let first_response = model_response(SIMPLE_DIFF);
-        let first_id = first_response.id.clone();
-        respond_first.send(first_response).unwrap();
-
-        cx.run_until_parked();
-
-        zeta.read_with(cx, |zeta, cx| {
-            // current prediction is still second, since first was cancelled
-            assert_eq!(
-                zeta.current_prediction_for_buffer(&buffer, &project, cx)
-                    .unwrap()
-                    .id
-                    .0,
-                second_id
-            );
-        });
-
-        // first is reported as rejected
-        let (reject_request, _) = requests.reject.next().await.unwrap();
-
-        cx.run_until_parked();
-
-        assert_eq!(
-            &reject_request.rejections,
-            &[EditPredictionRejection {
-                request_id: first_id,
-                reason: EditPredictionRejectReason::Canceled,
-                was_shown: false
-            }]
-        );
-    }
-
-    #[gpui::test]
     async fn test_replace_current(cx: &mut TestAppContext) {
         let (zeta, mut requests) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -3510,6 +3424,92 @@ mod tests {
             &[EditPredictionRejection {
                 request_id: second_id,
                 reason: EditPredictionRejectReason::CurrentPreferred,
+                was_shown: false
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
+        let (zeta, mut requests) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md":  "Hello!\nHow\nBye\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        zeta.update(cx, |zeta, cx| {
+            // start two refresh tasks
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        });
+
+        let (_, respond_first) = requests.predict.next().await.unwrap();
+        let (_, respond_second) = requests.predict.next().await.unwrap();
+
+        // wait for throttle
+        cx.run_until_parked();
+
+        // second responds first
+        let second_response = model_response(SIMPLE_DIFF);
+        let second_id = second_response.id.clone();
+        respond_second.send(second_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // current prediction is second
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                second_id
+            );
+        });
+
+        let first_response = model_response(SIMPLE_DIFF);
+        let first_id = first_response.id.clone();
+        respond_first.send(first_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // current prediction is still second, since first was cancelled
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                second_id
+            );
+        });
+
+        // first is reported as rejected
+        let (reject_request, _) = requests.reject.next().await.unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            &reject_request.rejections,
+            &[EditPredictionRejection {
+                request_id: first_id,
+                reason: EditPredictionRejectReason::Canceled,
                 was_shown: false
             }]
         );
