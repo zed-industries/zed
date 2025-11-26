@@ -969,13 +969,6 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.history_store.update(cx, |store, cx| {
-            store.delete_threads(cx).detach_and_log_err(cx)
-        });
-        cx.notify();
-    }
-
     pub(crate) fn open_saved_text_thread(
         &mut self,
         path: Arc<Path>,
