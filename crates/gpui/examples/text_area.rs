@@ -6,8 +6,8 @@ use gpui::{
     App, Application, Backspace, Bounds, Context, Copy, Cut, Delete, Down, End, Enter, Entity,
     FocusHandle, Focusable, Home, Input, KeyBinding, Left, MoveToBeginning, MoveToEnd, Paste,
     Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
-    SelectUp, SelectWordLeft, SelectWordRight, Up, Window, WindowBounds, WindowOptions, WordLeft,
-    WordRight, div, prelude::*, px, rgb, rgba, size, text_area,
+    SelectUp, SelectWordLeft, SelectWordRight, Tab, Up, Window, WindowBounds, WindowOptions,
+    WordLeft, WordRight, div, prelude::*, px, rgb, rgba, size, text_area,
 };
 
 struct TextAreaExample {
@@ -138,6 +138,9 @@ fn main() {
             KeyBinding::new("cmd-x", Cut, None),
             KeyBinding::new("cmd-v", Paste, None),
             KeyBinding::new("enter", Enter, None),
+            KeyBinding::new("shift-enter", Enter, None),
+            KeyBinding::new("tab", Tab, None),
+            KeyBinding::new("shift-backspace", Backspace, None),
         ]);
 
         let bounds = Bounds::centered(None, size(px(600.), px(400.)), cx);
