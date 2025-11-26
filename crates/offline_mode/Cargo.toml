@@ -13,3 +13,8 @@ path = "src/offline_mode.rs"
 
 [dependencies]
 settings.workspace = true
+
+[dev-dependencies]
+ctor.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

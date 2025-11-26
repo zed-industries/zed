@@ -10915,7 +10915,10 @@ dependencies = [
 name = "offline_mode"
 version = "0.1.0"
 dependencies = [
+ "ctor",
+ "gpui",
  "settings",
+ "zlog",
 ]
 
 [[package]]
