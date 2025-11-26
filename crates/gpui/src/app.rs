@@ -782,12 +782,6 @@ impl App {
         let result = update(self);
         self.finish_update();
         result
-
-        // .update(, || {
-        //    .update(, || {
-        //
-        //    })
-        // })
     }
 
     pub(crate) fn start_update(&mut self) {

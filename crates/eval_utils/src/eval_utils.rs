@@ -38,6 +38,7 @@ pub struct EvalOutput {
 }
 
 impl EvalOutput {
+    // TODO! Evaluate this API in relation to the original evals
     pub fn assert(failure_data: String, pass: bool) -> Self {
         if pass {
             EvalOutput {
