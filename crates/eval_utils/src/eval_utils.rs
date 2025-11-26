@@ -37,12 +37,33 @@ pub struct EvalOutput {
     pub outcome_kind: OutcomeKind,
 }
 
+impl EvalOutput {
+    pub fn assert(failure_data: String, pass: bool) -> Self {
+        if pass {
+            EvalOutput {
+                data: "✅".to_string(),
+                mismatched_tags: 0,
+                tags: 0,
+                outcome_kind: OutcomeKind::Passed,
+            }
+        } else {
+            EvalOutput {
+                data: failure_data,
+                mismatched_tags: 0,
+                tags: 0,
+                outcome_kind: OutcomeKind::Failed,
+            }
+        }
+    }
+}
+
 pub fn eval(
     iterations: usize,
     expected_pass_ratio: f32,
     mismatched_tag_threshold: f32,
     evalf: Arc<dyn Fn(mpsc::Sender<EvalOutput>) + Send + Sync>,
 ) {
+    dbg!("STARTINGING EVAL HARNESS");
     let mut evaluated_count = 0;
     let mut failed_count = 0;
     report_progress(evaluated_count, failed_count, iterations);
@@ -51,6 +72,10 @@ pub fn eval(
 
     let executor = gpui::background_executor();
     let semaphore = Arc::new(smol::lock::Semaphore::new(32));
+
+    // Warm the cache once
+    evalf(tx.clone());
+
     for _ in 1..iterations {
         let tx = tx.clone();
         let semaphore = semaphore.clone();
@@ -58,6 +83,7 @@ pub fn eval(
         executor
             .spawn(async move {
                 let _guard = semaphore.acquire().await;
+                dbg!("CALLING EVALF");
                 evalf(tx);
             })
             .detach();

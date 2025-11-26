@@ -337,6 +337,7 @@ dependencies = [
  "context_server",
  "db",
  "editor",
+ "eval_utils",
  "extension",
  "extension_host",
  "feature_flags",
@@ -5778,6 +5779,7 @@ name = "eval_utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.31",
  "gpui",
  "serde",
  "smol",

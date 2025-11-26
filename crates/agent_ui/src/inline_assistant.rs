@@ -1969,3 +1969,162 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
         }
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test {
+    use std::sync::Arc;
+
+    use agent::HistoryStore;
+    use assistant_text_thread::TextThreadStore;
+    use client::{Client, UserStore};
+    use editor::{Editor, MultiBuffer, MultiBufferOffset};
+    use fs::FakeFs;
+    use futures::channel::mpsc;
+    use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
+    use language::Buffer;
+    use language_model::LanguageModelRegistry;
+    use project::Project;
+    use prompt_store::PromptBuilder;
+    use smol::stream::StreamExt as _;
+    use util::test::marked_text_ranges;
+    use workspace::Workspace;
+
+    use crate::InlineAssistant;
+
+    pub fn run_inline_assistant_test<SetupF, TestF>(
+        base_buffer: String,
+        prompt: String,
+        setup: SetupF,
+        test: TestF,
+        cx: &mut TestAppContext,
+    ) -> String
+    where
+        SetupF: FnOnce(&mut gpui::VisualTestContext),
+        TestF: FnOnce(&mut gpui::VisualTestContext),
+    {
+        let fs = FakeFs::new(cx.executor());
+        let app_state = cx.update(|cx| workspace::AppState::test(cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let http = Arc::new(reqwest_client::ReqwestClient::user_agent("agent tests").unwrap());
+        let client = cx.update(|cx| {
+            cx.set_http_client(http);
+            Client::production(cx)
+        });
+        let mut inline_assistant = InlineAssistant::new(
+            fs.clone(),
+            prompt_builder.clone(),
+            client.telemetry().clone(),
+        );
+
+        let (tx, mut completion_rx) = mpsc::unbounded();
+        inline_assistant.set_completion_receiver(tx);
+
+        // Initialize settings and client
+        cx.update(|cx| {
+            gpui_tokio::init(cx);
+            settings::init(cx);
+            client::init(&client, cx);
+            workspace::init(app_state.clone(), cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
+
+            cx.set_global(inline_assistant);
+        });
+
+        let project = cx
+            .executor()
+            .block_test(async { Project::test(fs.clone(), [], cx).await });
+
+        // Create workspace with window
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            window.activate_window();
+            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+        });
+
+        setup(cx);
+
+        let (_editor, buffer) = cx.update(|window, cx| {
+            let buffer = cx.new(|cx| Buffer::local("", cx));
+            let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+            let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
+            editor.update(cx, |editor, cx| {
+                let (unmarked_text, selection_ranges) = marked_text_ranges(&base_buffer, true);
+                editor.set_text(unmarked_text, window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(
+                        selection_ranges.into_iter().map(|range| {
+                            MultiBufferOffset(range.start)..MultiBufferOffset(range.end)
+                        }),
+                    )
+                })
+            });
+
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+            // Add editor to workspace
+            workspace.update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            });
+
+            // Call assist method
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                let assist_id = inline_assistant
+                    .assist(
+                        &editor,
+                        workspace.downgrade(),
+                        project.downgrade(),
+                        history_store, // thread_store
+                        None,          // prompt_store
+                        Some(prompt),
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+                inline_assistant.start_assist(assist_id, window, cx);
+            });
+
+            (editor, buffer)
+        });
+
+        cx.run_until_parked();
+
+        test(cx);
+
+        cx.executor()
+            .block_test(async { completion_rx.next().await });
+
+        buffer.read_with(cx, |buffer, _| buffer.text())
+    }
+
+    #[allow(unused)]
+    fn test_inline_assistant(
+        base_buffer: &'static str,
+        llm_output: &'static str, // vec<&'static str>
+        cx: &mut TestAppContext,
+    ) -> String {
+        run_inline_assistant_test(
+            base_buffer.to_string(),
+            "Prompt doesn't matter because we're using a fake model".to_string(),
+            |cx| {
+                cx.update(|_, cx| LanguageModelRegistry::test(cx));
+            },
+            |cx| {
+                let fake_model = cx.update(|_, cx| {
+                    LanguageModelRegistry::global(cx)
+                        .update(cx, |registry, _| registry.fake_model())
+                });
+                let fake = fake_model.as_fake();
+
+                // let fake = fake_model;
+                fake.send_last_completion_stream_text_chunk(llm_output.to_string());
+                fake.end_last_completion_stream();
+
+                // Run again to process the model's response
+                cx.run_until_parked();
+            },
+            cx,
+        )
+    }
+}
