@@ -1739,4 +1739,277 @@ mod tests {
         })
         .unwrap();
     }
+
+    // ============================================================
+    // EMOJI & GRAPHEME CLUSTERS
+    // ============================================================
+
+    #[crate::test]
+    fn test_simple_emoji_navigation(cx: &mut TestAppContext) {
+        // 😀 is 4 bytes in UTF-8
+        let view = create_test_input(cx, "a😀b", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                // Move right through: a -> 😀 -> b
+                input.right(&Right, window, cx);
+                assert_eq!(input.selected_range.start, 1); // after 'a'
+
+                input.right(&Right, window, cx);
+                assert_eq!(input.selected_range.start, 5); // after 😀 (1 + 4 bytes)
+
+                input.right(&Right, window, cx);
+                assert_eq!(input.selected_range.start, 6); // after 'b'
+
+                // Move left back
+                input.left(&Left, window, cx);
+                assert_eq!(input.selected_range.start, 5); // before 'b'
+
+                input.left(&Left, window, cx);
+                assert_eq!(input.selected_range.start, 1); // before 😀
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_emoji_with_skin_tone_modifier(cx: &mut TestAppContext) {
+        // 👋🏽 = 👋 (U+1F44B, 4 bytes) + 🏽 (U+1F3FD, 4 bytes) = 8 bytes total
+        let emoji = "👋🏽";
+        assert_eq!(emoji.len(), 8);
+
+        let view = create_test_input(cx, &format!("a{}b", emoji), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'a'
+                assert_eq!(input.selected_range.start, 1);
+
+                input.right(&Right, window, cx); // past entire emoji with modifier
+                assert_eq!(input.selected_range.start, 9); // 1 + 8
+
+                input.left(&Left, window, cx); // back before emoji
+                assert_eq!(input.selected_range.start, 1);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_zwj_family_emoji(cx: &mut TestAppContext) {
+        // 👨‍👩‍👧 = man + ZWJ + woman + ZWJ + girl
+        // Each person emoji is 4 bytes, ZWJ is 3 bytes
+        // Total: 4 + 3 + 4 + 3 + 4 = 18 bytes
+        let family = "👨‍👩‍👧";
+        assert_eq!(family.len(), 18);
+
+        let view = create_test_input(cx, &format!("x{}y", family), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'x'
+                assert_eq!(input.selected_range.start, 1);
+
+                input.right(&Right, window, cx); // past entire ZWJ sequence
+                assert_eq!(input.selected_range.start, 19); // 1 + 18
+
+                input.right(&Right, window, cx); // past 'y'
+                assert_eq!(input.selected_range.start, 20);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_backspace_deletes_emoji_between_ascii(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "a😀b", 5..5); // cursor after emoji
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.backspace(&Backspace, window, cx);
+                assert_eq!(input.content(), "ab");
+                assert_eq!(input.selected_range.start, 1);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_backspace_deletes_zwj_sequence(cx: &mut TestAppContext) {
+        let family = "👨‍👩‍👧";
+        let content = format!("a{}b", family);
+        let cursor_pos = 1 + family.len(); // after the family emoji
+
+        let view = create_test_input(cx, &content, cursor_pos..cursor_pos);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.backspace(&Backspace, window, cx);
+                assert_eq!(input.content(), "ab");
+                assert_eq!(input.selected_range.start, 1);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_removes_entire_emoji(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "a😀b", 1..1); // cursor before emoji
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete(&Delete, window, cx);
+                assert_eq!(input.content(), "ab");
+                assert_eq!(input.selected_range.start, 1);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_flag_emoji_navigation(cx: &mut TestAppContext) {
+        // 🇯🇵 = Regional Indicator J (4 bytes) + Regional Indicator P (4 bytes)
+        let flag = "🇯🇵";
+        assert_eq!(flag.len(), 8);
+
+        let view = create_test_input(cx, &format!("x{}y", flag), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'x'
+                input.right(&Right, window, cx); // past flag (should be single grapheme)
+                assert_eq!(input.selected_range.start, 9); // 1 + 8
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_combining_diacritical_marks(cx: &mut TestAppContext) {
+        // é as e + combining acute accent (U+0301)
+        let combining = "e\u{0301}"; // 1 + 2 = 3 bytes
+        assert_eq!(combining.len(), 3);
+
+        let view = create_test_input(cx, &format!("a{}b", combining), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'a'
+                assert_eq!(input.selected_range.start, 1);
+
+                input.right(&Right, window, cx); // past e + combining mark (single grapheme)
+                assert_eq!(input.selected_range.start, 4); // 1 + 3
+
+                input.left(&Left, window, cx);
+                assert_eq!(input.selected_range.start, 1);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_multiple_combining_marks(cx: &mut TestAppContext) {
+        // ë́ = e + combining diaeresis (U+0308) + combining acute (U+0301)
+        let multi_combining = "e\u{0308}\u{0301}"; // 1 + 2 + 2 = 5 bytes
+        assert_eq!(multi_combining.len(), 5);
+
+        let view = create_test_input(cx, &format!("x{}y", multi_combining), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'x'
+                input.right(&Right, window, cx); // past entire combined character
+                assert_eq!(input.selected_range.start, 6); // 1 + 5
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_select_emoji_with_shift(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "a😀b", 1..1); // cursor before emoji
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.select_right(&SelectRight, window, cx);
+                assert_eq!(input.selected_range, 1..5); // selected the entire emoji
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_cjk_characters(cx: &mut TestAppContext) {
+        // 你好 - each character is 3 bytes in UTF-8
+        let view = create_test_input(cx, "a你好b", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'a'
+                assert_eq!(input.selected_range.start, 1);
+
+                input.right(&Right, window, cx); // past 你
+                assert_eq!(input.selected_range.start, 4); // 1 + 3
+
+                input.right(&Right, window, cx); // past 好
+                assert_eq!(input.selected_range.start, 7); // 4 + 3
+
+                input.right(&Right, window, cx); // past 'b'
+                assert_eq!(input.selected_range.start, 8);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_mixed_script_text(cx: &mut TestAppContext) {
+        // Mix of ASCII, CJK, and emoji
+        let view = create_test_input(cx, "Hi你😀", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'H'
+                assert_eq!(input.selected_range.start, 1);
+
+                input.right(&Right, window, cx); // past 'i'
+                assert_eq!(input.selected_range.start, 2);
+
+                input.right(&Right, window, cx); // past 你 (3 bytes)
+                assert_eq!(input.selected_range.start, 5);
+
+                input.right(&Right, window, cx); // past 😀 (4 bytes)
+                assert_eq!(input.selected_range.start, 9);
+
+                // Now go back
+                input.left(&Left, window, cx);
+                assert_eq!(input.selected_range.start, 5);
+
+                input.left(&Left, window, cx);
+                assert_eq!(input.selected_range.start, 2);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_variation_selector_emoji(cx: &mut TestAppContext) {
+        // ☺️ = ☺ (U+263A, 3 bytes) + variation selector-16 (U+FE0F, 3 bytes)
+        let emoji_presentation = "☺\u{FE0F}";
+        assert_eq!(emoji_presentation.len(), 6);
+
+        let view = create_test_input(cx, &format!("a{}b", emoji_presentation), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'a'
+                input.right(&Right, window, cx); // past emoji with variation selector
+                assert_eq!(input.selected_range.start, 7); // 1 + 6
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_keycap_emoji(cx: &mut TestAppContext) {
+        // 1️⃣ = 1 + variation selector + combining enclosing keycap
+        let keycap = "1\u{FE0F}\u{20E3}";
+
+        let view = create_test_input(cx, &format!("x{}y", keycap), 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.right(&Right, window, cx); // past 'x'
+                input.right(&Right, window, cx); // past keycap sequence
+                let expected_pos = 1 + keycap.len();
+                assert_eq!(input.selected_range.start, expected_pos);
+            });
+        })
+        .unwrap();
+    }
 }
