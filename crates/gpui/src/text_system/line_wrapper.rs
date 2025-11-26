@@ -80,7 +80,6 @@ impl LineWrapper {
                             if candidate {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
-                                dbg!(c);
                             }
                         }
 
@@ -108,8 +107,6 @@ impl LineWrapper {
                         element_width
                     }
                 };
-
-                dbg!(&item_width);
 
                 width += item_width;
                 if width > wrap_width && ix > last_wrap_ix {
