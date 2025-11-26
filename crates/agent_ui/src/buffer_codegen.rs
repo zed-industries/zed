@@ -416,8 +416,6 @@ impl CodegenAlternative {
             )
             .context("generating content prompt")?;
 
-        println!("{}", prompt);
-
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
         Ok(cx.spawn(async move |_cx| {
@@ -463,13 +461,14 @@ impl CodegenAlternative {
         // This can happen often if the editor loses focus and is saved + reformatted,
         // as in https://github.com/zed-industries/zed/issues/39088
         self.snapshot = self.buffer.read(cx).snapshot(cx);
-        self.range =
-            self.snapshot.anchor_after(self.range.start)..self.snapshot.anchor_after(Anchor::max());
+        self.range = self.snapshot.anchor_after(self.range.start)
+            ..self.snapshot.anchor_after(self.range.end);
 
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
             .collect::<Rope>();
+
         let selection_start = self.range.start.to_point(&snapshot);
 
         // Start with the indentation of the first line in the selection
@@ -548,6 +547,7 @@ impl CodegenAlternative {
                                 }
                                 let chunk = chunk?;
                                 completion_clone.lock().push_str(&chunk);
+
                                 let mut lines = chunk.split('\n').peekable();
                                 while let Some(line) = lines.next() {
                                     new_text.push_str(line);
@@ -644,8 +644,6 @@ impl CodegenAlternative {
                     });
 
                 while let Some((char_ops, line_ops)) = diff_rx.next().await {
-                    println!("CHAR OPS {:?}", char_ops);
-                    println!("LINE OPS {:?}", line_ops);
                     codegen.update(cx, |codegen, cx| {
                         codegen.last_equal_ranges.clear();
 

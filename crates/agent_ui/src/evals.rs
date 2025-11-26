@@ -4,17 +4,9 @@ use std::{str::FromStr, sync::Arc};
 use crate::inline_assistant::test::run_inline_assistant_test;
 
 use eval_utils::EvalOutput;
-// use client::{Client, UserStore};
-// use editor::{Editor, MultiBuffer};
-
 use gpui::TestAppContext;
-// use language::Buffer;
 use language_model::{LanguageModelRegistry, SelectedModel};
-// use project::{FakeFs, Project};
-// use prompt_store::PromptBuilder;
 use rand::{SeedableRng as _, rngs::StdRng};
-// use smol::stream::StreamExt;
-// use workspace::Workspace;
 
 #[test]
 fn eval_single_cursor_edit() {
@@ -76,10 +68,7 @@ fn run_eval(
             let selected_model = SelectedModel::from_str(&model_name)
                 .expect("Invalid model format. Use 'provider/model-id'");
 
-            log::info!("MODEL {selected_model:?}");
-            log::info!("Using real model: {}", model_name);
-            log::info!("NOTE: Real models require authentication/API keys to be configured");
-            log::info!("      Set ANTHROPIC_API_KEY, OPENAI_API_KEY, etc. in your environment");
+            log::info!("Selected model: {selected_model:?}");
 
             cx.update(|_, cx| {
                 LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
