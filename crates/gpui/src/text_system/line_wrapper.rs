@@ -35,6 +35,7 @@ impl LineWrapper {
         fragments: &'a [LineFragment],
         wrap_width: Pixels,
     ) -> impl Iterator<Item = Boundary> + 'a {
+        let space_width = self.width_for_char(' ');
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
         let mut indent = None;
@@ -43,15 +44,21 @@ impl LineWrapper {
         let mut last_wrap_ix = 0;
         let mut prev_c = '\0';
         let mut index = 0;
+
         let mut candidates = fragments
             .iter()
             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
             .peekable();
         iter::from_fn(move || {
-            for candidate in candidates.by_ref() {
+            while let Some(candidate) = candidates.next() {
                 let ix = index;
                 index += candidate.len_utf8();
                 let mut new_prev_c = prev_c;
+                let next_c = candidates.peek().map(|c| match c {
+                    WrapBoundaryCandidate::Char { character: c } => *c,
+                    WrapBoundaryCandidate::Element { .. } => '\0',
+                });
+
                 let item_width = match candidate {
                     WrapBoundaryCandidate::Char { character: c } => {
                         if c == '\n' {
@@ -61,23 +68,18 @@ impl LineWrapper {
                         if first_non_whitespace_ix.is_some() {
                             let mut candidate = false;
                             if Self::is_word_char(c) {
-                                if prev_c == ' ' && c != ' ' {
+                                // For english or latin-based words,
+                                // only if prev char is space, then we can break here.
+                                if prev_c == ' ' {
                                     candidate = true;
                                 }
                             } else {
-                                if c != ' ' {
-                                    // For CJK, may not be space separated, e.g.: `Hello world你好世界`,
-                                    // when `ix` is `你`, we can wrap here.
-                                    candidate = true;
-                                } else if prev_c == ' ' && c == ' ' {
-                                    // For continue spaces, we can wrap at the space
-                                    // if the previous character is not a space.
-                                    // But not set width, to keep space at line end.
-                                    candidate = true;
-                                }
+                                // Other chars (e.g: CJK), break if possible.
+                                candidate = true;
                             }
 
-                            if candidate {
+                            // Avoid line starts with space.
+                            if c != ' ' && candidate {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
@@ -127,7 +129,7 @@ impl LineWrapper {
                     }
 
                     if let Some(indent) = indent {
-                        width += self.width_for_char(' ') * indent as f32;
+                        width += space_width * indent as f32;
                     }
 
                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
@@ -434,24 +436,17 @@ mod tests {
                 Boundary::new(22, 3),
             ]
         );
+
+        // Test ending with many space
         assert_eq!(
             wrapper
-                .wrap_line(
-                    &[LineFragment::text("aa bbb cccc ddddd eeeeee          ")],
-                    WRAP_WIDTH
-                )
+                .wrap_line(&[LineFragment::text("aa bbb ccc f         ")], WRAP_WIDTH)
                 .collect::<Vec<_>>(),
             &[
                 // "aa bbb "
                 Boundary::new(7, 0),
-                // "cccc "
-                Boundary::new(12, 0),
-                // "ddddd "
-                Boundary::new(18, 0),
-                // "eeeeee "
-                Boundary::new(25, 0),
-                // "       "
-                Boundary::new(32, 0),
+                // "ccc f  "
+                Boundary::new(14, 0),
             ]
         );
 
@@ -480,16 +475,16 @@ mod tests {
         assert_eq!(
             wrapper
                 .wrap_line(
-                    &[LineFragment::text("aaaaa bbb你好世界cccccdd")],
+                    &[LineFragment::text("aaaaa bbb 你好世界 cccccdd")],
                     WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
                 // "aaaaa "
                 Boundary::new(6, 0),
-                // "bbb你好世"
+                // "bbb 你好"
                 Boundary::new(18, 0),
-                // "界ccccc"
+                // "世界 ccc"
                 Boundary::new(27, 0),
             ]
         );
@@ -511,10 +506,10 @@ mod tests {
             &[
                 // "aa [el] "
                 Boundary::new(5, 0),
-                // "bbb [el] "
-                // - "bbb [el]" (4 * 9.6 + 30 = 68.4px)
-                // - Adding last space to avoid line starting with space
-                Boundary::new(10, 0),
+                // "bbb "
+                Boundary::new(9, 0),
+                // "[el] "
+                Boundary::new(11, 0),
             ],
         );
 
