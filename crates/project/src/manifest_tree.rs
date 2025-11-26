@@ -14,9 +14,9 @@ use gpui::{App, AppContext as _, Context, Entity, Subscription};
 use language::{ManifestDelegate, ManifestName, ManifestQuery};
 pub use manifest_store::ManifestProvidersStore;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
-use settings::{SettingsStore, WorktreeId};
+use settings::SettingsStore;
 use util::rel_path::RelPath;
-use worktree::{Event as WorktreeEvent, Snapshot, Worktree};
+use worktree::{Event as WorktreeEvent, Snapshot, Worktree, WorktreeId};
 
 use crate::{
     ProjectPath,
@@ -96,7 +96,7 @@ impl ManifestTree {
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> Option<ProjectPath> {
-        debug_assert_eq!(delegate.worktree_id(), *worktree_id);
+        debug_assert_eq!(delegate.worktree_id().worktree_id, worktree_id.to_usize() as u64);
         let (mut marked_path, mut current_presence) = (None, LabelPresence::KnownAbsent);
         let worktree_roots = match self.root_points.entry(*worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
@@ -218,7 +218,7 @@ impl ManifestDelegate for ManifestQueryDelegate {
         })
     }
 
-    fn worktree_id(&self) -> WorktreeId {
-        self.worktree.id()
+    fn worktree_id(&self) -> settings::ProjectWorktree {
+        self.worktree.project_worktree()
     }
 }

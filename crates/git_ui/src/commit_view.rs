@@ -284,7 +284,7 @@ impl language::File for GitBlob {
         self.path.file_name().unwrap()
     }
 
-    fn worktree_id(&self, _: &App) -> WorktreeId {
+    fn project_worktree(&self, _: &App) -> WorktreeId {
         self.worktree_id
     }
 
@@ -322,7 +322,7 @@ impl language::File for CommitMetadataFile {
         self.title.file_name().unwrap()
     }
 
-    fn worktree_id(&self, _: &App) -> WorktreeId {
+    fn project_worktree(&self, _: &App) -> WorktreeId {
         self.worktree_id
     }
 

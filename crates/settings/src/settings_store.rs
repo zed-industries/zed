@@ -32,7 +32,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId, fallible_options,
+    LanguageToSettingsMap, ThemeName, VsCodeSettings, ProjectWorktree, fallible_options,
     merge_from::MergeFrom,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
@@ -134,7 +134,7 @@ inventory::collect!(RegisteredSetting);
 
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
-    pub worktree_id: WorktreeId,
+    pub worktree: ProjectWorktree,
     pub path: &'a RelPath,
 }
 
@@ -149,8 +149,8 @@ pub struct SettingsStore {
 
     merged_settings: Rc<SettingsContent>,
 
-    local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
-    raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<RelPath>), (String, Option<Editorconfig>)>,
+    local_settings: BTreeMap<(ProjectWorktree, Arc<RelPath>), SettingsContent>,
+    raw_editorconfig_settings: BTreeMap<(ProjectWorktree, Arc<RelPath>), (String, Option<Editorconfig>)>,
 
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
@@ -165,7 +165,7 @@ pub enum SettingsFile {
     User,
     Server,
     /// Represents project settings in ssh projects as well as local projects
-    Project((WorktreeId, Arc<RelPath>)),
+    Project((ProjectWorktree, Arc<RelPath>)),
 }
 
 impl PartialOrd for SettingsFile {
@@ -234,7 +234,7 @@ pub struct SettingValue<T> {
     #[doc(hidden)]
     pub global_value: Option<T>,
     #[doc(hidden)]
-    pub local_values: Vec<(WorktreeId, Arc<RelPath>, T)>,
+    pub local_values: Vec<(ProjectWorktree, Arc<RelPath>, T)>,
 }
 
 #[doc(hidden)]
@@ -244,9 +244,9 @@ pub trait AnySettingValue: 'static + Send + Sync {
     fn from_settings(&self, s: &SettingsContent) -> Box<dyn Any>;
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
-    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
+    fn all_local_values(&self) -> Vec<(ProjectWorktree, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
-    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
+    fn set_local_value(&mut self, root_id: ProjectWorktree, path: Arc<RelPath>, value: Box<dyn Any>);
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
@@ -358,7 +358,7 @@ impl SettingsStore {
     }
 
     /// Get all values from project specific settings
-    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<RelPath>, &T)> {
+    pub fn get_all_locals<T: Settings>(&self) -> Vec<(ProjectWorktree, Arc<RelPath>, &T)> {
         self.setting_values
             .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -825,7 +825,7 @@ impl SettingsStore {
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
-        root_id: WorktreeId,
+        root_id: ProjectWorktree,
         directory_path: Arc<RelPath>,
         kind: LocalSettingsKind,
         settings_content: Option<&str>,
@@ -968,7 +968,7 @@ impl SettingsStore {
     }
 
     /// Add or remove a set of local settings via a JSON string.
-    pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
+    pub fn clear_local_settings(&mut self, root_id: ProjectWorktree, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
         self.recompute_values(Some((root_id, RelPath::empty())), cx);
@@ -977,13 +977,13 @@ impl SettingsStore {
 
     pub fn local_settings(
         &self,
-        root_id: WorktreeId,
+        root_id: ProjectWorktree,
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, &ProjectSettingsContent)> {
         self.local_settings
             .range(
                 (root_id, RelPath::empty().into())
                     ..(
-                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        ProjectWorktree{ project_id: root_id.project_id, worktree_id: root_id.worktree_id + 1},
                         RelPath::empty().into(),
                     ),
             )
@@ -992,13 +992,13 @@ impl SettingsStore {
 
     pub fn local_editorconfig_settings(
         &self,
-        root_id: WorktreeId,
+        root_id: ProjectWorktree,
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
         self.raw_editorconfig_settings
             .range(
                 (root_id, RelPath::empty().into())
                     ..(
-                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        ProjectWorktree{ project_id: root_id.project_id, worktree_id: root_id.worktree_id + 1},
                         RelPath::empty().into(),
                     ),
             )
@@ -1063,12 +1063,12 @@ impl SettingsStore {
 
     fn recompute_values(
         &mut self,
-        changed_local_path: Option<(WorktreeId, &RelPath)>,
+        changed_local_path: Option<(ProjectWorktree, &RelPath)>,
         cx: &mut App,
     ) {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<SettingsContent>::new();
-        let mut paths_stack = Vec::<Option<(WorktreeId, &RelPath)>>::new();
+        let mut paths_stack = Vec::<Option<(ProjectWorktree, &RelPath)>>::new();
 
         if changed_local_path.is_none() {
             let mut merged = self.default_settings.as_ref().clone();
@@ -1129,7 +1129,7 @@ impl SettingsStore {
 
     pub fn editorconfig_properties(
         &self,
-        for_worktree: WorktreeId,
+        for_worktree: ProjectWorktree,
         for_path: &RelPath,
     ) -> Option<EditorconfigProperties> {
         let mut properties = EditorconfigProperties::new();
@@ -1302,7 +1302,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         type_name::<T>()
     }
 
-    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)> {
+    fn all_local_values(&self) -> Vec<(ProjectWorktree, Arc<RelPath>, &dyn Any)> {
         self.local_values
             .iter()
             .map(|(id, path, value)| (*id, path.clone(), value as _))
@@ -1310,7 +1310,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     }
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
-        if let Some(SettingsLocation { worktree_id, path }) = path {
+        if let Some(SettingsLocation { worktree: worktree_id, path }) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
                 if worktree_id == *settings_root_id && path.starts_with(settings_path) {
                     return value;
@@ -1327,7 +1327,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         self.global_value = Some(*value.downcast().unwrap());
     }
 
-    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>) {
+    fn set_local_value(&mut self, root_id: ProjectWorktree, path: Arc<RelPath>, value: Box<dyn Any>) {
         let value = *value.downcast().unwrap();
         match self
             .local_values
@@ -1344,8 +1344,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
-        settings_content::LanguageSettingsContent, test_settings,
+        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings, settings_content::LanguageSettingsContent, test_settings
     };
 
     use super::*;
@@ -1450,9 +1449,11 @@ mod tests {
             ClosePosition::Left
         );
 
+        let worktree = ProjectWorktree { project_id: 1, worktree_id: 1 };
+
         store
             .set_local_settings(
-                WorktreeId::from_usize(1),
+                worktree,
                 rel_path("root1").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 5 }"#),
@@ -1461,7 +1462,7 @@ mod tests {
             .unwrap();
         store
             .set_local_settings(
-                WorktreeId::from_usize(1),
+                worktree,
                 rel_path("root1/subdir").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "preferred_line_length": 50 }"#),
@@ -1471,7 +1472,7 @@ mod tests {
 
         store
             .set_local_settings(
-                WorktreeId::from_usize(1),
+                worktree,
                 rel_path("root2").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 9, "auto_update": true}"#),
@@ -1481,7 +1482,7 @@ mod tests {
 
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree: worktree,
                 path: rel_path("root1/something"),
             })),
             &DefaultLanguageSettings {
@@ -1491,7 +1492,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree: worktree,
                 path: rel_path("root1/subdir/something"),
             })),
             &DefaultLanguageSettings {
@@ -1501,7 +1502,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree,
                 path: rel_path("root2/something"),
             })),
             &DefaultLanguageSettings {
@@ -1511,7 +1512,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<AutoUpdateSetting>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree,
                 path: rel_path("root2/something")
             })),
             &AutoUpdateSetting { auto_update: false }
@@ -1935,11 +1936,10 @@ mod tests {
     fn test_get_value_for_field_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
-
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
             .unwrap();
-        let local = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local = (ProjectWorktree::from_u64(0), RelPath::empty().into_arc());
         store
             .set_local_settings(
                 local.0,
@@ -1999,10 +1999,10 @@ mod tests {
         store.register_setting::<DefaultLanguageSettings>();
         store.register_setting::<AutoUpdateSetting>();
 
-        let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local_1 = (ProjectWorktree::from_u64(0), RelPath::empty().into_arc());
 
         let local_1_child = (
-            WorktreeId::from_usize(0),
+            ProjectWorktree::from_u64(0),
             RelPath::new(
                 std::path::Path::new("child1"),
                 util::paths::PathStyle::Posix,
@@ -2011,9 +2011,9 @@ mod tests {
             .into_arc(),
         );
 
-        let local_2 = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let local_2 = (ProjectWorktree::from_u64(1), RelPath::empty().into_arc());
         let local_2_child = (
-            WorktreeId::from_usize(1),
+            ProjectWorktree::from_u64(1),
             RelPath::new(
                 std::path::Path::new("child2"),
                 util::paths::PathStyle::Posix,
@@ -2132,12 +2132,13 @@ mod tests {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
 
-        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
-        let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
-        let wt0_child2 = (WorktreeId::from_usize(0), rel_path("child2").into_arc());
 
-        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
-        let wt1_subdir = (WorktreeId::from_usize(1), rel_path("subdir").into_arc());
+        let wt0_root = (ProjectWorktree::from_u64(0), RelPath::empty().into_arc());
+        let wt0_child1 = (ProjectWorktree::from_u64(0), rel_path("child1").into_arc());
+        let wt0_child2 = (ProjectWorktree::from_u64(0), rel_path("child2").into_arc());
+
+        let wt1_root = (ProjectWorktree::from_u64(1), RelPath::empty().into_arc());
+        let wt1_subdir = (ProjectWorktree::from_u64(1), rel_path("subdir").into_arc());
 
         fn get(content: &SettingsContent) -> &Option<u32> {
             &content.project.all_languages.defaults.preferred_line_length
@@ -2232,7 +2233,7 @@ mod tests {
         assert_eq!(overrides, vec![]);
 
         let wt0_deep_child = (
-            WorktreeId::from_usize(0),
+            ProjectWorktree::from_u64(0),
             rel_path("child1/subdir").into_arc(),
         );
         store
@@ -2255,16 +2256,16 @@ mod tests {
     #[test]
     fn test_file_ord() {
         let wt0_root =
-            SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty().into_arc()));
+            SettingsFile::Project((ProjectWorktree::from_u64(0), RelPath::empty().into_arc()));
         let wt0_child1 =
-            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child1").into_arc()));
+            SettingsFile::Project((ProjectWorktree::from_u64(0), rel_path("child1").into_arc()));
         let wt0_child2 =
-            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child2").into_arc()));
+            SettingsFile::Project((ProjectWorktree::from_u64(0), rel_path("child2").into_arc()));
 
         let wt1_root =
-            SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty().into_arc()));
+            SettingsFile::Project((ProjectWorktree::from_u64(1), RelPath::empty().into_arc()));
         let wt1_subdir =
-            SettingsFile::Project((WorktreeId::from_usize(1), rel_path("subdir").into_arc()));
+            SettingsFile::Project((ProjectWorktree::from_u64(1), rel_path("subdir").into_arc()));
 
         let mut files = vec![
             &wt1_root,

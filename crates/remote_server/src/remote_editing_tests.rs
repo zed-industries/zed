@@ -354,7 +354,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
         assert_eq!(
             AllLanguageSettings::get(
                 Some(SettingsLocation {
-                    worktree_id,
+                    worktree,
                     path: rel_path("src/lib.rs")
                 }),
                 cx

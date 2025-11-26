@@ -52,7 +52,7 @@ struct WorktreeDelegateAdapter(pub Arc<dyn DapDelegate>);
 #[async_trait]
 impl WorktreeDelegate for WorktreeDelegateAdapter {
     fn id(&self) -> u64 {
-        self.0.worktree_id().to_proto()
+        self.0.worktree_id().worktree_id
     }
 
     fn root_path(&self) -> String {

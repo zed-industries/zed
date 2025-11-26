@@ -40,7 +40,7 @@ use rpc::{
     proto::{self},
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, WorktreeId};
+use settings::{Settings, SettingsLocation, ProjectWorktree};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -253,7 +253,7 @@ impl DapStore {
                 };
 
                 let settings_location = SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
+                    worktree: worktree.read(cx).id(),
                     path: RelPath::empty(),
                 };
                 let dap_settings = ProjectSettings::get(Some(settings_location), cx)
@@ -857,7 +857,7 @@ impl DapStore {
             .update(&mut cx, |this, cx| {
                 this.worktree_store
                     .read(cx)
-                    .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
+                    .worktree_for_id(ProjectWorktree::from_proto(envelope.payload.worktree_id), cx)
             })?
             .context("Failed to find worktree with a given ID")?;
         let binary = this
@@ -971,7 +971,7 @@ impl DapAdapterDelegate {
 
 #[async_trait]
 impl dap::adapters::DapDelegate for DapAdapterDelegate {
-    fn worktree_id(&self) -> WorktreeId {
+    fn worktree_id(&self) -> ProjectWorktree {
         self.worktree.id()
     }
 

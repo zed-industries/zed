@@ -452,7 +452,7 @@ impl TitleBar {
             .map(|worktree| {
                 let worktree = worktree.read(cx);
                 let settings_location = SettingsLocation {
-                    worktree_id: worktree.id(),
+                    worktree: worktree.id(),
                     path: RelPath::empty(),
                 };
 

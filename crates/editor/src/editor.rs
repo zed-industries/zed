@@ -16033,7 +16033,7 @@ impl Editor {
             let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer, cx)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| (file.worktree_id(cx), file.clone()))
+                .map(|file| (file.project_worktree(cx), file.clone()))
                 .unzip();
 
             (
@@ -21189,7 +21189,7 @@ impl Editor {
                     file.is_private()
                         && EditorSettings::get(
                             Some(SettingsLocation {
-                                worktree_id: file.worktree_id(cx),
+                                worktree: file.project_worktree(cx),
                                 path: file.path().as_ref(),
                             }),
                             cx,

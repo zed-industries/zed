@@ -19,9 +19,10 @@ use rpc::{
         resolve_toolchain_response::Response as ResolveResponsePayload,
     },
 };
-use settings::WorktreeId;
+use settings::ProjectWorktree;
 use task::Shell;
 use util::{ResultExt as _, rel_path::RelPath};
+use worktree::WorktreeId;
 
 use crate::{
     ProjectEnvironment, ProjectPath,
@@ -297,7 +298,7 @@ impl ToolchainStore {
         let toolchains = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
-                let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+                let worktree_id = ProjectWorktree::from_proto(envelope.payload.worktree_id);
                 let path = RelPath::from_proto(envelope.payload.path.as_deref().unwrap_or(""))?;
                 anyhow::Ok(this.list_toolchains(
                     ProjectPath { worktree_id, path },
@@ -398,7 +399,7 @@ pub struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
-    active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
+    active_toolchains: BTreeMap<(ProjectWorktree, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
     manifest_tree: Entity<ManifestTree>,
     fs: Arc<dyn Fs>,
 }
@@ -407,7 +408,7 @@ pub struct LocalToolchainStore {
 impl language::LocalLanguageToolchainStore for LocalStore {
     fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: WorktreeId,
+        worktree_id: ProjectWorktree,
         path: &Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
@@ -424,7 +425,7 @@ impl language::LocalLanguageToolchainStore for LocalStore {
 impl language::LanguageToolchainStore for RemoteStore {
     async fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: WorktreeId,
+        worktree_id: ProjectWorktree,
         path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
@@ -442,7 +443,7 @@ pub struct EmptyToolchainStore;
 impl language::LocalLanguageToolchainStore for EmptyToolchainStore {
     fn active_toolchain(
         self: Arc<Self>,
-        _: WorktreeId,
+        _: ProjectWorktree,
         _: &Arc<RelPath>,
         _: LanguageName,
         _: &mut AsyncApp,
@@ -554,7 +555,7 @@ impl LocalToolchainStore {
     }
     pub(crate) fn active_toolchain(
         &self,
-        worktree_id: WorktreeId,
+        worktree_id: ProjectWorktree,
         relative_path: &Arc<RelPath>,
         language_name: LanguageName,
     ) -> Option<Toolchain> {

@@ -1281,7 +1281,7 @@ impl SerializableItem for Editor {
         let buffer = self.buffer().read(cx).as_singleton()?;
 
         let abs_path = buffer.read(cx).file().and_then(|file| {
-            let worktree_id = file.worktree_id(cx);
+            let worktree_id = file.project_worktree(cx);
             project
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)

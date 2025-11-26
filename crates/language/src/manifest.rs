@@ -1,7 +1,7 @@
 use std::{borrow::Borrow, sync::Arc};
 
 use gpui::SharedString;
-use settings::WorktreeId;
+use settings::ProjectWorktree;
 use util::rel_path::RelPath;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -54,6 +54,6 @@ pub trait ManifestProvider {
 }
 
 pub trait ManifestDelegate: Send + Sync {
-    fn worktree_id(&self) -> WorktreeId;
+    fn worktree_id(&self) -> ProjectWorktree;
     fn exists(&self, path: &RelPath, is_dir: Option<bool>) -> bool;
 }

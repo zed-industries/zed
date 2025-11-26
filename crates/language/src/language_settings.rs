@@ -26,7 +26,7 @@ pub fn language_settings<'a>(
     cx: &'a App,
 ) -> Cow<'a, LanguageSettings> {
     let location = file.map(|f| SettingsLocation {
-        worktree_id: f.worktree_id(cx),
+        worktree: f.project_worktree(cx),
         path: f.path().as_ref(),
     });
     AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
@@ -38,7 +38,7 @@ pub fn all_language_settings<'a>(
     cx: &'a App,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| SettingsLocation {
-        worktree_id: f.worktree_id(cx),
+        worktree: f.project_worktree(cx),
         path: f.path().as_ref(),
     });
     AllLanguageSettings::get(location, cx)
@@ -435,7 +435,7 @@ impl AllLanguageSettings {
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
-                .editorconfig_properties(location.worktree_id, location.path)
+                .editorconfig_properties(location.worktree, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
             let mut settings = settings.clone();

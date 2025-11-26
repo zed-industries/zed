@@ -1256,7 +1256,7 @@ impl EditorElement {
                         let Some(abs_path) = project.read(cx).absolute_path(
                             &ProjectPath {
                                 path: file.path().clone(),
-                                worktree_id: file.worktree_id(cx),
+                                worktree_id: file.project_worktree(cx),
                             },
                             cx,
                         ) else {
@@ -4157,7 +4157,7 @@ impl EditorElement {
                     if let Some(file) = file
                         && let Some(project) = editor.read(cx).project()
                         && let Some(worktree) =
-                            project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
+                            project.read(cx).worktree_for_id(file.project_worktree(cx), cx)
                     {
                         let path_style = file.path_style(cx);
                         let worktree = worktree.read(cx);

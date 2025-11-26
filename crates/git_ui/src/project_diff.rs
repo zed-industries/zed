@@ -349,7 +349,7 @@ impl ProjectDiff {
 
         let file = buffer.read(cx).file()?;
         Some(ProjectPath {
-            worktree_id: file.worktree_id(cx),
+            worktree_id: file.project_worktree(cx),
             path: file.path().clone(),
         })
     }

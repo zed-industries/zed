@@ -18,7 +18,8 @@ use language::{
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
-use settings::{Settings, SettingsLocation, WorktreeId};
+use settings::{Settings, SettingsLocation};
+use worktree::WorktreeId;
 use std::sync::OnceLock;
 use util::rel_path::RelPath;
 
@@ -144,7 +145,7 @@ impl LanguageServerTree {
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
         let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
-        let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
+        let adapters = self.adapters_for_language(&manifest_location, &language_name, delegate, cx);
         self.get_with_adapters(manifest_location, adapters)
     }
 
@@ -158,8 +159,8 @@ impl LanguageServerTree {
         cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
-        let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
-        self.init_with_adapters(manifest_location, language_name, adapters, cx)
+        let adapters = self.adapters_for_language(&manifest_location, &language_name, delegate, cx);
+        self.init_with_adapters(manifest_location, language_name, adapters, delegate.clone(), cx)
     }
 
     fn init_with_adapters<'a>(
@@ -167,6 +168,7 @@ impl LanguageServerTree {
         root_path: ProjectPath,
         language_name: LanguageName,
         adapters: IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &'a App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         adapters.into_iter().map(move |(_, (settings, adapter))| {
@@ -181,7 +183,7 @@ impl LanguageServerTree {
                 .entry(adapter.name());
             let (node, languages) = inner_node.or_insert_with(|| {
                 let toolchain = self.toolchains.read(cx).active_toolchain(
-                    root_path.worktree_id,
+                    delegate.worktree_id(),
                     &root_path.path,
                     language_name.clone(),
                 );
@@ -236,10 +238,11 @@ impl LanguageServerTree {
         &self,
         manifest_location: &ProjectPath,
         language_name: &LanguageName,
+        delegate: &Arc<dyn ManifestDelegate>,
         cx: &App,
     ) -> IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)> {
         let settings_location = SettingsLocation {
-            worktree_id: manifest_location.worktree_id,
+            worktree: delegate.worktree_id(),
             path: &manifest_location.path,
         };
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
@@ -401,10 +404,10 @@ impl ServerTreeRebase {
                 .manifest_location_for_path(&path, manifest_name, &delegate, cx);
         let adapters = self
             .new_tree
-            .adapters_for_language(&manifest, &language_name, cx);
+            .adapters_for_language(&manifest, &language_name, &delegate, cx);
 
         self.new_tree
-            .init_with_adapters(manifest, language_name, adapters, cx)
+            .init_with_adapters(manifest, language_name, adapters, delegate, cx)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.

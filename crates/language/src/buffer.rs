@@ -37,7 +37,7 @@ use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::WorktreeId;
+use settings::ProjectWorktree;
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -393,7 +393,12 @@ pub trait File: Send + Sync + Any {
     /// Returns the id of the worktree to which this file belongs.
     ///
     /// This is needed for looking up project-specific settings.
-    fn worktree_id(&self, cx: &App) -> WorktreeId;
+    fn project_worktree(&self, cx: &App) -> ProjectWorktree;
+
+    /// worktree_id
+    fn worktree_id(&self, cx: &App) -> u64 {
+        self.project_worktree(cx).worktree_id
+    }
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
@@ -5422,8 +5427,8 @@ impl File for TestFile {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
-    fn worktree_id(&self, _: &App) -> WorktreeId {
-        WorktreeId::from_usize(0)
+    fn project_worktree(&self, _: &App) -> ProjectWorktree {
+        ProjectWorktree::from_u64(0)
     }
 
     fn to_proto(&self, _: &App) -> rpc::proto::File {

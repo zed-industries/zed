@@ -138,7 +138,7 @@ impl LspAdapter for YamlLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let location = SettingsLocation {
-            worktree_id: delegate.worktree_id(),
+            worktree: delegate.worktree_id(),
             path: RelPath::empty(),
         };
 

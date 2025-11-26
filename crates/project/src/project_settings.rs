@@ -1002,7 +1002,7 @@ impl SettingsObserver {
                     let result = task_store.update(cx, |task_store, cx| {
                         task_store.update_user_tasks(
                             TaskSettingsLocation::Worktree(SettingsLocation {
-                                worktree_id,
+                                worktree: worktree_id,
                                 path: directory.as_ref(),
                             }),
                             file_content.as_deref(),
@@ -1031,7 +1031,7 @@ impl SettingsObserver {
                     let result = task_store.update(cx, |task_store, cx| {
                         task_store.update_user_debug_scenarios(
                             TaskSettingsLocation::Worktree(SettingsLocation {
-                                worktree_id,
+                                worktree: worktree_id,
                                 path: directory.as_ref(),
                             }),
                             file_content.as_deref(),

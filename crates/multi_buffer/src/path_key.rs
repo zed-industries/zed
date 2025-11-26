@@ -29,7 +29,7 @@ impl PathKey {
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::with_sort_prefix(file.worktree_id(cx).to_proto(), file.path().clone())
+            Self::with_sort_prefix(file.project_worktree(cx).worktree_id as u64, file.path().clone())
         } else {
             Self {
                 sort_prefix: None,

@@ -41,6 +41,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         Path::new("/root"),
+        0,
         true,
         fs,
         Default::default(),
@@ -105,6 +106,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         Path::new("/root"),
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -204,6 +206,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         Path::new("/root/dir1"),
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -354,6 +357,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         temp_root.path(),
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -430,6 +434,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         Path::new("/root"),
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -594,6 +599,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         Path::new("/root"),
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -694,6 +700,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
 
     let worktree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -787,6 +794,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -852,6 +860,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
 
     let tree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -910,6 +919,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     });
     let tree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -995,6 +1005,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -1076,6 +1087,7 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -1186,6 +1198,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         dir.path(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -1297,6 +1310,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         dot_git_worktree_dir.clone(),
+        0,
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
@@ -1335,6 +1349,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
 
     let tree = Worktree::local(
         "/root".as_ref(),
+        0,
         true,
         fs,
         Default::default(),
@@ -1403,6 +1418,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
 
     let tree_fake = Worktree::local(
         "/root".as_ref(),
+        0,
         true,
         fs_fake,
         Default::default(),
@@ -1444,6 +1460,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
 
     let tree_real = Worktree::local(
         temp_root.path(),
+        0,
         true,
         fs_real,
         Default::default(),
@@ -1555,6 +1572,7 @@ async fn test_random_worktree_operations_during_initial_scan(
 
     let worktree = Worktree::local(
         root_dir,
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -1645,6 +1663,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     let worktree = Worktree::local(
         root_dir,
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -1717,6 +1736,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     {
         let new_worktree = Worktree::local(
             root_dir,
+            0,
             true,
             fs.clone(),
             Default::default(),
@@ -2029,6 +2049,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         .await;
     let tree = Worktree::local(
         Path::new("/.env"),
+        0,
         true,
         fs.clone(),
         Default::default(),
@@ -2061,6 +2082,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     .await;
     let worktree = Worktree::local(
         path!("/root/subproject").as_ref(),
+        0,
         true,
         fs.clone(),
         Arc::default(),
@@ -2138,6 +2160,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     .await;
     let worktree = Worktree::local(
         home.join("project"),
+        0,
         true,
         fs.clone(),
         Arc::default(),

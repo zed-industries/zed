@@ -38,8 +38,7 @@ use rpc::{
     AnyProtoClient,
     proto::{self, split_worktree_update},
 };
-pub use settings::WorktreeId;
-use settings::{Settings, SettingsLocation, SettingsStore};
+use settings::{ProjectWorktree, Settings, SettingsLocation, SettingsStore};
 use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
@@ -71,6 +70,39 @@ use util::{
 pub use worktree_settings::WorktreeSettings;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
+pub struct WorktreeId(pub usize);
+
+impl From<WorktreeId> for usize {
+    fn from(value: WorktreeId) -> Self {
+        value.0
+    }
+}
+
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -158,6 +190,7 @@ pub struct RemoteWorktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
+    project_id_for_settings: u64,
     /// The absolute path of the worktree root.
     abs_path: Arc<SanitizedPath>,
     path_style: PathStyle,
@@ -353,6 +386,7 @@ impl EventEmitter<Event> for Worktree {}
 impl Worktree {
     pub async fn local(
         path: impl Into<Arc<Path>>,
+        project_id_for_settings: u64,
         visible: bool,
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
@@ -392,6 +426,7 @@ impl Worktree {
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
                     cx.entity_id().as_u64(),
+                    project_id_for_settings,
                     abs_path
                         .file_name()
                         .and_then(|f| f.to_str())
@@ -405,9 +440,8 @@ impl Worktree {
                 executor: cx.background_executor().clone(),
             };
 
-            let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
-                worktree_id,
+                worktree: snapshot.project_worktree(),
                 path: RelPath::empty(),
             });
 
@@ -466,7 +500,8 @@ impl Worktree {
     }
 
     pub fn remote(
-        project_id: u64,
+        remote_project_id: u64,
+        project_id_for_settings: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
         client: AnyProtoClient,
@@ -476,6 +511,7 @@ impl Worktree {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Snapshot::new(
                 worktree.id,
+                project_id_for_settings,
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
@@ -492,14 +528,17 @@ impl Worktree {
 
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
-                worktree_id,
+                worktree: settings::ProjectWorktree {
+                    worktree_id: worktree_id.to_proto(),
+                    project_id: project_id_for_settings,
+                },
                 path: RelPath::empty(),
             });
 
             let settings = WorktreeSettings::get(settings_location, cx).clone();
             let worktree = RemoteWorktree {
                 client,
-                project_id,
+                project_id: remote_project_id,
                 replica_id,
                 snapshot,
                 file_scan_inclusions: settings.parent_dir_scan_inclusions.clone(),
@@ -611,7 +650,11 @@ impl Worktree {
 
     pub fn settings_location(&self, _: &Context<Self>) -> SettingsLocation<'static> {
         SettingsLocation {
-            worktree_id: self.id(),
+            worktree: ProjectWorktree {
+                project_id: self.project_id_for_settings,
+                worktree_id: self.id.to_proto()
+
+            },
             path: RelPath::empty(),
         }
     }
@@ -2032,12 +2075,14 @@ impl RemoteWorktree {
 impl Snapshot {
     pub fn new(
         id: u64,
+        project_id_for_settings: u64,
         root_name: Arc<RelPath>,
         abs_path: Arc<Path>,
         path_style: PathStyle,
     ) -> Self {
         Snapshot {
             id: WorktreeId::from_usize(id as usize),
+            project_id_for_settings,
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name
@@ -2056,6 +2101,13 @@ impl Snapshot {
 
     pub fn id(&self) -> WorktreeId {
         self.id
+    }
+
+    pub fn project_worktree(&self) -> ProjectWorktree {
+        ProjectWorktree {
+            worktree_id: self.id.0 as u64,
+            project_id: self.project_id_for_settings,
+        }
     }
 
     // TODO:
@@ -3104,8 +3156,8 @@ impl language::File for File {
             .unwrap_or_else(|| self.worktree.read(cx).root_name_str())
     }
 
-    fn worktree_id(&self, cx: &App) -> WorktreeId {
-        self.worktree.read(cx).id()
+    fn project_worktree(&self, cx: &App) -> ProjectWorktree {
+        self.worktree.read(cx).project_worktree()
     }
 
     fn to_proto(&self, cx: &App) -> rpc::proto::File {

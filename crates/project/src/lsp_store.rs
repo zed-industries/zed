@@ -8427,6 +8427,10 @@ impl LspStore {
         }
     }
 
+    pub fn project_id_for_settings(&self, cx: &Context<Self>) -> u64 {
+        cx.entity_id().as_u64()
+    }
+
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Uri,
@@ -8473,7 +8477,7 @@ impl LspStore {
                 let worktree = lsp_store
                     .update(cx, |lsp_store, cx| {
                         lsp_store.worktree_store.update(cx, |worktree_store, cx| {
-                            worktree_store.create_worktree(&worktree_root_target, false, cx)
+                            worktree_store.create_worktree(&worktree_root_target, self.project_id_for_settings(cx), false, cx)
                         })
                     })?
                     .await?;
@@ -10859,7 +10863,7 @@ impl LspStore {
         for buffer in buffers {
             buffer.update(cx, |buffer, cx| {
                 language_servers_to_stop.extend(local.language_server_ids_for_buffer(buffer, cx));
-                if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx))
+                if let Some(worktree_id) = buffer.file().map(|f| f.project_worktree(cx))
                     && covered_worktrees.insert(worktree_id)
                 {
                     language_server_names_to_stop.retain(|name| {
@@ -13605,7 +13609,7 @@ pub fn language_server_settings<'a>(
 ) -> Option<&'a LspSettings> {
     language_server_settings_for(
         SettingsLocation {
-            worktree_id: delegate.worktree_id(),
+            worktree: delegate.worktree_id(),
             path: RelPath::empty(),
         },
         language,

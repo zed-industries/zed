@@ -463,6 +463,7 @@ impl WorktreeStore {
     pub fn create_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
+        project_id_for_settings: u64,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
@@ -478,11 +479,11 @@ impl WorktreeStore {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
                         let abs_path = RemotePathBuf::new(abs_path.to_string(), *path_style);
-                        self.create_remote_worktree(upstream_client.clone(), abs_path, visible, cx)
+                        self.create_remote_worktree(upstream_client.clone(), project_id_for_settings, abs_path, visible, cx)
                     }
                 }
                 WorktreeStoreState::Local { fs } => {
-                    self.create_local_worktree(fs.clone(), abs_path.clone(), visible, cx)
+                    self.create_local_worktree(fs.clone(), project_id_for_settings, abs_path.clone(), visible, cx)
                 }
             };
 
@@ -573,6 +574,7 @@ impl WorktreeStore {
         fs: Arc<dyn Fs>,
         abs_path: Arc<SanitizedPath>,
         visible: bool,
+        project_id_for_settings: u64,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
@@ -580,6 +582,7 @@ impl WorktreeStore {
         cx.spawn(async move |this, cx| {
             let worktree = Worktree::local(
                 SanitizedPath::cast_arc(abs_path.clone()),
+                project_id_for_settings,
                 visible,
                 fs,
                 next_entry_id,

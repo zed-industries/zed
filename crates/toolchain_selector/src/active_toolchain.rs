@@ -83,7 +83,7 @@ impl ActiveToolchain {
                 let (worktree_id, path) = active_file
                     .update(cx, |this, cx| {
                         this.file().and_then(|file| {
-                            Some((file.worktree_id(cx), file.path().parent()?.into()))
+                            Some((file.project_worktree(cx), file.path().parent()?.into()))
                         })
                     })
                     .ok()
@@ -118,7 +118,7 @@ impl ActiveToolchain {
     ) {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
-            && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx))
+            && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.project_worktree(cx))
         {
             let subscription = cx.subscribe_in(
                 &buffer,

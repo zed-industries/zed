@@ -427,7 +427,7 @@ fn worktree_root(
         .buffer
         .read(cx)
         .file()
-        .map(|f| f.worktree_id(cx))
+        .map(|f| f.project_worktree(cx))
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
         .and_then(|worktree| {
             let worktree = worktree.read(cx);

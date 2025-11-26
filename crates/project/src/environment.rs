@@ -137,7 +137,7 @@ impl ProjectEnvironment {
             None => Some({
                 let shell = TerminalSettings::get(
                     Some(settings::SettingsLocation {
-                        worktree_id: worktree.id(),
+                        worktree: worktree.project_worktree(),
                         path: RelPath::empty(),
                     }),
                     cx,
@@ -180,7 +180,7 @@ impl ProjectEnvironment {
                         worktree
                             .as_ref()
                             .map(|(worktree, path)| settings::SettingsLocation {
-                                worktree_id: worktree.read(cx).id(),
+                                worktree: worktree.read(cx).id(),
                                 path: &path,
                             }),
                         cx,

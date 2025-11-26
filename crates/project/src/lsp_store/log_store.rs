@@ -8,9 +8,9 @@ use lsp::{
     MessageType, TraceValue,
 };
 use rpc::proto;
-use settings::WorktreeId;
+use settings::ProjectWorktree;
 
-use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
+use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _, WorktreeId};
 
 const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";

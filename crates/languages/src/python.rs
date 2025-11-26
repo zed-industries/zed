@@ -722,7 +722,7 @@ impl ContextProvider for PythonContextProvider {
 
         let module_target = self.build_module_target(variables);
         let location_file = location.file_location.buffer.read(cx).file().cloned();
-        let worktree_id = location_file.as_ref().map(|f| f.worktree_id(cx));
+        let worktree_id = location_file.as_ref().map(|f| f.project_worktree(cx));
 
         cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {

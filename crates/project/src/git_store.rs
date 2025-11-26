@@ -55,7 +55,7 @@ use rpc::{
     proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
-use settings::WorktreeId;
+use settings::ProjectWorktree;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque},
@@ -90,7 +90,7 @@ pub struct GitStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<RepositoryId, Entity<Repository>>,
-    worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
+    worktree_ids: HashMap<RepositoryId, HashSet<ProjectWorktree>>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
@@ -1267,7 +1267,7 @@ impl GitStore {
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
     fn update_repositories_from_worktree(
         &mut self,
-        worktree_id: WorktreeId,
+        worktree_id: ProjectWorktree,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,

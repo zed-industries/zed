@@ -67,7 +67,7 @@ impl Project {
             && let Some((worktree, _)) = self.find_worktree(path, cx)
         {
             settings_location = Some(SettingsLocation {
-                worktree_id: worktree.read(cx).id(),
+                worktree: worktree.read(cx).id(),
                 path: RelPath::empty(),
             });
         }
@@ -289,7 +289,7 @@ impl Project {
             && let Some((worktree, _)) = self.find_worktree(path, cx)
         {
             settings_location = Some(SettingsLocation {
-                worktree_id: worktree.read(cx).id(),
+                worktree: worktree.read(cx).id(),
                 path: RelPath::empty(),
             });
         }
@@ -464,7 +464,7 @@ impl Project {
             && let Some((worktree, _)) = self.find_worktree(path, cx)
         {
             settings_location = Some(SettingsLocation {
-                worktree_id: worktree.read(cx).id(),
+                worktree: worktree.read(cx).id(),
                 path: RelPath::empty(),
             });
         }

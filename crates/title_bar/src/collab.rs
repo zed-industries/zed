@@ -384,7 +384,7 @@ impl TitleBar {
                     let worktree_id = worktree.read(cx).id();
 
                     let settings_location = Some(SettingsLocation {
-                        worktree_id,
+                        worktree: worktree_id,
                         path: RelPath::empty(),
                     });
 

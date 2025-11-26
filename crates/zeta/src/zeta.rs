@@ -2357,7 +2357,7 @@ impl Zeta {
         };
         zeta_project
             .license_detection_watchers
-            .get(&file.worktree_id(cx))
+            .get(&file.project_worktree(cx))
             .as_ref()
             .is_some_and(|watcher| watcher.is_project_open_source())
     }

@@ -16,6 +16,7 @@ use gpui::{
     SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
+use settings::ProjectWorktree;
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
     ShowDiagnostics,
@@ -592,11 +593,18 @@ impl<T: Item> ItemHandle for Entity<T> {
         result
     }
 
-    fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings {
+    fn workspace_settings<'a>(
+        &self,
+        project: &Entity<Project>,
+        cx: &'a App,
+    ) -> &'a WorkspaceSettings {
         if let Some(project_path) = self.project_path(cx) {
             WorkspaceSettings::get(
                 Some(SettingsLocation {
-                    worktree_id: project_path.worktree_id,
+                    worktree: ProjectWorktree {
+                        worktree_id: project_path.worktree_id,
+                        project_id: project.read(cx),
+                    },
                     path: &project_path.path,
                 }),
                 cx,
@@ -805,7 +813,9 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                             if item.has_deleted_file(cx)
                                 && !item.is_dirty(cx)
-                                && item.workspace_settings(cx).close_on_file_delete
+                                && item
+                                    .workspace_settings(&workspace.project, cx)
+                                    .close_on_file_delete
                             {
                                 let item_id = item.item_id();
                                 let close_item_task = pane.update(cx, |pane, cx| {
@@ -835,7 +845,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
 
                         ItemEvent::Edit => {
-                            let autosave = item.workspace_settings(cx).autosave;
+                            let autosave = item.workspace_settings(&workspace.project, cx).autosave;
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
                                 let delay = Duration::from_millis(milliseconds.0);
@@ -867,7 +877,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                 window,
                 move |workspace, window, cx| {
                     if let Some(item) = weak_item.upgrade()
-                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
+                        && item.workspace_settings(&workspace.project, cx).autosave
+                            == AutosaveSetting::OnFocusChange
                     {
                         Pane::autosave_item(&item, workspace.project.clone(), window, cx)
                             .detach_and_log_err(cx);

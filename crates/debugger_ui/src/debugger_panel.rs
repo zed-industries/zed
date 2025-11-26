@@ -195,7 +195,7 @@ impl DebugPanel {
             active_buffer
                 .as_ref()
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|f| f.worktree_id(cx))
+                .map(|f| f.project_worktree(cx))
         });
 
         let Some(worktree) = worktree

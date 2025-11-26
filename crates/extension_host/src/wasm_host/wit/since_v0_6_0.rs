@@ -8,7 +8,7 @@ use crate::wasm_host::wit::since_v0_6_0::{
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
-use ::settings::{Settings, WorktreeId};
+use ::settings::{Settings, ProjectWorktree};
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -923,7 +923,7 @@ impl ExtensionImports for WasmState {
                     .as_ref()
                     .zip(location.as_ref())
                     .map(|(path, location)| ::settings::SettingsLocation {
-                        worktree_id: WorktreeId::from_proto(location.worktree_id),
+                        worktree: ProjectWorktree::from_proto(location.worktree_id),
                         path,
                     });
 

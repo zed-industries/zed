@@ -581,7 +581,7 @@ impl ToolchainSelector {
         let project = workspace.project().clone();
 
         let language_name = buffer.read(cx).language()?.name();
-        let worktree_id = buffer.read(cx).file()?.worktree_id(cx);
+        let worktree_id = buffer.read(cx).file()?.project_worktree(cx);
         let relative_path: Arc<RelPath> = buffer.read(cx).file()?.path().parent()?.into();
         let worktree_root_path = project
             .read(cx)

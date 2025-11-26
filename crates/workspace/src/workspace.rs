@@ -4596,7 +4596,7 @@ impl Workspace {
         for (i, worktree) in project.visible_worktrees(cx).enumerate() {
             let name = {
                 let settings_location = SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
+                    worktree: worktree.read(cx).id(),
                     path: RelPath::empty(),
                 };
 

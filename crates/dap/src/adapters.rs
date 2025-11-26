@@ -12,7 +12,7 @@ use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::WorktreeId;
+use settings::ProjectWorktree;
 use smol::fs::File;
 use std::{
     borrow::Borrow,
@@ -36,7 +36,7 @@ pub enum DapStatus {
 
 #[async_trait]
 pub trait DapDelegate: Send + Sync + 'static {
-    fn worktree_id(&self) -> WorktreeId;
+    fn worktree_id(&self) -> ProjectWorktree;
     fn worktree_root_path(&self) -> &Path;
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn node_runtime(&self) -> NodeRuntime;

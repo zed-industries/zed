@@ -3832,7 +3832,7 @@ impl GitPanel {
         cx: &App,
     ) -> Option<AnyElement> {
         let repo = self.active_repository.as_ref()?.read(cx);
-        let project_path = (file.worktree_id(cx), file.path().clone()).into();
+        let project_path = (file.project_worktree(cx), file.path().clone()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
         let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;

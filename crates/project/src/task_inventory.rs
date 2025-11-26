@@ -355,7 +355,7 @@ impl Inventory {
                 let buffer = buffer.read(cx);
                 let file = buffer.file().cloned();
                 (
-                    file.as_ref().map(|file| file.worktree_id(cx)),
+                    file.as_ref().map(|file| file.project_worktree(cx)),
                     file,
                     buffer.language().cloned(),
                 )
@@ -683,14 +683,14 @@ impl Inventory {
                 let new_templates = new_templates.collect::<Vec<_>>();
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
-                        parsed_templates.worktree.get_mut(&location.worktree_id)
+                        parsed_templates.worktree.get_mut(&WorktreeId(location.worktree.worktree_id as usize))
                     {
                         worktree_tasks.remove(location.path);
                     }
                 } else {
                     parsed_templates
                         .worktree
-                        .entry(location.worktree_id)
+                        .entry(WorktreeId(location.worktree.worktree_id as usize))
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
                 }
@@ -701,7 +701,7 @@ impl Inventory {
                         ..
                     } = kind
                     {
-                        *id != location.worktree_id
+                        id.0 != location.worktree.worktree_id as usize
                             || directory_in_worktree.as_ref() != location.path
                     } else {
                         true
@@ -767,20 +767,20 @@ impl Inventory {
             }
             TaskSettingsLocation::Worktree(location) => {
                 previously_existing_scenarios = parsed_scenarios
-                    .worktree_scenarios(location.worktree_id)
+                    .worktree_scenarios(location.worktree)
                     .map(|(_, scenario)| scenario.label)
                     .collect::<HashSet<_>>();
 
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
-                        parsed_scenarios.worktree.get_mut(&location.worktree_id)
+                        parsed_scenarios.worktree.get_mut(&location.worktree)
                     {
                         worktree_tasks.remove(location.path);
                     }
                 } else {
                     parsed_scenarios
                         .worktree
-                        .entry(location.worktree_id)
+                        .entry(location.worktree)
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
                 }
@@ -1015,7 +1015,7 @@ impl ContextProvider for BasicContextProvider {
         }
         let worktree = buffer
             .file()
-            .map(|file| file.worktree_id(cx))
+            .map(|file| file.project_worktree(cx))
             .and_then(|worktree_id| {
                 self.worktree_store
                     .read(cx)
@@ -1181,7 +1181,7 @@ mod tests {
 
         let worktree_id = WorktreeId::from_usize(0);
         let local_worktree_location = SettingsLocation {
-            worktree_id,
+            worktree,
             path: rel_path("foo"),
         };
         inventory.update(cx, |inventory, _| {
@@ -1475,7 +1475,7 @@ mod tests {
             inventory
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
-                        worktree_id: worktree_1,
+                        worktree: worktree_1,
                         path: rel_path(".zed"),
                     }),
                     Some(&mock_tasks_from_names(
@@ -1486,7 +1486,7 @@ mod tests {
             inventory
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
-                        worktree_id: worktree_2,
+                        worktree: worktree_2,
                         path: rel_path(".zed"),
                     }),
                     Some(&mock_tasks_from_names(

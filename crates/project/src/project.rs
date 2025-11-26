@@ -367,7 +367,7 @@ pub struct ProjectPath {
 impl ProjectPath {
     pub fn from_file(value: &dyn language::File, cx: &App) -> Self {
         ProjectPath {
-            worktree_id: value.worktree_id(cx),
+            worktree_id: value.project_worktree(cx),
             path: value.path().clone(),
         }
     }
@@ -4227,7 +4227,7 @@ impl Project {
             }
         }
 
-        let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
+        let buffer_worktree_id = buffer.read(cx).file().map(|file| file.project_worktree(cx));
         let worktrees_with_ids: Vec<_> = self
             .worktrees(cx)
             .map(|worktree| {
@@ -4324,7 +4324,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.create_worktree(abs_path, visible, cx)
+            worktree_store.create_worktree(abs_path, self.project_id_for_settings(cx), visible, cx)
         })
     }
 
@@ -5438,7 +5438,7 @@ impl EventEmitter<Event> for Project {}
 impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
     fn from(val: &'a ProjectPath) -> Self {
         SettingsLocation {
-            worktree_id: val.worktree_id,
+            worktree: val.worktree_id,
             path: val.path.as_ref(),
         }
     }
@@ -5516,7 +5516,7 @@ impl ProjectItem for Buffer {
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.file().map(|file| ProjectPath {
-            worktree_id: file.worktree_id(cx),
+            worktree_id: file.project_worktree(cx).worktree_id,
             path: file.path().clone(),
         })
     }

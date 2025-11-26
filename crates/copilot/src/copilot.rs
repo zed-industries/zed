@@ -1441,8 +1441,8 @@ mod tests {
             unimplemented!()
         }
 
-        fn worktree_id(&self, _: &App) -> settings::WorktreeId {
-            settings::WorktreeId::from_usize(0)
+        fn project_worktree(self, _: &App) -> settings::ProjectWorktree {
+            settings::ProjectWorktree::from_u64(0)
         }
 
         fn is_private(&self) -> bool {

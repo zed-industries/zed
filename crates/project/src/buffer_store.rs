@@ -906,7 +906,7 @@ impl BufferStore {
             this.update(cx, |this, cx| {
                 old_file.clone().and_then(|file| {
                     this.path_to_buffer_id.remove(&ProjectPath {
-                        worktree_id: file.worktree_id(cx),
+                        worktree_id: file.project_worktree(cx).worktree_id,
                         path: file.path().clone(),
                     })
                 });
