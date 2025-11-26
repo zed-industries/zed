@@ -3232,7 +3232,6 @@ impl LocalLspStore {
             }
         }
         servers_to_remove.retain(|server_id| !servers_to_preserve.contains(server_id));
-        // TODO kb clean up old tokens here and other places
         self.language_server_ids
             .retain(|_, state| !servers_to_remove.contains(&state.id));
         for server_id_to_remove in &servers_to_remove {
@@ -3671,6 +3670,13 @@ impl BufferLspData {
         }
 
         self.inlay_hints.remove_server_data(for_server);
+
+        if let Some(semantic_tokens) = &mut self.semantic_tokens {
+            semantic_tokens
+                .buffer_tokens
+                .servers
+                .swap_remove(&for_server);
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3688,7 +3694,7 @@ pub struct DocumentColors {
 type DocumentColorTask = Shared<Task<std::result::Result<DocumentColors, Arc<anyhow::Error>>>>;
 type CodeLensTask = Shared<Task<std::result::Result<Option<Vec<CodeAction>>, Arc<anyhow::Error>>>>;
 type SemanticTokensTask =
-    Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>>;
+    Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
 
 #[derive(Debug, Default)]
 struct DocumentColorData {
@@ -3705,7 +3711,7 @@ struct CodeLensData {
 
 #[derive(Default, Debug)]
 struct SemanticTokensData {
-    buffer_tokens: Arc<BufferSemanticTokens>,
+    buffer_tokens: BufferSemanticTokens,
     update: Option<(Global, SemanticTokensTask)>,
 }
 
@@ -7089,7 +7095,7 @@ impl LspStore {
         }
     }
 
-    pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<Arc<BufferSemanticTokens>> {
+    pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<BufferSemanticTokens> {
         Some(
             self.lsp_data
                 .get(&buffer)?
@@ -7218,9 +7224,10 @@ impl LspStore {
                     let semantic_tokens =
                         ServerSemanticTokens::from_full(response.data, response.id);
 
-                    let mut buffer_tokens = (*semantic_tokens_data.buffer_tokens).clone();
-                    buffer_tokens.servers.insert(server, semantic_tokens);
-                    semantic_tokens_data.buffer_tokens = Arc::new(buffer_tokens);
+                    semantic_tokens_data
+                        .buffer_tokens
+                        .servers
+                        .insert(server, semantic_tokens);
                 }
             },
         )
@@ -7241,23 +7248,20 @@ impl LspStore {
 
                 match response {
                     SemanticTokensDeltaResponse::Full { data, id } => {
-                        let semantic_tokens = ServerSemanticTokens::from_full(data, id);
-
-                        let mut buffer_tokens = (*semantic_tokens_data.buffer_tokens).clone();
-                        buffer_tokens.servers.insert(server, semantic_tokens);
-                        semantic_tokens_data.buffer_tokens = Arc::new(buffer_tokens);
+                        semantic_tokens_data
+                            .buffer_tokens
+                            .servers
+                            .insert(server, ServerSemanticTokens::from_full(data, id));
                     }
                     SemanticTokensDeltaResponse::Delta { edits, id } => {
-                        let mut buffer_tokens = (*semantic_tokens_data.buffer_tokens).clone();
-
                         // If we don't have tokens for this server, we shouldn't have sent the request
                         // in the first place.
-                        if let Some(tokens) = buffer_tokens.servers.get_mut(&server) {
+                        if let Some(tokens) =
+                            semantic_tokens_data.buffer_tokens.servers.get_mut(&server)
+                        {
                             tokens.result_id = id;
                             tokens.apply(&edits);
                         }
-
-                        semantic_tokens_data.buffer_tokens = Arc::new(buffer_tokens);
                     }
                 }
             }

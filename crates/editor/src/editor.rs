@@ -23342,7 +23342,7 @@ pub trait SemanticsProvider {
         buffer: Entity<Buffer>,
         refresh: bool,
         cx: &mut App,
-    ) -> Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>>;
+    ) -> Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
@@ -23926,7 +23926,7 @@ impl SemanticsProvider for Entity<Project> {
         buffer: Entity<Buffer>,
         refresh: bool,
         cx: &mut App,
-    ) -> Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>> {
+    ) -> Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>> {
         self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.semantic_tokens(buffer, refresh, cx)
         })

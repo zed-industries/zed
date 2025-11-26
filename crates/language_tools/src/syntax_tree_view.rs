@@ -119,7 +119,7 @@ struct EditorState {
 
 type SemanticTokenState = Option<(
     HashMap<lsp::LanguageServerId, lsp::SemanticTokensLegend>,
-    std::sync::Arc<BufferSemanticTokens>,
+    BufferSemanticTokens,
     BufferSnapshot,
 )>;
 

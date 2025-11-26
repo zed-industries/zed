@@ -12,6 +12,7 @@ use crate::lsp_command::SemanticTokensEdit;
 /// Semantic tokens later in the list will override earlier ones in case of overlap.
 #[derive(Default, Debug, Clone)]
 pub struct BufferSemanticTokens {
+    // TODO kb why index map is needed?
     pub servers: IndexMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
