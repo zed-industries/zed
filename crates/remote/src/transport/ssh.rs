@@ -61,6 +61,16 @@ impl SshConnectionHost {
     }
 }
 
+impl From<&str> for SshConnectionHost {
+    fn from(value: &str) -> Self {
+        if let Ok(address) = value.parse() {
+            Self::IpAddr(address)
+        } else {
+            Self::Hostname(value.to_string())
+        }
+    }
+}
+
 impl From<String> for SshConnectionHost {
     fn from(value: String) -> Self {
         if let Ok(address) = value.parse() {
@@ -93,7 +103,7 @@ pub struct SshConnectionOptions {
 impl From<settings::SshConnection> for SshConnectionOptions {
     fn from(val: settings::SshConnection) -> Self {
         SshConnectionOptions {
-            host: SshConnectionHost::from(val.host.to_string()),
+            host: val.host.to_string().into(),
             username: val.username,
             port: val.port,
             password: None,
@@ -1278,7 +1288,7 @@ impl SshConnectionOptions {
         };
 
         Ok(Self {
-            host: SshConnectionHost::from(hostname),
+            host: hostname.into(),
             username,
             port,
             port_forwards,
@@ -1535,7 +1545,7 @@ mod tests {
     #[test]
     fn scp_args_exclude_port_forward_flags() {
         let options = SshConnectionOptions {
-            host: SshConnectionHost::Hostname("example.com".to_owned()),
+            host: "example.com".into(),
             args: Some(vec![
                 "-p".to_string(),
                 "2222".to_string(),
@@ -1576,58 +1586,37 @@ mod tests {
     #[test]
     fn test_host_parsing() -> Result<()> {
         let opts = SshConnectionOptions::parse_command_line("user@2001:db8::1")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::from("2001:db8::1".to_string())
-        );
+        assert_eq!(opts.host, "2001:db8::1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, None);
 
         let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]:2222")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::from("2001:db8::1".to_string())
-        );
+        assert_eq!(opts.host, "2001:db8::1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
 
         let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::from("2001:db8::1".to_string())
-        );
+        assert_eq!(opts.host, "2001:db8::1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, None);
 
         let opts = SshConnectionOptions::parse_command_line("2001:db8::1")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::from("2001:db8::1".to_string())
-        );
+        assert_eq!(opts.host, "2001:db8::1".into());
         assert_eq!(opts.username, None);
         assert_eq!(opts.port, None);
 
         let opts = SshConnectionOptions::parse_command_line("[2001:db8::1]:2222")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::from("2001:db8::1".to_string())
-        );
+        assert_eq!(opts.host, "2001:db8::1".into());
         assert_eq!(opts.username, None);
         assert_eq!(opts.port, Some(2222));
 
         let opts = SshConnectionOptions::parse_command_line("user@example.com:2222")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::Hostname("example.com".to_string())
-        );
+        assert_eq!(opts.host, "example.com".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
 
         let opts = SshConnectionOptions::parse_command_line("user@192.168.1.1:2222")?;
-        assert_eq!(
-            opts.host,
-            SshConnectionHost::from("192.168.1.1".to_string())
-        );
+        assert_eq!(opts.host, "192.168.1.1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
 
