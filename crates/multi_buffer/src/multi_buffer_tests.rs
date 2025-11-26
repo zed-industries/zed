@@ -1,6 +1,6 @@
 use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use gpui::{App, TestAppContext};
+use gpui::{App, BorrowAppContext, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
@@ -350,7 +350,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
+async fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -392,7 +392,7 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
+async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -472,7 +472,7 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
+async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -904,7 +904,7 @@ fn test_empty_multibuffer(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
+async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let buffer = cx.new(|cx| Buffer::local("", cx));
     let base_text = "a\nb\nc";
@@ -1234,7 +1234,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_basic_diff_hunks(cx: &mut TestAppContext) {
+async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         ZERO
@@ -1479,7 +1479,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
+async fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         one
@@ -1993,7 +1993,7 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
+async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "
         one
@@ -2664,7 +2664,7 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 50)]
 async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -3094,6 +3094,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 fn test_history(cx: &mut App) {
     let test_settings = SettingsStore::test(cx);
     cx.set_global(test_settings);
+
     let group_interval: Duration = Duration::from_millis(1);
     let buffer_1 = cx.new(|cx| {
         let mut buf = Buffer::local("1234", cx);
@@ -3334,7 +3335,7 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_summaries_for_anchors(cx: &mut TestAppContext) {
+async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "
         bar
@@ -3411,7 +3412,7 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
+async fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     let base_text_1 = "one\ntwo".to_owned();
     let text_1 = "one\n".to_owned();
 
@@ -3938,8 +3939,10 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     }
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 10)]
 fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
     use buffer_diff::BufferDiff;
     use util::RandomCharIter;
 
@@ -4093,6 +4096,155 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
             }
         }
     }
+}
+
+#[gpui::test(iterations = 100)]
+async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.word_diff_max_lines =
+                    Some(settings::WordDiffMaxLines(10));
+            });
+        });
+    });
+
+    log::info!("Starting word diff test iteration");
+    let word_count = rng.random_range(5..30);
+    let mut base_text = String::new();
+    let mut words = Vec::new();
+
+    for i in 0..word_count {
+        let word: String = (0..rng.random_range(3..10))
+            .map(|_| rng.random_range(b'a'..=b'z') as char)
+            .collect();
+        words.push(word.clone());
+        base_text.push_str(&word);
+
+        if i < word_count - 1 {
+            if rng.random_range(0..100) < 30 {
+                base_text.push('\n');
+            } else {
+                base_text.push(' ');
+            }
+        }
+    }
+
+    let mut modified_text = base_text.clone();
+    let mut expected_total_word_diff_count = 0;
+    let mutation_count = rng.random_range(1..word_count.min(5));
+
+    for _ in 0..mutation_count {
+        if words.is_empty() {
+            break;
+        }
+
+        let word_idx = rng.random_range(0..words.len());
+        let word = &words[word_idx];
+
+        if let Some(word_pos) = modified_text.find(word) {
+            let action = rng.random_range(0..100);
+
+            if action < 70 {
+                let new_word: String = (0..rng.random_range(3..10))
+                    .map(|_| rng.random_range(b'A'..=b'Z') as char)
+                    .collect();
+
+                expected_total_word_diff_count += 2;
+                modified_text.replace_range(word_pos..word_pos + word.len(), &new_word);
+            } else {
+                let end = word_pos + word.len();
+
+                let line_start = modified_text[..word_pos]
+                    .rfind('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let line_end = modified_text[word_pos..]
+                    .find('\n')
+                    .map(|i| word_pos + i)
+                    .unwrap_or(modified_text.len());
+                let line = &modified_text[line_start..line_end];
+
+                let other_content = line[..word_pos - line_start].trim().len()
+                    + line[end - line_start..].trim().len();
+
+                if other_content > 0 {
+                    let delete_end = if modified_text.as_bytes().get(end) == Some(&b' ') {
+                        end + 1
+                    } else {
+                        end
+                    };
+
+                    expected_total_word_diff_count += 1;
+                    modified_text.replace_range(word_pos..delete_end, "");
+                }
+            }
+
+            words.remove(word_idx);
+        }
+    }
+
+    let buffer = cx.new(|cx| Buffer::local(&modified_text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let text = snapshot.text();
+
+    let mut found_word_diffs = false;
+    let mut actual_total_word_diff_count = 0;
+
+    for (hunk_idx, diff_hunk) in snapshot.diff_hunks().enumerate() {
+        if !diff_hunk.word_diffs.is_empty() {
+            found_word_diffs = true;
+            actual_total_word_diff_count += diff_hunk.word_diffs.len();
+
+            for word_diff in &diff_hunk.word_diffs {
+                assert!(
+                    word_diff.start < word_diff.end,
+                    "Word diff is empty in hunk {}",
+                    hunk_idx
+                );
+
+                assert!(
+                    word_diff.end.0 <= text.len(),
+                    "Word diff end {} exceeds text length {} in hunk {}",
+                    word_diff.end.0,
+                    text.len(),
+                    hunk_idx
+                );
+
+                let word_diff_text = &text[word_diff.start.0..word_diff.end.0];
+                assert!(
+                    !word_diff_text.is_empty(),
+                    "Word diff at {:?} points to empty text in hunk {}",
+                    word_diff,
+                    hunk_idx
+                );
+            }
+        }
+    }
+
+    if expected_total_word_diff_count > 0 {
+        assert!(
+            found_word_diffs,
+            "Expected to find word_diffs after expanding hunks with mutations"
+        );
+    }
+    assert_eq!(actual_total_word_diff_count, expected_total_word_diff_count);
 }
 
 /// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)

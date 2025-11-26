@@ -12,7 +12,7 @@ workspace = true
 path = "src/buffer_diff.rs"
 
 [features]
-test-support = []
+test-support = ["settings"]
 
 [dependencies]
 anyhow.workspace = true
@@ -24,6 +24,7 @@ language.workspace = true
 log.workspace = true
 pretty_assertions.workspace = true
 rope.workspace = true
+settings = { workspace = true, optional = true }
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
@@ -33,6 +34,7 @@ ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 zlog.workspace = true

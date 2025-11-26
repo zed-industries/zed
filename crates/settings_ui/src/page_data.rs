@@ -6958,6 +6958,26 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+        SettingsPageItem::SectionHeader("Word Diff"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Word Diff Max Lines",
+            description: "Maximum number of lines in a diff section before word/character diff highlighting is disabled. If either the deleted or added section of a diff exceeds this line count, no word/character diff will be generated for that section. This improves performance for large diffs.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).word_diff_max_lines"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.word_diff_max_lines.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.word_diff_max_lines = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",

@@ -8,7 +8,9 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
+use settings::{
+    CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast, WordDiffMaxLines,
+};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,6 +114,14 @@ impl_newtype_numeric_stepper_float!(
     0.1,
     CenteredPaddingSettings::MIN_PADDING,
     CenteredPaddingSettings::MAX_PADDING
+);
+impl_newtype_numeric_stepper_int!(
+    WordDiffMaxLines,
+    1,
+    5,
+    1,
+    WordDiffMaxLines::MIN.0,
+    WordDiffMaxLines::MAX.0
 );
 
 macro_rules! impl_numeric_stepper_int {

@@ -5577,6 +5577,54 @@ impl EditorElement {
         }
     }
 
+    fn layout_word_diff_highlights(
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        row_infos: &[RowInfo],
+        start_row: DisplayRow,
+        snapshot: &EditorSnapshot,
+        highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
+        cx: &mut App,
+    ) {
+        for (hunk, _) in display_hunks {
+            if let DisplayDiffHunk::Unfolded {
+                word_diffs, status, ..
+            } = hunk
+            {
+                // Some views always have line highlights even if the status is not modified
+                if !status.is_modified() {
+                    continue;
+                }
+
+                for word_diff in word_diffs {
+                    let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
+                    let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
+
+                    let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
+
+                    if start_row_offset < row_infos.len() {
+                        if let Some(row_info) = row_infos.get(start_row_offset) {
+                            if let Some(diff_status) = row_info.diff_status {
+                                let colors = cx.theme().colors();
+                                let background_color = match diff_status.kind {
+                                    DiffHunkStatusKind::Added => colors.version_control_word_added,
+                                    DiffHunkStatusKind::Deleted => {
+                                        colors.version_control_word_deleted
+                                    }
+                                    DiffHunkStatusKind::Modified => {
+                                        debug_panic!("modified diff status for row info");
+                                        continue;
+                                    }
+                                };
+
+                                highlighted_ranges.push((start_point..end_point, background_color));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn layout_diff_hunk_controls(
         &self,
         row_range: Range<DisplayRow>,
@@ -9127,7 +9175,7 @@ impl Element for EditorElement {
                     );
                     let end_row = DisplayRow(end_row);
 
-                    let row_infos = snapshot
+                    let row_infos = snapshot // note we only get the visual range
                         .row_infos(start_row)
                         .take((start_row..end_row).len())
                         .collect::<Vec<RowInfo>>();
@@ -9158,16 +9206,27 @@ impl Element for EditorElement {
 
                     let is_light = cx.theme().appearance().is_light();
 
+                    let mut highlighted_ranges = self
+                        .editor_with_selections(cx)
+                        .map(|editor| {
+                            editor.read(cx).background_highlights_in_range(
+                                start_anchor..end_anchor,
+                                &snapshot.display_snapshot,
+                                cx.theme(),
+                            )
+                        })
+                        .unwrap_or_default();
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
 
                         let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                            DiffHunkStatusKind::Added =>
+                                cx.theme().colors().version_control_added,
+                            DiffHunkStatusKind::Deleted =>
+                                cx.theme().colors().version_control_deleted,
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
@@ -9205,21 +9264,14 @@ impl Element for EditorElement {
                             filled_highlight
                         };
 
+                        let base_display_point =
+                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
+
                         highlighted_rows
-                            .entry(start_row + DisplayRow(ix as u32))
+                            .entry(base_display_point.row())
                             .or_insert(background);
                     }
 
-                    let highlighted_ranges = self
-                        .editor_with_selections(cx)
-                        .map(|editor| {
-                            editor.read(cx).background_highlights_in_range(
-                                start_anchor..end_anchor,
-                                &snapshot.display_snapshot,
-                                cx.theme(),
-                            )
-                        })
-                        .unwrap_or_default();
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
@@ -9392,7 +9444,7 @@ impl Element for EditorElement {
                     let crease_trailers =
                         window.with_element_namespace("crease_trailers", |window| {
                             self.layout_crease_trailers(
-                                row_infos.iter().copied(),
+                                row_infos.iter().cloned(),
                                 &snapshot,
                                 window,
                                 cx,
@@ -9405,6 +9457,15 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &snapshot,
                         window,
+                        cx,
+                    );
+
+                    Self::layout_word_diff_highlights(
+                        &display_hunks,
+                        &row_infos,
+                        start_row,
+                        &snapshot,
+                        &mut highlighted_ranges,
                         cx,
                     );
 
