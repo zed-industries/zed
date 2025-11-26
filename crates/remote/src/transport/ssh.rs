@@ -1358,9 +1358,9 @@ impl SshConnectionOptions {
         let host = if let Some(port) = &self.port {
             match &self.host {
                 SshConnectionHost::IpAddr(IpAddr::V6(ip)) => {
-                    format!("[{}]:{}", ip.to_string(), port)
+                    format!("[{}]:{}", ip, port)
                 }
-                SshConnectionHost::IpAddr(IpAddr::V4(ip)) => format!("{}:{}", ip.to_string(), port),
+                SshConnectionHost::IpAddr(IpAddr::V4(ip)) => format!("{}:{}", ip, port),
                 SshConnectionHost::Hostname(host) => format!("{}:{}", host.clone(), port),
             }
         } else {
