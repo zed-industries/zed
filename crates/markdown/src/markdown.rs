@@ -1203,11 +1203,11 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::InlineHtml => {
                     let html = &parsed_markdown.source[range.clone()];
-                    if html.eq_ignore_ascii_case("<code>") {
+                    if html.starts_with("<code>") {
                         builder.push_text_style(self.style.inline_code.clone());
                         continue;
                     }
-                    if html.eq_ignore_ascii_case("</code>") {
+                    if html.trim_end().starts_with("</code>") {
                         builder.pop_text_style();
                         continue;
                     }
