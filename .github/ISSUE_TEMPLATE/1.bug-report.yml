@@ -87,14 +87,13 @@ body:
   - type: dropdown
     attributes:
       label: If you are using WSL on Windows, what flavor of Linux are you using?
-      description: Select one.
       multiple: false
       options:
+        - Arch Linux
         - Ubuntu
         - Fedora
-        - NixOs
-        - Arch
         - Mint
-        - PopOs
+        - Pop!_OS
+        - NixOS
         - Other
       default: 0
