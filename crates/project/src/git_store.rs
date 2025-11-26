@@ -3222,7 +3222,7 @@ impl RepositorySnapshot {
         path_style: PathStyle,
     ) -> Option<RepoPath> {
         let rel_path = path_style.strip_prefix(abs_path, work_directory_abs_path)?;
-        Some(RepoPath::from_rel_path(&*rel_path))
+        Some(RepoPath::from_rel_path(&rel_path))
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
