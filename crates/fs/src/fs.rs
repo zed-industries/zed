@@ -897,7 +897,11 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
-        let is_executable = path.is_executable();
+        let path_buf = path.to_path_buf();
+        let is_executable = self
+            .executor
+            .spawn(async move { path_buf.is_executable() })
+            .await;
 
         Ok(Some(Metadata {
             inode,

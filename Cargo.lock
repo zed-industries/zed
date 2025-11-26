@@ -21234,7 +21234,6 @@ dependencies = [
  "image_viewer",
  "inspector_ui",
  "install_cli",
- "is_executable",
  "itertools 0.14.0",
  "journal",
  "json_schema_store",

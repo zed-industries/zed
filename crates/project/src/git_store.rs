@@ -5174,7 +5174,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
-        let fs_clone = fs.clone();
+        let fs_cloned = fs.clone();
 
         cx.spawn(async move |_, cx| {
             let environment = project_environment
@@ -5207,7 +5207,7 @@ impl Repository {
                 );
             }
             let state = RepositoryState::Local {
-                fs: fs_clone,
+                fs: fs_cloned,
                 backend,
                 environment: Arc::new(environment),
             };

@@ -995,7 +995,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let mode = if is_executable { "100755" } else { "100644" }.to_string();
+                let mode = if is_executable { "100755" } else { "100644" };
 
                 if let Some(content) = content {
                     let mut child = new_smol_command(&git_binary_path)
@@ -1017,7 +1017,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--cacheinfo", &mode, sha])
+                        .args(["update-index", "--add", "--cacheinfo", mode, sha])
                         .arg(path.as_unix_str())
                         .output()
                         .await?;
