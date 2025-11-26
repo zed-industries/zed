@@ -9,6 +9,7 @@ use thiserror::Error;
 use util::maybe;
 
 pub fn init(cx: &mut App) {
+    dbg!("here?");
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
     cx.set_global(GlobalLanguageModelRegistry(registry));
 }

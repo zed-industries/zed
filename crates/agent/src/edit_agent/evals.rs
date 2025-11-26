@@ -1313,106 +1313,14 @@ fn eval(
     iterations: usize,
     expected_pass_ratio: f32,
     mismatched_tag_threshold: f32,
-    mut eval: EvalInput,
+    eval: EvalInput,
 ) {
-    let (tx, _rx) = std::sync::mpsc::channel();
-    // YYY - is this bit about caching nonsense?
-    // Cache the last message in the conversation, and run one instance of the eval so that
-    // all the next ones are cached.
-    eval.conversation.last_mut().unwrap().cache = true;
-    run_eval(eval.clone(), tx);
-
     eval_utils::eval(
         iterations,
         expected_pass_ratio,
         mismatched_tag_threshold,
         Arc::new(move |tx| run_eval(eval.clone(), tx)),
     );
-
-    // let mut evaluated_count = 0;
-    // let mut failed_count = 0;
-    // report_progress(evaluated_count, failed_count, iterations);
-
-    // let (tx, rx) = mpsc::channel();
-
-    // // Cache the last message in the conversation, and run one instance of the eval so that
-    // // all the next ones are cached.
-    // eval.conversation.last_mut().unwrap().cache = true;
-    // run_eval(eval.clone(), tx.clone());
-
-    // let executor = gpui::background_executor();
-    // let semaphore = Arc::new(smol::lock::Semaphore::new(32));
-    // for _ in 1..iterations {
-    //     let eval = eval.clone();
-    //     let tx = tx.clone();
-    //     let semaphore = semaphore.clone();
-    //     executor
-    //         .spawn(async move {
-    //             let _guard = semaphore.acquire().await;
-    //             run_eval(eval, tx)
-    //         })
-    //         .detach();
-    // }
-    // drop(tx);
-
-    // let mut failed_evals = HashMap::default();
-    // let mut errored_evals = HashMap::default();
-    // let mut eval_outputs = Vec::new();
-    // let mut cumulative_parser_metrics = EditParserMetrics::default();
-    // while let Ok(output) = rx.recv() {
-    //     match output {
-    //         Ok(output) => {
-    //             cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
-    //             eval_outputs.push(output.clone());
-    //             if output.assertion.score < 80 {
-    //                 failed_count += 1;
-    //                 failed_evals
-    //                     .entry(output.sample.text_after.clone())
-    //                     .or_insert(Vec::new())
-    //                     .push(output);
-    //             }
-    //         }
-    //         Err(error) => {
-    //             failed_count += 1;
-    //             *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
-    //         }
-    //     }
-
-    //     evaluated_count += 1;
-    //     report_progress(evaluated_count, failed_count, iterations);
-    // }
-
-    // let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
-    // println!("Actual pass ratio: {}\n", actual_pass_ratio);
-    // if actual_pass_ratio < expected_pass_ratio {
-    //     let mut errored_evals = errored_evals.into_iter().collect::<Vec<_>>();
-    //     errored_evals.sort_by_key(|(_, count)| Reverse(*count));
-    //     for (error, count) in errored_evals {
-    //         println!("Eval errored {} times. Error: {}", count, error);
-    //     }
-
-    //     let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
-    //     failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
-    //     for (_buffer_output, failed_evals) in failed_evals {
-    //         let eval_output = failed_evals.first().unwrap();
-    //         println!("Eval failed {} times", failed_evals.len());
-    //         println!("{}", eval_output);
-    //     }
-
-    //     panic!(
-    //         "Actual pass ratio: {}\nExpected pass ratio: {}",
-    //         actual_pass_ratio, expected_pass_ratio
-    //     );
-    // }
-
-    // let mismatched_tag_ratio =
-    //     cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
-    // if mismatched_tag_ratio > mismatched_tag_threshold {
-    //     for eval_output in eval_outputs {
-    //         println!("{}", eval_output);
-    //     }
-    //     panic!("Too many mismatched tags: {:?}", cumulative_parser_metrics);
-    // }
 }
 
 fn run_eval(eval: EvalInput, tx: mpsc::Sender<eval_utils::EvalOutput>) {
@@ -1563,7 +1471,10 @@ impl EditAgentTest {
         })
     }
 
-    async fn eval(&self, eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
+    async fn eval(&self, mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
+        // Make sure the last message in the conversation is cached.
+        eval.conversation.last_mut().unwrap().cache = true;
+
         let path = self
             .project
             .read_with(cx, |project, cx| {

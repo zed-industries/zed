@@ -109,6 +109,7 @@ buffer_diff = { workspace = true, features = ["test-support"] }
 clock.workspace = true
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }

@@ -15,7 +15,7 @@ use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Ta
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream,  Role, report_assistant_event,
+    LanguageModelTextStream, Role, report_assistant_event,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -416,6 +416,8 @@ impl CodegenAlternative {
             )
             .context("generating content prompt")?;
 
+        println!("{}", prompt);
+
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
         Ok(cx.spawn(async move |_cx| {
@@ -461,15 +463,35 @@ impl CodegenAlternative {
         // This can happen often if the editor loses focus and is saved + reformatted,
         // as in https://github.com/zed-industries/zed/issues/39088
         self.snapshot = self.buffer.read(cx).snapshot(cx);
-        self.range = self.snapshot.anchor_after(self.range.start)
-            ..self.snapshot.anchor_after(self.range.end);
+        self.range =
+            self.snapshot.anchor_after(self.range.start)..self.snapshot.anchor_after(Anchor::max());
+
+        // 1. We realized that our current behavior of treating single cursors as _pure inserts_
+        //    causes problems, when the user asks the LLM to do something non-insert.
+        //      This behavior is good becuase:
+
+        // 2. Sometimes, new lines at the end of inline prompts are consumed by the differ or something
+
+        // 3. Asking the inline assistant to do something non-sensical can cause it to produce markdown
+
+        // 4. If the assistant wants to clarify something, e.g. "Make any reasonable change" may produce
+        //    markdown explaining what change is being made.
+
+        // 5. Easy win: Trim out all lines that don't start with "```", will waste tokens and doesn't fix
+        //    the fact that LLMs "want" to talk to the user.
+
+        // 6. Should the LLM prompt suggest what the LLM could do if the request is impossible?
 
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
             .collect::<Rope>();
+        dbg!(&selected_text);
 
         let selection_start = self.range.start.to_point(&snapshot);
+        dbg!(&selection_start);
+
+        // if in insert mode, don't do any streaming diff. OR just do a
 
         // Start with the indentation of the first line in the selection
         let mut suggested_line_indent = snapshot
@@ -547,7 +569,7 @@ impl CodegenAlternative {
                                 }
                                 let chunk = chunk?;
                                 completion_clone.lock().push_str(&chunk);
-
+                                dbg!(&chunk);
                                 let mut lines = chunk.split('\n').peekable();
                                 while let Some(line) = lines.next() {
                                     new_text.push_str(line);
@@ -644,6 +666,8 @@ impl CodegenAlternative {
                     });
 
                 while let Some((char_ops, line_ops)) = diff_rx.next().await {
+                    println!("CHAR OPS {:?}", char_ops);
+                    println!("LINE OPS {:?}", line_ops);
                     codegen.update(cx, |codegen, cx| {
                         codegen.last_equal_ranges.clear();
 
@@ -948,6 +972,7 @@ where
                 let mut stream = unsafe { Pin::new_unchecked(&mut this.stream) };
                 match stream.as_mut().poll_next(cx) {
                     Poll::Ready(Some(Ok(chunk))) => {
+                        dbg!(&chunk);
                         this.buffer.push_str(&chunk);
                     }
                     Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error))),
