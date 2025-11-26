@@ -642,14 +642,23 @@ impl Platform for WindowsPlatform {
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
-            unsafe {
+            let result = unsafe {
                 CredReadW(
                     PCWSTR::from_raw(target_name.as_ptr()),
                     CRED_TYPE_GENERIC,
                     None,
                     &mut credentials,
-                )?
+                )
             };
+
+            if let Err(err) = result {
+                // ERROR_NOT_FOUND means the credential doesn't exist.
+                // Return Ok(None) to match macOS and Linux behavior.
+                if err.code().0 == ERROR_NOT_FOUND.0 as i32 {
+                    return Ok(None);
+                }
+                return Err(err.into());
+            }
 
             if credentials.is_null() {
                 Ok(None)
