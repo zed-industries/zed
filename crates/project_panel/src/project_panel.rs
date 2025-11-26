@@ -4837,7 +4837,7 @@ impl ProjectPanel {
                                         .collect::<Vec<_>>();
                                     let active_index = folded_ancestors.active_index();
                                     let components_len = components.len();
-                                    let delimiter = SharedString::new(path_style.separator());
+                                    let delimiter = SharedString::new(path_style.primary_separator());
                                     for (index, component) in components.iter().enumerate() {
                                         if index != 0 {
                                                 let delimiter_target_index = index - 1;
