@@ -1850,7 +1850,7 @@ impl Editor {
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, _window, cx| {
+                    .on_click(move |_, _win, cx| {
                         editor
                             .update(cx, |editor, cx| {
                                 editor.unfold_ranges(
@@ -6605,7 +6605,7 @@ impl Editor {
             .when(show_tooltip, |this| {
                 this.tooltip({
                     let focus_handle = self.focus_handle.clone();
-                    move |_window, cx| {
+                    move |_win, cx| {
                         Tooltip::for_action_in(
                             "Toggle Code Actions",
                             &ToggleCodeActions {
@@ -7929,7 +7929,7 @@ impl Editor {
 
     fn update_visible_edit_prediction(
         &mut self,
-        _window: &mut Window,
+        _win: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if DisableAiSettings::get_global(cx).disable_ai {
@@ -8308,7 +8308,7 @@ impl Editor {
                     this.entry(msg, None, {
                         let weak_editor = weak_editor.clone();
                         let breakpoint = breakpoint.clone();
-                        move |_window, cx| {
+                        move |_win, cx| {
                             weak_editor
                                 .update(cx, |this, cx| {
                                     this.edit_breakpoint_at_anchor(
@@ -25434,7 +25434,7 @@ fn render_diff_hunk_controls(
             Button::new(("restore", row as u64), "Restore")
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
-                    move |_window, cx| {
+                    move |_win, cx| {
                         Tooltip::for_action_in("Restore Hunk", &::git::Restore, &focus_handle, cx)
                     }
                 })
@@ -25460,7 +25460,7 @@ fn render_diff_hunk_controls(
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
-                            move |_window, cx| {
+                            move |_win, cx| {
                                 Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, cx)
                             }
                         })
@@ -25490,7 +25490,7 @@ fn render_diff_hunk_controls(
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
-                            move |_window, cx| {
+                            move |_win, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
                                     &GoToPreviousHunk,

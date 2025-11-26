@@ -343,7 +343,13 @@ pub struct GitJob {
     key: Option<GitJobKey>,
 }
 
-#[derive(PartialEq, Eq)]
+impl std::fmt::Debug for GitJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GitJob {{ {:?} }}", self.key)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum GitJobKey {
     WriteIndex(Vec<RepoPath>),
     ReloadBufferDiffBases,
@@ -5213,22 +5219,29 @@ impl Repository {
             };
             let mut jobs = VecDeque::new();
             loop {
+                println!("  Current job queue: {:?}", jobs);
                 while let Ok(Some(next_job)) = job_rx.try_next() {
+                    println!("    >>> pushing new job: {next_job:?}");
                     jobs.push_back(next_job);
                 }
 
                 if let Some(job) = jobs.pop_front() {
+                    println!("    >>> popping front: {job:?}");
                     if let Some(current_key) = &job.key
                         && jobs
                             .iter()
                             .any(|other_job| other_job.key.as_ref() == Some(current_key))
                         {
+                            println!("    >>> SKIPPING");
                             continue;
                         }
+                    println!("    >>> RUNNING!");
                     (job.job)(state.clone(), cx).await;
                 } else if let Some(job) = job_rx.next().await {
+                    println!("    >>> blocking for new job: {job:?}");
                     jobs.push_back(job);
                 } else {
+                    // TODO: as far as I understand, this prong will never be reached
                     break;
                 }
             }
@@ -5372,10 +5385,11 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        self.paths_needing_status_update.extend(paths);
+        println!("paths_neeeding_status_update: {paths:?}");
+        self.paths_needing_status_update.extend(paths.clone());
 
         let this = cx.weak_entity();
-        let _ = self.send_keyed_job(
+        let res = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
             None,
             |state, mut cx| async move {
@@ -5450,6 +5464,21 @@ impl Repository {
                 })
             },
         );
+
+        cx.spawn(async move |this, cx| match res.await {
+            Ok(res) => {
+                let _ = res;
+            }
+            Err(Canceled) => {
+                println!(
+                    "skipped!!! this.paths_needing_status_update.len() = {:?}",
+                    this.update(cx, |this, _cx| {
+                        this.paths_needing_status_update.iter().count()
+                    })
+                );
+            }
+        })
+        .detach();
     }
 
     /// currently running git command and when it started
