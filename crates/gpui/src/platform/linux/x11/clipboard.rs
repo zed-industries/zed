@@ -304,7 +304,7 @@ impl Inner {
                     None
                 }
                 Ok(ClipboardData { bytes, format }) => {
-                    if format == AtomEnum::ATOM {
+                    if format == u32::from(AtomEnum::ATOM) {
                         let available_formats = Self::parse_formats(&bytes);
                         formats
                             .iter()
