@@ -216,6 +216,6 @@ fn create_pull_request(
             .add("base", "main")
             .add("delete-branch", true)
             .add("token", generated_token.to_string())
-            .add("signoff", true),
+            .add("sign-commits", true),
     )
 }

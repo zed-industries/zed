@@ -135,7 +135,7 @@ jobs:
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
-        signoff: true
+        sign-commits: true
     timeout-minutes: 1
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
