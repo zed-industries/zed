@@ -12,7 +12,7 @@ on:
   - cron: 0 7 * * *
 jobs:
   check_style:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-mini-macos
     steps:
     - name: steps::checkout_repo
@@ -28,7 +28,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -51,7 +51,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -361,7 +361,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -392,7 +392,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-mini-macos
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -434,7 +434,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo

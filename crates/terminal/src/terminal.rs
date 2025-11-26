@@ -374,7 +374,7 @@ impl TerminalBuilder {
             scroll_px: px(0.),
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            hyperlink_regex_searches: RegexSearches::new(),
+            hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
@@ -388,6 +388,8 @@ impl TerminalBuilder {
                 cursor_shape,
                 alternate_scroll,
                 max_scroll_history_lines,
+                path_hyperlink_regexes: Vec::default(),
+                path_hyperlink_timeout_ms: 0,
                 window_id,
             },
             child_exited: None,
@@ -408,6 +410,8 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        path_hyperlink_regexes: Vec<String>,
+        path_hyperlink_timeout_ms: u64,
         is_remote_terminal: bool,
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
@@ -592,7 +596,10 @@ impl TerminalBuilder {
                 scroll_px: px(0.),
                 next_link_id: 0,
                 selection_phase: SelectionPhase::Ended,
-                hyperlink_regex_searches: RegexSearches::new(),
+                hyperlink_regex_searches: RegexSearches::new(
+                    &path_hyperlink_regexes,
+                    path_hyperlink_timeout_ms,
+                ),
                 vi_mode_enabled: false,
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
@@ -606,6 +613,8 @@ impl TerminalBuilder {
                     cursor_shape,
                     alternate_scroll,
                     max_scroll_history_lines,
+                    path_hyperlink_regexes,
+                    path_hyperlink_timeout_ms,
                     window_id,
                 },
                 child_exited: None,
@@ -838,6 +847,8 @@ struct CopyTemplate {
     cursor_shape: CursorShape,
     alternate_scroll: AlternateScroll,
     max_scroll_history_lines: Option<usize>,
+    path_hyperlink_regexes: Vec<String>,
+    path_hyperlink_timeout_ms: u64,
     window_id: u64,
 }
 
@@ -981,6 +992,12 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                // If there are matches we need to emit a wake up event to
+                // invalidate the matches and recalculate their locations
+                // in the new terminal layout
+                if !self.matches.is_empty() {
+                    cx.emit(Event::Wakeup);
+                }
             }
             InternalEvent::Clear => {
                 trace!("Clearing");
@@ -2163,6 +2180,8 @@ impl Terminal {
             self.template.cursor_shape,
             self.template.alternate_scroll,
             self.template.max_scroll_history_lines,
+            self.template.path_hyperlink_regexes.clone(),
+            self.template.path_hyperlink_timeout_ms,
             self.is_remote_terminal,
             self.template.window_id,
             None,
@@ -2404,6 +2423,8 @@ mod tests {
                     CursorShape::default(),
                     AlternateScroll::On,
                     None,
+                    vec![],
+                    0,
                     false,
                     0,
                     Some(completion_tx),
@@ -2452,6 +2473,8 @@ mod tests {
                     CursorShape::default(),
                     AlternateScroll::On,
                     None,
+                    vec![],
+                    0,
                     false,
                     0,
                     Some(completion_tx),
@@ -2527,6 +2550,8 @@ mod tests {
                     CursorShape::default(),
                     AlternateScroll::On,
                     None,
+                    Vec::new(),
+                    0,
                     false,
                     0,
                     Some(completion_tx),

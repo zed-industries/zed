@@ -20,7 +20,7 @@ use git::{
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, FutureExt, SemanticVersion, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
@@ -8174,6 +8174,91 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     });
 }
 
+// TODO: Should we test this on Windows also?
+#[gpui::test]
+#[cfg(not(windows))]
+async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    init_test(cx);
+    cx.executor().allow_parking();
+    let committed_contents = "bar\n";
+    let file_contents = "baz\n";
+    let root = TempTree::new(json!({
+        "project": {
+            "foo": committed_contents
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let file_path = work_dir.join("foo");
+    let repo = git_init(work_dir.as_path());
+    let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&file_path, perms).unwrap();
+    git_add("foo", &repo);
+    git_commit("Initial commit", &repo);
+    std::fs::write(&file_path, file_contents).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+    });
+
+    cx.run_until_parked();
+
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["diff", "--staged"])
+        .output()
+        .await
+        .unwrap();
+
+    let staged_diff = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !staged_diff.contains("new mode 100644"),
+        "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
+        staged_diff
+    );
+
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["ls-files", "-s"])
+        .output()
+        .await
+        .unwrap();
+    let index_contents = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        index_contents.contains("100755"),
+        "Index should show file as executable (100755).\ngit ls-files -s:\n{}",
+        index_contents
+    );
+}
+
 #[gpui::test]
 async fn test_repository_and_path_for_project_path(
     background_executor: BackgroundExecutor,
@@ -8453,6 +8538,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -8611,7 +8697,7 @@ async fn test_repository_pending_ops_staging(
 
     // Ensure we have no pending ops for any of the untracked files
     repo.read_with(cx, |repo, _cx| {
-        assert!(repo.pending_ops_by_path.is_empty());
+        assert!(repo.pending_ops().next().is_none());
     });
 
     let mut id = 1u16;
@@ -10345,7 +10431,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 }
 

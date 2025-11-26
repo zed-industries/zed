@@ -1,7 +1,7 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
-use crate::{Oid, SHORT_SHA_LENGTH};
+use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -400,6 +400,7 @@ pub trait GitRepository: Send + Sync {
         path: RepoPath,
         content: Option<String>,
         env: Arc<HashMap<String, String>>,
+        is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
@@ -482,6 +483,12 @@ pub trait GitRepository: Send + Sync {
     fn unstage_paths(
         &self,
         paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn run_hook(
+        &self,
+        hook: RunHook,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -981,12 +988,15 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Option<String>,
         env: Arc<HashMap<String, String>>,
+        is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
+                let mode = if is_executable { "100755" } else { "100644" };
+
                 if let Some(content) = content {
                     let mut child = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
@@ -1007,7 +1017,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--cacheinfo", "100644", sha])
+                        .args(["update-index", "--add", "--cacheinfo", mode, sha])
                         .arg(path.as_unix_str())
                         .output()
                         .await?;
@@ -1643,6 +1653,7 @@ impl GitRepository for RealGitRepository {
                 .args(["commit", "--quiet", "-m"])
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
+                .arg("--no-verify")
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
@@ -2034,6 +2045,26 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(None)
+            })
+            .boxed()
+    }
+
+    fn run_hook(
+        &self,
+        hook: RunHook,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor)
+                    .envs(HashMap::clone(&env));
+                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                    .await?;
+                Ok(())
             })
             .boxed()
     }

@@ -1203,7 +1203,7 @@ impl Pane {
     pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = Entity<T>> {
         self.items
             .iter()
-            .filter_map(|item| item.to_any().downcast().ok())
+            .filter_map(|item| item.to_any_view().downcast().ok())
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
@@ -3869,7 +3869,7 @@ impl Render for Pane {
                                 .size_full()
                                 .overflow_hidden()
                                 .child(self.toolbar.clone())
-                                .child(item.to_any())
+                                .child(item.to_any_view())
                         } else {
                             let placeholder = div
                                 .id("pane_placeholder")
@@ -6957,7 +6957,7 @@ mod tests {
                 .enumerate()
                 .map(|(ix, item)| {
                     let mut state = item
-                        .to_any()
+                        .to_any_view()
                         .downcast::<TestItem>()
                         .unwrap()
                         .read(cx)

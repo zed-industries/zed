@@ -584,8 +584,11 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) =
-                    hovered_hint.position.buffer_id.and_then(|buffer_id| {
+                if let Some(ResolvedHint::Resolved(cached_hint)) = hovered_hint
+                    .position
+                    .text_anchor
+                    .buffer_id
+                    .and_then(|buffer_id| {
                         lsp_store.update(cx, |lsp_store, cx| {
                             lsp_store.resolved_hint(buffer_id, hovered_hint.id, cx)
                         })
@@ -645,9 +648,9 @@ impl Editor {
                                         )
                                     {
                                         let highlight_start =
-                                            (part_range.start - hint_start).0 + extra_shift_left;
+                                            (part_range.start - hint_start) + extra_shift_left;
                                         let highlight_end =
-                                            (part_range.end - hint_start).0 + extra_shift_right;
+                                            (part_range.end - hint_start) + extra_shift_right;
                                         let highlight = InlayHighlight {
                                             inlay: hovered_hint.id,
                                             inlay_position: hovered_hint.position,
@@ -757,7 +760,7 @@ impl Editor {
         let visible_inlay_hint_ids = self
             .visible_inlay_hints(cx)
             .iter()
-            .filter(|inlay| inlay.position.buffer_id == Some(buffer_id))
+            .filter(|inlay| inlay.position.text_anchor.buffer_id == Some(buffer_id))
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {
@@ -858,9 +861,13 @@ impl Editor {
                 self.visible_inlay_hints(cx)
                     .iter()
                     .filter(|inlay| {
-                        inlay.position.buffer_id.is_none_or(|buffer_id| {
-                            invalidate_hints_for_buffers.contains(&buffer_id)
-                        })
+                        inlay
+                            .position
+                            .text_anchor
+                            .buffer_id
+                            .is_none_or(|buffer_id| {
+                                invalidate_hints_for_buffers.contains(&buffer_id)
+                            })
                     })
                     .map(|inlay| inlay.id),
             );
@@ -941,14 +948,14 @@ pub mod tests {
     use crate::{ExcerptRange, scroll::Autoscroll};
     use collections::HashSet;
     use futures::{StreamExt, future};
-    use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
     use lsp::FakeLanguageServer;
-    use multi_buffer::MultiBuffer;
+    use multi_buffer::{MultiBuffer, MultiBufferOffset};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
@@ -1029,7 +1036,7 @@ pub mod tests {
         editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([13..13])
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                 });
                 editor.handle_input("some change", window, cx);
             })
@@ -1429,7 +1436,7 @@ pub mod tests {
         rs_editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([13..13])
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                 });
                 editor.handle_input("some rs change", window, cx);
             })
@@ -1461,7 +1468,7 @@ pub mod tests {
         md_editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([13..13])
+                    s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                 });
                 editor.handle_input("some md change", window, cx);
             })
@@ -1909,7 +1916,7 @@ pub mod tests {
             editor
                 .update(cx, |editor, window, cx| {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.select_ranges([13..13])
+                        s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                     });
                     editor.handle_input(change_after_opening, window, cx);
                 })
@@ -1955,7 +1962,7 @@ pub mod tests {
                 task_editor
                     .update(&mut cx, |editor, window, cx| {
                         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_ranges([13..13])
+                            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
                         });
                         editor.handle_input(async_later_change, window, cx);
                     })
@@ -2706,7 +2713,7 @@ let c = 3;"#
             let mut editor =
                 Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
             editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                s.select_ranges([0..0])
+                s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)])
             });
             editor
         });
@@ -4062,7 +4069,7 @@ let c = 3;"#
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
             crate::init(cx);
         });
 

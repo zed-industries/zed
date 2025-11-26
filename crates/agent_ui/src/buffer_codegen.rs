@@ -1,6 +1,4 @@
-use crate::{
-    context::load_context, context_store::ContextStore, inline_prompt_editor::CodegenStatus,
-};
+use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -8,9 +6,12 @@ use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
 use futures::{
-    SinkExt, Stream, StreamExt, TryStreamExt as _, channel::mpsc, future::LocalBoxFuture, join,
+    SinkExt, Stream, StreamExt, TryStreamExt as _,
+    channel::mpsc,
+    future::{LocalBoxFuture, Shared},
+    join,
 };
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
@@ -18,8 +19,7 @@ use language_model::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::Project;
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptBuilder;
 use rope::Rope;
 use smol::future::FutureExt;
 use std::{
@@ -43,9 +43,6 @@ pub struct BufferCodegen {
     buffer: Entity<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    context_store: Entity<ContextStore>,
-    project: WeakEntity<Project>,
-    prompt_store: Option<Entity<PromptStore>>,
     telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     pub is_insertion: bool,
@@ -56,9 +53,6 @@ impl BufferCodegen {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        context_store: Entity<ContextStore>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
         telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
@@ -68,9 +62,6 @@ impl BufferCodegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                Some(context_store.clone()),
-                project.clone(),
-                prompt_store.clone(),
                 Some(telemetry.clone()),
                 builder.clone(),
                 cx,
@@ -85,9 +76,6 @@ impl BufferCodegen {
             buffer,
             range,
             initial_transaction_id,
-            context_store,
-            project,
-            prompt_store,
             telemetry,
             builder,
         };
@@ -148,6 +136,7 @@ impl BufferCodegen {
         &mut self,
         primary_model: Arc<dyn LanguageModel>,
         user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let alternative_models = LanguageModelRegistry::read_global(cx)
@@ -165,9 +154,6 @@ impl BufferCodegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    Some(self.context_store.clone()),
-                    self.project.clone(),
-                    self.prompt_store.clone(),
                     Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
@@ -180,7 +166,7 @@ impl BufferCodegen {
             .zip(&self.alternatives)
         {
             alternative.update(cx, |alternative, cx| {
-                alternative.start(user_prompt.clone(), model.clone(), cx)
+                alternative.start(user_prompt.clone(), context_task.clone(), model.clone(), cx)
             })?;
         }
 
@@ -243,9 +229,6 @@ pub struct CodegenAlternative {
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
-    context_store: Option<Entity<ContextStore>>,
-    project: WeakEntity<Project>,
-    prompt_store: Option<Entity<PromptStore>>,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
@@ -264,9 +247,6 @@ impl CodegenAlternative {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
-        context_store: Option<Entity<ContextStore>>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
@@ -307,9 +287,6 @@ impl CodegenAlternative {
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
-            context_store,
-            project,
-            prompt_store,
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             builder,
@@ -366,6 +343,7 @@ impl CodegenAlternative {
     pub fn start(
         &mut self,
         user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -384,7 +362,7 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(&model, user_prompt, cx)?;
+                let request = self.build_request(&model, user_prompt, context_task, cx)?;
                 cx.spawn(async move |_, cx| {
                     Ok(model.stream_completion_text(request.await, cx).await?)
                 })
@@ -398,6 +376,7 @@ impl CodegenAlternative {
         &self,
         model: &Arc<dyn LanguageModel>,
         user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -429,21 +408,13 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(
+                user_prompt,
+                language_name,
+                buffer,
+                range.start.0..range.end.0,
+            )
             .context("generating content prompt")?;
-
-        let context_task = self.context_store.as_ref().and_then(|context_store| {
-            if let Some(project) = self.project.upgrade() {
-                let context = context_store
-                    .read(cx)
-                    .context()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                Some(load_context(context, &project, &self.prompt_store, cx))
-            } else {
-                None
-            }
-        });
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
@@ -452,12 +423,11 @@ impl CodegenAlternative {
                 role: Role::User,
                 content: Vec::new(),
                 cache: false,
+                reasoning_details: None,
             };
 
-            if let Some(context_task) = context_task {
-                context_task
-                    .await
-                    .add_to_request_message(&mut request_message);
+            if let Some(context) = context_task.await {
+                context.add_to_request_message(&mut request_message);
             }
 
             request_message.content.push(prompt.into());
@@ -486,6 +456,14 @@ impl CodegenAlternative {
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
+
+        // Make a new snapshot and re-resolve anchor in case the document was modified.
+        // This can happen often if the editor loses focus and is saved + reformatted,
+        // as in https://github.com/zed-industries/zed/issues/39088
+        self.snapshot = self.buffer.read(cx).snapshot(cx);
+        self.range = self.snapshot.anchor_after(self.range.start)
+            ..self.snapshot.anchor_after(self.range.end);
+
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
@@ -1075,7 +1053,6 @@ impl Diff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
     use futures::{
         Stream,
         stream::{self},
@@ -1107,16 +1084,11 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1174,16 +1146,11 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1243,16 +1210,11 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1312,16 +1274,11 @@ mod tests {
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1369,16 +1326,11 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 14))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 false,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,

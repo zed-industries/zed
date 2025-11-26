@@ -7,7 +7,7 @@ on:
     - published
 jobs:
   rebuild_releases_page:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: after_release::rebuild_releases_page::refresh_cloud_releases
@@ -21,7 +21,7 @@ jobs:
   post_to_discord:
     needs:
     - rebuild_releases_page
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: get-release-url
@@ -71,7 +71,7 @@ jobs:
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
   create_sentry_release:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
