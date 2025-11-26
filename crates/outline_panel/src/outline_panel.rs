@@ -111,8 +111,6 @@ pub struct OutlinePanel {
     selected_entry: SelectedEntry,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
-    updating_fs_entries: bool,
-    updating_cached_entries: bool,
     new_entries_for_fs_update: HashSet<ExcerptId>,
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
@@ -853,8 +851,6 @@ impl OutlinePanel {
                 width: None,
                 active_item: None,
                 pending_serialization: Task::ready(None),
-                updating_fs_entries: false,
-                updating_cached_entries: false,
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
                 pending_default_expansion_depth: None,
@@ -2658,7 +2654,6 @@ impl OutlinePanel {
         let repo_snapshots = self.project.update(cx, |project, cx| {
             project.git_store().read(cx).repo_snapshots(cx)
         });
-        self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3016,7 +3011,6 @@ impl OutlinePanel {
 
             outline_panel
                 .update_in(cx, |outline_panel, window, cx| {
-                    outline_panel.updating_fs_entries = false;
                     outline_panel.new_entries_for_fs_update.clear();
                     outline_panel.excerpts = new_excerpts;
                     outline_panel.collapsed_entries = new_collapsed_entries;
@@ -3579,7 +3573,6 @@ impl OutlinePanel {
 
         let is_singleton = self.is_singleton_active(cx);
         let query = self.query(cx);
-        self.updating_cached_entries = true;
         self.cached_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3612,7 +3605,6 @@ impl OutlinePanel {
                     }
 
                     outline_panel.autoscroll(cx);
-                    outline_panel.updating_cached_entries = false;
                     cx.notify();
                 })
                 .ok();
