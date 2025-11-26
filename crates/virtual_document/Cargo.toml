@@ -21,3 +21,6 @@ extension.workspace = true
 futures.workspace = true
 gpui.workspace = true
 lsp.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
