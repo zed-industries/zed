@@ -377,7 +377,7 @@ impl CurrentEditPrediction {
         {
             let (old_range, old_text) = &old_edits[0];
             let (new_range, new_text) = &new_edits[0];
-            dbg!(new_range == old_range) && dbg!(new_text.starts_with(old_text.as_ref()))
+            new_range == old_range && new_text.starts_with(old_text.as_ref())
         } else {
             true
         }
