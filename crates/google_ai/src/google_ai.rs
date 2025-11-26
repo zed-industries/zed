@@ -499,7 +499,7 @@ pub enum Model {
     Gemini20Flash,
     #[serde(
         rename = "gemini-2.5-flash-lite-preview",
-        alias = "gemini-2.5-flash-lite-preview-06-17"
+        alias = "gemini-2.5-flash-lite-preview-09-2025"
     )]
     Gemini25FlashLitePreview,
     #[serde(
