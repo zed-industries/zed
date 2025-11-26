@@ -20,12 +20,6 @@ on:
       app-secret:
         description: The app secret for the corresponding app ID
         required: true
-  workflow_dispatch:
-    inputs:
-      bump-type:
-        description: bump-type
-        type: string
-        default: patch
 jobs:
   check_extension:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

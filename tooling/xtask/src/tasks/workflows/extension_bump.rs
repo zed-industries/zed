@@ -42,21 +42,17 @@ pub(crate) fn extension_bump() -> Workflow {
 
     named::workflow()
         .add_event(
-            Event::default()
-                .workflow_call(
-                    WorkflowCall::default()
-                        .add_input(bump_type.name, bump_type.call_input())
-                        .secrets([
-                            (app_id.name.to_owned(), app_id.secret_configuration()),
-                            (
-                                app_secret.name.to_owned(),
-                                app_secret.secret_configuration(),
-                            ),
-                        ]),
-                )
-                .workflow_dispatch(
-                    WorkflowDispatch::default().add_input(bump_type.name, bump_type.input()),
-                ),
+            Event::default().workflow_call(
+                WorkflowCall::default()
+                    .add_input(bump_type.name, bump_type.call_input())
+                    .secrets([
+                        (app_id.name.to_owned(), app_id.secret_configuration()),
+                        (
+                            app_secret.name.to_owned(),
+                            app_secret.secret_configuration(),
+                        ),
+                    ]),
+            ),
         )
         .concurrency(one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
