@@ -1153,7 +1153,9 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_notification_auto_dismiss(cx: &mut TestAppContext) {
+    async fn test_notification_auto_dismiss_with_notifications_from_multiple_language_servers(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1162,41 +1164,38 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let build_notification = |cx: &mut Context<'_, Workspace>| {
-            cx.new(|cx| {
-                let request = LanguageServerPromptRequest::test(
-                    gpui::PromptLevel::Info,
-                    "Test notification".to_string(),
-                    vec![], // Empty actions triggers auto-dismiss
-                    "test-lsp".to_string(),
-                );
-                LanguageServerPrompt::new(request, cx)
-            })
-        };
-
         let count_notifications = |workspace: &Entity<Workspace>, cx: &mut TestAppContext| {
             workspace.read_with(cx, |workspace, _| workspace.notification_ids().len())
         };
 
-        let show_notification =
-            |id: &str, workspace: &Entity<Workspace>, cx: &mut TestAppContext| {
-                workspace.update(cx, |workspace, cx| {
-                    let notification_id = NotificationId::named(SharedString::from(id.to_string()));
-                    workspace.show_notification(notification_id, cx, build_notification);
-                })
-            };
+        let show_notification = |workspace: &Entity<Workspace>,
+                                 cx: &mut TestAppContext,
+                                 lsp_name: &str| {
+            workspace.update(cx, |workspace, cx| {
+                let request = LanguageServerPromptRequest::test(
+                    gpui::PromptLevel::Warning,
+                    "Test notification".to_string(),
+                    vec![], // Empty actions triggers auto-dismiss
+                    lsp_name.to_string(),
+                );
+                let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| LanguageServerPrompt::new(request, cx))
+                });
+            })
+        };
 
-        show_notification("id1", &workspace, cx);
+        show_notification(&workspace, cx, "Lsp1");
         assert_eq!(count_notifications(&workspace, cx), 1);
 
         cx.executor().advance_clock(Duration::from_millis(1000));
 
-        show_notification("id2", &workspace, cx);
+        show_notification(&workspace, cx, "Lsp2");
         assert_eq!(count_notifications(&workspace, cx), 2);
 
         cx.executor().advance_clock(Duration::from_millis(1000));
 
-        show_notification("id3", &workspace, cx);
+        show_notification(&workspace, cx, "Lsp3");
         assert_eq!(count_notifications(&workspace, cx), 3);
 
         cx.executor().advance_clock(Duration::from_millis(3000));
