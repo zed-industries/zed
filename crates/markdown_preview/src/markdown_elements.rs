@@ -40,6 +40,68 @@ impl ParsedMarkdownElement {
     pub fn is_list_item(&self) -> bool {
         matches!(self, Self::ListItem(_))
     }
+
+    pub fn append_plain_text(&self, output: &mut String) {
+        match self {
+            Self::Heading(heading) => {
+                append_paragraph_text(&heading.contents, output);
+            }
+            Self::ListItem(list_item) => {
+                for (index, child) in list_item.content.iter().enumerate() {
+                    if index > 0 {
+                        output.push('\n');
+                    }
+                    child.append_plain_text(output);
+                }
+            }
+            Self::Table(table) => {
+                for row in table.header.iter().chain(table.body.iter()) {
+                    for (col_index, column) in row.columns.iter().enumerate() {
+                        if col_index > 0 {
+                            output.push('\t');
+                        }
+                        append_paragraph_text(&column.children, output);
+                    }
+                    output.push('\n');
+                }
+            }
+            Self::BlockQuote(block_quote) => {
+                for (index, child) in block_quote.children.iter().enumerate() {
+                    if index > 0 {
+                        output.push('\n');
+                    }
+                    child.append_plain_text(output);
+                }
+            }
+            Self::CodeBlock(code_block) => {
+                output.push_str(&code_block.contents);
+            }
+            Self::Paragraph(paragraph) => {
+                append_paragraph_text(paragraph, output);
+            }
+            Self::HorizontalRule(_) => {}
+            Self::Image(image) => {
+                if let Some(alt_text) = &image.alt_text {
+                    output.push_str(alt_text);
+                }
+            }
+        }
+    }
+}
+
+fn append_paragraph_text(paragraph: &MarkdownParagraph, output: &mut String) {
+    for chunk in paragraph {
+        match chunk {
+            MarkdownParagraphChunk::Text(text) => {
+                output.push_str(&text.contents);
+            }
+            MarkdownParagraphChunk::Image(image) => {
+                if let Some(alt_text) = &image.alt_text {
+                    output.push_str(alt_text);
+                }
+            }
+        }
+    }
 }
 
 pub type MarkdownParagraph = Vec<MarkdownParagraphChunk>;
@@ -55,6 +117,19 @@ pub enum MarkdownParagraphChunk {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdown {
     pub children: Vec<ParsedMarkdownElement>,
+}
+
+impl ParsedMarkdown {
+    pub fn to_plain_text(&self) -> String {
+        let mut output = String::new();
+        for (index, child) in self.children.iter().enumerate() {
+            if index > 0 {
+                output.push('\n');
+            }
+            child.append_plain_text(&mut output);
+        }
+        output
+    }
 }
 
 #[derive(Debug)]
