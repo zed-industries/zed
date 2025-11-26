@@ -5,11 +5,11 @@ use anyhow::Result;
 use extension::{ExtensionLanguageServerProxy, WorktreeDelegate};
 use gpui::BackgroundExecutor;
 use language::BinaryStatus;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 1);
+pub const MIN_VERSION: Version = Version::new(0, 0, 1);
 
 wasmtime::component::bindgen!({
     async: true,

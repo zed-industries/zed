@@ -379,6 +379,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         fs::RenameOptions {
             overwrite: true,
             ignore_if_exists: true,
+            create_parents: false,
         },
     )
     .await
@@ -1986,6 +1987,7 @@ async fn randomly_mutate_fs(
                 fs::RenameOptions {
                     overwrite: true,
                     ignore_if_exists: true,
+                    create_parents: false,
                 },
             )
             .await

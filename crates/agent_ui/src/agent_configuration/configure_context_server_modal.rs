@@ -182,7 +182,7 @@ impl ConfigurationSource {
                     parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
                         (
                             id,
-                            ContextServerSettings::Custom {
+                            ContextServerSettings::Stdio {
                                 enabled: true,
                                 command,
                             },
@@ -403,7 +403,7 @@ impl ConfigureContextServerModal {
 
         window.spawn(cx, async move |cx| {
             let target = match settings {
-                ContextServerSettings::Custom {
+                ContextServerSettings::Stdio {
                     enabled: _,
                     command,
                 } => Some(ConfigurationTarget::Existing {
@@ -635,7 +635,6 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
-        // All variants now use single editor approach
         let editor = match &self.source {
             ConfigurationSource::New { editor, .. } => editor,
             ConfigurationSource::Existing { editor, .. } => editor,
@@ -712,12 +711,12 @@ impl ConfigureContextServerModal {
                     )
                 } else if let ConfigurationSource::New { is_http, .. } = &self.source {
                     let label = if *is_http {
-                        "Run command"
+                        "Configure Local"
                     } else {
-                        "Connect via HTTP"
+                        "Configure Remote"
                     };
                     let tooltip = if *is_http {
-                        "Configure an MCP serevr that runs on stdin/stdout."
+                        "Configure an MCP server that runs on stdin/stdout."
                     } else {
                         "Configure an MCP server that you connect to over HTTP"
                     };
@@ -822,7 +821,6 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let scroll_handle = self.scroll_handle.clone();
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -850,7 +848,7 @@ impl Render for ConfigureContextServerModal {
                                         .id("modal-content")
                                         .max_h(vh(0.7, window))
                                         .overflow_y_scroll()
-                                        .track_scroll(&scroll_handle)
+                                        .track_scroll(&self.scroll_handle)
                                         .child(self.render_modal_description(window, cx))
                                         .child(self.render_modal_content(cx))
                                         .child(match &self.state {
@@ -863,7 +861,7 @@ impl Render for ConfigureContextServerModal {
                                             }
                                         }),
                                 )
-                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                         ),
                     )
                     .footer(self.render_modal_footer(cx)),
