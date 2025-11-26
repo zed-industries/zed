@@ -85,6 +85,7 @@
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
 # Migrate
+
 - [VS Code](./migrate/vs-code.md)
 
 # Language Support
