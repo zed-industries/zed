@@ -135,10 +135,19 @@ jobs:
     timeout-minutes: 1
   create_version_label:
     needs:
+    - check_extension
     - check_bump_needed
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'false'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    permissions:
+      contents: write
     steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.app-id }}
+        private-key: ${{ secrets.app-secret }}
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -153,6 +162,7 @@ jobs:
               ref: 'refs/tags/v${{ needs.check_bump_needed.outputs.current_version }}',
               sha: context.sha
           })
+        github-token: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 1
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}

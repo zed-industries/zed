@@ -36,14 +36,17 @@ pub(crate) fn extension_bump() -> Workflow {
     let needs_bump = needs_bump.as_job_output(&check_bump_needed);
     let current_version = current_version.as_job_output(&check_bump_needed);
 
-    let bump_version = bump_extension_version(
-        &[&test_extension, &check_bump_needed],
-        &bump_type,
+    let dependencies = [&test_extension, &check_bump_needed];
+
+    let bump_version =
+        bump_extension_version(&dependencies, &bump_type, &needs_bump, &app_id, &app_secret);
+    let create_label = create_version_label(
+        &dependencies,
         &needs_bump,
+        &current_version,
         &app_id,
         &app_secret,
     );
-    let create_label = create_version_label(&[&check_bump_needed], &needs_bump, &current_version);
 
     named::workflow()
         .add_event(
@@ -97,36 +100,44 @@ fn create_version_label(
     dependencies: &[&NamedJob],
     needs_bump: &JobOutput,
     current_version: &JobOutput,
+    app_id: &WorkflowSecret,
+    app_secret: &WorkflowSecret,
 ) -> NamedJob {
+    let (generate_token, generated_token) = generate_token(app_id, app_secret);
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && {} == 'false'",
             needs_bump.expr(),
         )))
-        // .permissions(Permissions::default().contents(Level::Write))
+        .permissions(Permissions::default().contents(Level::Write))
         .runs_on(runners::LINUX_LARGE)
         .timeout_minutes(1u32)
+        .add_step(generate_token)
         .add_step(steps::checkout_repo())
-        .add_step(create_version_tag(current_version));
+        .add_step(create_version_tag(current_version, generated_token));
 
     named::job(job)
 }
 
-fn create_version_tag(current_version: &JobOutput) -> Step<Use> {
-    named::uses("actions", "github-script", "v7").with(Input::default().add(
-        "script",
-        format!(
-            indoc! {r#"
-                github.rest.git.createRef({{
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    ref: 'refs/tags/v{}',
-                    sha: context.sha
-                }})"#
-            },
-            current_version
-        ),
-    ))
+fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) -> Step<Use> {
+    named::uses("actions", "github-script", "v7").with(
+        Input::default()
+            .add(
+                "script",
+                format!(
+                    indoc! {r#"
+                        github.rest.git.createRef({{
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            ref: 'refs/tags/v{}',
+                            sha: context.sha
+                        }})"#
+                    },
+                    current_version
+                ),
+            )
+            .add("github-token", generated_token.to_string()),
+    )
 }
 
 /// Compares the current and previous commit and checks whether versions changed inbetween.
