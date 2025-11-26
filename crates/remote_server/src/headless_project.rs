@@ -17,7 +17,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
     image_store::ImageId,
-    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -623,26 +623,28 @@ impl HeadlessProject {
     async fn handle_toggle_lsp_logs(
         _: Entity<Self>,
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
-        let lsp_logs = cx
-            .update(|cx| {
-                cx.try_global::<GlobalLogStore>()
-                    .map(|lsp_logs| lsp_logs.0.clone())
-            })?
-            .context("lsp logs store is missing")?;
+        cx.update(|cx| {
+            let log_store = cx
+                .try_global::<GlobalLogStore>()
+                .map(|global_log_store| global_log_store.0.clone())
+                .context("lsp logs store is missing")?;
+            let toggled_log_kind =
+                match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                    .context("invalid log type")?
+                {
+                    proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                    proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                    proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+                };
+            log_store.update(cx, |log_store, _| {
+                log_store.toggle_lsp_logs(server_id, envelope.payload.enabled, toggled_log_kind);
+            });
+            anyhow::Ok(())
+        })??;
 
-        lsp_logs.update(&mut cx, |lsp_logs, _| {
-            // RPC logs are very noisy and we need to toggle it on the headless server too.
-            // The rest of the logs for the ssh project are very important to have toggled always,
-            // to e.g. send language server error logs to the client before anything is toggled.
-            if envelope.payload.enabled {
-                lsp_logs.enable_rpc_trace_for_language_server(server_id);
-            } else {
-                lsp_logs.disable_rpc_trace_for_language_server(server_id);
-            }
-        })?;
         Ok(())
     }
 

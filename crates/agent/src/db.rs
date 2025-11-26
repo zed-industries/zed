@@ -182,6 +182,7 @@ impl DbThread {
                     crate::Message::Agent(AgentMessage {
                         content,
                         tool_results,
+                        reasoning_details: None,
                     })
                 }
                 language_model::Role::System => {

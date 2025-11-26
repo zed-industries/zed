@@ -308,7 +308,7 @@ impl ProjectDiagnosticsEditor {
                 .selections
                 .all_anchors(&snapshot)
                 .iter()
-                .filter_map(|anchor| anchor.start.buffer_id)
+                .filter_map(|anchor| anchor.start.text_anchor.buffer_id)
                 .collect::<HashSet<_>>()
         });
         for buffer_id in buffer_ids {

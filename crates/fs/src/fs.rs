@@ -32,6 +32,7 @@ use std::mem::MaybeUninit;
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
+use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
@@ -208,6 +209,7 @@ pub struct Metadata {
     pub is_dir: bool,
     pub len: u64,
     pub is_fifo: bool,
+    pub is_executable: bool,
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -420,6 +422,75 @@ impl RealFs {
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn canonicalize(path: &Path) -> Result<PathBuf> {
+        let mut strip_prefix = None;
+
+        let mut new_path = PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Prefix(_) => {
+                    let canonicalized = std::fs::canonicalize(component)?;
+
+                    let mut strip = PathBuf::new();
+                    for component in canonicalized.components() {
+                        match component {
+                            Component::Prefix(prefix_component) => {
+                                match prefix_component.kind() {
+                                    std::path::Prefix::Verbatim(os_str) => {
+                                        strip.push(os_str);
+                                    }
+                                    std::path::Prefix::VerbatimUNC(host, share) => {
+                                        strip.push("\\\\");
+                                        strip.push(host);
+                                        strip.push(share);
+                                    }
+                                    std::path::Prefix::VerbatimDisk(disk) => {
+                                        strip.push(format!("{}:", disk as char));
+                                    }
+                                    _ => strip.push(component),
+                                };
+                            }
+                            _ => strip.push(component),
+                        }
+                    }
+                    strip_prefix = Some(strip);
+                    new_path.push(component);
+                }
+                std::path::Component::RootDir => {
+                    new_path.push(component);
+                }
+                std::path::Component::CurDir => {
+                    if strip_prefix.is_none() {
+                        // unrooted path
+                        new_path.push(component);
+                    }
+                }
+                std::path::Component::ParentDir => {
+                    if strip_prefix.is_some() {
+                        // rooted path
+                        new_path.pop();
+                    } else {
+                        new_path.push(component);
+                    }
+                }
+                std::path::Component::Normal(_) => {
+                    if let Ok(link) = std::fs::read_link(new_path.join(component)) {
+                        let link = match &strip_prefix {
+                            Some(e) => link.strip_prefix(e).unwrap_or(&link),
+                            None => &link,
+                        };
+                        new_path.extend(link);
+                    } else {
+                        new_path.push(component);
+                    }
+                }
+            }
+        }
+
+        Ok(new_path)
     }
 }
 
@@ -749,7 +820,13 @@ impl Fs for RealFs {
         let path = path.to_owned();
         self.executor
             .spawn(async move {
-                std::fs::canonicalize(&path).with_context(|| format!("canonicalizing {path:?}"))
+                #[cfg(target_os = "windows")]
+                let result = Self::canonicalize(&path);
+
+                #[cfg(not(target_os = "windows"))]
+                let result = std::fs::canonicalize(&path);
+
+                result.with_context(|| format!("canonicalizing {path:?}"))
             })
             .await
     }
@@ -820,6 +897,12 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
+        let path_buf = path.to_path_buf();
+        let is_executable = self
+            .executor
+            .spawn(async move { path_buf.is_executable() })
+            .await;
+
         Ok(Some(Metadata {
             inode,
             mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
@@ -827,6 +910,7 @@ impl Fs for RealFs {
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
+            is_executable,
         }))
     }
 
@@ -2527,6 +2611,7 @@ impl Fs for FakeFs {
                     is_dir: false,
                     is_symlink,
                     is_fifo: false,
+                    is_executable: false,
                 },
                 FakeFsEntry::Dir {
                     inode, mtime, len, ..
@@ -2537,6 +2622,7 @@ impl Fs for FakeFs {
                     is_dir: true,
                     is_symlink,
                     is_fifo: false,
+                    is_executable: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
