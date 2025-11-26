@@ -121,5 +121,4 @@ impl IgnoreStack {
             },
         }
     }
-
 }

@@ -64,7 +64,9 @@ use std::{
 use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt, command::new_smol_command, debug_panic, maybe,
+    ResultExt,
+    command::new_smol_command,
+    debug_panic, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
     rel_path::RelPath,
 };
@@ -2994,7 +2996,8 @@ impl BackgroundScannerState {
 
         // Fetch and store tracked files for this repository
         let tracked_files = get_tracked_files(&work_directory_abs_path).await;
-        self.snapshot.tracked_files_by_repo_root
+        self.snapshot
+            .tracked_files_by_repo_root
             .insert(work_directory_abs_path.into(), Arc::new(tracked_files));
 
         log::trace!("inserting new local git repository");

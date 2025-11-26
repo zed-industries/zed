@@ -2290,8 +2290,12 @@ async fn test_tracked_files_not_ignored(cx: &mut TestAppContext) {
 
     // Add .gitignore and tracked.txt to git (force add tracked.txt since it matches ignore pattern)
     let mut index = repo.index().expect("Failed to get index");
-    index.add_path(Path::new(".gitignore")).expect("Failed to add .gitignore");
-    index.add_path(Path::new("tracked.txt")).expect("Failed to add tracked.txt");
+    index
+        .add_path(Path::new(".gitignore"))
+        .expect("Failed to add .gitignore");
+    index
+        .add_path(Path::new("tracked.txt"))
+        .expect("Failed to add tracked.txt");
     index.write().expect("Failed to write index");
 
     // Commit the tracked files
