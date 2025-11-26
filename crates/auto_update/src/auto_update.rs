@@ -6,6 +6,7 @@ use gpui::{
     actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
+use offline_mode::OfflineModeSetting;
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use semver::Version;
@@ -224,6 +225,17 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
             Some(&message),
+            &["Ok"],
+            cx,
+        ));
+        return;
+    }
+
+    if OfflineModeSetting::get_global(cx).0 {
+        drop(window.prompt(
+            gpui::PromptLevel::Info,
+            "Unable to check for updates",
+            Some("Update checking is unavailable in offline mode."),
             &["Ok"],
             cx,
         ));
@@ -498,6 +510,11 @@ impl AutoUpdater {
         arch: &str,
         cx: &mut AsyncApp,
     ) -> Result<ReleaseAsset> {
+        let is_offline = cx.update(|cx| OfflineModeSetting::get_global(cx).0)?;
+        if is_offline {
+            anyhow::bail!("Cannot fetch release asset in offline mode");
+        }
+
         let client = this.read_with(cx, |this, _| this.client.clone())?;
 
         let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
@@ -551,15 +568,20 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let (client, installed_version, previous_status, release_channel) =
+        let (client, installed_version, previous_status, release_channel, is_offline) =
             this.read_with(cx, |this, cx| {
                 (
                     this.client.http_client(),
                     this.current_version.clone(),
                     this.status.clone(),
                     ReleaseChannel::try_global(cx).unwrap_or(ReleaseChannel::Stable),
+                    OfflineModeSetting::get_global(cx).0,
                 )
             })?;
+
+        if is_offline {
+            return Ok(());
+        }
 
         Self::check_dependencies()?;
 

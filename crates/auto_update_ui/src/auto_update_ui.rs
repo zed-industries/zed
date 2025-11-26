@@ -3,8 +3,10 @@ use editor::{Editor, MultiBuffer};
 use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+use offline_mode::OfflineModeSetting;
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
+use settings::Settings;
 use smol::io::AsyncReadExt;
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -75,18 +77,31 @@ fn view_release_notes_locally(
         .with_local_workspace(window, cx, move |_, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 let markdown = markdown.await.log_err();
-                let response = client.get(&url, Default::default(), true).await;
-                let Some(mut response) = response.log_err() else {
-                    return;
+
+                let is_offline = cx.update(|_window, cx| OfflineModeSetting::get_global(cx).0).ok().unwrap_or(false);
+
+                let release_notes = if is_offline {
+                    "# Release Notes Unavailable\n\nRelease notes cannot be fetched in offline mode.".to_string()
+                } else {
+                    let response = client.get(&url, Default::default(), true).await;
+                    let Some(mut response) = response.log_err() else {
+                        return;
+                    };
+
+                    let mut body = Vec::new();
+                    response.body_mut().read_to_end(&mut body).await.ok();
+
+                    let body: serde_json::Result<ReleaseNotesBody> =
+                        serde_json::from_slice(body.as_slice());
+
+                    if let Ok(body) = body {
+                        body.release_notes
+                    } else {
+                        return;
+                    }
                 };
 
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await.ok();
-
-                let body: serde_json::Result<ReleaseNotesBody> =
-                    serde_json::from_slice(body.as_slice());
-
-                if let Ok(body) = body {
+                if !release_notes.is_empty() {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
@@ -94,7 +109,7 @@ fn view_release_notes_locally(
                                 project.create_local_buffer("", markdown, false, cx)
                             });
                             buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, body.release_notes)], None, cx)
+                                buffer.edit([(0..0, release_notes)], None, cx)
                             });
                             let language_registry = project.read(cx).languages().clone();
 
