@@ -157,7 +157,7 @@ use project::{
     git_store::GitStoreEvent,
     lsp_store::{
         CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
-        OpenLspBufferHandle, semantic_tokens::BufferSemanticTokens,
+        OpenLspBufferHandle, BufferSemanticTokens,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };

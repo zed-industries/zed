@@ -4842,6 +4842,7 @@ fn process_full_diagnostics_report(
     }
 }
 
+// TODO kb upstream to lsp-types Zed's form
 // Copy of the semantic tokens types, except using `Vec<u32>` instead
 // of `Vec<SemanticToken>`. This is so that servers can send a delta
 // that only modifies part of a token.

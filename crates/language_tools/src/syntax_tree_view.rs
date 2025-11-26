@@ -8,7 +8,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::{Buffer, BufferSnapshot, OwnedSyntaxLayer, Point};
-use project::lsp_store::semantic_tokens::BufferSemanticTokens;
+use project::lsp_store::BufferSemanticTokens;
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
