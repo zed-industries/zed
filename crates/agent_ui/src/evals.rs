@@ -9,6 +9,7 @@ use language_model::{LanguageModelRegistry, SelectedModel};
 use rand::{SeedableRng as _, rngs::StdRng};
 
 #[test]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_single_cursor_edit() {
     eval_utils::eval(
         1,
