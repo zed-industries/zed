@@ -7128,6 +7128,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "notifications",
+ "offline_mode",
  "panel",
  "picker",
  "pretty_assertions",

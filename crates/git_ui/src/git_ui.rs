@@ -384,6 +384,7 @@ fn render_remote_button(
     branch: &Branch,
     keybinding_target: Option<FocusHandle>,
     show_fetch_button: bool,
+    is_offline: bool,
 ) -> Option<impl IntoElement> {
     let id = id.into();
     let upstream = branch.upstream.as_ref();
@@ -393,19 +394,21 @@ fn render_remote_button(
             ..
         }) => match (*ahead, *behind) {
             (0, 0) if show_fetch_button => {
-                Some(remote_button::render_fetch_button(keybinding_target, id))
+                Some(remote_button::render_fetch_button(keybinding_target, id, is_offline))
             }
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
                 keybinding_target,
                 id,
                 ahead,
+                is_offline,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
                 keybinding_target,
                 id,
                 ahead,
                 behind,
+                is_offline,
             )),
         },
         Some(Upstream {
@@ -414,15 +417,16 @@ fn render_remote_button(
         }) => Some(remote_button::render_republish_button(
             keybinding_target,
             id,
+            is_offline,
         )),
-        None => Some(remote_button::render_publish_button(keybinding_target, id)),
+        None => Some(remote_button::render_publish_button(keybinding_target, id, is_offline)),
     }
 }
 
 mod remote_button {
     use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
     use ui::{
-        App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
+        App, ButtonCommon, Clickable, ContextMenu, Disableable, ElementId, FluentBuilder, Icon, IconName,
         IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
         PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div, h_flex, rems,
     };
@@ -430,6 +434,7 @@ mod remote_button {
     pub fn render_fetch_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        is_offline: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -441,15 +446,20 @@ mod remote_button {
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
             },
-            move |_window, cx| {
-                git_action_tooltip(
-                    "Fetch updates from remote",
-                    &git::Fetch,
-                    "git fetch",
-                    keybinding_target.clone(),
-                    cx,
-                )
+            move |window, cx| {
+                if is_offline {
+                    Tooltip::text("Unavailable in Offline Mode")(window, cx)
+                } else {
+                    git_action_tooltip(
+                        "Fetch updates from remote",
+                        &git::Fetch,
+                        "git fetch",
+                        keybinding_target.clone(),
+                        cx,
+                    )
+                }
             },
+            is_offline,
         )
     }
 
@@ -457,6 +467,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         ahead: u32,
+        is_offline: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -468,15 +479,20 @@ mod remote_button {
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
-            move |_window, cx| {
-                git_action_tooltip(
-                    "Push committed changes to remote",
-                    &git::Push,
-                    "git push",
-                    keybinding_target.clone(),
-                    cx,
-                )
+            move |window, cx| {
+                if is_offline {
+                    Tooltip::text("Unavailable in Offline Mode")(window, cx)
+                } else {
+                    git_action_tooltip(
+                        "Push committed changes to remote",
+                        &git::Push,
+                        "git push",
+                        keybinding_target.clone(),
+                        cx,
+                    )
+                }
             },
+            is_offline,
         )
     }
 
@@ -485,6 +501,7 @@ mod remote_button {
         id: SharedString,
         ahead: u32,
         behind: u32,
+        is_offline: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -496,21 +513,27 @@ mod remote_button {
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
             },
-            move |_window, cx| {
-                git_action_tooltip(
-                    "Pull",
-                    &git::Pull,
-                    "git pull",
-                    keybinding_target.clone(),
-                    cx,
-                )
+            move |window, cx| {
+                if is_offline {
+                    Tooltip::text("Unavailable in Offline Mode")(window, cx)
+                } else {
+                    git_action_tooltip(
+                        "Pull",
+                        &git::Pull,
+                        "git pull",
+                        keybinding_target.clone(),
+                        cx,
+                    )
+                }
             },
+            is_offline,
         )
     }
 
     pub fn render_publish_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        is_offline: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -522,21 +545,27 @@ mod remote_button {
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
-            move |_window, cx| {
-                git_action_tooltip(
-                    "Publish branch to remote",
-                    &git::Push,
-                    "git push --set-upstream",
-                    keybinding_target.clone(),
-                    cx,
-                )
+            move |window, cx| {
+                if is_offline {
+                    Tooltip::text("Unavailable in Offline Mode")(window, cx)
+                } else {
+                    git_action_tooltip(
+                        "Publish branch to remote",
+                        &git::Push,
+                        "git push --set-upstream",
+                        keybinding_target.clone(),
+                        cx,
+                    )
+                }
             },
+            is_offline,
         )
     }
 
     pub fn render_republish_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        is_offline: bool,
     ) -> SplitButton {
         split_button(
             id,
@@ -548,15 +577,20 @@ mod remote_button {
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
-            move |_window, cx| {
-                git_action_tooltip(
-                    "Re-publish branch to remote",
-                    &git::Push,
-                    "git push --set-upstream",
-                    keybinding_target.clone(),
-                    cx,
-                )
+            move |window, cx| {
+                if is_offline {
+                    Tooltip::text("Unavailable in Offline Mode")(window, cx)
+                } else {
+                    git_action_tooltip(
+                        "Re-publish branch to remote",
+                        &git::Push,
+                        "git push --set-upstream",
+                        keybinding_target.clone(),
+                        cx,
+                    )
+                }
             },
+            is_offline,
         )
     }
 
@@ -621,6 +655,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        is_disabled: bool,
     ) -> SplitButton {
         fn count(count: usize) -> impl IntoElement {
             h_flex()
@@ -643,6 +678,7 @@ mod remote_button {
         ))
         .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
+        .disabled(is_disabled)
         .when(should_render_counts, |this| {
             this.child(
                 h_flex()

@@ -54,6 +54,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
+use offline_mode::OfflineModeSetting;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -2147,6 +2148,18 @@ impl GitPanel {
             return;
         }
 
+        let is_offline = OfflineModeSetting::get_global(cx).0;
+        if is_offline {
+            let _ = window.prompt(
+                PromptLevel::Info,
+                "Fetch is unavailable in offline mode",
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -2192,6 +2205,18 @@ impl GitPanel {
     }
 
     pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
+        let is_offline = OfflineModeSetting::get_global(cx).0;
+        if is_offline {
+            let _ = window.prompt(
+                PromptLevel::Info,
+                "Clone is unavailable in offline mode",
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
         let path = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,
@@ -2367,6 +2392,19 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return;
         }
+
+        let is_offline = OfflineModeSetting::get_global(cx).0;
+        if is_offline {
+            let _ = window.prompt(
+                PromptLevel::Info,
+                "Pull is unavailable in offline mode",
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -2430,6 +2468,19 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return;
         }
+
+        let is_offline = OfflineModeSetting::get_global(cx).0;
+        if is_offline {
+            let _ = window.prompt(
+                PromptLevel::Info,
+                "Push is unavailable in offline mode",
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -3466,6 +3517,7 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return None;
         }
+        let is_offline = OfflineModeSetting::get_global(cx).0;
         Some(
             h_flex()
                 .gap_1()
@@ -3478,6 +3530,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
+                        is_offline,
                     ))
                 })
                 .into_any_element(),

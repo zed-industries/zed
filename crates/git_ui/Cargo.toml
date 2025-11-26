@@ -41,6 +41,7 @@ markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
+offline_mode.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true

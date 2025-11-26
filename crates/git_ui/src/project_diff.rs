@@ -24,6 +24,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
+use offline_mode::OfflineModeSetting;
 use project::{
     Project, ProjectPath,
     git_store::{
@@ -1260,6 +1261,7 @@ pub struct ProjectDiffEmptyState {
 
 impl RenderOnce for ProjectDiffEmptyState {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_offline = OfflineModeSetting::get_global(cx).0;
         let status_against_remote = |ahead_by: usize, behind_by: usize| -> bool {
             matches!(self.current_branch, Some(Branch {
                     upstream:
@@ -1325,6 +1327,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             self.focus_handle,
                             "push".into(),
                             ahead_count as u32,
+                            is_offline,
                         )))
                     } else if branch_not_on_remote {
                         this.child(
@@ -1336,7 +1339,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                                 ),
                         )
                         .child(
-                            div().child(render_publish_button(self.focus_handle, "publish".into())),
+                            div().child(render_publish_button(self.focus_handle, "publish".into(), is_offline)),
                         )
                     } else {
                         this.child(Label::new("Remote status unknown").color(Color::Muted))
