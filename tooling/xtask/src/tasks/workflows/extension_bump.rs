@@ -5,7 +5,9 @@ use crate::tasks::workflows::{
     extension_tests::{self},
     runners,
     steps::{self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
-    vars::{self, JobOutput, StepOutput, WorkflowInput, one_workflow_per_non_main_branch},
+    vars::{
+        JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
+    },
 };
 
 const BUMPVERSION_CONFIG: &str = indoc! {"
@@ -24,19 +26,32 @@ const VERSION_CHECK: &str = r#"cat extension.toml| sed -n 's/version = \"\(.*\)\
 pub(crate) fn extension_bump() -> Workflow {
     let bump_type = WorkflowInput::string("bump-type", Some("patch".to_owned()));
 
+    let app_id = WorkflowSecret::new("app-id", "The app ID used to create the PR");
+    let app_secret = WorkflowSecret::new("app-id", "The app secret for the corresponding app ID");
+
     let test_extension = extension_tests::check_extension();
     let (check_bump_needed, needs_bump) = check_bump_needed();
     let bump_version = bump_extension_version(
         &[&test_extension, &check_bump_needed],
         &bump_type,
         needs_bump.as_job_output(&check_bump_needed),
+        &app_id,
+        &app_secret,
     );
 
     named::workflow()
         .add_event(
             Event::default()
                 .workflow_call(
-                    WorkflowCall::default().add_input(bump_type.name, bump_type.call_input()),
+                    WorkflowCall::default()
+                        .add_input(bump_type.name, bump_type.call_input())
+                        .secrets([
+                            (app_id.name.to_owned(), app_id.secret_configuration()),
+                            (
+                                app_secret.name.to_owned(),
+                                app_secret.secret_configuration(),
+                            ),
+                        ]),
                 )
                 .workflow_dispatch(
                     WorkflowDispatch::default().add_input(bump_type.name, bump_type.input()),
@@ -98,8 +113,10 @@ fn bump_extension_version(
     dependencies: &[&NamedJob],
     bump_type: &WorkflowInput,
     needs_bump: JobOutput,
+    app_id: &WorkflowSecret,
+    app_secret: &WorkflowSecret,
 ) -> NamedJob {
-    let (generate_token, generated_token) = generate_token();
+    let (generate_token, generated_token) = generate_token(app_id, app_secret);
     let (bump_version, old_version, new_version) = bump_version(bump_type);
 
     let job = steps::dependant_job(dependencies)
@@ -123,13 +140,13 @@ fn bump_extension_version(
     named::job(job)
 }
 
-fn generate_token() -> (Step<Use>, StepOutput) {
+fn generate_token(app_id: &WorkflowSecret, app_secret: &WorkflowSecret) -> (Step<Use>, StepOutput) {
     let step = named::uses("actions", "create-github-app-token", "v2")
         .id("generate-token")
         .add_with(
             Input::default()
-                .add("app-id", vars::ZED_ZIPPY_APP_ID)
-                .add("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY),
+                .add("app-id", app_id.to_string())
+                .add("private-key", app_secret.to_string()),
         );
 
     let generated_token = StepOutput::new(&step, "token");

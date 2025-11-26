@@ -1,6 +1,9 @@
 use std::cell::RefCell;
 
-use gh_workflow::{Concurrency, Env, Expression, Step, WorkflowCallInput, WorkflowDispatchInput};
+use gh_workflow::{
+    Concurrency, Env, Expression, Step, WorkflowCallInput, WorkflowCallSecret,
+    WorkflowDispatchInput,
+};
 
 use crate::tasks::workflows::{runners::Platform, steps::NamedJob};
 
@@ -240,6 +243,44 @@ impl std::fmt::Display for WorkflowInput {
 }
 
 impl serde::Serialize for WorkflowInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+pub(crate) struct WorkflowSecret {
+    pub name: &'static str,
+    description: String,
+    required: bool,
+}
+
+impl WorkflowSecret {
+    pub fn new(name: &'static str, description: impl ToString) -> Self {
+        Self {
+            name,
+            description: description.to_string(),
+            required: true,
+        }
+    }
+
+    pub fn secret_configuration(&self) -> WorkflowCallSecret {
+        WorkflowCallSecret {
+            description: self.description.clone(),
+            required: self.required,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkflowSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${{{{ secrets.{} }}}}", self.name)
+    }
+}
+
+impl serde::Serialize for WorkflowSecret {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
