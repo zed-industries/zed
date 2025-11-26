@@ -3669,9 +3669,7 @@ impl Window {
 
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
-        // Handlers may set this to true by calling `prevent_default`.
-        self.default_prevented = false;
-
+        
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.

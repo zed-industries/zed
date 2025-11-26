@@ -2034,7 +2034,7 @@ impl Interactivity {
 
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
-        // This behavior can be suppressed by using `cx.prevent_default()`.
+        // This behavior can be suppressed by using `cx.stop_propagation()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {

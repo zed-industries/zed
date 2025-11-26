@@ -552,7 +552,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .tooltip(Tooltip::text("Open Project in New Window"))
                     .on_click(cx.listener(move |this, _event, window, cx| {
                         cx.stop_propagation();
-                        window.prevent_default();
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
                     })),
@@ -563,7 +562,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .tooltip(Tooltip::text("Delete from Recent Projects"))
                     .on_click(cx.listener(move |this, _event, window, cx| {
                         cx.stop_propagation();
-                        window.prevent_default();
 
                         this.delegate.delete_recent_project(ix, window, cx)
                     })),
