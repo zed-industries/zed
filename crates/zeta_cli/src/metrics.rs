@@ -134,9 +134,9 @@ pub fn chr_f(expected: &str, actual: &str) -> f64 {
     const BETA: f64 = 2.0;
     const IGNORE_WHITESPACE: bool = true;
 
-    // Ignore whitespace. Original chrF implementation skips all
-    // whitepace. We should consider compressing multiple consequntative
-    // spaces into one -- this may reflect our task closer
+    // Ignore whitespace. The original chrF implementation skips all
+    // whitespace. We should consider compressing multiple consecutive
+    // spaces into one -- this may reflect our task more closely.
     let expected = if IGNORE_WHITESPACE {
         expected
             .chars()
