@@ -87,7 +87,7 @@ impl SplittableEditor {
             pane
         });
         let panes = PaneGroup::new(pane);
-        // TODO we might want to tag editor events with whether they came from primary/secondary
+        // TODO(split-diff) we might want to tag editor events with whether they came from primary/secondary
         let subscriptions =
             vec![
                 cx.subscribe(&primary_editor, |this, _, event: &EditorEvent, cx| {
@@ -144,7 +144,7 @@ impl SplittableEditor {
         follower.update(cx, |follower, cx| {
             follower.set_all_diff_hunks_expanded(cx);
             follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-            // TODO set readonly here too?
+            // TODO(split-diff) set readonly here too?
         });
         let secondary_editor = workspace.update(cx, |workspace, cx| {
             cx.new(|cx| {

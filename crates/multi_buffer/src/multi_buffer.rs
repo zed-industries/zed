@@ -1169,7 +1169,7 @@ impl MultiBuffer {
                 old: ExcerptDimension(MultiBufferOffset(0))..excerpt_len,
                 new: ExcerptDimension(MultiBufferOffset(0))..excerpt_len,
             }],
-            // TODO is this right?
+            // TODO(split-diff) is this right?
             DiffChangeKind::BufferEdited,
             new_mode,
         );
@@ -1726,7 +1726,7 @@ impl MultiBuffer {
     ) where
         O: text::ToOffset + Clone,
     {
-        // todo! see if it's worth time avoiding collecting here later
+        // TODO(split-diff) see if it's worth time avoiding collecting here later
         let collected_ranges: Vec<_> = ranges.into_iter().collect();
 
         assert_eq!(self.history.transaction_depth(), 0);
@@ -3895,7 +3895,6 @@ impl MultiBufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&range.start);
-
         std::iter::from_fn(move || {
             let region = cursor.region()?;
             if region.range.start > range.end
@@ -4512,15 +4511,9 @@ impl MultiBufferSnapshot {
     ) -> MBR2
     where
         MBR1: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBR1 as Sub>::Output>,
-        BR1: TextDimension
-            + Sub<Output = <MBR1 as Sub>::Output>
-            + AddAssign<<MBR1 as Sub>::Output>
-            + text::ToOffset,
+        BR1: TextDimension + Sub<Output = <MBR1 as Sub>::Output> + AddAssign<<MBR1 as Sub>::Output>,
         MBR2: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBR2 as Sub>::Output>,
-        BR2: TextDimension
-            + Sub<Output = <MBR2 as Sub>::Output>
-            + AddAssign<<MBR2 as Sub>::Output>
-            + text::ToOffset,
+        BR2: TextDimension + Sub<Output = <MBR2 as Sub>::Output> + AddAssign<<MBR2 as Sub>::Output>,
     {
         let mut cursor = self.cursor::<DimensionPair<MBR1, MBR2>, DimensionPair<BR1, BR2>>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -7547,7 +7540,7 @@ impl Iterator for MultiBufferRows<'_> {
                     .end
                     .to_point(&last_excerpt.buffer)
                     .row;
-                // TODO perf
+                // TODO(split-diff) perf
                 let base_text_row = self
                     .cursor
                     .snapshot
@@ -7610,7 +7603,7 @@ impl Iterator for MultiBufferRows<'_> {
             .diff_hunk_status
             .filter(|_| self.point < region.range.end);
         let base_text_row = match diff_status {
-            // TODO perf
+            // TODO(split-diff) perf
             None => self
                 .cursor
                 .snapshot

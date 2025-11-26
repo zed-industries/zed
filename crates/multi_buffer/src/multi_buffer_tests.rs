@@ -2364,7 +2364,7 @@ impl ReferenceMultibuffer {
         let mut regions = Vec::<ReferenceRegion>::new();
         let mut filtered_regions = Vec::<ReferenceRegion>::new();
         let mut excerpt_boundary_rows = HashSet::default();
-        for (excerpt_ix, excerpt) in self.excerpts.iter().enumerate() {
+        for excerpt in &self.excerpts {
             excerpt_boundary_rows.insert(MultiBufferRow(text.matches('\n').count() as u32));
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
@@ -2375,11 +2375,8 @@ impl ReferenceMultibuffer {
             let hunks = diff
                 .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
                 .peekable();
-            let mut need_trailing_newline = true;
 
             for hunk in hunks {
-                need_trailing_newline = true;
-
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 
@@ -2471,18 +2468,7 @@ impl ReferenceMultibuffer {
             // Add the buffer text for the rest of the excerpt.
             let len = text.len();
             text.extend(buffer.text_for_range(offset..buffer_range.end));
-            if offset > buffer_range.end
-                || need_trailing_newline
-                || (excerpt_ix == self.excerpts.len() - 2
-                    && self.excerpts.last().is_some_and(|last_excerpt| {
-                        last_excerpt
-                            .range
-                            .to_offset(&last_excerpt.buffer.read(cx).snapshot())
-                            .is_empty()
-                    }))
-            {
-                text.push('\n');
-            }
+            text.push('\n');
             regions.push(ReferenceRegion {
                 buffer_id: Some(buffer.remote_id()),
                 range: len..text.len(),
@@ -2985,29 +2971,19 @@ async fn test_random_multibuffer_impl(
             }
         }
 
-        let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
-            cx.update(|cx| reference.expected_content(None, true, cx));
-        log::info!(
-            "\nunfiltered:\n{}",
-            format_diff(
-                &unfiltered_text,
-                &unfiltered_row_infos,
-                &unfiltered_boundary_rows,
-                None,
-            ),
-        );
-        let (expected_text, expected_row_infos, expected_boundary_rows) =
-            cx.update(|cx| reference.expected_content(filter_mode, filter_mode.is_some(), cx));
-        log::info!(
-            "\nexpected:\n{}",
-            format_diff(
-                &expected_text,
-                &expected_row_infos,
-                &expected_boundary_rows,
-                None,
-            )
-        );
-
+        if filter_mode.is_some() {
+            let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
+                cx.update(|cx| reference.expected_content(None, true, cx));
+            log::info!(
+                "Unfiltered multibuffer content:\n{}",
+                format_diff(
+                    &unfiltered_text,
+                    &unfiltered_row_infos,
+                    &unfiltered_boundary_rows,
+                    None,
+                ),
+            );
+        }
         if rng.random_bool(0.3) {
             multibuffer.update(cx, |multibuffer, cx| {
                 old_versions.push((multibuffer.snapshot(cx), multibuffer.subscribe()));
@@ -3015,14 +2991,15 @@ async fn test_random_multibuffer_impl(
         }
 
         let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-        log::info!("\ntransforms:\n{}", format_transforms(&snapshot));
         let actual_text = snapshot.text();
         let actual_boundary_rows = snapshot
             .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
             .map(|b| b.row)
             .collect::<HashSet<_>>();
-
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+
+        let (expected_text, expected_row_infos, expected_boundary_rows) =
+            cx.update(|cx| reference.expected_content(filter_mode, filter_mode.is_some(), cx));
 
         let has_diff = actual_row_infos
             .iter()
@@ -3051,29 +3028,16 @@ async fn test_random_multibuffer_impl(
             "line count: {}",
             actual_text.split('\n').count()
         );
-        pretty_assertions::assert_eq!(
-            actual_diff,
-            expected_diff,
-            "\nunfiltered:\n{}\ntransforms:\n{}\nexcerpts:\n{}",
-            format_diff(
-                &unfiltered_text,
-                &unfiltered_row_infos,
-                &unfiltered_boundary_rows,
-                None,
-            ),
-            format_transforms(&snapshot),
-            format_excerpts(&snapshot),
-        );
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos,);
+        pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
+        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
 
         for _ in 0..5 {
             let start_row = rng.random_range(0..=expected_row_infos.len());
-            let actual_row_infos_slice = snapshot
-                .row_infos(MultiBufferRow(start_row as u32))
-                .collect::<Vec<_>>();
             assert_eq!(
-                &actual_row_infos_slice,
+                snapshot
+                    .row_infos(MultiBufferRow(start_row as u32))
+                    .collect::<Vec<_>>(),
                 &expected_row_infos[start_row..],
                 "buffer_rows({})",
                 start_row
@@ -3093,7 +3057,7 @@ async fn test_random_multibuffer_impl(
                 })
                 .max()
                 .unwrap()
-                + 1,
+                + 1
         );
         let reference_ranges = cx.update(|cx| {
             reference
@@ -3641,7 +3605,6 @@ fn format_diff(
 ) -> String {
     let has_diff =
         has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
-
     text.split('\n')
         .enumerate()
         .zip(row_infos)
@@ -3660,9 +3623,9 @@ fn format_diff(
             };
             let boundary_row = if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
                 if has_diff {
-                    "                          |   ---------\n"
+                    "  ----------\n"
                 } else {
-                    "                          | ---------\n"
+                    "---------\n"
                 }
             } else {
                 ""
@@ -3688,36 +3651,36 @@ fn format_diff(
         .join("\n")
 }
 
-fn format_transforms(snapshot: &MultiBufferSnapshot) -> String {
-    snapshot
-        .diff_transforms
-        .iter()
-        .map(|transform| {
-            let (kind, summary) = match transform {
-                DiffTransform::DeletedHunk { summary, .. } => ("   Deleted", (*summary).into()),
-                DiffTransform::FilteredInsertedHunk { summary, .. } => ("  Filtered", *summary),
-                DiffTransform::InsertedHunk { summary, .. } => ("  Inserted", *summary),
-                DiffTransform::Unmodified { summary, .. } => ("Unmodified", *summary),
-            };
-            format!("{kind}(len: {}, lines: {:?})", summary.len, summary.lines)
-        })
-        .join("\n")
-}
+// fn format_transforms(snapshot: &MultiBufferSnapshot) -> String {
+//     snapshot
+//         .diff_transforms
+//         .iter()
+//         .map(|transform| {
+//             let (kind, summary) = match transform {
+//                 DiffTransform::DeletedHunk { summary, .. } => ("   Deleted", (*summary).into()),
+//                 DiffTransform::FilteredInsertedHunk { summary, .. } => ("  Filtered", *summary),
+//                 DiffTransform::InsertedHunk { summary, .. } => ("  Inserted", *summary),
+//                 DiffTransform::Unmodified { summary, .. } => ("Unmodified", *summary),
+//             };
+//             format!("{kind}(len: {}, lines: {:?})", summary.len, summary.lines)
+//         })
+//         .join("\n")
+// }
 
-fn format_excerpts(snapshot: &MultiBufferSnapshot) -> String {
-    snapshot
-        .excerpts
-        .iter()
-        .map(|excerpt| {
-            format!(
-                "Excerpt(buffer_range = {:?}, lines = {:?}, has_trailing_newline = {:?})",
-                excerpt.range.context.to_point(&excerpt.buffer),
-                excerpt.text_summary.lines,
-                excerpt.has_trailing_newline
-            )
-        })
-        .join("\n")
-}
+// fn format_excerpts(snapshot: &MultiBufferSnapshot) -> String {
+//     snapshot
+//         .excerpts
+//         .iter()
+//         .map(|excerpt| {
+//             format!(
+//                 "Excerpt(buffer_range = {:?}, lines = {:?}, has_trailing_newline = {:?})",
+//                 excerpt.range.context.to_point(&excerpt.buffer),
+//                 excerpt.text_summary.lines,
+//                 excerpt.has_trailing_newline
+//             )
+//         })
+//         .join("\n")
+// }
 
 #[gpui::test]
 async fn test_basic_filtering(cx: &mut TestAppContext) {

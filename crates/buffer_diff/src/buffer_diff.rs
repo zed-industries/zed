@@ -315,7 +315,7 @@ impl BufferDiffSnapshot {
     }
 
     pub fn row_to_base_text_row(&self, row: BufferRow, buffer: &text::BufferSnapshot) -> u32 {
-        // todo! expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
+        // TODO(split-diff) expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
 
         // Find the last hunk that starts before this position.
         let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);

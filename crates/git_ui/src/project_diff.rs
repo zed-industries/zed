@@ -39,8 +39,8 @@ use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
-    CloseActiveItem, ItemNavHistory, SerializableItem, SplitDirection, ToolbarItemEvent,
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
@@ -81,7 +81,6 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
-        workspace.register_action(Self::leader_and_follower);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -129,26 +128,6 @@ impl ProjectDiff {
                 anyhow::Ok(())
             })
             .detach_and_notify_err(window, cx);
-    }
-
-    pub fn leader_and_follower(
-        workspace: &mut Workspace,
-        _: &LeaderAndFollower,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        Self::deploy_at(workspace, None, window, cx);
-        let Some(this) = workspace.item_of_type::<Self>(cx) else {
-            return;
-        };
-        let follower = this.update(cx, |this, cx| {
-            this.multibuffer
-                .update(cx, |multibuffer, cx| multibuffer.get_or_create_follower(cx))
-        });
-        let project = this.read(cx).project.clone();
-        let follower_editor =
-            cx.new(|cx| Editor::for_multibuffer(follower, Some(project), window, cx));
-        workspace.split_item(SplitDirection::Right, Box::new(follower_editor), window, cx);
     }
 
     pub fn deploy_at(
@@ -502,7 +481,7 @@ impl ProjectDiff {
         self.buffer_diff_subscriptions
             .insert(path_key.path.clone(), (diff.clone(), subscription));
 
-        // TODO we shouldn't have a conflict addon when split
+        // TODO(split-diff) we shouldn't have a conflict addon when split
         let conflict_addon = self
             .editor
             .read(cx)
@@ -725,7 +704,7 @@ impl Item for ProjectDiff {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        // TODO SplitEditor should be searchable
+        // TODO(split-diff) SplitEditor should be searchable
         Some(Box::new(self.editor.read(cx).primary_editor().clone()))
     }
 
