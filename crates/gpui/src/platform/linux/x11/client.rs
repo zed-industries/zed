@@ -38,7 +38,7 @@ use x11rb::{
 };
 use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
+use xkbcommon::xkb::{self as xkbc, Keysym, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
@@ -1023,8 +1023,13 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
+                    // Never update xkb state for lock modifiers (Caps Lock, Num Lock, etc.)
+                    // Modifiers on regular keyboards should work fine either way but
+                    // custom macros on some Linux distributions require the state to be updated
+                    // to prevent race conditions and occasional unexpected inputs
+                    if !is_lock_modifier(keysym) {
+                        state.xkb.update_key(code, xkbc::KeyDirection::Down);
+                    }
 
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1088,8 +1093,13 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
+                    // Never update xkb state for lock modifiers (Caps Lock, Num Lock, etc.)
+                    // Modifiers on regular keyboards should work fine either way but
+                    // custom macros on some Linux distributions require the state to be updated
+                    // to prevent race conditions and occasional unexpected inputs
+                    if !is_lock_modifier(keysym) {
+                        state.xkb.update_key(code, xkbc::KeyDirection::Up);
+                    }
 
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -2515,4 +2525,12 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[inline]
+fn is_lock_modifier(keysym: Keysym) -> bool {
+    matches!(
+        keysym,
+        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Scroll_Lock | Keysym::Shift_Lock
+    )
 }
