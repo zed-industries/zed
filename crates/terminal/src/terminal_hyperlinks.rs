@@ -149,7 +149,7 @@ fn sanitize_url_punctuation<T: EventListener>(
     let mut chars_trimmed = 0;
 
     // Count parentheses in the URL
-    let (mut open_parens, mut close_parens) =
+    let (open_parens, mut close_parens) =
         sanitized_url
             .chars()
             .fold((0, 0), |(opens, closes), c| match c {
