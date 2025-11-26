@@ -18,7 +18,7 @@ use std::{
     time::Instant,
 };
 
-use crate::{EditPrediction, EditPredictionId, EditPredictionInputs};
+use crate::{EditPredictionId, EditPredictionInputs, prediction::EditPredictionResult};
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
@@ -45,7 +45,7 @@ impl SweepAi {
         recent_paths: &VecDeque<ProjectPath>,
         diagnostic_search_range: Range<Point>,
         cx: &mut App,
-    ) -> Task<Result<Option<EditPrediction>>> {
+    ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
         let Some(api_token) = self.api_token.clone() else {
             return Task::ready(Ok(None));
@@ -242,8 +242,8 @@ impl SweepAi {
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;
-            anyhow::Ok(
-                EditPrediction::new(
+            anyhow::Ok(Some(
+                EditPredictionResult::new(
                     EditPredictionId(id.into()),
                     &buffer,
                     &old_snapshot,
@@ -254,7 +254,7 @@ impl SweepAi {
                     cx,
                 )
                 .await,
-            )
+            ))
         })
     }
 }
