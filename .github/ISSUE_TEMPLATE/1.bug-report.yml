@@ -48,13 +48,13 @@ body:
       required: false
   - type: textarea
     attributes:
-      label: If applicable, attach your relevant Zed settings fields to this issue.
+      label: If applicable, attach your relevant Zed settings to this issue
       description: |
-        Open the command palette in Zed, then type `zed: open settings` and copy/paste any relevant (e.g., LSP specific) settings.
+        Open the command palette in Zed, then type “zed: open settings file” and copy/paste any relevant (e.g., LSP-specific) settings.
       value: |
         <details><summary>settings.json</summary>
 
-        <!-- Paste your `settings.json` inside the code block. -->
+        <!-- Paste your settings inside the code block. -->
         ```json
 
         ```
