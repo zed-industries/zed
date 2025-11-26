@@ -125,7 +125,7 @@ jobs:
         echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
       shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
-      uses: peter-evans/create-pull-request@v6
+      uses: peter-evans/create-pull-request@v7
       with:
         title: Bump version to ${{ steps.bump-version.outputs.new_version }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}

@@ -194,7 +194,7 @@ fn create_pull_request(
 ) -> Step<Use> {
     let formatted_version = format!("v{}", new_version);
 
-    named::uses("peter-evans", "create-pull-request", "v6").with(
+    named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
             .add("title", format!("Bump version to {}", new_version))
             .add(
