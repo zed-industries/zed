@@ -200,7 +200,7 @@ pub struct RejectEditPredictionsBody {
     pub rejections: Vec<EditPredictionRejection>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EditPredictionRejection {
     pub request_id: String,
     pub was_shown: bool,

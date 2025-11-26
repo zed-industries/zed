@@ -310,6 +310,26 @@ impl ZetaProject {
             )
             .collect()
     }
+
+    fn cancel_pending_prediction(
+        &mut self,
+        pending_prediction: PendingPrediction,
+        cx: &mut Context<Zeta>,
+    ) {
+        self.cancelled_predictions.insert(pending_prediction.id);
+
+        cx.spawn(async move |this, cx| {
+            let Some(prediction_id) = pending_prediction.task.await else {
+                return;
+            };
+
+            this.update(cx, |this, cx| {
+                this.discard_prediction(prediction_id, false, cx);
+            })
+            .ok();
+        })
+        .detach()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +393,7 @@ impl PredictionRequestedBy {
     }
 }
 
+#[derive(Debug)]
 struct PendingPrediction {
     id: usize,
     task: Task<Option<EditPredictionId>>,
@@ -383,6 +404,18 @@ struct PendingPrediction {
 enum BufferEditPrediction<'a> {
     Local { prediction: &'a EditPrediction },
     Jump { prediction: &'a EditPrediction },
+}
+
+#[cfg(test)]
+impl std::ops::Deref for BufferEditPrediction<'_> {
+    type Target = EditPrediction;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            BufferEditPrediction::Local { prediction } => prediction,
+            BufferEditPrediction::Jump { prediction } => prediction,
+        }
+    }
 }
 
 struct RegisteredBuffer {
@@ -818,7 +851,7 @@ impl Zeta {
         };
         let request_id = prediction.prediction.id.to_string();
         for pending_prediction in mem::take(&mut project_state.pending_predictions) {
-            self.cancel_pending_prediction(pending_prediction, cx);
+            project_state.cancel_pending_prediction(pending_prediction, cx);
         }
 
         let client = self.client.clone();
@@ -954,24 +987,6 @@ impl Zeta {
         }));
     }
 
-    fn cancel_pending_prediction(
-        &self,
-        pending_prediction: PendingPrediction,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn(async move |this, cx| {
-            let Some(prediction_id) = pending_prediction.task.await else {
-                return;
-            };
-
-            this.update(cx, |this, cx| {
-                this.discard_prediction(prediction_id, false, cx);
-            })
-            .ok();
-        })
-        .detach()
-    }
-
     fn is_refreshing(&self, project: &Entity<Project>) -> bool {
         self.projects
             .get(&project.entity_id())
@@ -998,7 +1013,6 @@ impl Zeta {
             let project = project.clone();
             cx.spawn(async move |cx| {
                 if let Some(prediction) = request_task.await? {
-                    let id = prediction.id.clone();
                     this.update(cx, |this, cx| {
                         let project_state = this
                             .projects
@@ -1018,12 +1032,11 @@ impl Zeta {
                                 new_prediction.should_replace_prediction(&old_prediction, cx)
                             })
                         {
-                            project_state.current_prediction = Some(new_prediction);
-                            cx.notify();
+                            anyhow::Ok(Some(new_prediction))
+                        } else {
+                            anyhow::Ok(None)
                         }
-                        anyhow::Ok(())
-                    })??;
-                    Ok(Some(id))
+                    })?
                 } else {
                     Ok(None)
                 }
@@ -1085,21 +1098,21 @@ impl Zeta {
                     return anyhow::Ok(None);
                 };
 
-                let id = prediction.id.clone();
                 this.update(cx, |this, cx| {
-                    if let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) {
-                        zeta_project.current_prediction.get_or_insert_with(|| {
-                            cx.notify();
-                            CurrentEditPrediction {
-                                requested_by: PredictionRequestedBy::DiagnosticsUpdate,
-                                prediction,
-                                was_shown: false,
-                            }
-                        });
+                    if this
+                        .get_or_init_zeta_project(&project, cx)
+                        .current_prediction
+                        .is_none()
+                    {
+                        Some(CurrentEditPrediction {
+                            requested_by: PredictionRequestedBy::DiagnosticsUpdate,
+                            prediction,
+                            was_shown: false,
+                        })
+                    } else {
+                        None
                     }
-                })?;
-
-                anyhow::Ok(Some(id))
+                })
             })
         });
     }
@@ -1117,7 +1130,7 @@ impl Zeta {
         do_refresh: impl FnOnce(
             WeakEntity<Self>,
             &mut AsyncApp,
-        ) -> Task<Result<Option<EditPredictionId>>>
+        ) -> Task<Result<Option<CurrentEditPrediction>>>
         + 'static,
     ) {
         let zeta_project = self.get_or_init_zeta_project(&project, cx);
@@ -1152,22 +1165,29 @@ impl Zeta {
                 return None;
             }
 
-            let edit_prediction_id = do_refresh(this.clone(), cx).await.log_err().flatten();
+            let new_prediction = do_refresh(this.clone(), cx).await.log_err().flatten();
+            let new_prediction_id = new_prediction
+                .as_ref()
+                .map(|prediction| prediction.prediction.id.clone());
 
             // When a prediction completes, remove it from the pending list, and cancel
             // any pending predictions that were enqueued before it.
             this.update(cx, |this, cx| {
                 let zeta_project = this.get_or_init_zeta_project(&project, cx);
-                zeta_project
+
+                if !zeta_project
                     .cancelled_predictions
-                    .remove(&pending_prediction_id);
+                    .remove(&pending_prediction_id)
+                {
+                    zeta_project.current_prediction = new_prediction;
+                }
 
                 let mut pending_predictions = mem::take(&mut zeta_project.pending_predictions);
                 for (ix, pending_prediction) in pending_predictions.iter().enumerate() {
                     if pending_prediction.id == pending_prediction_id {
                         pending_predictions.remove(ix);
                         for pending_prediction in pending_predictions.drain(0..ix) {
-                            this.cancel_pending_prediction(pending_prediction, cx)
+                            zeta_project.cancel_pending_prediction(pending_prediction, cx)
                         }
                         break;
                     }
@@ -1178,7 +1198,7 @@ impl Zeta {
             })
             .ok();
 
-            edit_prediction_id
+            new_prediction_id
         });
 
         if zeta_project.pending_predictions.len() <= 1 {
@@ -1192,10 +1212,7 @@ impl Zeta {
                 id: pending_prediction_id,
                 task,
             });
-            zeta_project
-                .cancelled_predictions
-                .insert(pending_prediction.id);
-            self.cancel_pending_prediction(pending_prediction, cx);
+            zeta_project.cancel_pending_prediction(pending_prediction, cx);
         }
     }
 
@@ -2806,6 +2823,7 @@ mod tests {
 
     use client::UserStore;
     use clock::FakeSystemClock;
+    use cloud_llm_client::{EditPredictionRejection, RejectEditPredictionsBody};
     use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
     use futures::{
         AsyncReadExt, StreamExt,
@@ -2830,7 +2848,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_current_state(cx: &mut TestAppContext) {
-        let (zeta, mut req_rx) = init_test(cx);
+        let (zeta, mut requests) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
@@ -2861,7 +2879,7 @@ mod tests {
         zeta.update(cx, |zeta, cx| {
             zeta.refresh_prediction_from_buffer(project.clone(), buffer1.clone(), position, cx)
         });
-        let (_request, respond_tx) = req_rx.next().await.unwrap();
+        let (_request, respond_tx) = requests.predict.next().await.unwrap();
 
         respond_tx
             .send(model_response(indoc! {r"
@@ -2888,7 +2906,7 @@ mod tests {
         let refresh_task = zeta.update(cx, |zeta, cx| {
             zeta.refresh_context(project.clone(), buffer1.clone(), position, cx)
         });
-        let (_request, respond_tx) = req_rx.next().await.unwrap();
+        let (_request, respond_tx) = requests.predict.next().await.unwrap();
         respond_tx
             .send(open_ai::Response {
                 id: Uuid::new_v4().to_string(),
@@ -2936,7 +2954,7 @@ mod tests {
         zeta.update(cx, |zeta, cx| {
             zeta.refresh_prediction_from_buffer(project.clone(), buffer1.clone(), position, cx)
         });
-        let (_request, respond_tx) = req_rx.next().await.unwrap();
+        let (_request, respond_tx) = requests.predict.next().await.unwrap();
         respond_tx
             .send(model_response(indoc! {r#"
                 --- a/root/2.txt
@@ -2977,7 +2995,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_simple_request(cx: &mut TestAppContext) {
-        let (zeta, mut req_rx) = init_test(cx);
+        let (zeta, mut requests) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
@@ -3002,7 +3020,7 @@ mod tests {
             zeta.request_prediction(&project, &buffer, position, cx)
         });
 
-        let (_, respond_tx) = req_rx.next().await.unwrap();
+        let (_, respond_tx) = requests.predict.next().await.unwrap();
 
         // TODO Put back when we have a structured request again
         // assert_eq!(
@@ -3041,7 +3059,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_request_events(cx: &mut TestAppContext) {
-        let (zeta, mut req_rx) = init_test(cx);
+        let (zeta, mut requests) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
@@ -3075,7 +3093,7 @@ mod tests {
             zeta.request_prediction(&project, &buffer, position, cx)
         });
 
-        let (request, respond_tx) = req_rx.next().await.unwrap();
+        let (request, respond_tx) = requests.predict.next().await.unwrap();
 
         let prompt = prompt_from_request(&request);
         assert!(
@@ -3111,6 +3129,221 @@ mod tests {
             language::Point::new(1, 3)
         );
         assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+    }
+
+    const SIMPLE_DIFF: &str = indoc! { r"
+        --- a/root/foo.md
+        +++ b/root/foo.md
+        @@ ... @@
+         Hello!
+        -How
+        +How are you?
+         Bye
+    "};
+
+    #[gpui::test]
+    async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
+        let (zeta, mut requests) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md":  "Hello!\nHow\nBye\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        zeta.update(cx, |zeta, cx| {
+            // start two refresh tasks
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        });
+
+        let (_, respond_first) = requests.predict.next().await.unwrap();
+        let (_, respond_second) = requests.predict.next().await.unwrap();
+
+        // wait for throttle
+        cx.run_until_parked();
+
+        // second responds first
+        let second_response = model_response(SIMPLE_DIFF);
+        let second_id = second_response.id.clone();
+        respond_second.send(second_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // current prediction is second
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                second_id
+            );
+        });
+
+        let first_response = model_response(SIMPLE_DIFF);
+        let first_id = first_response.id.clone();
+        respond_first.send(first_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // current prediction is still second, since first was cancelled
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                second_id
+            );
+        });
+
+        // first is reported as rejected
+        let (reject_request, _) = requests.reject.next().await.unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            &reject_request.rejections,
+            &[EditPredictionRejection {
+                request_id: first_id,
+                was_shown: false
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
+        let (zeta, mut requests) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md":  "Hello!\nHow\nBye\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        zeta.update(cx, |zeta, cx| {
+            // start two refresh tasks
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        });
+
+        // wait for throttle, so requests are sent
+        cx.run_until_parked();
+
+        let (_, respond_first) = requests.predict.next().await.unwrap();
+        let (_, respond_second) = requests.predict.next().await.unwrap();
+
+        zeta.update(cx, |zeta, cx| {
+            // start a third request
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+
+            // 2 are pending, so 2nd is cancelled
+            assert_eq!(
+                zeta.get_or_init_zeta_project(&project, cx)
+                    .cancelled_predictions
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                [1]
+            );
+        });
+
+        // wait for throttle
+        cx.run_until_parked();
+
+        let (_, respond_third) = requests.predict.next().await.unwrap();
+
+        let first_response = model_response(SIMPLE_DIFF);
+        let first_response_id = first_response.id.clone();
+        respond_first.send(first_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // current prediction is first
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                first_response_id
+            );
+        });
+
+        let cancelled_response = model_response(SIMPLE_DIFF);
+        let cancelled_id = cancelled_response.id.clone();
+        respond_second.send(cancelled_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // current prediction is still first, since second was cancelled
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                first_response_id
+            );
+        });
+
+        let third_response = model_response(SIMPLE_DIFF);
+        let third_response_id = third_response.id.clone();
+        respond_third.send(third_response).unwrap();
+
+        cx.run_until_parked();
+
+        zeta.read_with(cx, |zeta, cx| {
+            // third completes and replaces first
+            assert_eq!(
+                zeta.current_prediction_for_buffer(&buffer, &project, cx)
+                    .unwrap()
+                    .id
+                    .0,
+                third_response_id
+            );
+        });
+
+        // second is reported as rejected
+        let (reject_request, _) = requests.reject.next().await.unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            &reject_request.rejections,
+            &[EditPredictionRejection {
+                request_id: cancelled_id,
+                was_shown: false
+            }]
+        );
     }
 
     // Skipped until we start including diagnostics in prompt
@@ -3242,24 +3475,26 @@ mod tests {
         content
     }
 
-    fn init_test(
-        cx: &mut TestAppContext,
-    ) -> (
-        Entity<Zeta>,
-        mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
-    ) {
+    struct RequestChannels {
+        predict: mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
+        reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> (Entity<Zeta>, RequestChannels) {
         cx.update(move |cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             zlog::init_test();
 
-            let (req_tx, req_rx) = mpsc::unbounded();
+            let (predict_req_tx, predict_req_rx) = mpsc::unbounded();
+            let (reject_req_tx, reject_req_rx) = mpsc::unbounded();
 
             let http_client = FakeHttpClient::create({
                 move |req| {
                     let uri = req.uri().path().to_string();
                     let mut body = req.into_body();
-                    let req_tx = req_tx.clone();
+                    let predict_req_tx = predict_req_tx.clone();
+                    let reject_req_tx = reject_req_tx.clone();
                     async move {
                         let resp = match uri.as_str() {
                             "/client/llm_tokens" => serde_json::to_string(&json!({
@@ -3272,7 +3507,16 @@ mod tests {
                                 let req = serde_json::from_slice(&buf).unwrap();
 
                                 let (res_tx, res_rx) = oneshot::channel();
-                                req_tx.unbounded_send((req, res_tx)).unwrap();
+                                predict_req_tx.unbounded_send((req, res_tx)).unwrap();
+                                serde_json::to_string(&res_rx.await?).unwrap()
+                            }
+                            "/predict_edits/reject" => {
+                                let mut buf = Vec::new();
+                                body.read_to_end(&mut buf).await.ok();
+                                let req = serde_json::from_slice(&buf).unwrap();
+
+                                let (res_tx, res_rx) = oneshot::channel();
+                                reject_req_tx.unbounded_send((req, res_tx)).unwrap();
                                 serde_json::to_string(&res_rx.await?).unwrap()
                             }
                             _ => {
@@ -3293,7 +3537,13 @@ mod tests {
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             let zeta = Zeta::global(&client, &user_store, cx);
 
-            (zeta, req_rx)
+            (
+                zeta,
+                RequestChannels {
+                    predict: predict_req_rx,
+                    reject: reject_req_rx,
+                },
+            )
         })
     }
 }
