@@ -4,7 +4,9 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
+use crate::fs::metadata;
 use parking_lot::Mutex;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -37,6 +39,7 @@ use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
 use std::{
+    fs,
     io::{self, Write},
     path::{Component, Path, PathBuf},
     pin::Pin,
@@ -62,7 +65,8 @@ use git::{
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
-
+use std::os::unix::fs::PermissionsExt;
+use serde::de::IntoDeserializer;
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
 
@@ -159,6 +163,14 @@ pub trait Fs: Send + Sync {
     fn as_fake(&self) -> Arc<FakeFs> {
         panic!("called as_fake on a real fs");
     }
+    /// Perform a safe write of raw bytes to `path`:
+    ///
+    /// * If `path` exists and is a regular file, back it up to `<name>.bak`.
+    /// * Write `data` to a temporary file in the same directory.
+    /// * Try to atomically persist that temp file into `path`.
+    /// * On permission failure (Unix), attempt a `sudo dd if=<temp> of=<path>`.
+    /// * On any failure, attempt to restore from the backup.
+    async fn safe_write(&self, path: &Path, data: &[u8]) -> Result<()>;
 }
 
 struct GlobalFs(Arc<dyn Fs>);
@@ -784,8 +796,110 @@ impl Fs for RealFs {
             atomic_replace(path.as_path(), temp_file.as_path())?;
             anyhow::Ok(())
         })
-        .await?;
+            .await?;
         Ok(())
+    }
+
+    /// Perform a safe write of raw bytes to `path`:
+    ///
+    /// * If `path` exists and is a regular file, back it up to `<name>.bak`.
+    /// * Write `data` to a temporary file in the same directory.
+    /// * Try to atomically persist that temp file into `path`.
+    /// * On permission failure (Unix), attempt a `sudo dd if=<temp> of=<path>`.
+    /// * On any failure, attempt to restore from the backup.
+    async fn safe_write(&self, path: &Path, data: &[u8]) -> Result<()> {
+        let path = path.to_owned();
+        let bytes = data.to_owned();
+
+        self.executor
+            .spawn(async move {
+                use std::{fs, io, path::PathBuf};
+
+                let path: PathBuf = path;
+                let parent = path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."));
+
+                // Derive a backup path: "file.txt" -> "file.txt.bak"
+                let backup_path = match path.file_name() {
+                    Some(name) => {
+                        let mut backup_name = name.to_os_string();
+                        backup_name.push(".bak");
+                        path.with_file_name(backup_name)
+                    }
+                    None => path.with_extension("bak"),
+                };
+
+                let mut had_original = false;
+                if let Ok(md) = fs::metadata(&path) {
+                    if md.is_file() {
+                        fs::copy(&path, &backup_path)?;
+                        had_original = true;
+                    }
+                }
+
+                // Write to a temporary file in a dedicated temp directory.
+                // On Unix we use /tmp/zed, elsewhere we fall back to the system temp dir.
+                let temp_root = std::env::temp_dir().join("zed");
+
+                fs::create_dir_all(&temp_root)?;
+                let mut tmp_file = tempfile::NamedTempFile::new_in(&temp_root)?;
+                tmp_file.write_all(&bytes)?;
+                let tmp_path = tmp_file.path().to_path_buf();
+
+                // Try to atomically replace the destination.
+                let persist_result = tmp_file.persist(&path);
+
+                #[cfg(unix)]
+                let persist_result = match persist_result {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        // If it looks like a permission problem, fall back to sudo dd.
+                        if e.error.kind() == io::ErrorKind::PermissionDenied {
+                            // Build conv argument: always notrunc, fsync only on platforms that support it.
+                            let mut conv = "conv=notrunc".to_owned();
+                            #[cfg(not(any(target_os = "illumos", target_os = "netbsd")))]
+                            conv.push_str(",fsync");
+
+                            let status = Command::new(std::env::var("ZED_SU_CMD").unwrap_or("sudo".to_owned()))
+                                .arg("-E")
+                                .arg("dd")
+                                .arg(format!("if={}", tmp_path.to_string_lossy()))
+                                .arg(format!("of={}", path.to_string_lossy()))
+                                .arg("bs=4k")
+                                .arg(conv)
+                                .status()?;
+
+                            if status.success() {
+                                Ok(())
+                            } else {
+                                Err(e)
+                            }
+                        } else {
+                            Err(e)
+                        }
+                    }
+                };
+
+                match persist_result {
+                    Ok(()) => {
+                        // New contents in place; best-effort backup cleanup.
+                        if had_original {
+                            let _ = fs::remove_file(&backup_path);
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // Try to restore the original from the backup if we had one.
+                        if had_original && fs::metadata(&backup_path).is_ok() {
+                            let _ = fs::copy(&backup_path, &path);
+                        }
+                        Err(io::Error::new(io::ErrorKind::Other, e).into())
+                    }
+                }
+            })
+            .await
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
@@ -793,27 +907,26 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        let file = smol::fs::File::create(path).await?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+        let md = metadata(path)?;
+        let perms = md.permissions();
+        if !perms.readonly() { // Is the file read-only to ALL users?
+            let file = smol::fs::File::create(path).await?;
+            let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+            for chunk in chunks(text, line_ending) {
+                writer.write_all(chunk.as_bytes()).await?;
+            }
+            writer.flush().await?;
+            Ok(())
+        } else {
+            Err(anyhow!("The save operation failed. Reason: File is read-only to all users."))
         }
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
-        if let Some(path) = path.parent() {
-            self.create_dir(path).await?;
+        if let Some(parent) = path.parent() {
+            self.create_dir(parent).await?;
         }
-        let path = path.to_owned();
-        let contents = content.to_owned();
-        self.executor
-            .spawn(async move {
-                std::fs::write(path, contents)?;
-                Ok(())
-            })
-            .await
+        self.safe_write(path, content).await
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
@@ -1580,15 +1693,23 @@ impl FakeFs {
     ) -> Result<()> {
         let mut state = self.state.lock();
         let path_buf = path.as_ref().to_path_buf();
-        *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
+        *state.path_write_counts.entry(path_buf.clone()).or_insert(0) += 1;
+
         let new_inode = state.get_and_increment_inode();
         let new_mtime = state.get_and_increment_mtime();
         let new_len = new_content.len() as u64;
+
         let mut kind = None;
-        state.write_path(path.as_ref(), |entry| {
+        // Backup for "safe write" semantics.
+        let mut old_entry: Option<FakeFsEntry> = None;
+        let mut created_new_entry = false;
+
+        // Perform the in‑memory write.
+        let result: Result<()> = state.write_path(&path_buf, |entry| {
             match entry {
                 btree_map::Entry::Vacant(e) => {
                     kind = Some(PathEventKind::Created);
+                    created_new_entry = true;
                     e.insert(FakeFsEntry::File {
                         inode: new_inode,
                         mtime: new_mtime,
@@ -1599,6 +1720,8 @@ impl FakeFs {
                 }
                 btree_map::Entry::Occupied(mut e) => {
                     kind = Some(PathEventKind::Changed);
+                    // Backup the previous entry so we can roll back on error.
+                    old_entry = Some(e.get().clone());
                     if let FakeFsEntry::File {
                         inode,
                         mtime,
@@ -1619,7 +1742,34 @@ impl FakeFs {
                 }
             }
             Ok(())
-        })?;
+        });
+
+        // If something went wrong, roll back to the previous state.
+        if let Err(err) = result {
+            // Roll back to the previous state.
+            if let Some(old) = old_entry {
+                let _ = state.write_path(&path_buf, |entry| {
+                    match entry {
+                        btree_map::Entry::Vacant(e) => {
+                            e.insert(old);
+                        }
+                        btree_map::Entry::Occupied(mut e) => {
+                            *e.get_mut() = old;
+                        }
+                    }
+                    Ok(())
+                });
+            } else if created_new_entry {
+                let _ = state.write_path(&path_buf, |entry| {
+                    if let btree_map::Entry::Occupied(e) = entry {
+                        e.remove();
+                    }
+                    Ok(())
+                });
+            }
+            return Err(err);
+        }
+
         state.emit_event([(path.as_ref(), kind)]);
         Ok(())
     }
