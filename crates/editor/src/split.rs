@@ -1,24 +1,36 @@
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use multi_buffer::{MultiBuffer, MultiBufferFilterMode};
+use project::Project;
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    SharedString, Styled as _, Window, div,
+    Styled as _, Window, div,
 };
 use workspace::{
-    ActivePaneDecorator, Item, ItemHandle as _, Pane, PaneGroup, SplitDirection, Workspace,
+    ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
 };
 
 use crate::{Editor, EditorEvent};
 
+struct SplitDiffFeatureFlag;
+
+impl FeatureFlag for SplitDiffFeatureFlag {
+    const NAME: &'static str = "split-diff";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
-pub(crate) struct SplitDiff;
+struct SplitDiff;
 
-#[derive(Clone, Copy, PartialEq, Eq, Action)]
+#[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
-pub(crate) struct UnsplitDiff;
+struct UnsplitDiff;
 
 pub struct SplittableEditor {
     primary_editor: Entity<Editor>,
@@ -52,11 +64,11 @@ impl SplittableEditor {
 
     pub fn new_unsplit(
         buffer: Entity<MultiBuffer>,
+        project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let project = workspace.read(cx).project().clone();
         let primary_editor =
             cx.new(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), window, cx));
         let pane = cx.new(|cx| {
@@ -87,6 +99,20 @@ impl SplittableEditor {
                     cx.emit(event.clone())
                 }),
             ];
+
+        window.defer(cx, {
+            let workspace = workspace.downgrade();
+            let primary_editor = primary_editor.downgrade();
+            move |window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        primary_editor.update(cx, |editor, cx| {
+                            editor.added_to_workspace(workspace, window, cx);
+                        })
+                    })
+                    .ok();
+            }
+        });
         Self {
             primary_editor,
             secondary: None,
@@ -96,13 +122,17 @@ impl SplittableEditor {
         }
     }
 
-    pub(crate) fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+    fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+        if !cx.has_flag::<SplitDiffFeatureFlag>() {
+            return;
+        }
         if self.secondary.is_some() {
             return;
         }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+        let project = workspace.read(cx).project().clone();
         let follower = self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, cx| {
                 let follower = buffer.get_or_create_follower(cx);
@@ -114,17 +144,15 @@ impl SplittableEditor {
         follower.update(cx, |follower, cx| {
             follower.set_all_diff_hunks_expanded(cx);
             follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-            // FIXME set readonly here too?
+            // TODO set readonly here too?
         });
-        let secondary_editor = cx.new(|cx| {
-            let mut editor = Editor::for_multibuffer(
-                follower,
-                Some(workspace.read(cx).project().clone()),
-                window,
-                cx,
-            );
-            editor.set_use_base_text_line_numbers(true, cx);
-            editor
+        let secondary_editor = workspace.update(cx, |workspace, cx| {
+            cx.new(|cx| {
+                let mut editor = Editor::for_multibuffer(follower, Some(project), window, cx);
+                editor.set_use_base_text_line_numbers(true, cx);
+                editor.added_to_workspace(workspace, window, cx);
+                editor
+            })
         });
         let secondary_pane = cx.new(|cx| {
             let mut pane = Pane::new(
@@ -139,7 +167,7 @@ impl SplittableEditor {
             );
             pane.set_should_display_tab_bar(|_, _| false);
             pane.add_item(
-                secondary_editor.boxed_clone(),
+                ItemHandle::boxed_clone(&secondary_editor),
                 false,
                 false,
                 None,
@@ -173,7 +201,7 @@ impl SplittableEditor {
         cx.notify();
     }
 
-    pub(crate) fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
+    fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
         let Some(secondary) = self.secondary.take() else {
             return;
         };
@@ -184,6 +212,23 @@ impl SplittableEditor {
             });
         });
         cx.notify();
+    }
+
+    pub fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace = workspace.weak_handle();
+        self.primary_editor.update(cx, |primary_editor, cx| {
+            primary_editor.added_to_workspace(workspace, window, cx);
+        });
+        if let Some(secondary) = &self.secondary {
+            secondary.editor.update(cx, |secondary_editor, cx| {
+                secondary_editor.added_to_workspace(workspace, window, cx);
+            });
+        }
     }
 }
 
@@ -215,13 +260,5 @@ impl Render for SplittableEditor {
                 cx,
             ))
             .into_any_element()
-    }
-}
-
-impl Item for SplittableEditor {
-    type Event = EditorEvent;
-
-    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
-        self.primary_editor.read(cx).tab_content_text(detail, cx)
     }
 }

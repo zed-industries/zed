@@ -5359,6 +5359,7 @@ dependencies = [
  "db",
  "edit_prediction",
  "emojis",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",

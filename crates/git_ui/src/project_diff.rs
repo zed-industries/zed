@@ -252,8 +252,13 @@ impl ProjectDiff {
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
         let editor = cx.new(|cx| {
-            let diff_display_editor =
-                SplittableEditor::new_unsplit(multibuffer.clone(), workspace.clone(), window, cx);
+            let diff_display_editor = SplittableEditor::new_unsplit(
+                multibuffer.clone(),
+                project.clone(),
+                workspace.clone(),
+                window,
+                cx,
+            );
             diff_display_editor
                 .primary_editor()
                 .update(cx, |editor, cx| {
@@ -279,17 +284,6 @@ impl ProjectDiff {
                     }
                 });
             diff_display_editor
-        });
-        window.defer(cx, {
-            let workspace = workspace.clone();
-            let editor = editor.clone();
-            move |window, cx| {
-                workspace.update(cx, |workspace, cx| {
-                    editor.update(cx, |editor, cx| {
-                        editor.added_to_workspace(workspace, window, cx);
-                    })
-                });
-            }
         });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
@@ -685,8 +679,11 @@ impl Item for ProjectDiff {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |primary_editor, cx| {
+                primary_editor.deactivated(window, cx);
+            })
+        });
     }
 
     fn navigate(
@@ -695,8 +692,11 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |primary_editor, cx| {
+                primary_editor.navigate(data, window, cx)
+            })
+        })
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
@@ -734,17 +734,23 @@ impl Item for ProjectDiff {
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
-        self.editor.for_each_project_item(cx, f)
+        self.editor
+            .read(cx)
+            .primary_editor()
+            .read(cx)
+            .for_each_project_item(cx, f)
     }
 
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_nav_history(nav_history, window, cx);
+            editor.primary_editor().update(cx, |primary_editor, _| {
+                primary_editor.set_nav_history(Some(nav_history));
+            })
         });
     }
 
@@ -788,7 +794,11 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(options, project, window, cx)
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |primary_editor, cx| {
+                primary_editor.save(options, project, window, cx)
+            })
+        })
     }
 
     fn save_as(
@@ -807,19 +817,23 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.reload(project, window, cx)
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |primary_editor, cx| {
+                primary_editor.reload(project, window, cx)
+            })
+        })
     }
 
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
-        _: &'a App,
+        cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.clone().into())
+            Some(self.editor.read(cx).primary_editor().clone().into())
         } else {
             None
         }
@@ -830,7 +844,11 @@ impl Item for ProjectDiff {
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+        self.editor
+            .read(cx)
+            .last_selected_editor()
+            .read(cx)
+            .breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(

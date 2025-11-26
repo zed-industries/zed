@@ -594,6 +594,8 @@ impl Item for Editor {
         self_handle: &'a Entity<Self>,
         cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
+        // If adding a new type here, make sure to add it to
+        // [`SplittableEditor::act_as_type`] too
         if TypeId::of::<Self>() == type_id {
             Some(self_handle.clone().into())
         } else if TypeId::of::<MultiBuffer>() == type_id {

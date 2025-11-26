@@ -1640,7 +1640,7 @@ pub(crate) struct FocusedBlock {
     focus_handle: WeakFocusHandle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum JumpData {
     MultiBufferRow {
         row: MultiBufferRow,
