@@ -71,29 +71,6 @@ actions!(
 /// - Selection and cursor management
 /// - Keyboard navigation and editing actions
 /// - IME (Input Method Editor) support via `EntityInputHandler`
-///
-/// To render an `Input`, use the [`TextArea`](crate::TextArea) element.
-///
-/// # Example
-///
-/// ```ignore
-/// struct MyView {
-///     input: Entity<Input>,
-/// }
-///
-/// impl MyView {
-///     fn new(cx: &mut Context<Self>) -> Self {
-///         Self {
-///             input: cx.new(Input::new),
-///         }
-///     }
-/// }
-///
-/// impl Render for MyView {
-///     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-///         text_area(&self.input)
-///     }
-/// }
 /// ```
 pub struct Input {
     focus_handle: FocusHandle,
