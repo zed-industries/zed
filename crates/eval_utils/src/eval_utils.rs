@@ -63,7 +63,6 @@ pub fn eval(
     mismatched_tag_threshold: f32,
     evalf: Arc<dyn Fn(mpsc::Sender<EvalOutput>) + Send + Sync>,
 ) {
-    dbg!("STARTINGING EVAL HARNESS");
     let mut evaluated_count = 0;
     let mut failed_count = 0;
     report_progress(evaluated_count, failed_count, iterations);
@@ -83,7 +82,6 @@ pub fn eval(
         executor
             .spawn(async move {
                 let _guard = semaphore.acquire().await;
-                dbg!("CALLING EVALF");
                 evalf(tx);
             })
             .detach();

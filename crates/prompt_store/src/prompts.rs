@@ -289,7 +289,7 @@ impl PromptBuilder {
         };
 
         const MAX_CTX: usize = 50000;
-        let is_insert = dbg!(range.is_empty());
+        let is_insert = range.is_empty();
         let mut is_truncated = false;
 
         let before_range = 0..range.start;
