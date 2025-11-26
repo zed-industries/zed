@@ -222,8 +222,6 @@ pub mod git {
             ViewStash,
             /// Opens the git worktree selector.
             Worktree,
-            /// Deletes the selected git branch.
-            DeleteBranch
         ]
     );
 }
