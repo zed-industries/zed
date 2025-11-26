@@ -17,6 +17,7 @@ use settings::{
 
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
+use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, Follow, InlineAssistant, NewTextThread, NewThread,
@@ -33,7 +34,6 @@ use crate::{
     acp::{AcpThreadHistory, ThreadHistoryEvent},
 };
 use crate::{ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary};
-use crate::{ManageProfiles, RemoveHistory};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -114,12 +114,6 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
-                    }
-                })
-                .register_action(|workspace, _: &RemoveHistory, window, cx| {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| panel.remove_history(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &OpenSettings, window, cx| {
@@ -619,11 +613,7 @@ impl AgentPanel {
                     if let Some(panel) = panel.upgrade() {
                         menu = Self::populate_recently_opened_menu_section(menu, panel, cx);
                     }
-                    menu = menu
-                        .action("Delete All", Box::new(RemoveHistory))
-                        .fixed_width(px(320.).into())
-                        .keep_open_on_confirm(false)
-                        .key_context("NavigationMenu");
+
                     menu = menu
                         .action("View All", Box::new(OpenHistory))
                         .fixed_width(px(320.).into())
@@ -2596,9 +2586,6 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
-                this.remove_history(window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_configuration(window, cx);
