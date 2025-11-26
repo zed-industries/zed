@@ -304,7 +304,7 @@ impl Inner {
                     None
                 }
                 Ok(ClipboardData { bytes, format }) => {
-                    if format == AtomEnum::ATOM.into() {
+                    if format == u32::from(AtomEnum::ATOM) {
                         let available_formats = Self::parse_formats(&bytes);
                         formats
                             .iter()
@@ -702,7 +702,7 @@ impl Inner {
                     PropMode::REPLACE,
                     event.requestor,
                     event.property,
-                    AtomEnum::ATOM.into(),
+                    AtomEnum::ATOM,
                     &targets,
                 )
                 .map_err(into_unknown)?;
