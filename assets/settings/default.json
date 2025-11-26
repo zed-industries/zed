@@ -1956,7 +1956,7 @@
       "use_on_type_format": false
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "vtsls", "..."],
+      "language_servers": ["vue-language-server", "typescript-language-server", "!vtsls", "..."],
       "prettier": {
         "allowed": true
       }
