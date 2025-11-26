@@ -2306,7 +2306,7 @@ impl RemoteServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                    .child(Label::new("Connect New Ssh Server"))
+                    .child(Label::new("Connect SSH Server"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let state = CreateRemoteServer::new(window, cx);
                         this.mode = Mode::CreateRemoteServer(state);
@@ -2377,6 +2377,20 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
+        let has_open_project = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .is_some()
+            })
+            .unwrap_or(false);
+
         let modal_section = v_flex()
             .track_focus(&self.focus_handle(cx))
             .id("ssh-server-list")
@@ -2384,7 +2398,9 @@ impl RemoteServerProjects {
             .track_scroll(&state.scroll_handle)
             .size_full()
             .child(connect_button)
-            .child(connect_dev_container_button);
+            .when(has_open_project, |this| {
+                this.child(connect_dev_container_button)
+            });
 
         #[cfg(target_os = "windows")]
         let modal_section = modal_section.child(wsl_connect_button);
@@ -2412,8 +2428,11 @@ impl RemoteServerProjects {
                 )
                 .into_any_element(),
         )
-        .entry(state.add_new_server.clone())
-        .entry(state.add_new_devcontainer.clone());
+        .entry(state.add_new_server.clone());
+
+        if has_open_project {
+            modal_section = modal_section.entry(state.add_new_devcontainer.clone());
+        }
 
         if cfg!(target_os = "windows") {
             modal_section = modal_section.entry(state.add_new_wsl.clone());
