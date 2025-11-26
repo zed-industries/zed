@@ -47,17 +47,12 @@ impl LineWrapper {
 
         let mut candidates = fragments
             .iter()
-            .flat_map(move |fragment| fragment.wrap_boundary_candidates())
-            .peekable();
+            .flat_map(move |fragment| fragment.wrap_boundary_candidates());
         iter::from_fn(move || {
-            while let Some(candidate) = candidates.next() {
+            for candidate in candidates.by_ref() {
                 let ix = index;
                 index += candidate.len_utf8();
                 let mut new_prev_c = prev_c;
-                let next_c = candidates.peek().map(|c| match c {
-                    WrapBoundaryCandidate::Char { character: c } => *c,
-                    WrapBoundaryCandidate::Element { .. } => '\0',
-                });
 
                 let item_width = match candidate {
                     WrapBoundaryCandidate::Char { character: c } => {
