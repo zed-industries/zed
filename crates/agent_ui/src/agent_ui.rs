@@ -69,7 +69,7 @@ actions!(
         CycleModeSelector,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Removes the history.
+        /// Removes all thread history.
         RemoveHistory,
         /// Opens the conversation history view.
         OpenHistory,
