@@ -847,6 +847,7 @@ impl Input {
         }
 
         self.needs_layout = false;
+        self.scroll_to_cursor();
     }
 
     pub(crate) fn total_content_height(&self) -> Pixels {

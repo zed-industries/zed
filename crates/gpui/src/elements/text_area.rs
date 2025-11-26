@@ -1019,22 +1019,24 @@ fn paint_cursor(
 fn is_cursor_in_line(
     cursor_offset: usize,
     text_range: &std::ops::Range<usize>,
-    content_len: usize,
+    _content_len: usize,
 ) -> bool {
+    // A cursor belongs to a line if:
+    // 1. It's within the line's text range (start <= cursor < end), OR
+    // 2. It's at text_range.end (cursor is at the end of this line, before the newline)
+    // 3. For empty lines, cursor must equal the start position
     let result = if text_range.is_empty() {
         cursor_offset == text_range.start
     } else {
-        text_range.contains(&cursor_offset)
-            || (cursor_offset == text_range.end && cursor_offset == content_len)
+        text_range.contains(&cursor_offset) || cursor_offset == text_range.end
     };
 
     eprintln!(
-        "[is_cursor_in_line] cursor_offset={}, text_range={:?}, content_len={}, contains={}, at_end_of_content={}, result={}",
+        "[is_cursor_in_line] cursor_offset={}, text_range={:?}, contains={}, at_line_end={}, result={}",
         cursor_offset,
         text_range,
-        content_len,
         text_range.contains(&cursor_offset),
-        cursor_offset == text_range.end && cursor_offset == content_len,
+        cursor_offset == text_range.end,
         result
     );
 
@@ -1099,4 +1101,20 @@ impl IntoElement for TextArea {
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: Add tests for `is_cursor_in_line` to prevent regression of cursor-at-line-end bug.
+    //
+    // The bug: Rust ranges are exclusive on the end, so `0..13.contains(13)` returns false.
+    // A cursor at the end of a line (e.g., offset 13 for line with text_range 0..13) was not
+    // being recognized as belonging to that line, causing the cursor to disappear.
+    //
+    // Test cases to cover:
+    // - cursor_offset=13, text_range=0..13 -> should return true (cursor at line end)
+    // - cursor_offset=12, text_range=0..13 -> should return true (cursor within line)
+    // - cursor_offset=14, text_range=0..13 -> should return false (cursor past line)
+    // - cursor_offset=14, text_range=14..14 -> should return true (empty line)
+    // - cursor_offset=89, text_range=47..89 -> should return true (cursor at end of last line)
 }
