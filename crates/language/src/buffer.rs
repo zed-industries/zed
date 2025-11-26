@@ -237,7 +237,7 @@ struct SelectionSet {
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
-    /// TODO docs
+    /// TODO kb docs
     pub registration_id: Option<SharedString>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,

@@ -1907,137 +1907,163 @@ impl Editor {
             project_subscriptions.push(cx.subscribe_in(
                 project,
                 window,
-                |editor, _, event, window, cx| match event {
-                    project::Event::RefreshCodeLens => {
-                        // we always query lens with actions, without storing them, always refreshing them
-                    }
-                    project::Event::RefreshInlayHints {
-                        server_id,
-                        request_id,
-                    } => {
-                        editor.refresh_inlay_hints(
-                            InlayHintRefreshReason::RefreshRequested {
-                                server_id: *server_id,
-                                request_id: *request_id,
-                            },
-                            cx,
-                        );
-                    }
-                    project::Event::LanguageServerRemoved(..) => {
-                        if editor.tasks_update_task.is_none() {
-                            editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
+                |editor, _, event, window, cx| {
+                    match event {
+                        project::Event::RefreshCodeLens => {
+                            // we always query lens with actions, without storing them, always refreshing them
                         }
-                        editor.registered_buffers.clear();
-                        editor.register_visible_buffers(cx);
-                    }
-                    project::Event::LanguageServerAdded(..) => {
-                        if editor.tasks_update_task.is_none() {
-                            editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
+                        project::Event::RefreshInlayHints {
+                            server_id,
+                            request_id,
+                        } => {
+                            editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::RefreshRequested {
+                                    server_id: *server_id,
+                                    request_id: *request_id,
+                                },
+                                cx,
+                            );
                         }
-                    }
-                    project::Event::SnippetEdit(id, snippet_edits) => {
-                        // todo(lw): Non singletons
-                        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
-                            let snapshot = buffer.read(cx).snapshot();
-                            let focus_handle = editor.focus_handle(cx);
-                            if snapshot.remote_id() == *id && focus_handle.is_focused(window) {
-                                for (range, snippet) in snippet_edits {
-                                    let buffer_range =
-                                        language::range_from_lsp(*range).to_offset(&snapshot);
-                                    editor
-                                        .insert_snippet(
-                                            &[MultiBufferOffset(buffer_range.start)
-                                                ..MultiBufferOffset(buffer_range.end)],
-                                            snippet.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .ok();
+                        project::Event::LanguageServerRemoved(..) => {
+                            if editor.tasks_update_task.is_none() {
+                                editor.tasks_update_task =
+                                    Some(editor.refresh_runnables(window, cx));
+                            }
+                            editor.registered_buffers.clear();
+                            editor.register_visible_buffers(cx);
+                        }
+                        project::Event::LanguageServerAdded(..) => {
+                            if editor.tasks_update_task.is_none() {
+                                editor.tasks_update_task =
+                                    Some(editor.refresh_runnables(window, cx));
+                            }
+                        }
+                        project::Event::SnippetEdit(id, snippet_edits) => {
+                            // todo(lw): Non singletons
+                            if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+                                let snapshot = buffer.read(cx).snapshot();
+                                let focus_handle = editor.focus_handle(cx);
+                                if snapshot.remote_id() == *id && focus_handle.is_focused(window) {
+                                    for (range, snippet) in snippet_edits {
+                                        let buffer_range =
+                                            language::range_from_lsp(*range).to_offset(&snapshot);
+                                        editor
+                                            .insert_snippet(
+                                                &[MultiBufferOffset(buffer_range.start)
+                                                    ..MultiBufferOffset(buffer_range.end)],
+                                                snippet.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                            .ok();
+                                    }
                                 }
                             }
                         }
-                    }
-                    project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
-                        let buffer_id = *buffer_id;
-                        if editor.buffer().read(cx).buffer(buffer_id).is_some() {
-                            editor.register_buffer(buffer_id, cx);
-                            editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                            refresh_linked_ranges(editor, window, cx);
-                            editor.refresh_code_actions(window, cx);
-                            editor.refresh_document_highlights(cx);
-                        }
-                    }
-
-                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
-                        let Some(workspace) = editor.workspace() else {
-                            return;
-                        };
-                        let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
-                        else {
-                            return;
-                        };
-
-                        if active_editor.entity_id() == cx.entity_id() {
-                            let entity_id = cx.entity_id();
-                            workspace.update(cx, |this, cx| {
-                                this.panes_mut()
-                                    .iter_mut()
-                                    .filter(|pane| pane.entity_id() != entity_id)
-                                    .for_each(|p| {
-                                        p.update(cx, |pane, _| {
-                                            pane.nav_history_mut().rename_item(
-                                                entity_id,
-                                                project_path.clone(),
-                                                abs_path.clone().into(),
-                                            );
-                                        })
-                                    });
-                            });
-                            let edited_buffers_already_open = {
-                                let other_editors: Vec<Entity<Editor>> = workspace
-                                    .read(cx)
-                                    .panes()
-                                    .iter()
-                                    .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
-                                    .filter(|editor| editor.entity_id() != cx.entity_id())
-                                    .collect();
-
-                                transaction.0.keys().all(|buffer| {
-                                    other_editors.iter().any(|editor| {
-                                        let multi_buffer = editor.read(cx).buffer();
-                                        multi_buffer.read(cx).is_singleton()
-                                            && multi_buffer.read(cx).as_singleton().map_or(
-                                                false,
-                                                |singleton| {
-                                                    singleton.entity_id() == buffer.entity_id()
-                                                },
-                                            )
-                                    })
-                                })
-                            };
-                            if !edited_buffers_already_open {
-                                let workspace = workspace.downgrade();
-                                let transaction = transaction.clone();
-                                cx.defer_in(window, move |_, window, cx| {
-                                    cx.spawn_in(window, async move |editor, cx| {
-                                        Self::open_project_transaction(
-                                            &editor,
-                                            workspace,
-                                            transaction,
-                                            "Rename".to_string(),
-                                            cx,
-                                        )
-                                        .await
-                                        .ok()
-                                    })
-                                    .detach();
-                                });
+                        project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                            let buffer_id = *buffer_id;
+                            if editor.buffer().read(cx).buffer(buffer_id).is_some() {
+                                editor.register_buffer(buffer_id, cx);
+                                editor.update_lsp_data(Some(buffer_id), window, cx);
+                                editor
+                                    .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                                refresh_linked_ranges(editor, window, cx);
+                                editor.refresh_code_actions(window, cx);
+                                editor.refresh_document_highlights(cx);
                             }
                         }
-                    }
 
-                    _ => {}
+                        project::Event::EntryRenamed(transaction, project_path, abs_path) => {
+                            let Some(workspace) = editor.workspace() else {
+                                return;
+                            };
+                            let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
+                            else {
+                                return;
+                            };
+
+                            if active_editor.entity_id() == cx.entity_id() {
+                                let entity_id = cx.entity_id();
+                                workspace.update(cx, |this, cx| {
+                                    this.panes_mut()
+                                        .iter_mut()
+                                        .filter(|pane| pane.entity_id() != entity_id)
+                                        .for_each(|p| {
+                                            p.update(cx, |pane, _| {
+                                                pane.nav_history_mut().rename_item(
+                                                    entity_id,
+                                                    project_path.clone(),
+                                                    abs_path.clone().into(),
+                                                );
+                                            })
+                                        });
+                                });
+                                let edited_buffers_already_open = {
+                                    let other_editors: Vec<Entity<Editor>> = workspace
+                                        .read(cx)
+                                        .panes()
+                                        .iter()
+                                        .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
+                                        .filter(|editor| editor.entity_id() != cx.entity_id())
+                                        .collect();
+
+                                    transaction.0.keys().all(|buffer| {
+                                        other_editors.iter().any(|editor| {
+                                            let multi_buffer = editor.read(cx).buffer();
+                                            multi_buffer.read(cx).is_singleton()
+                                                && multi_buffer.read(cx).as_singleton().map_or(
+                                                    false,
+                                                    |singleton| {
+                                                        singleton.entity_id() == buffer.entity_id()
+                                                    },
+                                                )
+                                        })
+                                    })
+                                };
+                                if !edited_buffers_already_open {
+                                    let workspace = workspace.downgrade();
+                                    let transaction = transaction.clone();
+                                    cx.defer_in(window, move |_, window, cx| {
+                                        cx.spawn_in(window, async move |editor, cx| {
+                                            Self::open_project_transaction(
+                                                &editor,
+                                                workspace,
+                                                transaction,
+                                                "Rename".to_string(),
+                                                cx,
+                                            )
+                                            .await
+                                            .ok()
+                                        })
+                                        .detach();
+                                    });
+                                }
+                            }
+                        }
+                        project::Event::EditorUpdatedDiagnostics {
+                            for_buffer,
+                            for_editor,
+                            for_worktree,
+                        } => {
+                            // TODO kb this is broken and throws us in a loop
+                            if cx.entity_id() != *for_editor
+                                && editor.buffer().read(cx).all_buffers().iter().any(|buffer| {
+                                    buffer
+                                        .read(cx)
+                                        .file()
+                                        .map(|f| f.worktree_id(cx))
+                                        .is_some_and(|buffer_worktree| {
+                                            buffer_worktree == *for_worktree
+                                        })
+                                })
+                            {
+                                let priority_update =
+                                    editor.buffer().read(cx).buffer(*for_buffer).is_some();
+                                editor.pull_diagnostics(None, priority_update, window, cx);
+                            }
+                        }
+                        _ => {}
+                    }
                 },
             ));
             if let Some(task_inventory) = project
@@ -18308,6 +18334,7 @@ impl Editor {
     fn pull_diagnostics(
         &mut self,
         buffer_id: Option<BufferId>,
+        priority_update: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
@@ -18321,7 +18348,12 @@ impl Editor {
             return None;
         }
         let project = self.project()?.downgrade();
-        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
+        let debounce = if priority_update {
+            Duration::from_millis(pull_diagnostics_settings.debounce_ms)
+        } else {
+            Duration::from_millis(pull_diagnostics_settings.debounce_ms) * 2
+        };
+
         let mut buffers = self.buffer.read(cx).all_buffers();
         buffers.retain(|buffer| {
             let buffer_id_to_retain = buffer.read(cx).remote_id();
@@ -18333,7 +18365,7 @@ impl Editor {
             return None;
         }
 
-        self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
+        self.pull_diagnostics_task = cx.spawn_in(window, async move |_, cx| {
             cx.background_executor().timer(debounce).await;
 
             let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
@@ -18354,18 +18386,8 @@ impl Editor {
             };
 
             while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                match pull_task {
-                    Ok(()) => {
-                        if editor
-                            .update_in(cx, |editor, window, cx| {
-                                editor.update_diagnostics_state(window, cx);
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
+                if let Err(e) = pull_task {
+                    log::error!("Failed to update project diagnostics: {e:#}");
                 }
             }
         });
@@ -21513,20 +21535,41 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged
             | multi_buffer::Event::Reloaded
             | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
-            multi_buffer::Event::DiagnosticsUpdated => {
-                self.update_diagnostics_state(window, cx);
+            multi_buffer::Event::DiagnosticsUpdated(buffer_id) => {
+                self.update_diagnostics_state(*buffer_id, window, cx);
             }
             _ => {}
         };
     }
 
-    fn update_diagnostics_state(&mut self, window: &mut Window, cx: &mut Context<'_, Editor>) {
+    fn update_diagnostics_state(
+        &mut self,
+        buffer_id: BufferId,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) {
         if !self.diagnostics_enabled() {
             return;
         }
         self.refresh_active_diagnostics(cx);
         self.refresh_inline_diagnostics(true, window, cx);
         self.scrollbar_marker_state.dirty = true;
+        if let Some(project) = self.project.clone() {
+            let for_worktree = self
+                .buffer()
+                .read(cx)
+                .buffer(buffer_id)
+                .and_then(|buffer| Some(buffer.read(cx).file()?.worktree_id(cx)));
+            if let Some(for_worktree) = for_worktree {
+                project.update(cx, |_, cx| {
+                    cx.emit(project::Event::EditorUpdatedDiagnostics {
+                        for_buffer: buffer_id,
+                        for_editor: cx.entity_id(),
+                        for_worktree,
+                    });
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -22565,7 +22608,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.pull_diagnostics(for_buffer, window, cx);
+        self.pull_diagnostics(for_buffer, true, window, cx);
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
     }
 

@@ -120,7 +120,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     DirtyChanged,
-    DiagnosticsUpdated,
+    DiagnosticsUpdated(BufferId),
     BufferDiffChanged,
 }
 
@@ -2154,6 +2154,8 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         use language::BufferEvent;
+
+        let buffer_id = buffer.read(cx).remote_id();
         cx.emit(match event {
             BufferEvent::Edited => Event::Edited {
                 edited_buffer: Some(buffer),
@@ -2162,9 +2164,9 @@ impl MultiBuffer {
             BufferEvent::Saved => Event::Saved,
             BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             BufferEvent::Reloaded => Event::Reloaded,
-            BufferEvent::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
-            BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
-            BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
+            BufferEvent::LanguageChanged => Event::LanguageChanged(buffer_id),
+            BufferEvent::Reparsed => Event::Reparsed(buffer_id),
+            BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated(buffer_id),
             BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
                 return;
