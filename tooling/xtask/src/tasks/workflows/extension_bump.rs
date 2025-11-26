@@ -62,7 +62,7 @@ fn check_bump_needed() -> (NamedJob, StepOutput) {
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
-        .add_step(steps::checkout_repo())
+        .add_step(steps::checkout_repo().add_with(("fetch-depth", 10)))
         .add_step(compare_versions);
 
     (named::job(job), version_changed)
