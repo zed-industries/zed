@@ -26,8 +26,8 @@ pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, Window, prelude::*,
+    ActiveTheme, Color, CommonAnimationExt, Context, InteractiveElement, IntoElement, KeyBinding,
+    LabelCommon, ListItem, Styled, Window, prelude::*,
 };
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
@@ -253,17 +253,16 @@ impl Render for RemoteConnectionPrompt {
 
         v_flex()
             .key_context("PasswordPrompt")
-            .py_2()
-            .px_3()
+            .p_2()
             .size_full()
             .text_buffer(cx)
             .when_some(self.status_message.clone(), |el, status_message| {
                 el.child(
                     h_flex()
-                        .gap_1()
+                        .gap_2()
                         .child(
                             Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Medium)
+                                .color(Color::Muted)
                                 .with_rotate_animation(2),
                         )
                         .child(
@@ -423,11 +422,26 @@ impl Render for RemoteConnectionModal {
             .child(
                 div()
                     .w_full()
-                    .rounded_b_lg()
                     .bg(body_color)
-                    .border_t_1()
+                    .border_y_1()
                     .border_color(theme.colors().border_variant)
                     .child(self.prompt.clone()),
+            )
+            .child(
+                div().w_full().py_1().child(
+                    ListItem::new("li-devcontainer-go-back")
+                        .inset(true)
+                        .spacing(ui::ListItemSpacing::Sparse)
+                        .start_slot(Icon::new(IconName::Close).color(Color::Muted))
+                        .child(Label::new("Cancel"))
+                        .end_slot(
+                            KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle(cx), cx)
+                                .size(rems_from_px(12.)),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.dismiss(&menu::Cancel, window, cx);
+                        })),
+                ),
             )
     }
 }
