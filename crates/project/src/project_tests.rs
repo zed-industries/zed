@@ -8237,10 +8237,10 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         .await
         .unwrap();
 
-    let staged_diff = String::from_utf8_lossy(&output.stdout);
 
     #[cfg(unix)]
     {
+        let staged_diff = String::from_utf8_lossy(&output.stdout);
         assert!(
             !staged_diff.contains("new mode 100644"),
             "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
