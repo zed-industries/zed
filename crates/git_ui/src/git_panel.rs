@@ -21,15 +21,15 @@ use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
-    PushOptions, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, Remote, RemoteUrl, RestoreTrackedFiles, StageAll, StashAll, StashApply,
-    StashPop, TrashUntrackedFiles, UnstageAll,
+    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
+    TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, AsyncApp, AsyncWindowContext, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
@@ -2569,7 +2569,6 @@ impl GitPanel {
 
             Ok(selection.map(|selection| Remote {
                 name: current_remotes[selection].clone(),
-                url: RemoteUrl::default(), //FIXME
             }))
         }
     }

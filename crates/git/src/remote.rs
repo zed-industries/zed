@@ -3,25 +3,12 @@ use std::sync::LazyLock;
 
 use derive_more::Deref;
 use derive_more::Into;
-use gpui::SharedString;
 use regex::Regex;
 use url::Url;
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Remote {
-    pub name: SharedString,
-    pub url: RemoteUrl,
-}
 
 /// The URL to a Git remote.
 #[derive(Debug, PartialEq, Eq, Clone, Deref, Into, Hash)]
 pub struct RemoteUrl(Url);
-
-impl Default for RemoteUrl {
-    fn default() -> Self {
-        Self(Url::from_str("http://default").expect("Failed to create default remote url"))
-    }
-}
 
 static USERNAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[0-9a-zA-Z\-_]+@").expect("Failed to create USERNAME_REGEX"));

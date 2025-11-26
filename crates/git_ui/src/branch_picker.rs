@@ -880,11 +880,3 @@ impl PickerDelegate for BranchListDelegate {
         None
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_name() {}
-}

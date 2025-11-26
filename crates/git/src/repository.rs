@@ -1,7 +1,7 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
-use crate::{Oid, Remote, RemoteUrl, RunHook, SHORT_SHA_LENGTH, remote};
+use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -18,7 +18,6 @@ use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
-use std::str::FromStr;
 use std::{
     cmp::Ordering,
     future,
@@ -36,8 +35,6 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
-/// Config key to set the default remote set
-const REMOTE_DEFAULT_CONFIG: &str = "remote.default";
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -230,6 +227,11 @@ impl CommitDetails {
     }
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Remote {
+    pub name: SharedString,
+}
+
 pub enum ResetMode {
     /// Reset the branch pointer, leave index and worktree unchanged (this will make it look like things that were
     /// committed are now staged).
@@ -255,10 +257,7 @@ impl FetchOptions {
 
     pub fn from_proto(remote_name: Option<String>) -> Self {
         match remote_name {
-            Some(name) => FetchOptions::Remote(Remote {
-                name: name.into(),
-                url: RemoteUrl::default(), // FIXME
-            }),
+            Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
             None => FetchOptions::All,
         }
     }
@@ -562,8 +561,6 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
     fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>>;
-
-    fn change_remote(&self, name: String) -> BoxFuture<'_, Result<()>>;
 
     fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>>;
 
@@ -1802,20 +1799,10 @@ impl GitRepository for RealGitRepository {
 
                     if output.status.success() {
                         let remote_name = String::from_utf8_lossy(&output.stdout);
-                        let output = new_smol_command(&git_binary_path)
-                            .current_dir(&working_directory)
-                            .args(["config", "--get"])
-                            .arg(format!("remote.{}.remote.url", remote_name))
-                            .output()
-                            .await?;
-                        if output.status.success() {
-                            let remote_url = String::from_utf8_lossy(&output.stdout);
 
-                            return Ok(vec![Remote {
-                                name: remote_name.trim().to_string().into(),
-                                url: RemoteUrl::from_str(&remote_url)?,
-                            }]);
-                        }
+                        return Ok(vec![Remote {
+                            name: remote_name.trim().to_string().into(),
+                        }]);
                     }
                 }
 
@@ -1836,11 +1823,9 @@ impl GitRepository for RealGitRepository {
                     .filter_map(|line| {
                         let mut splitted_line = line.split_whitespace();
                         let remote_name = splitted_line.next()?;
-                        let remote_url = splitted_line.next()?;
 
-                        Some(remote::Remote {
+                        Some(Remote {
                             name: remote_name.trim().to_string().into(),
-                            url: RemoteUrl::from_str(remote_url).ok()?,
                         })
                     })
                     .collect();
@@ -1856,19 +1841,6 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let repo = repo.lock();
                 repo.remote_delete(&name)?;
-
-                Ok(())
-            })
-            .boxed()
-    }
-
-    fn change_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        let repo = self.repository.clone();
-        self.executor
-            .spawn(async move {
-                let repo = repo.lock();
-                let mut config = repo.config()?;
-                config.set_str(REMOTE_DEFAULT_CONFIG, &name)?;
 
                 Ok(())
             })

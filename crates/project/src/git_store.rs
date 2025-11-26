@@ -25,12 +25,12 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, Oid, Remote, RemoteUrl, RunHook,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, RunHook,
     blame::Blame,
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, RemoteCommandOutput, RepoPath,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
         ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
@@ -4755,7 +4755,6 @@ impl Repository {
                         .into_iter()
                         .map(|remotes| Remote {
                             name: remotes.name.into(),
-                            url: RemoteUrl::default(), // FiXME
                         })
                         .collect();
 

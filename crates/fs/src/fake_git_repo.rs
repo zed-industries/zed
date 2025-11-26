@@ -3,11 +3,11 @@ use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
-    Oid, Remote, RunHook,
+    Oid, RunHook,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, RepoPath, ResetMode, Worktree,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -50,7 +50,6 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
-    pub current_remote_name: Option<String>,
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
@@ -70,7 +69,6 @@ impl FakeGitRepositoryState {
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
-            current_remote_name: None,
             remotes: HashMap::default(),
         }
     }
@@ -659,13 +657,6 @@ impl GitRepository for FakeGitRepository {
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             state.remotes.insert(name, url);
-            Ok(())
-        })
-    }
-
-    fn change_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.current_remote_name = Some(name);
             Ok(())
         })
     }
