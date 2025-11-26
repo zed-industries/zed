@@ -7,6 +7,7 @@ use futures::channel::mpsc;
 use futures::{Future, FutureExt, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
+use offline_mode::OfflineModeSetting;
 use parking_lot::Mutex;
 use regex::Regex;
 use release_channel::ReleaseChannel;
@@ -33,6 +34,7 @@ pub struct Telemetry {
 
 struct TelemetryState {
     settings: TelemetrySettings,
+    is_offline: bool,
     system_id: Option<Arc<str>>,       // Per system
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
@@ -181,6 +183,7 @@ impl Telemetry {
 
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
+            is_offline: OfflineModeSetting::get_global(cx).0,
             architecture: env::consts::ARCH,
             release_channel,
             system_id: None,
@@ -220,6 +223,7 @@ impl Telemetry {
             move |cx| {
                 let mut state = state.lock();
                 state.settings = *TelemetrySettings::get_global(cx);
+                state.is_offline = OfflineModeSetting::get_global(cx).0;
             }
         })
         .detach();
@@ -445,6 +449,10 @@ impl Telemetry {
             return;
         }
 
+        if state.is_offline {
+            return;
+        }
+
         match &mut event {
             Event::Flexible(event) => event
                 .event_properties
@@ -529,8 +537,13 @@ impl Telemetry {
         state.first_event_date_time = None;
         let events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
+        let is_offline = state.is_offline;
         drop(state);
         if events.is_empty() {
+            return Task::ready(());
+        }
+
+        if is_offline {
             return Task::ready(());
         }
 
