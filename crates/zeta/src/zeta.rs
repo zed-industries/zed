@@ -506,7 +506,7 @@ impl Zeta {
         let (reject_tx, mut reject_rx) = mpsc::unbounded();
         cx.spawn(async move |this, cx| {
             while let Some(()) = reject_rx.next().await {
-                this.update(cx, |this, cx| this.reject_edit_predictions(cx))?
+                this.update(cx, |this, cx| this.flush_rejected_predictions(cx))?
                     .await
                     .log_err();
             }
@@ -895,7 +895,7 @@ impl Zeta {
         .detach_and_log_err(cx);
     }
 
-    fn reject_edit_predictions(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn flush_rejected_predictions(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         match self.edit_prediction_model {
             ZetaEditPredictionModel::Zeta1 | ZetaEditPredictionModel::Zeta2 => {}
             ZetaEditPredictionModel::Sweep => return Task::ready(anyhow::Ok(())),
