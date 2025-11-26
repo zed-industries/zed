@@ -3758,6 +3758,10 @@ impl Repository {
 
             if let Some(language_registry) = language_registry {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
+                log::info!(
+                    "Loaded 'Git Commit' Language with {} rewrap_prefixes",
+                    git_commit_language.config().rewrap_prefixes.len()
+                );
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(Some(git_commit_language), cx);
                 })?;

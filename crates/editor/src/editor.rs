@@ -12327,6 +12327,10 @@ impl Editor {
                     let (comment_prefix, rewrap_prefix) = if let Some(language_scope) =
                         &language_scope
                     {
+                        log::info!(
+                            "language_scope with {:?} rewrap_prefixes",
+                            language_scope.rewrap_prefixes().len()
+                        );
                         let indent_end = Point::new(row, indent.len);
                         let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
                         let line_text_after_indent = buffer

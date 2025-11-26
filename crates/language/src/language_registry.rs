@@ -512,6 +512,10 @@ impl LanguageRegistry {
 
         for existing_language in &mut state.available_languages {
             if existing_language.name == name {
+                log::warn!(
+                    "language '{}' is being re-registered. This will replace the existing load function.",
+                    name
+                );
                 existing_language.grammar = grammar_name;
                 existing_language.matcher = matcher;
                 existing_language.load = load;
@@ -645,7 +649,24 @@ impl LanguageRegistry {
                 | LanguageMatchPrecedence::PathOrContent(_) => None,
             }
         });
-        async move { rx.await? }
+        async move {
+            match rx.await? {
+                Ok(result) => {
+                    if result.config().name.as_ref() == "Git Commit" {
+                        log::info!(
+                            "language_for_name returned {:?} with {} rewrap_prefixes",
+                            result.config().name,
+                            result.config().rewrap_prefixes.len()
+                        );
+                    }
+                    Ok(result)
+                }
+                Err(e) => {
+                    log::error!("language_for_name failed: {:?}", e);
+                    Err(e)
+                }
+            }
+        }
     }
 
     pub async fn language_for_id(self: &Arc<Self>, id: LanguageId) -> Result<Arc<Language>> {
