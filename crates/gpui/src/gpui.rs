@@ -22,7 +22,8 @@ mod elements;
 mod executor;
 mod geometry;
 mod global;
-mod input;
+/// Input
+pub mod input;
 mod inspector;
 mod interactive;
 mod key_dispatch;

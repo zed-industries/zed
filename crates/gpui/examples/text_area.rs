@@ -3,11 +3,15 @@
 //! Run with: `cargo run -p gpui --example text_area`
 
 use gpui::{
-    App, Application, Backspace, Bounds, Context, Copy, Cut, Delete, Down, End, Enter, Entity,
-    FocusHandle, Focusable, Home, Input, KeyBinding, Left, MoveToBeginning, MoveToEnd, Paste,
+    App, Application, Bounds, Context, Entity, FocusHandle, Focusable, Input, KeyBinding, Window,
+    WindowBounds, WindowOptions, div, prelude::*, px, rgb, rgba, size, text_area,
+};
+
+// todo: move to keymap
+use gpui::input::{
+    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste,
     Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
-    SelectUp, SelectWordLeft, SelectWordRight, Tab, Up, Window, WindowBounds, WindowOptions,
-    WordLeft, WordRight, div, prelude::*, px, rgb, rgba, size, text_area,
+    SelectUp, SelectWordLeft, SelectWordRight, Tab, Up, WordLeft, WordRight,
 };
 
 struct TextAreaExample {
@@ -112,6 +116,7 @@ impl Render for TextAreaExample {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
+        // todo: move to keymap
         cx.bind_keys([
             KeyBinding::new("delete", Delete, None),
             KeyBinding::new("left", Left, None),
@@ -136,14 +141,11 @@ fn main() {
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-x", Cut, None),
             KeyBinding::new("cmd-v", Paste, None),
-            // Enter variants - default is to insert newline
             KeyBinding::new("enter", Enter, None),
             KeyBinding::new("shift-enter", Enter, None),
             KeyBinding::new("alt-enter", Enter, None),
             KeyBinding::new("ctrl-enter", Enter, None),
-            // Tab
             KeyBinding::new("tab", Tab, None),
-            // Backspace variants - default is to delete backward
             KeyBinding::new("backspace", Backspace, None),
             KeyBinding::new("shift-backspace", Backspace, None),
             KeyBinding::new("alt-backspace", Backspace, None),

@@ -3,41 +3,15 @@
 //! The `TextArea` element renders an [`Input`] entity as a multi-line text editor.
 //! It handles layout, painting, and user interaction while the `Input` manages
 //! the text content and selection state.
-//!
-//! # Example
-//!
-//! ```ignore
-//! struct MyView {
-//!     input: Entity<Input>,
-//! }
-//!
-//! impl MyView {
-//!     fn new(cx: &mut Context<Self>) -> Self {
-//!         Self {
-//!             input: cx.new(Input::new),
-//!         }
-//!     }
-//! }
-//!
-//! impl Render for MyView {
-//!     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-//!         text_area(&self.input)
-//!             .bg(cx.theme().colors().editor_background)
-//!             .text_color(cx.theme().colors().text)
-//!     }
-//! }
-//! ```
 
 use crate::{
     Action, App, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Length,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, StyleRefinement, Styled, TextRun, TextStyle, Window, colors, fill, point, px,
-    relative, size,
+    Hsla, Input, InputLineLayout, InspectorElementId, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextRun, TextStyle,
+    Window, colors, fill, point, px, relative, size,
 };
-
-use super::input::{Input, InputLineLayout};
 
 /// Width of the cursor in pixels.
 const CURSOR_WIDTH: f32 = 2.0;
