@@ -1,10 +1,10 @@
+use crate::SelectionState;
 use crate::markdown_elements::{
     HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
-use crate::SelectionState;
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
@@ -738,8 +738,8 @@ fn render_markdown_code_block(
         base_highlights
     };
 
-    let body =
-        StyledText::new(parsed.contents.clone()).with_default_highlights(&cx.buffer_text_style, all_highlights);
+    let body = StyledText::new(parsed.contents.clone())
+        .with_default_highlights(&cx.buffer_text_style, all_highlights);
 
     let copy_block_button = IconButton::new("copy-code", IconName::Copy)
         .icon_size(IconSize::Small)
@@ -793,9 +793,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
         .iter()
         .map(|chunk| match chunk {
             MarkdownParagraphChunk::Text(text) => text.contents.len(),
-            MarkdownParagraphChunk::Image(image) => {
-                image.alt_text.as_ref().map_or(0, |t| t.len())
-            }
+            MarkdownParagraphChunk::Image(image) => image.alt_text.as_ref().map_or(0, |t| t.len()),
         })
         .sum();
 
@@ -874,7 +872,8 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 
                 // Combine base highlights with selection highlight
                 let highlights: Vec<_> = if let Some(selection_hl) = selection_highlight {
-                    gpui::combine_highlights(base_highlights, std::iter::once(selection_hl)).collect()
+                    gpui::combine_highlights(base_highlights, std::iter::once(selection_hl))
+                        .collect()
                 } else {
                     base_highlights
                 };
