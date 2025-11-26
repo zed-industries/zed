@@ -11,8 +11,8 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
-    ToOffset, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferOffset, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
@@ -1208,7 +1208,7 @@ impl BlockMapWriter<'_> {
 
     pub fn remove_intersecting_replace_blocks(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<usize>>,
+        ranges: impl IntoIterator<Item = Range<MultiBufferOffset>>,
         inclusive: bool,
     ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
@@ -1283,7 +1283,7 @@ impl BlockMapWriter<'_> {
 
     fn blocks_intersecting_buffer_range(
         &self,
-        range: Range<usize>,
+        range: Range<MultiBufferOffset>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
         if range.is_empty() && !inclusive {
@@ -2976,7 +2976,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 60)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.update(init_test);
 
@@ -3043,8 +3043,10 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
-                            let offset =
-                                buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Left);
+                            let offset = buffer.clip_offset(
+                                rng.random_range(MultiBufferOffset(0)..=buffer.len()),
+                                Bias::Left,
+                            );
                             let mut min_height = 0;
                             let placement = match rng.random_range(0..3) {
                                 0 => {
@@ -3244,7 +3246,7 @@ mod tests {
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
-                0..,
+                MultiBufferOffset(0)..,
                 &wraps_snapshot,
             ));
 

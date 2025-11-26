@@ -297,6 +297,7 @@ pub struct AcpThreadView {
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
     show_codex_windows_warning: bool,
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 enum ThreadState {
@@ -437,6 +438,7 @@ impl AcpThreadView {
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
             show_codex_windows_warning,
+            in_flight_prompt: None,
         }
     }
 
@@ -591,9 +593,13 @@ impl AcpThreadView {
                             .connection()
                             .model_selector(thread.read(cx).session_id())
                             .map(|selector| {
+                                let agent_server = this.agent.clone();
+                                let fs = this.project.read(cx).fs().clone();
                                 cx.new(|cx| {
                                     AcpModelSelectorPopover::new(
                                         selector,
+                                        agent_server,
+                                        fs,
                                         PopoverMenuHandle::default(),
                                         this.focus_handle(cx),
                                         window,
@@ -647,7 +653,6 @@ impl AcpThreadView {
                             mode_selector,
                             _subscriptions: subscriptions,
                         };
-                        this.message_editor.focus_handle(cx).focus(window);
 
                         this.profile_selector = this.as_native_thread(cx).map(|thread| {
                             cx.new(|cx| {
@@ -1151,6 +1156,7 @@ impl AcpThreadView {
             }
 
             this.update_in(cx, |this, window, cx| {
+                this.in_flight_prompt = Some(contents.clone());
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
                 this.message_editor.update(cx, |message_editor, cx| {
@@ -1178,7 +1184,12 @@ impl AcpThreadView {
             })?;
             let res = send.await;
             let turn_time_ms = turn_start_time.elapsed().as_millis();
-            let status = if res.is_ok() { "success" } else { "failure" };
+            let status = if res.is_ok() {
+                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
+                "success"
+            } else {
+                "failure"
+            };
             telemetry::event!(
                 "Agent Turn Completed",
                 agent = agent_telemetry_id,
@@ -1261,6 +1272,28 @@ impl AcpThreadView {
         };
 
         cx.spawn_in(window, async move |this, cx| {
+            // Check if there are any edits from prompts before the one being regenerated.
+            //
+            // If there are, we keep/accept them since we're not regenerating the prompt that created them.
+            //
+            // If editing the prompt that generated the edits, they are auto-rejected
+            // through the `rewind` function in the `acp_thread`.
+            let has_earlier_edits = thread.read_with(cx, |thread, _| {
+                thread
+                    .entries()
+                    .iter()
+                    .take(entry_ix)
+                    .any(|entry| entry.diffs().next().is_some())
+            })?;
+
+            if has_earlier_edits {
+                thread.update(cx, |thread, cx| {
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.keep_all_edits(None, cx);
+                    });
+                })?;
+            }
+
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
@@ -4070,7 +4103,9 @@ impl AcpThreadView {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
-                                                        vec![Anchor::MIN..Anchor::MAX],
+                                                        vec![Anchor::min_max_range_for_buffer(
+                                                            buffer.read(cx).remote_id(),
+                                                        )],
                                                         Some(telemetry.clone()),
                                                         cx,
                                                     )
@@ -4091,7 +4126,9 @@ impl AcpThreadView {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
-                                                    Anchor::MIN..Anchor::MAX,
+                                                    Anchor::min_max_range_for_buffer(
+                                                        buffer.read(cx).remote_id(),
+                                                    ),
                                                     Some(telemetry.clone()),
                                                     cx,
                                                 );
@@ -4710,11 +4747,8 @@ impl AcpThreadView {
                     let buffer = multibuffer.as_singleton();
                     if agent_location.buffer.upgrade() == buffer {
                         let excerpt_id = multibuffer.excerpt_ids().first().cloned();
-                        let anchor = editor::Anchor::in_buffer(
-                            excerpt_id.unwrap(),
-                            buffer.unwrap().read(cx).remote_id(),
-                            agent_location.position,
-                        );
+                        let anchor =
+                            editor::Anchor::in_buffer(excerpt_id.unwrap(), agent_location.position);
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
@@ -4763,7 +4797,7 @@ impl AcpThreadView {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(markdown, cx);
                 buffer.set_language(Some(markdown_language), cx);
-                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer.set_capability(language::Capability::ReadWrite, cx);
             })?;
 
             workspace.update_in(cx, |workspace, window, cx| {
@@ -5020,15 +5054,12 @@ impl AcpThreadView {
             }));
 
         let mut container = h_flex()
-            .id("thread-controls-container")
-            .group("thread-controls-container")
             .w_full()
             .py_2()
             .px_5()
             .gap_px()
             .opacity(0.6)
-            .hover(|style| style.opacity(1.))
-            .flex_wrap()
+            .hover(|s| s.opacity(1.))
             .justify_end();
 
         if AgentSettings::get_global(cx).enable_feedback
@@ -5038,23 +5069,13 @@ impl AcpThreadView {
         {
             let feedback = self.thread_feedback.feedback;
 
-            container = container
-                .child(
-                    div().visible_on_hover("thread-controls-container").child(
-                        Label::new(match feedback {
-                            Some(ThreadFeedback::Positive) => "Thanks for your feedback!",
-                            Some(ThreadFeedback::Negative) => {
-                                "We appreciate your feedback and will use it to improve."
-                            }
-                            None => {
-                                "Rating the thread sends all of your current conversation to the Zed team."
-                            }
-                        })
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall)
-                        .truncate(),
-                    ),
+            let tooltip_meta = || {
+                SharedString::new(
+                    "Rating the thread sends all of your current conversation to the Zed team.",
                 )
+            };
+
+            container = container
                 .child(
                     IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
                         .shape(ui::IconButtonShape::Square)
@@ -5063,7 +5084,12 @@ impl AcpThreadView {
                             Some(ThreadFeedback::Positive) => Color::Accent,
                             _ => Color::Ignored,
                         })
-                        .tooltip(Tooltip::text("Helpful Response"))
+                        .tooltip(move |window, cx| match feedback {
+                            Some(ThreadFeedback::Positive) => {
+                                Tooltip::text("Thanks for your feedback!")(window, cx)
+                            }
+                            _ => Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx),
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
                         })),
@@ -5076,7 +5102,16 @@ impl AcpThreadView {
                             Some(ThreadFeedback::Negative) => Color::Accent,
                             _ => Color::Ignored,
                         })
-                        .tooltip(Tooltip::text("Not Helpful"))
+                        .tooltip(move |window, cx| match feedback {
+                            Some(ThreadFeedback::Negative) => {
+                                Tooltip::text(
+                                    "We appreciate your feedback and will use it to improve in the future.",
+                                )(window, cx)
+                            }
+                            _ => {
+                                Tooltip::with_meta("Not Helpful Response", None, tooltip_meta(), cx)
+                            }
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
                         })),
@@ -5689,6 +5724,11 @@ impl AcpThreadView {
                         provider_id: None,
                     };
                     this.clear_thread_error(cx);
+                    if let Some(message) = this.in_flight_prompt.take() {
+                        this.message_editor.update(cx, |editor, cx| {
+                            editor.set_message(message, window, cx);
+                        });
+                    }
                     let this = cx.weak_entity();
                     window.defer(cx, |window, cx| {
                         Self::handle_auth_required(this, err, agent, connection, window, cx);
@@ -6066,8 +6106,9 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
+    use editor::MultiBufferOffset;
     use fs::FakeFs;
-    use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
+    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
@@ -6584,7 +6625,7 @@ pub(crate) mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
             prompt_store::init(cx)
         });
     }
@@ -7234,7 +7275,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor
@@ -7296,7 +7337,7 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([8..15]);
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
                     });
 
                     editor

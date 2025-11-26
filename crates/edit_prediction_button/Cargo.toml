@@ -30,7 +30,6 @@ project.workspace = true
 regex.workspace = true
 settings.workspace = true
 supermaven.workspace = true
-sweep_ai.workspace = true
 telemetry.workspace = true
 ui.workspace = true
 workspace.workspace = true

@@ -141,3 +141,15 @@ pub(crate) mod m_2025_11_12 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2025_11_20 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2025_11_25 {
+    mod settings;
+
+    pub(crate) use settings::remove_context_server_source;
+}

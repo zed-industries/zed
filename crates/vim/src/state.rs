@@ -217,6 +217,7 @@ pub struct VimGlobals {
     pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
+    pub recording_count: Option<usize>,
     pub recorded_count: Option<usize>,
     pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
@@ -605,7 +606,7 @@ impl MarksState {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
+                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -898,6 +899,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -924,6 +926,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }

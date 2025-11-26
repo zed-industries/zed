@@ -130,8 +130,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 0..0,
-                new: 0..10
+                old: MultiBufferOffset(0)..MultiBufferOffset(0),
+                new: MultiBufferOffset(0)..MultiBufferOffset(10)
             }]
         );
 
@@ -148,8 +148,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 10..10,
-                new: 10..22
+                old: MultiBufferOffset(10)..MultiBufferOffset(10),
+                new: MultiBufferOffset(10)..MultiBufferOffset(22)
             }]
         );
 
@@ -282,8 +282,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     assert_eq!(
         subscription.consume().into_inner(),
         [Edit {
-            old: 6..8,
-            new: 6..7
+            old: MultiBufferOffset(6)..MultiBufferOffset(8),
+            new: MultiBufferOffset(6)..MultiBufferOffset(7)
         }]
     );
 
@@ -925,7 +925,7 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
         .next()
         .unwrap();
 
-    assert_eq!(hunk.diff_base_byte_range.start, 0);
+    assert_eq!(hunk.diff_base_byte_range.start, BufferOffset(0));
 
     let buf2 = cx.new(|cx| Buffer::local("X", cx));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -971,10 +971,30 @@ fn test_singleton_multibuffer_anchors(cx: &mut App) {
     assert_eq!(old_snapshot.text(), "abcd");
     assert_eq!(new_snapshot.text(), "XabcdY");
 
-    assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 0);
-    assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 1);
-    assert_eq!(old_snapshot.anchor_before(4).to_offset(&new_snapshot), 5);
-    assert_eq!(old_snapshot.anchor_after(4).to_offset(&new_snapshot), 6);
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(0))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(0)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(0))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(1)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(4))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(5)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(4))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(6)
+    );
 }
 
 #[gpui::test]
@@ -989,12 +1009,28 @@ fn test_multibuffer_anchors(cx: &mut App) {
     });
     let old_snapshot = multibuffer.read(cx).snapshot(cx);
 
-    assert_eq!(old_snapshot.anchor_before(0).to_offset(&old_snapshot), 0);
-    assert_eq!(old_snapshot.anchor_after(0).to_offset(&old_snapshot), 0);
-    assert_eq!(Anchor::min().to_offset(&old_snapshot), 0);
-    assert_eq!(Anchor::min().to_offset(&old_snapshot), 0);
-    assert_eq!(Anchor::max().to_offset(&old_snapshot), 10);
-    assert_eq!(Anchor::max().to_offset(&old_snapshot), 10);
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(0))
+            .to_offset(&old_snapshot),
+        MultiBufferOffset(0)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(0))
+            .to_offset(&old_snapshot),
+        MultiBufferOffset(0)
+    );
+    assert_eq!(Anchor::min().to_offset(&old_snapshot), MultiBufferOffset(0));
+    assert_eq!(Anchor::min().to_offset(&old_snapshot), MultiBufferOffset(0));
+    assert_eq!(
+        Anchor::max().to_offset(&old_snapshot),
+        MultiBufferOffset(10)
+    );
+    assert_eq!(
+        Anchor::max().to_offset(&old_snapshot),
+        MultiBufferOffset(10)
+    );
 
     buffer_1.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "W")], None, cx);
@@ -1009,16 +1045,66 @@ fn test_multibuffer_anchors(cx: &mut App) {
     assert_eq!(old_snapshot.text(), "abcd\nefghi");
     assert_eq!(new_snapshot.text(), "WabcdX\nYefghiZ");
 
-    assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 0);
-    assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 1);
-    assert_eq!(old_snapshot.anchor_before(1).to_offset(&new_snapshot), 2);
-    assert_eq!(old_snapshot.anchor_after(1).to_offset(&new_snapshot), 2);
-    assert_eq!(old_snapshot.anchor_before(2).to_offset(&new_snapshot), 3);
-    assert_eq!(old_snapshot.anchor_after(2).to_offset(&new_snapshot), 3);
-    assert_eq!(old_snapshot.anchor_before(5).to_offset(&new_snapshot), 7);
-    assert_eq!(old_snapshot.anchor_after(5).to_offset(&new_snapshot), 8);
-    assert_eq!(old_snapshot.anchor_before(10).to_offset(&new_snapshot), 13);
-    assert_eq!(old_snapshot.anchor_after(10).to_offset(&new_snapshot), 14);
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(0))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(0)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(0))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(1)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(1))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(2)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(1))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(2)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(2))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(3)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(2))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(3)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(5))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(7)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(5))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(8)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_before(MultiBufferOffset(10))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(13)
+    );
+    assert_eq!(
+        old_snapshot
+            .anchor_after(MultiBufferOffset(10))
+            .to_offset(&new_snapshot),
+        MultiBufferOffset(14)
+    );
 }
 
 #[gpui::test]
@@ -1066,26 +1152,30 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
     // The current excerpts are from a different buffer, so we don't attempt to
     // resolve the old text anchor in the new buffer.
     assert_eq!(
-        snapshot_2.summary_for_anchor::<usize>(&snapshot_1.anchor_before(2)),
-        0
+        snapshot_2.summary_for_anchor::<MultiBufferOffset>(
+            &snapshot_1.anchor_before(MultiBufferOffset(2))
+        ),
+        MultiBufferOffset(0)
     );
     assert_eq!(
-        snapshot_2.summaries_for_anchors::<usize, _>(&[
-            snapshot_1.anchor_before(2),
-            snapshot_1.anchor_after(3)
+        snapshot_2.summaries_for_anchors::<MultiBufferOffset, _>(&[
+            snapshot_1.anchor_before(MultiBufferOffset(2)),
+            snapshot_1.anchor_after(MultiBufferOffset(3))
         ]),
-        vec![0, 0]
+        vec![MultiBufferOffset(0), MultiBufferOffset(0)]
     );
 
     // Refresh anchors from the old snapshot. The return value indicates that both
     // anchors lost their original excerpt.
-    let refresh =
-        snapshot_2.refresh_anchors(&[snapshot_1.anchor_before(2), snapshot_1.anchor_after(3)]);
+    let refresh = snapshot_2.refresh_anchors(&[
+        snapshot_1.anchor_before(MultiBufferOffset(2)),
+        snapshot_1.anchor_after(MultiBufferOffset(3)),
+    ]);
     assert_eq!(
         refresh,
         &[
-            (0, snapshot_2.anchor_before(0), false),
-            (1, snapshot_2.anchor_after(0), false),
+            (0, snapshot_2.anchor_before(MultiBufferOffset(0)), false),
+            (1, snapshot_2.anchor_after(MultiBufferOffset(0)), false),
         ]
     );
 
@@ -1112,14 +1202,19 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
     // The third anchor can't be resolved, since its excerpt has been removed,
     // so it resolves to the same position as its predecessor.
     let anchors = [
-        snapshot_2.anchor_before(0),
-        snapshot_2.anchor_after(2),
-        snapshot_2.anchor_after(6),
-        snapshot_2.anchor_after(14),
+        snapshot_2.anchor_before(MultiBufferOffset(0)),
+        snapshot_2.anchor_after(MultiBufferOffset(2)),
+        snapshot_2.anchor_after(MultiBufferOffset(6)),
+        snapshot_2.anchor_after(MultiBufferOffset(14)),
     ];
     assert_eq!(
-        snapshot_3.summaries_for_anchors::<usize, _>(&anchors),
-        &[0, 2, 9, 13]
+        snapshot_3.summaries_for_anchors::<MultiBufferOffset, _>(&anchors),
+        &[
+            MultiBufferOffset(0),
+            MultiBufferOffset(2),
+            MultiBufferOffset(9),
+            MultiBufferOffset(13)
+        ]
     );
 
     let new_anchors = snapshot_3.refresh_anchors(&anchors);
@@ -1128,8 +1223,13 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
         &[(0, true), (1, true), (2, true), (3, true)]
     );
     assert_eq!(
-        snapshot_3.summaries_for_anchors::<usize, _>(new_anchors.iter().map(|a| &a.1)),
-        &[0, 2, 7, 13]
+        snapshot_3.summaries_for_anchors::<MultiBufferOffset, _>(new_anchors.iter().map(|a| &a.1)),
+        &[
+            MultiBufferOffset(0),
+            MultiBufferOffset(2),
+            MultiBufferOffset(7),
+            MultiBufferOffset(13)
+        ]
     );
 }
 
@@ -1371,7 +1471,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     assert_eq!(
         snapshot
-            .diff_hunks_in_range(0..snapshot.len())
+            .diff_hunks_in_range(MultiBufferOffset(0)..snapshot.len())
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
             .collect::<Vec<_>>(),
         &[0..4, 5..7]
@@ -2072,7 +2172,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     assert_eq!(
         snapshot
-            .diff_hunks_in_range(0..snapshot.len())
+            .diff_hunks_in_range(MultiBufferOffset(0)..snapshot.len())
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
             .collect::<Vec<_>>(),
         &[0..1, 2..4, 5..7, 9..10, 12..13, 14..17]
@@ -2636,14 +2736,16 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             30..=39 if !reference.excerpts.is_empty() => {
                 let multibuffer =
                     multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-                let offset =
-                    multibuffer.clip_offset(rng.random_range(0..=multibuffer.len()), Bias::Left);
+                let offset = multibuffer.clip_offset(
+                    MultiBufferOffset(rng.random_range(0..=multibuffer.len().0)),
+                    Bias::Left,
+                );
                 let bias = if rng.random() {
                     Bias::Left
                 } else {
                     Bias::Right
                 };
-                log::info!("Creating anchor at {} with bias {:?}", offset, bias);
+                log::info!("Creating anchor at {} with bias {:?}", offset.0, bias);
                 anchors.push(multibuffer.anchor_at(offset, bias));
                 anchors.sort_by(|a, b| a.cmp(b, &multibuffer));
             }
@@ -2796,7 +2898,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         let actual_text = snapshot.text();
         let actual_boundary_rows = snapshot
-            .excerpt_boundaries_in_range(0..)
+            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
             .map(|b| b.row)
             .collect::<HashSet<_>>();
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
@@ -2874,9 +2976,14 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 })
                 .collect::<HashMap<_, _>>()
         });
-        for i in 0..snapshot.len() {
-            let excerpt = snapshot.excerpt_containing(i..i).unwrap();
-            assert_eq!(excerpt.buffer_range(), reference_ranges[&excerpt.id()]);
+        for i in 0..snapshot.len().0 {
+            let excerpt = snapshot
+                .excerpt_containing(MultiBufferOffset(i)..MultiBufferOffset(i))
+                .unwrap();
+            assert_eq!(
+                excerpt.buffer_range().start.0..excerpt.buffer_range().end.0,
+                reference_ranges[&excerpt.id()]
+            );
         }
 
         assert_consistent_line_numbers(&snapshot);
@@ -2897,7 +3004,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             let start_ix = text_rope.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
 
             let text_for_range = snapshot
-                .text_for_range(start_ix..end_ix)
+                .text_for_range(MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix))
                 .collect::<String>();
             assert_eq!(
                 text_for_range,
@@ -2906,9 +3013,12 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 start_ix..end_ix
             );
 
-            let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
+            let expected_summary =
+                MBTextSummary::from(TextSummary::from(&expected_text[start_ix..end_ix]));
             assert_eq!(
-                snapshot.text_summary_for_range::<TextSummary, _>(start_ix..end_ix),
+                snapshot.text_summary_for_range::<MBTextSummary, _>(
+                    MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix)
+                ),
                 expected_summary,
                 "incorrect summary for range {:?}",
                 start_ix..end_ix
@@ -2916,12 +3026,12 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         }
 
         // Anchor resolution
-        let summaries = snapshot.summaries_for_anchors::<usize, _>(&anchors);
+        let summaries = snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&anchors);
         assert_eq!(anchors.len(), summaries.len());
         for (anchor, resolved_offset) in anchors.iter().zip(summaries) {
             assert!(resolved_offset <= snapshot.len());
             assert_eq!(
-                snapshot.summary_for_anchor::<usize>(anchor),
+                snapshot.summary_for_anchor::<MultiBufferOffset>(anchor),
                 resolved_offset,
                 "anchor: {:?}",
                 anchor
@@ -2931,17 +3041,21 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         for _ in 0..10 {
             let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
             assert_eq!(
-                snapshot.reversed_chars_at(end_ix).collect::<String>(),
+                snapshot
+                    .reversed_chars_at(MultiBufferOffset(end_ix))
+                    .collect::<String>(),
                 expected_text[..end_ix].chars().rev().collect::<String>(),
             );
         }
 
         for _ in 0..10 {
             let end_ix = rng.random_range(0..=text_rope.len());
+            let end_ix = text_rope.floor_char_boundary(end_ix);
             let start_ix = rng.random_range(0..=end_ix);
+            let start_ix = text_rope.floor_char_boundary(start_ix);
             assert_eq!(
                 snapshot
-                    .bytes_in_range(start_ix..end_ix)
+                    .bytes_in_range(MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix))
                     .flatten()
                     .copied()
                     .collect::<Vec<_>>(),
@@ -2964,8 +3078,13 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
         let mut text = old_snapshot.text();
         for edit in edits {
-            let new_text: String = snapshot.text_for_range(edit.new.clone()).collect();
-            text.replace_range(edit.new.start..edit.new.start + edit.old.len(), &new_text);
+            let new_text: String = snapshot
+                .text_for_range(edit.new.start..edit.new.end)
+                .collect();
+            text.replace_range(
+                edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0),
+                &new_text,
+            );
         }
         assert_eq!(text.to_string(), snapshot.text());
     }
@@ -3038,7 +3157,11 @@ fn test_history(cx: &mut App) {
         // Edit buffer 1 through the multibuffer
         now += 2 * group_interval;
         multibuffer.start_transaction_at(now, cx);
-        multibuffer.edit([(2..2, "C")], None, cx);
+        multibuffer.edit(
+            [(MultiBufferOffset(2)..MultiBufferOffset(2), "C")],
+            None,
+            cx,
+        );
         multibuffer.end_transaction_at(now, cx);
         assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
@@ -3091,7 +3214,11 @@ fn test_history(cx: &mut App) {
         // Redo stack gets cleared after an edit.
         now += 2 * group_interval;
         multibuffer.start_transaction_at(now, cx);
-        multibuffer.edit([(0..0, "X")], None, cx);
+        multibuffer.edit(
+            [(MultiBufferOffset(0)..MultiBufferOffset(0), "X")],
+            None,
+            cx,
+        );
         multibuffer.end_transaction_at(now, cx);
         assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
         multibuffer.redo(cx);
@@ -3274,14 +3401,11 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         ),
     );
 
-    let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
-    let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-
-    let anchor_1 = Anchor::in_buffer(ids[0], id_1, text::Anchor::MIN);
+    let anchor_1 = Anchor::in_buffer(ids[0], text::Anchor::MIN);
     let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
     assert_eq!(point_1, Point::new(0, 0));
 
-    let anchor_2 = Anchor::in_buffer(ids[1], id_2, text::Anchor::MIN);
+    let anchor_2 = Anchor::in_buffer(ids[1], text::Anchor::MIN);
     let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
     assert_eq!(point_2, Point::new(3, 0));
 }
@@ -3320,7 +3444,7 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     );
 
     assert_eq!(snapshot.max_point(), Point::new(2, 0));
-    assert_eq!(snapshot.len(), 8);
+    assert_eq!(snapshot.len().0, 8);
 
     assert_eq!(
         snapshot
@@ -3330,7 +3454,7 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     );
 
     let (_, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
-    assert_eq!(translated_offset, "one\n".len());
+    assert_eq!(translated_offset.0, "one\n".len());
     let (_, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
     assert_eq!(translated_point, Point::new(1, 0));
 
@@ -3371,7 +3495,7 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     let buffer_1_id = buffer_1.read_with(cx, |buffer_1, _| buffer_1.remote_id());
     let (buffer, translated_offset) = snapshot.point_to_buffer_offset(Point::new(2, 0)).unwrap();
     assert_eq!(buffer.remote_id(), buffer_1_id);
-    assert_eq!(translated_offset, "one\n".len());
+    assert_eq!(translated_offset.0, "one\n".len());
     let (buffer, translated_point, _) = snapshot.point_to_buffer_point(Point::new(2, 0)).unwrap();
     assert_eq!(buffer.remote_id(), buffer_1_id);
     assert_eq!(translated_point, Point::new(1, 0));
@@ -3439,7 +3563,7 @@ fn assert_excerpts_match(
 fn assert_new_snapshot(
     multibuffer: &Entity<MultiBuffer>,
     snapshot: &mut MultiBufferSnapshot,
-    subscription: &mut Subscription,
+    subscription: &mut Subscription<MultiBufferOffset>,
     cx: &mut TestAppContext,
     expected_diff: &str,
 ) {
@@ -3462,15 +3586,15 @@ fn assert_new_snapshot(
 fn check_edits(
     old_snapshot: &MultiBufferSnapshot,
     new_snapshot: &MultiBufferSnapshot,
-    edits: &[Edit<usize>],
+    edits: &[Edit<MultiBufferOffset>],
 ) {
     let mut text = old_snapshot.text();
     let new_text = new_snapshot.text();
     for edit in edits.iter().rev() {
-        if !text.is_char_boundary(edit.old.start)
-            || !text.is_char_boundary(edit.old.end)
-            || !new_text.is_char_boundary(edit.new.start)
-            || !new_text.is_char_boundary(edit.new.end)
+        if !text.is_char_boundary(edit.old.start.0)
+            || !text.is_char_boundary(edit.old.end.0)
+            || !new_text.is_char_boundary(edit.new.start.0)
+            || !new_text.is_char_boundary(edit.new.end.0)
         {
             panic!(
                 "invalid edits: {:?}\nold text: {:?}\nnew text: {:?}",
@@ -3479,8 +3603,8 @@ fn check_edits(
         }
 
         text.replace_range(
-            edit.old.start..edit.old.end,
-            &new_text[edit.new.start..edit.new.end],
+            edit.old.start.0..edit.old.end.0,
+            &new_text[edit.new.start.0..edit.new.end.0],
         );
     }
 
@@ -3491,8 +3615,8 @@ fn check_edits(
 fn assert_chunks_in_ranges(snapshot: &MultiBufferSnapshot) {
     let full_text = snapshot.text();
     for ix in 0..full_text.len() {
-        let mut chunks = snapshot.chunks(0..snapshot.len(), false);
-        chunks.seek(ix..snapshot.len());
+        let mut chunks = snapshot.chunks(MultiBufferOffset(0)..snapshot.len(), false);
+        chunks.seek(MultiBufferOffset(ix)..snapshot.len());
         let tail = chunks.map(|chunk| chunk.text).collect::<String>();
         assert_eq!(tail, &full_text[ix..], "seek to range: {:?}", ix..);
     }
@@ -3522,44 +3646,49 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
     let mut offsets = Vec::new();
     let mut points = Vec::new();
     for offset in 0..=text.len() + 1 {
+        let offset = MultiBufferOffset(offset);
         let clipped_left = snapshot.clip_offset(offset, Bias::Left);
         let clipped_right = snapshot.clip_offset(offset, Bias::Right);
         assert_eq!(
-            clipped_left,
-            text.clip_offset(offset, Bias::Left),
+            clipped_left.0,
+            text.clip_offset(offset.0, Bias::Left),
             "clip_offset({offset:?}, Left)"
         );
         assert_eq!(
-            clipped_right,
-            text.clip_offset(offset, Bias::Right),
+            clipped_right.0,
+            text.clip_offset(offset.0, Bias::Right),
             "clip_offset({offset:?}, Right)"
         );
         assert_eq!(
             snapshot.offset_to_point(clipped_left),
-            text.offset_to_point(clipped_left),
-            "offset_to_point({clipped_left})"
+            text.offset_to_point(clipped_left.0),
+            "offset_to_point({})",
+            clipped_left.0
         );
         assert_eq!(
             snapshot.offset_to_point(clipped_right),
-            text.offset_to_point(clipped_right),
-            "offset_to_point({clipped_right})"
+            text.offset_to_point(clipped_right.0),
+            "offset_to_point({})",
+            clipped_right.0
         );
         let anchor_after = snapshot.anchor_after(clipped_left);
         assert_eq!(
             anchor_after.to_offset(snapshot),
             clipped_left,
-            "anchor_after({clipped_left}).to_offset {anchor_after:?}"
+            "anchor_after({}).to_offset {anchor_after:?}",
+            clipped_left.0
         );
         let anchor_before = snapshot.anchor_before(clipped_left);
         assert_eq!(
             anchor_before.to_offset(snapshot),
             clipped_left,
-            "anchor_before({clipped_left}).to_offset"
+            "anchor_before({}).to_offset",
+            clipped_left.0
         );
         left_anchors.push(anchor_before);
         right_anchors.push(anchor_after);
         offsets.push(clipped_left);
-        points.push(text.offset_to_point(clipped_left));
+        points.push(text.offset_to_point(clipped_left.0));
     }
 
     for row in 0..text.max_point().row {
@@ -3578,12 +3707,12 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
                 "clip_point({point:?}, Right)"
             );
             assert_eq!(
-                snapshot.point_to_offset(clipped_left),
+                snapshot.point_to_offset(clipped_left).0,
                 text.point_to_offset(clipped_left),
                 "point_to_offset({clipped_left:?})"
             );
             assert_eq!(
-                snapshot.point_to_offset(clipped_right),
+                snapshot.point_to_offset(clipped_right).0,
                 text.point_to_offset(clipped_right),
                 "point_to_offset({clipped_right:?})"
             );
@@ -3591,7 +3720,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
     }
 
     assert_eq!(
-        snapshot.summaries_for_anchors::<usize, _>(&left_anchors),
+        snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&left_anchors),
         offsets,
         "left_anchors <-> offsets"
     );
@@ -3601,7 +3730,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         "left_anchors <-> points"
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<usize, _>(&right_anchors),
+        snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&right_anchors),
         offsets,
         "right_anchors <-> offsets"
     );
@@ -3613,7 +3742,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 
     for (anchors, bias) in [(&left_anchors, Bias::Left), (&right_anchors, Bias::Right)] {
         for (ix, (offset, anchor)) in offsets.iter().zip(anchors).enumerate() {
-            if ix > 0 && *offset == 252 && offset > &offsets[ix - 1] {
+            if ix > 0 && *offset == MultiBufferOffset(252) && offset > &offsets[ix - 1] {
                 let prev_anchor = left_anchors[ix - 1];
                 assert!(
                     anchor.cmp(&prev_anchor, snapshot).is_gt(),
@@ -3632,7 +3761,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
     }
 
     if let Some((buffer, offset)) = snapshot.point_to_buffer_offset(snapshot.max_point()) {
-        assert!(offset <= buffer.len());
+        assert!(offset.0 <= buffer.len());
     }
     if let Some((buffer, point, _)) = snapshot.point_to_buffer_point(snapshot.max_point()) {
         assert!(point <= buffer.max_point());
@@ -3747,7 +3876,7 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(MultiBufferOffset(0)..snapshot.len(), false);
 
     for chunk in chunks {
         let chunk_text = chunk.text;
@@ -3879,24 +4008,24 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
 
             let mut ranges = Vec::new();
             for _ in 0..rng.random_range(1..5) {
-                if snapshot.len() == 0 {
+                if snapshot.len().0 == 0 {
                     break;
                 }
 
                 let diff_size = rng.random_range(5..1000);
-                let mut start = rng.random_range(0..snapshot.len());
+                let mut start = rng.random_range(0..snapshot.len().0);
 
                 while !text.is_char_boundary(start) {
                     start = start.saturating_sub(1);
                 }
 
-                let mut end = rng.random_range(start..snapshot.len().min(start + diff_size));
+                let mut end = rng.random_range(start..snapshot.len().0.min(start + diff_size));
 
                 while !text.is_char_boundary(end) {
                     end = end.saturating_add(1);
                 }
-                let start_anchor = snapshot.anchor_after(start);
-                let end_anchor = snapshot.anchor_before(end);
+                let start_anchor = snapshot.anchor_after(MultiBufferOffset(start));
+                let end_anchor = snapshot.anchor_before(MultiBufferOffset(end));
                 ranges.push(start_anchor..end_anchor);
             }
             multibuffer.expand_diff_hunks(ranges, cx);
@@ -3905,7 +4034,7 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(MultiBufferOffset(0)..snapshot.len(), false);
 
     for chunk in chunks {
         let chunk_text = chunk.text;
@@ -3964,4 +4093,118 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
             }
         }
     }
+}
+
+/// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)
+#[gpui::test]
+fn test_excerpts_containment_functions(cx: &mut App) {
+    // Multibuffer content for these tests:
+    //    0123
+    // 0: aa0
+    // 1: aa1
+    //    -----
+    // 2: bb0
+    // 3: bb1
+    //    -----MultiBufferOffset(0)..
+    // 4: cc0
+
+    let buffer_1 = cx.new(|cx| Buffer::local("aa0\naa1", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("bb0\nbb1", cx));
+    let buffer_3 = cx.new(|cx| Buffer::local("cc0", cx));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    let (excerpt_1_id, excerpt_2_id, excerpt_3_id) = multibuffer.update(cx, |multibuffer, cx| {
+        let excerpt_1_id = multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            cx,
+        )[0];
+
+        let excerpt_2_id = multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            cx,
+        )[0];
+
+        let excerpt_3_id = multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(0, 3))],
+            cx,
+        )[0];
+
+        (excerpt_1_id, excerpt_2_id, excerpt_3_id)
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+
+    assert_eq!(snapshot.text(), "aa0\naa1\nbb0\nbb1\ncc0");
+
+    //// Test `excerpts_for_range`
+
+    let p00 = snapshot.point_to_offset(Point::new(0, 0));
+    let p10 = snapshot.point_to_offset(Point::new(1, 0));
+    let p20 = snapshot.point_to_offset(Point::new(2, 0));
+    let p23 = snapshot.point_to_offset(Point::new(2, 3));
+    let p13 = snapshot.point_to_offset(Point::new(1, 3));
+    let p40 = snapshot.point_to_offset(Point::new(4, 0));
+    let p43 = snapshot.point_to_offset(Point::new(4, 3));
+
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p00..p00).collect();
+    assert_eq!(excerpts.len(), 1);
+    assert_eq!(excerpts[0].id, excerpt_1_id);
+
+    // Cursor at very end of excerpt 3
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p43..p43).collect();
+    assert_eq!(excerpts.len(), 1);
+    assert_eq!(excerpts[0].id, excerpt_3_id);
+
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p00..p23).collect();
+    assert_eq!(excerpts.len(), 2);
+    assert_eq!(excerpts[0].id, excerpt_1_id);
+    assert_eq!(excerpts[1].id, excerpt_2_id);
+
+    // This range represent an selection with end-point just inside excerpt_2
+    // Today we only expand the first excerpt, but another interpretation that
+    // we could consider is expanding both here
+    let excerpts: Vec<_> = snapshot.excerpts_for_range(p10..p20).collect();
+    assert_eq!(excerpts.len(), 1);
+    assert_eq!(excerpts[0].id, excerpt_1_id);
+
+    //// Test that `excerpts_for_range` and `excerpt_containing` agree for all single offsets (cursor positions)
+    for offset in 0..=snapshot.len().0 {
+        let offset = MultiBufferOffset(offset);
+        let excerpts_for_range: Vec<_> = snapshot.excerpts_for_range(offset..offset).collect();
+        assert_eq!(
+            excerpts_for_range.len(),
+            1,
+            "Expected exactly one excerpt for offset {offset}",
+        );
+
+        let excerpt_containing = snapshot.excerpt_containing(offset..offset);
+        assert!(
+            excerpt_containing.is_some(),
+            "Expected excerpt_containing to find excerpt for offset {offset}",
+        );
+
+        assert_eq!(
+            excerpts_for_range[0].id,
+            excerpt_containing.unwrap().id(),
+            "excerpts_for_range and excerpt_containing should agree for offset {offset}",
+        );
+    }
+
+    //// Test `excerpt_containing` behavior with ranges:
+
+    // Ranges intersecting a single-excerpt
+    let containing = snapshot.excerpt_containing(p00..p13);
+    assert!(containing.is_some());
+    assert_eq!(containing.unwrap().id(), excerpt_1_id);
+
+    // Ranges intersecting multiple excerpts (should return None)
+    let containing = snapshot.excerpt_containing(p20..p40);
+    assert!(
+        containing.is_none(),
+        "excerpt_containing should return None for ranges spanning multiple excerpts"
+    );
 }

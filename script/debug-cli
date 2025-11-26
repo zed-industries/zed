@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-cargo build; cargo run -p cli -- --foreground --zed=target/debug/zed "$@"
+cargo build -p zed && cargo run -p cli -- --foreground --zed=${CARGO_TARGET_DIR:-target}/debug/zed "$@"

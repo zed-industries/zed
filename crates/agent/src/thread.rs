@@ -15,7 +15,7 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage, UserStore};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
+use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -113,6 +113,7 @@ impl Message {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
                 cache: false,
+                reasoning_details: None,
             }],
         }
     }
@@ -177,6 +178,7 @@ impl UserMessage {
             role: Role::User,
             content: Vec::with_capacity(self.content.len()),
             cache: false,
+            reasoning_details: None,
         };
 
         const OPEN_CONTEXT: &str = "<context>\n\
@@ -444,6 +446,7 @@ impl AgentMessage {
             role: Role::Assistant,
             content: Vec::with_capacity(self.content.len()),
             cache: false,
+            reasoning_details: self.reasoning_details.clone(),
         };
         for chunk in &self.content {
             match chunk {
@@ -479,6 +482,7 @@ impl AgentMessage {
             role: Role::User,
             content: Vec::new(),
             cache: false,
+            reasoning_details: None,
         };
 
         for tool_result in self.tool_results.values() {
@@ -508,6 +512,7 @@ impl AgentMessage {
 pub struct AgentMessage {
     pub content: Vec<AgentMessageContent>,
     pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
+    pub reasoning_details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1398,6 +1403,18 @@ impl Thread {
                 self.handle_thinking_event(text, signature, event_stream, cx)
             }
             RedactedThinking { data } => self.handle_redacted_thinking_event(data, cx),
+            ReasoningDetails(details) => {
+                let last_message = self.pending_message();
+                // Store the last non-empty reasoning_details (overwrites earlier ones)
+                // This ensures we keep the encrypted reasoning with signatures, not the early text reasoning
+                if let serde_json::Value::Array(ref arr) = details {
+                    if !arr.is_empty() {
+                        last_message.reasoning_details = Some(details);
+                    }
+                } else {
+                    last_message.reasoning_details = Some(details);
+                }
+            }
             ToolUse(tool_use) => {
                 return Ok(self.handle_tool_use_event(tool_use, event_stream, cx));
             }
@@ -1430,20 +1447,16 @@ impl Thread {
                 );
                 self.update_token_usage(usage, cx);
             }
-            StatusUpdate(CompletionRequestStatus::UsageUpdated { amount, limit }) => {
+            UsageUpdated { amount, limit } => {
                 self.update_model_request_usage(amount, limit, cx);
             }
-            StatusUpdate(
-                CompletionRequestStatus::Started
-                | CompletionRequestStatus::Queued { .. }
-                | CompletionRequestStatus::Failed { .. },
-            ) => {}
-            StatusUpdate(CompletionRequestStatus::ToolUseLimitReached) => {
+            ToolUseLimitReached => {
                 self.tool_use_limit_reached = true;
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
+            Started | Queued { .. } => {}
         }
 
         Ok(None)
@@ -1677,6 +1690,7 @@ impl Thread {
             role: Role::User,
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
+            reasoning_details: None,
         });
 
         let task = cx
@@ -1687,9 +1701,7 @@ impl Thread {
                     let event = event.log_err()?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::StatusUpdate(
-                            CompletionRequestStatus::UsageUpdated { amount, limit },
-                        ) => {
+                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
                             this.update(cx, |thread, cx| {
                                 thread.update_model_request_usage(amount, limit, cx);
                             })
@@ -1743,6 +1755,7 @@ impl Thread {
             role: Role::User,
             content: vec![SUMMARIZE_THREAD_PROMPT.into()],
             cache: false,
+            reasoning_details: None,
         });
         self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
             let mut title = String::new();
@@ -1753,9 +1766,7 @@ impl Thread {
                     let event = event?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::StatusUpdate(
-                            CompletionRequestStatus::UsageUpdated { amount, limit },
-                        ) => {
+                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
                             this.update(cx, |thread, cx| {
                                 thread.update_model_request_usage(amount, limit, cx);
                             })?;
@@ -1992,6 +2003,7 @@ impl Thread {
             role: Role::System,
             content: vec![system_prompt.into()],
             cache: false,
+            reasoning_details: None,
         }];
         for message in &self.messages {
             messages.extend(message.to_request());

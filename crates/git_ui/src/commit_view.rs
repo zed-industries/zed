@@ -1,11 +1,14 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task,
-    WeakEntity, Window, actions,
+    Action, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -187,7 +190,7 @@ impl CommitView {
             editor.update(cx, |editor, cx| {
                 editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(vec![0..0]);
+                    selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
                 });
             });
         }
@@ -220,7 +223,11 @@ impl CommitView {
                         let snapshot = buffer.read(cx).snapshot();
                         let diff = buffer_diff.read(cx);
                         let diff_hunk_ranges = diff
-                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                            .hunks_intersecting_range(
+                                Anchor::min_max_range_for_buffer(diff.buffer_id),
+                                &snapshot,
+                                cx,
+                            )
                             .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
@@ -496,11 +503,11 @@ impl Item for CommitView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

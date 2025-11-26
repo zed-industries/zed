@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -1852,7 +1852,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{SemanticVersion, TestAppContext};
+    use gpui::TestAppContext;
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1863,7 +1863,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),

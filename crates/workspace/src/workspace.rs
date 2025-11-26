@@ -1845,7 +1845,7 @@ impl Workspace {
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
-    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> + use<> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
 
@@ -2869,7 +2869,7 @@ impl Workspace {
 
     pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
         let item = self.active_item(cx)?;
-        item.to_any().downcast::<I>().ok()
+        item.to_any_view().downcast::<I>().ok()
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
@@ -9176,7 +9176,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -9409,10 +9409,10 @@ mod tests {
 
         // Open two docks (left and right) with one panel each
         let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
-            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
             workspace.add_panel(left_panel.clone(), window, cx);
 
-            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
             workspace.add_panel(right_panel.clone(), window, cx);
 
             workspace.toggle_dock(DockPosition::Left, window, cx);
@@ -9840,10 +9840,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
-            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
-            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
             workspace.add_panel(panel_2.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 
@@ -10750,7 +10750,7 @@ mod tests {
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -11214,7 +11214,7 @@ mod tests {
 
             // Now we can check if the handle we got back errored or not
             assert_eq!(
-                handle.to_any().entity_type(),
+                handle.to_any_view().entity_type(),
                 TypeId::of::<TestPngItemView>()
             );
 
@@ -11227,7 +11227,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                handle.to_any().entity_type(),
+                handle.to_any_view().entity_type(),
                 TypeId::of::<TestIpynbItemView>()
             );
 
@@ -11276,7 +11276,7 @@ mod tests {
 
             // This _must_ be the second item registered
             assert_eq!(
-                handle.to_any().entity_type(),
+                handle.to_any_view().entity_type(),
                 TypeId::of::<TestAlternatePngItemView>()
             );
 

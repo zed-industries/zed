@@ -58,6 +58,7 @@ You can customize a wide range of settings for each language, including:
 - [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
 - [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
 - [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`colorize_brackets`](./configuring-zed.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -122,7 +123,7 @@ You can specify your preference using the `language_servers` setting:
 ```json [settings]
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
     }
   }
 ```

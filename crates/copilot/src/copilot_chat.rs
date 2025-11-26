@@ -294,6 +294,10 @@ pub enum ChatMessage {
         content: ChatMessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_opaque: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_text: Option<String>,
     },
     User {
         content: ChatMessageContent,
@@ -353,6 +357,8 @@ pub enum ToolCallContent {
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -384,6 +390,8 @@ pub struct ResponseDelta {
     pub role: Option<Role>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCallChunk>,
+    pub reasoning_opaque: Option<String>,
+    pub reasoning_text: Option<String>,
 }
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
@@ -396,6 +404,7 @@ pub struct ToolCallChunk {
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -783,13 +792,13 @@ async fn stream_completion(
     is_user_initiated: bool,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
-      ChatMessage::User { content }
-      | ChatMessage::Assistant { content, .. }
-      | ChatMessage::Tool { content, .. } => {
-          matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
-      }
-      _ => false,
-  });
+        ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. }
+        | ChatMessage::Tool { content, .. } => {
+            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+        }
+        _ => false,
+    });
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
