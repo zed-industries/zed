@@ -881,7 +881,7 @@ impl Input {
         text_before
             .grapheme_indices(true)
             .map(|(i, _)| i)
-            .last()
+            .next_back()
             .unwrap_or(0)
     }
 
