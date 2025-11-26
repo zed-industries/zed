@@ -148,21 +148,8 @@ fn sanitize_url_punctuation<T: EventListener>(
     let mut sanitized_url = url;
     let mut chars_trimmed = 0;
 
-    while let Some(last_char) = sanitized_url.chars().last() {
-        match last_char {
-            // These may be part of an URL but not at the end. It's not that the spec
-            // doesn't allow them, but they are frequently used in plain text as delimiters
-            // where they're not meant to be part of the URL.
-            '?' | '!' | '.' | ',' | ':' | ';' | '*' => {
-                sanitized_url.pop();
-                chars_trimmed += 1;
-            }
-            _ => break,
-        }
-    }
-
-    // First, handle parentheses balancing using single traversal
-    let (open_parens, close_parens) =
+    // Count parentheses in the URL
+    let (open_parens, mut close_parens) =
         sanitized_url
             .chars()
             .fold((0, 0), |(opens, closes), c| match c {
@@ -171,13 +158,26 @@ fn sanitize_url_punctuation<T: EventListener>(
                 _ => (opens, closes),
             });
 
-    // Trim unbalanced closing parentheses
-    if close_parens > open_parens {
-        let mut remaining_close = close_parens;
-        while sanitized_url.ends_with(')') && remaining_close > open_parens {
+    // Remove trailing characters that shouldn't be at the end of URLs
+    while let Some(last_char) = sanitized_url.chars().last() {
+        let should_remove = match last_char {
+            // These may be part of a URL but not at the end. It's not that the spec
+            // doesn't allow them, but they are frequently used in plain text as delimiters
+            // where they're not meant to be part of the URL.
+            '?' | '!' | '.' | ',' | ':' | ';' | '*' => true,
+            ')' if close_parens > open_parens => {
+                close_parens -= 1;
+
+                true
+            }
+            _ => false,
+        };
+
+        if should_remove {
             sanitized_url.pop();
             chars_trimmed += 1;
-            remaining_close -= 1;
+        } else {
+            break;
         }
     }
 
@@ -458,6 +458,7 @@ mod tests {
             ("https://example.com/).", "https://example.com/"),
             ("https://example.com/);", "https://example.com/"),
             ("https://example.com/)!", "https://example.com/"),
+            ("https://example.com/;)", "https://example.com/"),
             (
                 "https://example.com/v1.0/api",
                 "https://example.com/v1.0/api",
