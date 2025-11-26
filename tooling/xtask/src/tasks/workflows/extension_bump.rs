@@ -125,7 +125,6 @@ fn bump_extension_version(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && {} == 'true'",
             needs_bump,
         )))
-        .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE)
         .timeout_minutes(1u32)
         .add_step(generate_token)
