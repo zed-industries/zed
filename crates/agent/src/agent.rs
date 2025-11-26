@@ -237,6 +237,7 @@ pub struct NativeAgent {
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
+    context_server_prompt_registry: Entity<ContextServerPromptRegistry>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
     /// Cached model information
@@ -263,11 +264,21 @@ impl NativeAgent {
             .await;
 
         cx.new(|cx| {
+            let context_server_store = project.read(cx).context_server_store();
+
+            let context_server_prompt_registry = cx.new(|cx| {
+                ContextServerPromptRegistry::new(context_server_store.clone(), cx)
+            });
+
             let mut subscriptions = vec![
                 cx.subscribe(&project, Self::handle_project_event),
                 cx.subscribe(
                     &LanguageModelRegistry::global(cx),
                     Self::handle_models_updated_event,
+                ),
+                cx.subscribe(
+                    &context_server_prompt_registry,
+                    Self::handle_context_server_prompts_updated,
                 ),
             ];
             if let Some(prompt_store) = prompt_store.as_ref() {
@@ -285,8 +296,9 @@ impl NativeAgent {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
                 }),
                 context_server_registry: cx.new(|cx| {
-                    ContextServerRegistry::new(project.read(cx).context_server_store(), cx)
+                    ContextServerRegistry::new(context_server_store, cx)
                 }),
+                context_server_prompt_registry,
                 templates,
                 models: LanguageModels::new(cx),
                 project,
@@ -355,6 +367,24 @@ impl NativeAgent {
                 pending_save: Task::ready(()),
             },
         );
+
+        let available_commands = self.build_available_commands(cx);
+        if !available_commands.is_empty() {
+            acp_thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::AvailableCommandsUpdate(
+                            acp::AvailableCommandsUpdate {
+                                available_commands,
+                                meta: None,
+                            },
+                        ),
+                        cx,
+                    )
+                    .log_err();
+            });
+        }
+
         acp_thread
     }
 
@@ -622,6 +652,71 @@ impl NativeAgent {
         }
     }
 
+    fn handle_context_server_prompts_updated(
+        &mut self,
+        _registry: Entity<ContextServerPromptRegistry>,
+        event: &ContextServerPromptRegistryEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ContextServerPromptRegistryEvent::PromptsChanged => {
+                self.broadcast_available_commands(cx);
+            }
+        }
+    }
+
+    fn broadcast_available_commands(&self, cx: &mut Context<Self>) {
+        let available_commands = self.build_available_commands(cx);
+        for session in self.sessions.values() {
+            if let Some(acp_thread) = session.acp_thread.upgrade() {
+                acp_thread.update(cx, |thread, cx| {
+                    thread
+                        .handle_session_update(
+                            acp::SessionUpdate::AvailableCommandsUpdate(
+                                acp::AvailableCommandsUpdate {
+                                    available_commands: available_commands.clone(),
+                                    meta: None,
+                                },
+                            ),
+                            cx,
+                        )
+                        .log_err();
+                });
+            }
+        }
+    }
+
+    fn build_available_commands(&self, cx: &App) -> Vec<acp::AvailableCommand> {
+        self.context_server_prompt_registry
+            .read(cx)
+            .prompts()
+            .map(|context_server_prompt| {
+                let prompt = &context_server_prompt.prompt;
+                let has_argument = prompt
+                    .arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.is_empty());
+
+                acp::AvailableCommand {
+                    name: prompt.name.clone(),
+                    description: prompt.description.clone().unwrap_or_default(),
+                    input: if has_argument {
+                        let arg = prompt.arguments.as_ref().unwrap().first().unwrap();
+                        Some(acp::AvailableCommandInput::Unstructured {
+                            hint: format!("<{}>", arg.name),
+                        })
+                    } else {
+                        None
+                    },
+                    meta: Some(serde_json::json!({
+                        "mcp_prompt": true,
+                        "server_id": context_server_prompt.server_id.0,
+                    })),
+                }
+            })
+            .collect()
+    }
+
     pub fn load_thread(
         &mut self,
         id: acp::SessionId,
@@ -873,6 +968,127 @@ impl NativeAgentConnection {
             })
         })
     }
+
+    fn run_turn_with_prompt(
+        &self,
+        session_id: acp::SessionId,
+        id: acp_thread::UserMessageId,
+        expanded_prompt: Vec<acp::ContentBlock>,
+        path_style: util::paths::PathStyle,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        self.run_turn(session_id, cx, move |thread, cx| {
+            let content: Vec<UserMessageContent> = expanded_prompt
+                .into_iter()
+                .map(|block| UserMessageContent::from_content_block(block, path_style))
+                .collect::<Vec<_>>();
+            log::debug!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Message id: {:?}", id);
+            log::debug!("Message content: {:?}", content);
+
+            thread.update(cx, |thread, cx| thread.send(id, content, cx))
+        })
+    }
+
+    fn expand_mcp_prompts(
+        &self,
+        prompt: Vec<acp::ContentBlock>,
+        cx: &mut App,
+    ) -> Task<Result<Vec<acp::ContentBlock>>> {
+        let prompt_registry = self.0.read(cx).context_server_prompt_registry.clone();
+        let server_store = prompt_registry.read(cx).server_store().clone();
+
+        cx.spawn(async move |mut cx| {
+            let mut result = Vec::with_capacity(prompt.len());
+
+            for block in prompt {
+                match &block {
+                    acp::ContentBlock::Text(text_content) => {
+                        if let Some(expanded) = Self::try_expand_mcp_prompt(
+                            &text_content.text,
+                            &prompt_registry,
+                            &server_store,
+                            &mut cx,
+                        )
+                        .await?
+                        {
+                            result.push(acp::ContentBlock::Text(acp::TextContent {
+                                text: expanded,
+                                annotations: text_content.annotations.clone(),
+                                meta: text_content.meta.clone(),
+                            }));
+                        } else {
+                            result.push(block);
+                        }
+                    }
+                    _ => result.push(block),
+                }
+            }
+
+            Ok(result)
+        })
+    }
+
+    async fn try_expand_mcp_prompt(
+        text: &str,
+        prompt_registry: &Entity<ContextServerPromptRegistry>,
+        server_store: &Entity<project::context_server_store::ContextServerStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<String>> {
+        let trimmed = text.trim();
+        if !trimmed.starts_with('/') {
+            return Ok(None);
+        }
+
+        let (command_name, argument) = if let Some((cmd, arg)) = trimmed[1..].split_once(char::is_whitespace) {
+            (cmd.to_string(), Some(arg.trim().to_string()))
+        } else {
+            (trimmed[1..].to_string(), None)
+        };
+
+        let prompt_info = cx.update(|cx| {
+            let registry = prompt_registry.read(cx);
+            registry.prompts().find_map(|p| {
+                if p.prompt.name == command_name {
+                    let argument_name = p
+                        .prompt
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .map(|arg| arg.name.clone());
+                    Some((p.server_id.clone(), p.prompt.name.clone(), argument_name))
+                } else {
+                    None
+                }
+            })
+        })?;
+
+        let Some((server_id, prompt_name, argument_name)) = prompt_info else {
+            return Ok(None);
+        };
+
+        log::info!(
+            "Expanding MCP prompt '{}' from server '{}'",
+            command_name,
+            server_id
+        );
+
+        let arguments = match (argument, argument_name) {
+            (Some(arg), Some(arg_name)) => {
+                let mut args = std::collections::HashMap::new();
+                args.insert(arg_name, arg);
+                Some(args)
+            }
+            _ => None,
+        };
+
+        let expanded = cx
+            .update(|cx| {
+                execute_prompt(&server_store, &server_id, &prompt_name, arguments, cx)
+            })?;
+
+        Ok(Some(expanded.await?))
+    }
 }
 
 struct NativeAgentModelSelector {
@@ -1042,17 +1258,18 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::debug!("Prompt blocks count: {}", params.prompt.len());
         let path_style = self.0.read(cx).project.read(cx).path_style(cx);
 
-        self.run_turn(session_id, cx, move |thread, cx| {
-            let content: Vec<UserMessageContent> = params
-                .prompt
-                .into_iter()
-                .map(|block| UserMessageContent::from_content_block(block, path_style))
-                .collect::<Vec<_>>();
-            log::debug!("Converted prompt to message: {} chars", content.len());
-            log::debug!("Message id: {:?}", id);
-            log::debug!("Message content: {:?}", content);
+        let mcp_prompt_expansion = self.expand_mcp_prompts(params.prompt, cx);
+        let connection = self.clone();
 
-            thread.update(cx, |thread, cx| thread.send(id, content, cx))
+        let turn_task = cx.spawn(async move |cx| {
+            let expanded_prompt = mcp_prompt_expansion.await?;
+            cx.update(|cx| {
+                connection.run_turn_with_prompt(session_id, id, expanded_prompt, path_style, cx)
+            })
+        });
+
+        cx.spawn(async move |_| {
+            turn_task.await?.await
         })
     }
 

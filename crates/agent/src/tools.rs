@@ -1,3 +1,4 @@
+mod context_server_prompt_registry;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -19,6 +20,7 @@ mod web_search_tool;
 use crate::AgentTool;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 
+pub use context_server_prompt_registry::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
