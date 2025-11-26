@@ -79,29 +79,42 @@ pub fn get_default_system_shell() -> String {
     }
 }
 
-/// Get the default system shell, preferring git-bash on Windows.
+/// Get the default system shell, preferring bash on Windows.
 pub fn get_default_system_shell_preferring_bash() -> String {
     if cfg!(windows) {
-        get_windows_git_bash().unwrap_or_else(|| get_windows_system_shell())
+        get_windows_bash().unwrap_or_else(|| get_windows_system_shell())
     } else {
         "/bin/sh".to_string()
     }
 }
 
-pub fn get_windows_git_bash() -> Option<String> {
-    static GIT_BASH: LazyLock<Option<String>> = LazyLock::new(|| {
+pub fn get_windows_bash() -> Option<String> {
+    use std::path::PathBuf;
+
+    fn find_bash_in_scoop() -> Option<PathBuf> {
+        let bash_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\bash.exe");
+        bash_exe.exists().then_some(bash_exe)
+    }
+
+    fn find_bash_in_git() -> Option<PathBuf> {
         // /path/to/git/cmd/git.exe/../../bin/bash.exe
         let git = which::which("git").ok()?;
         let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
-        if git_bash.is_file() {
-            log::info!("Found git-bash at {}", git_bash.display());
-            Some(git_bash.to_string_lossy().to_string())
-        } else {
-            None
+        git_bash.exists().then_some(git_bash)
+    }
+
+    static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
+        let bash = find_bash_in_scoop()
+            .or_else(|| find_bash_in_git())
+            .map(|p| p.to_string_lossy().into_owned());
+        if let Some(ref path) = bash {
+            log::info!("Found bash at {}", path);
         }
+        bash
     });
 
-    (*GIT_BASH).clone()
+    (*BASH).clone()
 }
 
 pub fn get_windows_system_shell() -> String {
