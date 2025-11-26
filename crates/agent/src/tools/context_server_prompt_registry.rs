@@ -84,13 +84,12 @@ impl ContextServerPromptRegistry {
             return;
         }
 
-        let registered_server =
-            self.registered_servers
-                .entry(server_id.clone())
-                .or_insert(RegisteredContextServerPrompts {
-                    prompts: BTreeMap::default(),
-                    load_prompts: Task::ready(Ok(())),
-                });
+        let registered_server = self.registered_servers.entry(server_id.clone()).or_insert(
+            RegisteredContextServerPrompts {
+                prompts: BTreeMap::default(),
+                load_prompts: Task::ready(Ok(())),
+            },
+        );
         registered_server.load_prompts = cx.spawn(async move |this, cx| {
             let response = client
                 .request::<context_server::types::requests::PromptsList>(())

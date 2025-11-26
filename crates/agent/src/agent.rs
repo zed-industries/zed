@@ -266,9 +266,8 @@ impl NativeAgent {
         cx.new(|cx| {
             let context_server_store = project.read(cx).context_server_store();
 
-            let context_server_prompt_registry = cx.new(|cx| {
-                ContextServerPromptRegistry::new(context_server_store.clone(), cx)
-            });
+            let context_server_prompt_registry =
+                cx.new(|cx| ContextServerPromptRegistry::new(context_server_store.clone(), cx));
 
             let mut subscriptions = vec![
                 cx.subscribe(&project, Self::handle_project_event),
@@ -295,9 +294,8 @@ impl NativeAgent {
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
                 }),
-                context_server_registry: cx.new(|cx| {
-                    ContextServerRegistry::new(context_server_store, cx)
-                }),
+                context_server_registry: cx
+                    .new(|cx| ContextServerRegistry::new(context_server_store, cx)),
                 context_server_prompt_registry,
                 templates,
                 models: LanguageModels::new(cx),
@@ -373,12 +371,10 @@ impl NativeAgent {
             acp_thread.update(cx, |thread, cx| {
                 thread
                     .handle_session_update(
-                        acp::SessionUpdate::AvailableCommandsUpdate(
-                            acp::AvailableCommandsUpdate {
-                                available_commands,
-                                meta: None,
-                            },
-                        ),
+                        acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
+                            available_commands,
+                            meta: None,
+                        }),
                         cx,
                     )
                     .log_err();
@@ -1040,11 +1036,12 @@ impl NativeAgentConnection {
             return Ok(None);
         }
 
-        let (command_name, argument) = if let Some((cmd, arg)) = trimmed[1..].split_once(char::is_whitespace) {
-            (cmd.to_string(), Some(arg.trim().to_string()))
-        } else {
-            (trimmed[1..].to_string(), None)
-        };
+        let (command_name, argument) =
+            if let Some((cmd, arg)) = trimmed[1..].split_once(char::is_whitespace) {
+                (cmd.to_string(), Some(arg.trim().to_string()))
+            } else {
+                (trimmed[1..].to_string(), None)
+            };
 
         let prompt_info = cx.update(|cx| {
             let registry = prompt_registry.read(cx);
@@ -1082,10 +1079,8 @@ impl NativeAgentConnection {
             _ => None,
         };
 
-        let expanded = cx
-            .update(|cx| {
-                execute_prompt(&server_store, &server_id, &prompt_name, arguments, cx)
-            })?;
+        let expanded =
+            cx.update(|cx| execute_prompt(&server_store, &server_id, &prompt_name, arguments, cx))?;
 
         Ok(Some(expanded.await?))
     }
@@ -1268,9 +1263,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             })
         });
 
-        cx.spawn(async move |_| {
-            turn_task.await?.await
-        })
+        cx.spawn(async move |_| turn_task.await?.await)
     }
 
     fn resume(
