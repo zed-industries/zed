@@ -54,7 +54,7 @@ fn eval_single_cursor_edit() {
 }
 
 struct EvalInput {
-    text: Stbuffer_ring,
+    text: String,
     prompt: String,
 }
 
