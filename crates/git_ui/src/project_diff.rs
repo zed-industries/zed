@@ -385,7 +385,13 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
         if !ranges.iter().any(|range| range.start != range.end) {
             selection = false;
-            if let Some((excerpt_id, _, range)) = self.editor.read(cx).active_excerpt(cx) {
+            if let Some((excerpt_id, _, range)) = self
+                .editor
+                .read(cx)
+                .primary_editor()
+                .read(cx)
+                .active_excerpt(cx)
+            {
                 ranges = vec![multi_buffer::Anchor::range_in_buffer(excerpt_id, range)];
             } else {
                 ranges = Vec::default();

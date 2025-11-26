@@ -28397,6 +28397,9 @@ async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
     follower_cx.assert_editor_state(indoc! {"
         ˇbase
     "});
+}
+
+#[gpui::test]
 async fn test_multibuffer_scroll_cursor_top_margin(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
