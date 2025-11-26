@@ -3989,7 +3989,7 @@ impl AcpThreadView {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();
                 let path_style = file.path_style(cx);
-                let separator = file.path_style(cx).separator();
+                let separator = file.path_style(cx).primary_separator();
 
                 let file_path = path.parent().and_then(|parent| {
                     if parent.is_empty() {
@@ -5896,7 +5896,7 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                        .vertical_scrollbar_for(&self.list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
