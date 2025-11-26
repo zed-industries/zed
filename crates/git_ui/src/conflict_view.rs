@@ -60,27 +60,27 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
         buffer_added(editor, buffer, cx);
     }
 
-    cx.subscribe(&cx.entity(), |editor, _, event, cx| match event {
-        EditorEvent::ExcerptsAdded { buffer, .. } => buffer_added(editor, buffer.clone(), cx),
-        EditorEvent::ExcerptsExpanded { ids } => {
-            let multibuffer = editor.buffer().read(cx).snapshot(cx);
-            for excerpt_id in ids {
-                let Some(buffer) = multibuffer.buffer_for_excerpt(*excerpt_id) else {
-                    continue;
-                };
-                let addon = editor.addon::<ConflictAddon>().unwrap();
-                let Some(conflict_set) = addon.conflict_set(buffer.remote_id()).clone() else {
-                    return;
-                };
-                excerpt_for_buffer_updated(editor, conflict_set, cx);
-            }
-        }
-        EditorEvent::ExcerptsRemoved {
-            removed_buffer_ids, ..
-        } => buffers_removed(editor, removed_buffer_ids, cx),
-        _ => {}
-    })
-    .detach();
+    // cx.subscribe(&cx.entity(), |editor, _, event, cx| match event {
+    //     EditorEvent::ExcerptsAdded { buffer, .. } => buffer_added(editor, buffer.clone(), cx),
+    //     EditorEvent::ExcerptsExpanded { ids } => {
+    //         let multibuffer = editor.buffer().read(cx).snapshot(cx);
+    //         for excerpt_id in ids {
+    //             let Some(buffer) = multibuffer.buffer_for_excerpt(*excerpt_id) else {
+    //                 continue;
+    //             };
+    //             let addon = editor.addon::<ConflictAddon>().unwrap();
+    //             let Some(conflict_set) = addon.conflict_set(buffer.remote_id()).clone() else {
+    //                 return;
+    //             };
+    //             excerpt_for_buffer_updated(editor, conflict_set, cx);
+    //         }
+    //     }
+    //     EditorEvent::ExcerptsRemoved {
+    //         removed_buffer_ids, ..
+    //     } => buffers_removed(editor, removed_buffer_ids, cx),
+    //     _ => {}
+    // })
+    // .detach();
 }
 
 fn excerpt_for_buffer_updated(

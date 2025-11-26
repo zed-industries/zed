@@ -76,6 +76,8 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
+        let _timer =
+            zlog::time!("set_excerpts_for_path").warn_if_gt(std::time::Duration::from_millis(100));
         let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
