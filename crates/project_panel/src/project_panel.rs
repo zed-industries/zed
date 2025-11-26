@@ -5765,7 +5765,7 @@ impl Render for ProjectPanel {
                                 ListHorizontalSizingBehavior::Unconstrained,
                             )
                             .with_width_from_item(self.state.max_width_item_index)
-                            .track_scroll(self.scroll_handle.clone()),
+                            .track_scroll(&self.scroll_handle),
                         )
                         .child(
                             div()
@@ -5908,7 +5908,7 @@ impl Render for ProjectPanel {
                 )
                 .custom_scrollbars(
                     Scrollbars::for_settings::<ProjectPanelSettings>()
-                        .tracked_scroll_handle(self.scroll_handle.clone())
+                        .tracked_scroll_handle(&self.scroll_handle)
                         .with_track_along(
                             ScrollAxes::Horizontal,
                             cx.theme().colors().panel_background,

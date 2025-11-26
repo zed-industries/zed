@@ -933,7 +933,7 @@ impl CompletionsMenu {
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .with_sizing_behavior(ListSizingBehavior::Infer)
         .map(|this| {
             if self.display_options.dynamic_width {
@@ -948,7 +948,7 @@ impl CompletionsMenu {
                 div().child(list).custom_scrollbars(
                     Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
                         .show_along(ScrollAxes::Vertical)
-                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                        .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
                 ),
@@ -1599,7 +1599,7 @@ impl CodeActionsMenu {
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .with_width_from_item(
             self.actions
                 .iter()
