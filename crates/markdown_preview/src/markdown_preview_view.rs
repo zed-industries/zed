@@ -6,9 +6,10 @@ use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache,
-    Styled, Subscription, Task, WeakEntity, Window, list,
+    App, ClickEvent, ClipboardItem, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, IsZero, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Render, RetainAllImageCache, Styled, Subscription,
+    Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -20,11 +21,12 @@ use workspace::{Pane, Workspace};
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
 use crate::{
-    CopyAll, MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
-    markdown_elements::ParsedMarkdown,
+    CopyAll, MarkdownPosition, MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview,
+    OpenPreviewToTheSide, SelectionPhase, SelectionState, markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
 };
+use editor::actions::Copy;
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -39,6 +41,8 @@ pub struct MarkdownPreviewView {
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
+    selection: Option<SelectionState>,
+    selection_phase: SelectionPhase,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,6 +219,8 @@ impl MarkdownPreviewView {
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
+                selection: None,
+                selection_phase: SelectionPhase::None,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -346,6 +352,9 @@ impl MarkdownPreviewView {
             view.update(cx, move |view, cx| {
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
+                // Clear selection when content changes
+                view.selection = None;
+                view.selection_phase = SelectionPhase::None;
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
@@ -425,6 +434,123 @@ impl MarkdownPreviewView {
         !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
 
+    /// Starts text selection at the given mouse position.
+    fn start_selection(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(pos) = self.position_from_point(position) {
+            self.selection = Some(SelectionState::new(pos));
+            self.selection_phase = SelectionPhase::Selecting;
+            cx.notify();
+        }
+    }
+
+    /// Updates the selection head during mouse drag.
+    fn update_selection(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        if self.selection_phase != SelectionPhase::Selecting {
+            return;
+        }
+
+        if let Some(pos) = self.position_from_point(position) {
+            if let Some(selection) = &mut self.selection {
+                if selection.head != pos {
+                    selection.head = pos;
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// Ends the selection (mouse up).
+    fn end_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selection_phase == SelectionPhase::Selecting {
+            self.selection_phase = SelectionPhase::Ended;
+
+            // If selection is empty (click without drag), clear it
+            if let Some(selection) = &self.selection {
+                if selection.is_empty() {
+                    self.selection = None;
+                    self.selection_phase = SelectionPhase::None;
+                }
+            }
+
+            cx.notify();
+        }
+    }
+
+    /// Clears the current selection.
+    #[allow(dead_code)]
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selection.is_some() {
+            self.selection = None;
+            self.selection_phase = SelectionPhase::None;
+            cx.notify();
+        }
+    }
+
+    /// Converts a mouse position to a MarkdownPosition (block index + character offset).
+    fn position_from_point(&self, point: gpui::Point<Pixels>) -> Option<MarkdownPosition> {
+        let contents = self.contents.as_ref()?;
+        let block_count = contents.children.len();
+
+        if block_count == 0 {
+            return None;
+        }
+
+        // Find which block contains this point
+        for block_index in 0..block_count {
+            if let Some(bounds) = self.list_state.bounds_for_item(block_index) {
+                if bounds.contains(&point) {
+                    // Found the block, now estimate character offset
+                    let block = &contents.children[block_index];
+                    let plain_text = block.plain_text();
+                    let text_len = plain_text.len();
+
+                    if text_len == 0 {
+                        return Some(MarkdownPosition::new(block_index, 0));
+                    }
+
+                    // Estimate character offset based on relative Y position within the block
+                    // and horizontal position. This is a rough estimate since we don't have
+                    // access to the actual text layout.
+                    let relative_y = (point.y - bounds.top()) / bounds.size.height;
+                    let relative_x = ((point.x - bounds.left()) / bounds.size.width).clamp(0.0, 1.0);
+
+                    // Count approximate lines in the text
+                    let line_count = plain_text.lines().count().max(1);
+                    let target_line = ((relative_y * line_count as f32).floor() as usize)
+                        .min(line_count.saturating_sub(1));
+
+                    // Get the target line's content
+                    let mut char_offset = 0;
+                    for (line_idx, line) in plain_text.lines().enumerate() {
+                        if line_idx == target_line {
+                            // Estimate position within this line based on relative_x
+                            let line_char_offset =
+                                ((relative_x * line.len() as f32).round() as usize).min(line.len());
+                            char_offset += line_char_offset;
+                            break;
+                        }
+                        char_offset += line.len() + 1; // +1 for newline
+                    }
+
+                    return Some(MarkdownPosition::new(block_index, char_offset.min(text_len)));
+                }
+            }
+        }
+
+        // Point is not in any rendered block, check if it's above or below
+        let viewport = self.list_state.viewport_bounds();
+        if point.y < viewport.top() {
+            // Above the viewport, return start of first block
+            Some(MarkdownPosition::new(0, 0))
+        } else {
+            // Below or to the side, return end of last block
+            let last_block_index = block_count.saturating_sub(1);
+            let last_block = &contents.children[last_block_index];
+            let text_len = last_block.plain_text().len();
+            Some(MarkdownPosition::new(last_block_index, text_len))
+        }
+    }
+
     fn scroll_page_up(&mut self, _: &MovePageUp, _window: &mut Window, cx: &mut Context<Self>) {
         let viewport_height = self.list_state.viewport_bounds().size.height;
         if viewport_height.is_zero() {
@@ -449,6 +575,70 @@ impl MarkdownPreviewView {
         if let Some(contents) = &self.contents {
             let text = contents.to_plain_text();
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.get_selected_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    /// Extracts the text content within the current selection.
+    fn get_selected_text(&self) -> Option<String> {
+        let selection = self.selection.as_ref()?;
+        let contents = self.contents.as_ref()?;
+
+        if selection.is_empty() {
+            return None;
+        }
+
+        let (start, end) = selection.ordered();
+        let mut result = String::new();
+
+        for block_index in start.block_index..=end.block_index {
+            if block_index >= contents.children.len() {
+                break;
+            }
+
+            let block = &contents.children[block_index];
+            let block_text = block.plain_text();
+            let block_len = block_text.len();
+
+            if block_len == 0 {
+                continue;
+            }
+
+            // Calculate the start and end offsets for this block
+            let block_start = if block_index == start.block_index {
+                start.char_offset.min(block_len)
+            } else {
+                0
+            };
+
+            let block_end = if block_index == end.block_index {
+                end.char_offset.min(block_len)
+            } else {
+                block_len
+            };
+
+            if block_start < block_end {
+                // Add newline between blocks
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+
+                // Extract the relevant portion of the block's text
+                if let Some(slice) = block_text.get(block_start..block_end) {
+                    result.push_str(slice);
+                }
+            }
+        }
+
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
         }
     }
 }
@@ -504,6 +694,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .on_action(cx.listener(MarkdownPreviewView::copy_all))
+            .on_action(cx.listener(MarkdownPreviewView::copy))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
@@ -522,17 +713,41 @@ impl Render for MarkdownPreviewView {
                         })),
                 ),
             )
-            .child(div().flex_grow().map(|this| {
-                this.child(
-                    list(
-                        self.list_state.clone(),
-                        cx.processor(|this, ix, window, cx| {
+            .child(
+                div()
+                    .id("markdown-content")
+                    .flex_grow()
+                    .cursor(CursorStyle::IBeam)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            // Clear existing selection when starting a new one
+                            this.selection = None;
+                            this.start_selection(event.position, cx);
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                            this.end_selection(cx);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            this.update_selection(event.position, cx);
+                        }
+                    }))
+                    .child(
+                        list(
+                            self.list_state.clone(),
+                            cx.processor(|this, ix, window, cx| {
                             let Some(contents) = &this.contents else {
                                 return div().into_any();
                             };
 
                             let mut render_cx =
                                 RenderContext::new(Some(this.workspace.clone()), window, cx)
+                                    .with_selection(this.selection.clone())
                                     .with_checkbox_clicked_callback(cx.listener(
                                         move |this, e: &CheckboxClickedEvent, window, cx| {
                                             if let Some(editor) = this
@@ -565,6 +780,7 @@ impl Render for MarkdownPreviewView {
                                         },
                                     ));
 
+                            render_cx.set_current_block_index(ix);
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
 
@@ -630,8 +846,8 @@ impl Render for MarkdownPreviewView {
                         }),
                     )
                     .size_full(),
-                )
-            }))
+                ),
+            )
             .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }

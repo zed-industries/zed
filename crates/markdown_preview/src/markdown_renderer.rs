@@ -4,6 +4,7 @@ use crate::markdown_elements::{
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
+use crate::SelectionState;
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
@@ -25,6 +26,35 @@ use ui::{
     h_flex, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
+
+/// Finds the nearest valid UTF-8 character boundary at or near the given byte offset.
+/// If `search_forward` is true, finds the boundary at or after the offset.
+/// If `search_forward` is false, finds the boundary at or before the offset.
+fn find_char_boundary(text: &str, offset: usize, search_forward: bool) -> usize {
+    if offset >= text.len() {
+        return text.len();
+    }
+    if text.is_char_boundary(offset) {
+        return offset;
+    }
+    if search_forward {
+        // Search forward for the next character boundary
+        for i in offset..=text.len() {
+            if text.is_char_boundary(i) {
+                return i;
+            }
+        }
+        text.len()
+    } else {
+        // Search backward for the previous character boundary
+        for i in (0..offset).rev() {
+            if text.is_char_boundary(i) {
+                return i;
+            }
+        }
+        0
+    }
+}
 
 pub struct CheckboxClickedEvent {
     pub checked: bool,
@@ -63,6 +93,9 @@ pub struct RenderContext {
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
     is_last_child: bool,
+    selection: Option<SelectionState>,
+    current_block_index: usize,
+    selection_color: Hsla,
 }
 
 impl RenderContext {
@@ -78,6 +111,8 @@ impl RenderContext {
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
         buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
+
+        let selection_color = theme.players().local().selection;
 
         RenderContext {
             workspace,
@@ -98,6 +133,9 @@ impl RenderContext {
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
             is_last_child: false,
+            selection: None,
+            current_block_index: 0,
+            selection_color,
         }
     }
 
@@ -107,6 +145,55 @@ impl RenderContext {
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
         self
+    }
+
+    /// Sets the current selection state.
+    pub fn with_selection(mut self, selection: Option<SelectionState>) -> Self {
+        self.selection = selection;
+        self
+    }
+
+    /// Sets the current block index being rendered.
+    pub fn set_current_block_index(&mut self, index: usize) {
+        self.current_block_index = index;
+    }
+
+    /// Returns the selection range (as character offsets) for the current block, if any.
+    /// Returns None if no selection intersects this block.
+    pub fn selection_range_for_current_block(&self, block_text_len: usize) -> Option<Range<usize>> {
+        let selection = self.selection.as_ref()?;
+        let (start, end) = selection.ordered();
+
+        // Check if selection intersects this block
+        if end.block_index < self.current_block_index
+            || start.block_index > self.current_block_index
+        {
+            return None;
+        }
+
+        // Calculate the character range within this block
+        let start_offset = if start.block_index < self.current_block_index {
+            0
+        } else {
+            start.char_offset
+        };
+
+        let end_offset = if end.block_index > self.current_block_index {
+            block_text_len
+        } else {
+            end.char_offset
+        };
+
+        if start_offset >= end_offset {
+            return None;
+        }
+
+        Some(start_offset..end_offset)
+    }
+
+    /// Returns the selection color.
+    pub fn selection_color(&self) -> Hsla {
+        self.selection_color
     }
 
     fn next_id(&mut self, span: &Range<usize>) -> ElementId {
@@ -609,18 +696,50 @@ fn render_markdown_code_block(
     parsed: &ParsedMarkdownCodeBlock,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let body = if let Some(highlights) = parsed.highlights.as_ref() {
-        StyledText::new(parsed.contents.clone()).with_default_highlights(
-            &cx.buffer_text_style,
-            highlights.iter().filter_map(|(range, highlight_id)| {
-                highlight_id
-                    .style(cx.syntax_theme.as_ref())
-                    .map(|style| (range.clone(), style))
-            }),
-        )
+    let code_len = parsed.contents.len();
+    let contents_str = parsed.contents.as_ref();
+    let selection_highlight = cx
+        .selection_range_for_current_block(code_len)
+        .and_then(|range| {
+            // Ensure offsets fall on valid UTF-8 character boundaries
+            let safe_start = find_char_boundary(contents_str, range.start, true);
+            let safe_end = find_char_boundary(contents_str, range.end, false);
+            if safe_start < safe_end {
+                Some((
+                    safe_start..safe_end,
+                    HighlightStyle {
+                        background_color: Some(cx.selection_color()),
+                        ..Default::default()
+                    },
+                ))
+            } else {
+                None
+            }
+        });
+
+    let base_highlights: Vec<_> = parsed
+        .highlights
+        .as_ref()
+        .map(|highlights| {
+            highlights
+                .iter()
+                .filter_map(|(range, highlight_id)| {
+                    highlight_id
+                        .style(cx.syntax_theme.as_ref())
+                        .map(|style| (range.clone(), style))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let all_highlights: Vec<_> = if let Some(sel_hl) = selection_highlight {
+        gpui::combine_highlights(base_highlights, std::iter::once(sel_hl)).collect()
     } else {
-        StyledText::new(parsed.contents.clone())
+        base_highlights
     };
+
+    let body =
+        StyledText::new(parsed.contents.clone()).with_default_highlights(&cx.buffer_text_style, all_highlights);
 
     let copy_block_button = IconButton::new("copy-code", IconName::Copy)
         .icon_size(IconSize::Small)
@@ -667,13 +786,63 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     let code_span_bg_color = cx.code_span_background_color;
     let text_style = cx.text_style.clone();
     let link_color = cx.link_color;
+    let selection_color = cx.selection_color();
+
+    // Calculate total text length for selection range calculation
+    let total_text_len: usize = parsed_new
+        .iter()
+        .map(|chunk| match chunk {
+            MarkdownParagraphChunk::Text(text) => text.contents.len(),
+            MarkdownParagraphChunk::Image(image) => {
+                image.alt_text.as_ref().map_or(0, |t| t.len())
+            }
+        })
+        .sum();
+
+    // Get selection range for this block
+    let block_selection = cx.selection_range_for_current_block(total_text_len);
+
+    // Track cumulative offset as we process chunks
+    let mut cumulative_offset = 0usize;
 
     for parsed_region in parsed_new {
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
                 let element_id = cx.next_id(&parsed.source_range);
+                let chunk_len = parsed.contents.len();
+                let chunk_end = cumulative_offset + chunk_len;
 
-                let highlights = gpui::combine_highlights(
+                // Calculate selection highlight for this chunk
+                let selection_highlight: Option<(Range<usize>, HighlightStyle)> =
+                    block_selection.as_ref().and_then(|selection| {
+                        // Check if selection intersects this chunk
+                        if selection.end <= cumulative_offset || selection.start >= chunk_end {
+                            return None;
+                        }
+
+                        // Map selection to chunk-local coordinates
+                        let local_start = selection.start.saturating_sub(cumulative_offset);
+                        let local_end = (selection.end - cumulative_offset).min(chunk_len);
+
+                        // Ensure offsets fall on valid UTF-8 character boundaries
+                        let contents = parsed.contents.as_ref();
+                        let safe_start = find_char_boundary(contents, local_start, true);
+                        let safe_end = find_char_boundary(contents, local_end, false);
+
+                        if safe_start < safe_end {
+                            Some((
+                                safe_start..safe_end,
+                                HighlightStyle {
+                                    background_color: Some(selection_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else {
+                            None
+                        }
+                    });
+
+                let base_highlights: Vec<_> = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
                         highlight
                             .to_highlight_style(&syntax_theme)
@@ -700,7 +869,17 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             None
                         }
                     }),
-                );
+                )
+                .collect();
+
+                // Combine base highlights with selection highlight
+                let highlights: Vec<_> = if let Some(selection_hl) = selection_highlight {
+                    gpui::combine_highlights(base_highlights, std::iter::once(selection_hl)).collect()
+                } else {
+                    base_highlights
+                };
+
+                cumulative_offset = chunk_end;
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
                 for (range, region) in parsed.regions.iter() {
@@ -758,6 +937,9 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
             }
 
             MarkdownParagraphChunk::Image(image) => {
+                // Update cumulative offset for image alt text
+                let alt_len = image.alt_text.as_ref().map_or(0, |t| t.len());
+                cumulative_offset += alt_len;
                 any_element.push(render_markdown_image(image, cx));
             }
         }

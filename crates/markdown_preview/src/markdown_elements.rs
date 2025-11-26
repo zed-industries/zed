@@ -41,6 +41,13 @@ impl ParsedMarkdownElement {
         matches!(self, Self::ListItem(_))
     }
 
+    /// Returns the plain text content of this element.
+    pub fn plain_text(&self) -> String {
+        let mut output = String::new();
+        self.append_plain_text(&mut output);
+        output
+    }
+
     pub fn append_plain_text(&self, output: &mut String) {
         match self {
             Self::Heading(heading) => {
