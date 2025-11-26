@@ -296,10 +296,6 @@ name = "pattern"
 path = "examples/pattern.rs"
 
 [[example]]
-name = "stickies"
-path = "examples/stickies/main.rs"
-
-[[example]]
 name = "set_menus"
 path = "examples/set_menus.rs"
 
