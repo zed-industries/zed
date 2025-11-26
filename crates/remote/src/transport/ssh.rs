@@ -22,6 +22,7 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -45,9 +46,40 @@ pub(crate) struct SshRemoteConnection {
     _temp_dir: TempDir,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SshConnectionHost {
+    IpAddr(IpAddr),
+    Domain(String),
+}
+
+impl SshConnectionHost {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::IpAddr(ip) => ip.to_string(),
+            Self::Domain(domain) => domain.clone(),
+        }
+    }
+}
+
+impl From<String> for SshConnectionHost {
+    fn from(value: String) -> Self {
+        if let Ok(address) = value.parse() {
+            Self::IpAddr(address)
+        } else {
+            Self::Domain(value)
+        }
+    }
+}
+
+impl Default for SshConnectionHost {
+    fn default() -> Self {
+        Self::Domain(Default::default())
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SshConnectionOptions {
-    pub host: String,
+    pub host: SshConnectionHost,
     pub username: Option<String>,
     pub port: Option<u16>,
     pub password: Option<String>,
@@ -61,7 +93,7 @@ pub struct SshConnectionOptions {
 impl From<settings::SshConnection> for SshConnectionOptions {
     fn from(val: settings::SshConnection) -> Self {
         SshConnectionOptions {
-            host: val.host.into(),
+            host: SshConnectionHost::from(val.host.to_string()),
             username: val.username,
             port: val.port,
             password: None,
@@ -1215,10 +1247,29 @@ impl SshConnectionOptions {
                 input = rest;
                 username = Some(u.to_string());
             }
-            if let Some((rest, p)) = input.split_once(':') {
-                input = rest;
-                port = p.parse().ok()
+
+            // Handle port parsing, accounting for IPv6 addresses
+            // IPv6 addresses can be: 2001:db8::1 or [2001:db8::1]:22
+            if input.starts_with('[') {
+                // Handle [ipv6]:port format
+                if let Some((rest, p)) = input.rsplit_once("]:") {
+                    // Remove the leading '['
+                    input = rest.strip_prefix('[').unwrap_or(rest);
+                    port = p.parse().ok();
+                } else if input.ends_with(']') {
+                    // Just [ipv6] without port
+                    input = input.strip_prefix('[').unwrap_or(input);
+                    input = input.strip_suffix(']').unwrap_or(input);
+                }
+            } else if let Some((rest, p)) = input.rsplit_once(':') {
+                // Only treat as host:port if it's not an IPv6 address
+                // IPv6 addresses have multiple colons
+                if !rest.contains(':') {
+                    input = rest;
+                    port = p.parse().ok();
+                }
             }
+
             hostname = Some(input.to_string())
         }
 
@@ -1251,11 +1302,26 @@ impl SshConnectionOptions {
             result.push_str(&username);
             result.push('@');
         }
-        result.push_str(&self.host);
+
         if let Some(port) = self.port {
+            match &self.host {
+                SshConnectionHost::IpAddr(IpAddr::V4(host)) => {
+                    result.push_str(&host.to_string());
+                }
+                SshConnectionHost::IpAddr(IpAddr::V6(host)) => {
+                    result.push('[');
+                    result.push_str(&host.to_string());
+                    result.push(']');
+                }
+                SshConnectionHost::Domain(host) => result.push_str(&host),
+            }
+
             result.push(':');
             result.push_str(&port.to_string());
+        } else {
+            result.push_str(&self.host.to_string());
         }
+
         result
     }
 
@@ -1505,5 +1571,52 @@ mod tests {
             scp_args.iter().all(|arg| !arg.starts_with("-L")),
             "scp args should not contain port forward flags: {scp_args:?}"
         );
+    }
+
+    #[test]
+    fn test_ipv6_address_parsing() -> Result<()> {
+        // Test IPv6 address without port
+        let opts = SshConnectionOptions::parse_command_line("user@2001:db8::1")?;
+        assert_eq!(opts.host, "2001:db8::1");
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, None);
+
+        // Test IPv6 address with brackets and port
+        let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]:2222")?;
+        assert_eq!(opts.host, "2001:db8::1");
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        // Test IPv6 address with brackets but no port
+        let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]")?;
+        assert_eq!(opts.host, "2001:db8::1");
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, None);
+
+        // Test IPv6 address without username
+        let opts = SshConnectionOptions::parse_command_line("2001:db8::1")?;
+        assert_eq!(opts.host, "2001:db8::1");
+        assert_eq!(opts.username, None);
+        assert_eq!(opts.port, None);
+
+        // Test IPv6 address with brackets and port but no username
+        let opts = SshConnectionOptions::parse_command_line("[2001:db8::1]:2222")?;
+        assert_eq!(opts.host, "2001:db8::1");
+        assert_eq!(opts.username, None);
+        assert_eq!(opts.port, Some(2222));
+
+        // Test regular hostname:port still works
+        let opts = SshConnectionOptions::parse_command_line("user@example.com:2222")?;
+        assert_eq!(opts.host, "example.com");
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        // Test IPv4 address with port
+        let opts = SshConnectionOptions::parse_command_line("user@192.168.1.1:2222")?;
+        assert_eq!(opts.host, "192.168.1.1");
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        Ok(())
     }
 }
