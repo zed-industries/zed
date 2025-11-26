@@ -375,7 +375,7 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
         let actual_patch = preds.diff.lines().map(DiffLine::parse).collect::<Vec<_>>();
 
         let line_match = metrics::line_match_score(&expected_patch, &actual_patch);
-        let chr_f = metrics::patch_chr_f(&expected_patch, &actual_patch);
+        let chr_f = metrics::delta_chr_f(&expected_patch, &actual_patch);
 
         eval_result.completion_scores = Some(CompletionScores { line_match, chr_f });
     }
