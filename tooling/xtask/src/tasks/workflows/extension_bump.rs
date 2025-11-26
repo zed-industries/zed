@@ -103,7 +103,7 @@ fn create_version_label(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && {} == 'false'",
             needs_bump.expr(),
         )))
-        .permissions(Permissions::default().contents(Level::Write))
+        // .permissions(Permissions::default().contents(Level::Write))
         .runs_on(runners::LINUX_LARGE)
         .timeout_minutes(1u32)
         .add_step(steps::checkout_repo())
