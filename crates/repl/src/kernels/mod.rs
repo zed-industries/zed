@@ -19,6 +19,12 @@ use jupyter_protocol::JupyterKernelspec;
 use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
 use util::rel_path::RelPath;
+use gpui::Context;
+
+pub trait KernelSession: Sized {
+    fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>);
+    fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>);
+}
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 

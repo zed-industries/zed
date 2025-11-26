@@ -9,9 +9,7 @@ use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
 
-use crate::Session;
-
-use super::RunningKernel;
+use super::{KernelSession, RunningKernel};
 use anyhow::Result;
 use jupyter_websocket_client::{
     JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
@@ -127,10 +125,10 @@ pub struct RemoteRunningKernel {
 }
 
 impl RemoteRunningKernel {
-    pub fn new(
+    pub fn new<S: KernelSession + 'static>(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        session: Entity<Session>,
+        session: Entity<S>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
