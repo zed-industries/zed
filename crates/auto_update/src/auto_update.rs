@@ -510,7 +510,9 @@ impl AutoUpdater {
             (None, None, None)
         };
 
-        let version = if let Some(version) = version {
+        let version = if let Some(mut version) = version {
+            version.pre = semver::Prerelease::EMPTY;
+            version.build = semver::BuildMetadata::EMPTY;
             version.to_string()
         } else {
             "latest".to_string()
