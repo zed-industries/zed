@@ -721,9 +721,20 @@ impl Render for MarkdownPreviewView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            // Clear existing selection when starting a new one
-                            this.selection = None;
-                            this.start_selection(event.position, cx);
+                            if event.modifiers.shift && this.selection.is_some() {
+                                // Shift+click extends the existing selection
+                                if let Some(pos) = this.position_from_point(event.position) {
+                                    if let Some(selection) = &mut this.selection {
+                                        selection.head = pos;
+                                        this.selection_phase = SelectionPhase::Selecting;
+                                        cx.notify();
+                                    }
+                                }
+                            } else {
+                                // Clear existing selection and start a new one
+                                this.selection = None;
+                                this.start_selection(event.position, cx);
+                            }
                         }),
                     )
                     .on_mouse_up(
