@@ -440,7 +440,6 @@ impl InlineAssistant {
         {
             let anchor_range = Anchor::range_in_buffer(
                 excerpt_id,
-                buffer.remote_id(),
                 buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
             );
 
@@ -1445,6 +1444,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
+                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
                             Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );

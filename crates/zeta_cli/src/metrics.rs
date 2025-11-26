@@ -114,6 +114,21 @@ False Negatives : {}",
     }
 }
 
+pub fn line_match_score(expected_patch: &[DiffLine], actual_patch: &[DiffLine]) -> Scores {
+    let expected_change_lines = expected_patch
+        .iter()
+        .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
+        .map(|line| line.to_string())
+        .collect();
+    let actual_change_lines = actual_patch
+        .iter()
+        .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
+        .map(|line| line.to_string())
+        .collect();
+
+    Scores::from_sets(&expected_change_lines, &actual_change_lines)
+}
+
 pub fn chr_f(expected: &str, actual: &str) -> f64 {
     const CHAR_ORDER: usize = 6;
     const BETA: f64 = 2.0;

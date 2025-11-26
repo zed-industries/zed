@@ -4002,7 +4002,8 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
+        let captures =
+            snapshot.debug_variables_query(Anchor::min_for_buffer(snapshot.remote_id())..range.end);
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)

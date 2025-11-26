@@ -649,9 +649,10 @@ impl TerminalView {
         // When focused, check blinking settings and blink manager state
         match TerminalSettings::get_global(cx).blinking {
             TerminalBlink::Off => true,
-            TerminalBlink::On | TerminalBlink::TerminalControlled => {
-                self.blink_manager.read(cx).visible()
+            TerminalBlink::TerminalControlled => {
+                !self.blinking_terminal_enabled || self.blink_manager.read(cx).visible()
             }
+            TerminalBlink::On => self.blink_manager.read(cx).visible(),
         }
     }
 

@@ -2553,7 +2553,7 @@ fn setup_context_server(
         let mut settings = ProjectSettings::get_global(cx).clone();
         settings.context_servers.insert(
             name.into(),
-            project::project_settings::ContextServerSettings::Custom {
+            project::project_settings::ContextServerSettings::Stdio {
                 enabled: true,
                 command: ContextServerCommand {
                     path: "somebinary".into(),

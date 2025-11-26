@@ -9283,7 +9283,7 @@ impl Element for EditorElement {
                                     HashMap::default();
                                 for selection in all_anchor_selections.iter() {
                                     let head = selection.head();
-                                    if let Some(buffer_id) = head.buffer_id {
+                                    if let Some(buffer_id) = head.text_anchor.buffer_id {
                                         anchors_by_buffer
                                             .entry(buffer_id)
                                             .and_modify(|(latest_id, latest_anchor)| {

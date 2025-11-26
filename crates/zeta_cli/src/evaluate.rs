@@ -1,12 +1,11 @@
 use crate::metrics::{self, Scores};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     io::{IsTerminal, Write},
     sync::Arc,
 };
 
 use anyhow::Result;
-use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
 use util::ResultExt as _;
@@ -131,16 +130,6 @@ fn write_aggregated_scores(
                 .then(|| CompletionScores::aggregate(&completion_scores)),
             prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
             generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
-                / successful.len(),
-            context_lines_found_in_context: successful
-                .iter()
-                .map(|r| r.context_lines_found_in_context)
-                .sum::<usize>()
-                / successful.len(),
-            context_lines_in_expected_patch: successful
-                .iter()
-                .map(|r| r.context_lines_in_expected_patch)
-                .sum::<usize>()
                 / successful.len(),
         };
 
@@ -281,8 +270,6 @@ pub struct EvaluationResult {
     pub context_scores: Scores,
     pub prompt_len: usize,
     pub generated_len: usize,
-    pub context_lines_in_expected_patch: usize,
-    pub context_lines_found_in_context: usize,
 }
 
 impl std::fmt::Display for EvaluationResult {
@@ -319,26 +306,10 @@ impl EvaluationResult {
 
     fn fmt_table(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "#### Prompt Statistics")?;
-        writeln!(
-            f,
-            "──────────────────────────────────────────────────────────────"
-        )?;
-        writeln!(
-            f,
-            "Prompt_len  Generated_len  RetrievedContext  PatchContext"
-        )?;
-        writeln!(
-            f,
-            "──────────────────────────────────────────────────────────────"
-        )?;
-        writeln!(
-            f,
-            "{:<11} {:<14} {:<17} {}",
-            self.prompt_len,
-            self.generated_len,
-            self.context_lines_found_in_context,
-            self.context_lines_in_expected_patch
-        )?;
+        writeln!(f, "─────────────────────────")?;
+        writeln!(f, "Prompt_len  Generated_len")?;
+        writeln!(f, "─────────────────────────")?;
+        writeln!(f, "{:<11} {:<14}", self.prompt_len, self.generated_len,)?;
         writeln!(f)?;
         writeln!(f)?;
         writeln!(f, "#### Performance Scores")?;
@@ -394,53 +365,6 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
         ..Default::default()
     };
 
-    let actual_context_lines: HashSet<_> = preds
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| format!("{}: {line}", excerpt.path.display()))
-        })
-        .collect();
-
-    let mut false_positive_lines = actual_context_lines.clone();
-
-    for entry in &example.expected_context {
-        let mut best_alternative_score: Option<Scores> = None;
-
-        for alternative in &entry.alternatives {
-            let expected: HashSet<_> = alternative
-                .excerpts
-                .iter()
-                .flat_map(|excerpt| {
-                    excerpt
-                        .text
-                        .lines()
-                        .map(|line| format!("{}: {line}", excerpt.path.display()))
-                })
-                .collect();
-
-            let scores = Scores::from_sets(&expected, &actual_context_lines);
-
-            false_positive_lines.retain(|line| !expected.contains(line));
-
-            if best_alternative_score
-                .as_ref()
-                .is_none_or(|best| scores.recall() > best.recall())
-            {
-                best_alternative_score = Some(scores);
-            }
-        }
-
-        let best_alternative = best_alternative_score.unwrap_or_default();
-        eval_result.context_scores.false_negatives += best_alternative.false_negatives;
-        eval_result.context_scores.true_positives += best_alternative.true_positives;
-    }
-
-    eval_result.context_scores.false_positives = false_positive_lines.len();
-
     if predict {
         // todo: alternatives for patches
         let expected_patch = example
@@ -449,45 +373,11 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .map(DiffLine::parse)
             .collect::<Vec<_>>();
         let actual_patch = preds.diff.lines().map(DiffLine::parse).collect::<Vec<_>>();
-        let expected_patch_lines = expected_patch
-            .iter()
-            .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
-            .map(|line| line.to_string())
-            .collect();
-        let expected_context_lines = expected_patch
-            .iter()
-            .filter_map(|line| {
-                if let DiffLine::Context(str) = line {
-                    Some(String::from(*str))
-                } else {
-                    None
-                }
-            })
-            .collect::<BTreeSet<_>>();
-        let actual_context_lines = preds
-            .excerpts
-            .iter()
-            .flat_map(|excerpt| excerpt.text.lines().map(ToOwned::to_owned))
-            .collect::<BTreeSet<_>>();
 
-        let matched = expected_context_lines
-            .intersection(&actual_context_lines)
-            .count();
-
-        let actual_patch_lines = preds
-            .diff
-            .lines()
-            .map(DiffLine::parse)
-            .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
-            .map(|line| line.to_string())
-            .collect();
-
-        let line_match = Scores::from_sets(&expected_patch_lines, &actual_patch_lines);
+        let line_match = metrics::line_match_score(&expected_patch, &actual_patch);
         let chr_f = metrics::patch_chr_f(&expected_patch, &actual_patch);
 
         eval_result.completion_scores = Some(CompletionScores { line_match, chr_f });
-        eval_result.context_lines_in_expected_patch = expected_context_lines.len();
-        eval_result.context_lines_found_in_context = matched;
     }
 
     eval_result
