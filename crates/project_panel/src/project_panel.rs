@@ -2797,8 +2797,30 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        println!("Download from remote not implemented yet");
-        unimplemented!();
+        let Some((_worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+
+        let entry_path = entry.path.clone();
+        let home_dir = std::env::home_dir().unwrap_or_else(|| PathBuf::from(""));
+        let suggested_name = entry_path.file_name().map(str::to_string);
+        let destination = cx.prompt_for_new_path(&home_dir, suggested_name.as_deref());
+
+        cx.spawn_in(window, async move |_this, mut cx| match destination.await {
+            Ok(Ok(Some(destination_path))) => {
+                println!("Download to: {:?}", destination_path);
+            }
+            Ok(Ok(None)) => {
+                println!("Download cancelled");
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error: {:?}", e);
+            }
+            Err(e) => {
+                eprintln!("Channel error: {:?}", e);
+            }
+        })
+        .detach();
     }
 
     fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
