@@ -5386,13 +5386,16 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         println!("paths_neeeding_status_update: {paths:?}");
-        self.paths_needing_status_update.extend(paths.clone());
+        // self.paths_needing_status_update.extend(paths.clone());
 
         let this = cx.weak_entity();
         let res = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
             None,
             |state, mut cx| async move {
+                this.update(&mut cx, |this, _| {
+                    this.paths_needing_status_update.extend(paths);
+                })?;
                 let (prev_snapshot, mut changed_paths) = this.update(&mut cx, |this, _| {
                     (
                         this.snapshot.clone(),
