@@ -9,6 +9,8 @@ pub const XAI_API_URL: &str = "https://api.x.ai/v1";
 pub enum Model {
     #[serde(rename = "grok-2-vision-latest")]
     Grok2Vision,
+    #[serde(rename = "grok-2-vision-1212")]
+    Grok2Vision1212,
     #[default]
     #[serde(rename = "grok-3-latest")]
     Grok3,
@@ -20,6 +22,12 @@ pub enum Model {
     Grok3MiniFast,
     #[serde(rename = "grok-4", alias = "grok-4-latest")]
     Grok4,
+    #[serde(rename = "grok-4-0709")]
+    Grok40709,
+    #[serde(rename = "grok-4-1-fast-reasoning")]
+    Grok41FastReasoning,
+    #[serde(rename = "grok-4-1-fast-non-reasoning")]
+    Grok41FastNonReasoning,
     #[serde(
         rename = "grok-4-fast-reasoning",
         alias = "grok-4-fast-reasoning-latest"
@@ -54,9 +62,13 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "grok-4" => Ok(Self::Grok4),
+            "grok-4-0709" => Ok(Self::Grok40709),
+            "grok-4-1-fast-reasoning" => Ok(Self::Grok41FastReasoning),
+            "grok-4-1-fast-non-reasoning" => Ok(Self::Grok41FastNonReasoning),
             "grok-4-fast-reasoning" => Ok(Self::Grok4FastReasoning),
             "grok-4-fast-non-reasoning" => Ok(Self::Grok4FastNonReasoning),
             "grok-2-vision" => Ok(Self::Grok2Vision),
+            "grok-2-vision-1212" => Ok(Self::Grok2Vision1212),
             "grok-3" => Ok(Self::Grok3),
             "grok-3-mini" => Ok(Self::Grok3Mini),
             "grok-3-fast" => Ok(Self::Grok3Fast),
@@ -69,11 +81,15 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::Grok2Vision => "grok-2-vision",
+            Self::Grok2Vision1212 => "grok-2-vision-1212",
             Self::Grok3 => "grok-3",
             Self::Grok3Mini => "grok-3-mini",
             Self::Grok3Fast => "grok-3-fast",
             Self::Grok3MiniFast => "grok-3-mini-fast",
             Self::Grok4 => "grok-4",
+            Self::Grok40709 => "grok-4-0709",
+            Self::Grok41FastReasoning => "grok-4-1-fast-reasoning",
+            Self::Grok41FastNonReasoning => "grok-4-1-fast-non-reasoning",
             Self::Grok4FastReasoning => "grok-4-fast-reasoning",
             Self::Grok4FastNonReasoning => "grok-4-fast-non-reasoning",
             Self::GrokCodeFast1 => "grok-code-fast-1",
@@ -84,11 +100,15 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::Grok2Vision => "Grok 2 Vision",
+            Self::Grok2Vision1212 => "Grok 2 Vision 1212",
             Self::Grok3 => "Grok 3",
             Self::Grok3Mini => "Grok 3 Mini",
             Self::Grok3Fast => "Grok 3 Fast",
             Self::Grok3MiniFast => "Grok 3 Mini Fast",
             Self::Grok4 => "Grok 4",
+            Self::Grok40709 => "Grok 4 0709",
+            Self::Grok41FastReasoning => "Grok 4.1 Fast",
+            Self::Grok41FastNonReasoning => "Grok 4.1 Fast (Non-Reasoning)",
             Self::Grok4FastReasoning => "Grok 4 Fast",
             Self::Grok4FastNonReasoning => "Grok 4 Fast (Non-Reasoning)",
             Self::GrokCodeFast1 => "Grok Code Fast 1",
@@ -101,9 +121,12 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
-            Self::Grok4 | Self::GrokCodeFast1 => 256_000,
-            Self::Grok4FastReasoning | Self::Grok4FastNonReasoning => 128_000,
-            Self::Grok2Vision => 8_192,
+            Self::Grok4 | Self::Grok40709 | Self::GrokCodeFast1 => 256_000,
+            Self::Grok41FastReasoning
+            | Self::Grok41FastNonReasoning
+            | Self::Grok4FastReasoning
+            | Self::Grok4FastNonReasoning => 2_000_000,
+            Self::Grok2Vision | Self::Grok2Vision1212 => 32_768,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -112,10 +135,13 @@ impl Model {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
             Self::Grok4
+            | Self::Grok40709
+            | Self::Grok41FastReasoning
+            | Self::Grok41FastNonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::GrokCodeFast1 => Some(64_000),
-            Self::Grok2Vision => Some(4_096),
+            Self::Grok2Vision | Self::Grok2Vision1212 => Some(4_096),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -125,11 +151,15 @@ impl Model {
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::Grok2Vision
+            | Self::Grok2Vision1212
             | Self::Grok3
             | Self::Grok3Mini
             | Self::Grok3Fast
             | Self::Grok3MiniFast
             | Self::Grok4
+            | Self::Grok40709
+            | Self::Grok41FastReasoning
+            | Self::Grok41FastNonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning => true,
             Self::Custom {
@@ -141,17 +171,21 @@ impl Model {
     }
 
     pub fn supports_prompt_cache_key(&self) -> bool {
-        false
+        true
     }
 
     pub fn supports_tool(&self) -> bool {
         match self {
             Self::Grok2Vision
+            | Self::Grok2Vision1212
             | Self::Grok3
             | Self::Grok3Mini
             | Self::Grok3Fast
             | Self::Grok3MiniFast
             | Self::Grok4
+            | Self::Grok40709
+            | Self::Grok41FastReasoning
+            | Self::Grok41FastNonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::GrokCodeFast1 => true,
@@ -165,12 +199,95 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Grok2Vision => true,
+            Self::Grok2Vision
+            | Self::Grok2Vision1212
+            | Self::Grok41FastReasoning
+            | Self::Grok41FastNonReasoning => true,
             Self::Custom {
                 supports_images: Some(support),
                 ..
             } => *support,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_max_token_count() {
+        assert_eq!(Model::Grok3.max_token_count(), 131_072);
+        assert_eq!(Model::Grok3Mini.max_token_count(), 131_072);
+        assert_eq!(Model::Grok4.max_token_count(), 256_000);
+        assert_eq!(Model::Grok40709.max_token_count(), 256_000);
+        assert_eq!(Model::GrokCodeFast1.max_token_count(), 256_000);
+        assert_eq!(Model::Grok41FastReasoning.max_token_count(), 2_000_000);
+        assert_eq!(Model::Grok41FastNonReasoning.max_token_count(), 2_000_000);
+        assert_eq!(Model::Grok4FastReasoning.max_token_count(), 2_000_000);
+        assert_eq!(Model::Grok4FastNonReasoning.max_token_count(), 2_000_000);
+        assert_eq!(Model::Grok2Vision.max_token_count(), 32_768);
+        assert_eq!(Model::Grok2Vision1212.max_token_count(), 32_768);
+    }
+
+    #[test]
+    fn test_supports_tool() {
+        assert!(Model::Grok3.supports_tool());
+        assert!(Model::Grok4FastReasoning.supports_tool());
+        assert!(Model::Grok41FastReasoning.supports_tool());
+        assert!(Model::GrokCodeFast1.supports_tool());
+    }
+
+    #[test]
+    fn test_supports_images() {
+        assert!(Model::Grok2Vision.supports_images());
+        assert!(Model::Grok2Vision1212.supports_images());
+        assert!(Model::Grok41FastReasoning.supports_images());
+        assert!(Model::Grok41FastNonReasoning.supports_images());
+        assert!(!Model::Grok3.supports_images());
+    }
+
+    #[test]
+    fn test_supports_parallel_tool_calls() {
+        assert!(Model::Grok4FastReasoning.supports_parallel_tool_calls());
+        assert!(Model::Grok41FastReasoning.supports_parallel_tool_calls());
+        assert!(!Model::GrokCodeFast1.supports_parallel_tool_calls());
+    }
+
+    #[test]
+    fn test_max_output_tokens() {
+        assert_eq!(Model::Grok3.max_output_tokens(), Some(8_192));
+        assert_eq!(Model::Grok4.max_output_tokens(), Some(64_000));
+        assert_eq!(Model::Grok41FastReasoning.max_output_tokens(), Some(64_000));
+        assert_eq!(Model::Grok2Vision.max_output_tokens(), Some(4_096));
+    }
+
+    #[test]
+    fn test_from_id() {
+        assert_eq!(
+            Model::from_id("grok-4-1-fast-reasoning").unwrap(),
+            Model::Grok41FastReasoning
+        );
+        assert_eq!(Model::from_id("grok-4-0709").unwrap(), Model::Grok40709);
+        assert_eq!(
+            Model::from_id("grok-2-vision-1212").unwrap(),
+            Model::Grok2Vision1212
+        );
+        assert!(Model::from_id("invalid-model").is_err());
+    }
+
+    #[test]
+    fn test_id() {
+        assert_eq!(Model::Grok41FastReasoning.id(), "grok-4-1-fast-reasoning");
+        assert_eq!(Model::Grok40709.id(), "grok-4-0709");
+        assert_eq!(Model::Grok2Vision1212.id(), "grok-2-vision-1212");
+    }
+
+    #[test]
+    fn test_display_name() {
+        assert_eq!(Model::Grok41FastReasoning.display_name(), "Grok 4.1 Fast");
+        assert_eq!(Model::Grok40709.display_name(), "Grok 4 0709");
+        assert_eq!(Model::Grok2Vision1212.display_name(), "Grok 2 Vision 1212");
     }
 }
