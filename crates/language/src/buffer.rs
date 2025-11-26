@@ -758,8 +758,8 @@ impl EditPreview {
             .to_point(&self.applied_edits_snapshot);
 
         let start = Point::new(start.row.saturating_sub(3), 0);
-        let old_end = Point::new(old_end.row + 3, 0).min(self.old_snapshot.max_point());
-        let new_end = Point::new(new_end.row + 3, 0).min(self.applied_edits_snapshot.max_point());
+        let old_end = Point::new(old_end.row + 4, 0).min(self.old_snapshot.max_point());
+        let new_end = Point::new(new_end.row + 4, 0).min(self.applied_edits_snapshot.max_point());
 
         Some(unified_diff(
             &self
