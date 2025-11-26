@@ -21705,21 +21705,27 @@ impl Editor {
 
     pub fn open_excerpts_in_split(
         &mut self,
-        _: &OpenExcerptsSplit,
+        action: &OpenExcerptsSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_excerpts_common(None, true, window, cx)
+        self.open_excerpts_common(None, true, &action.into(), window, cx)
     }
 
-    pub fn open_excerpts(&mut self, _: &OpenExcerpts, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_excerpts_common(None, false, window, cx)
+    pub fn open_excerpts(
+        &mut self,
+        action: &OpenExcerpts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_excerpts_common(None, false, action, window, cx)
     }
 
     fn open_excerpts_common(
         &mut self,
         jump_data: Option<JumpData>,
         split: bool,
+        action: &OpenExcerpts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -21732,6 +21738,10 @@ impl Editor {
             cx.propagate();
             return;
         }
+
+        // Clone action fields to avoid lifetime issues in async context
+        let target = action.target;
+        let force_editable = action.force_editable;
 
         let mut new_selections_by_buffer = HashMap::default();
         match &jump_data {
@@ -21838,32 +21848,27 @@ impl Editor {
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
-                    let editor = buffer
-                        .read(cx)
-                        .file()
-                        .is_none()
-                        .then(|| {
-                            // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
-                            // so `workspace.open_project_item` will never find them, always opening a new editor.
-                            // Instead, we try to activate the existing editor in the pane first.
-                            let (editor, pane_item_index) =
-                                pane.read(cx).items().enumerate().find_map(|(i, item)| {
-                                    let editor = item.downcast::<Editor>()?;
-                                    let singleton_buffer =
-                                        editor.read(cx).buffer().read(cx).as_singleton()?;
-                                    if singleton_buffer == buffer {
-                                        Some((editor, i))
-                                    } else {
-                                        None
-                                    }
-                                })?;
-                            pane.update(cx, |pane, cx| {
-                                pane.activate_item(pane_item_index, true, true, window, cx)
-                            });
-                            Some(editor)
-                        })
-                        .flatten()
-                        .unwrap_or_else(|| {
+                    let buffer_read = buffer.read(cx);
+                    let (has_file, is_project_file) = if let Some(file) = buffer_read.file() {
+                        (true, project::File::from_dyn(Some(file)).is_some())
+                    } else {
+                        (false, false)
+                    };
+                    let should_open_current = target == ExcerptTarget::OpenCurrent;
+
+                    let editor = if should_open_current && has_file && !is_project_file {
+                        // For non-project files (like GitBlob), open the actual project file by path
+                        if let Some(file) = buffer_read.file() {
+                            let project_path = ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path().clone(),
+                            };
+                            workspace
+                                .open_path(project_path, Some(pane.downgrade()), true, window, cx)
+                                .detach_and_log_err(cx);
+                            // Return early, we'll handle navigation in the async callback
+                            continue;
+                        } else {
                             workspace.open_project_item::<Self>(
                                 pane.clone(),
                                 buffer,
@@ -21872,9 +21877,53 @@ impl Editor {
                                 window,
                                 cx,
                             )
-                        });
+                        }
+                    } else if !has_file {
+                        // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
+                        // so `workspace.open_project_item` will never find them, always opening a new editor.
+                        // Instead, we try to activate the existing editor in the pane first.
+                        let existing_editor =
+                            pane.read(cx).items().enumerate().find_map(|(i, item)| {
+                                let editor = item.downcast::<Editor>()?;
+                                let singleton_buffer =
+                                    editor.read(cx).buffer().read(cx).as_singleton()?;
+                                if singleton_buffer == buffer {
+                                    Some((editor, i))
+                                } else {
+                                    None
+                                }
+                            });
+
+                        if let Some((editor, pane_item_index)) = existing_editor {
+                            pane.update(cx, |pane, cx| {
+                                pane.activate_item(pane_item_index, true, true, window, cx)
+                            });
+                            editor
+                        } else {
+                            workspace.open_project_item::<Self>(
+                                pane.clone(),
+                                buffer,
+                                true,
+                                true,
+                                window,
+                                cx,
+                            )
+                        }
+                    } else {
+                        workspace.open_project_item::<Self>(
+                            pane.clone(),
+                            buffer,
+                            true,
+                            true,
+                            window,
+                            cx,
+                        )
+                    };
 
                     editor.update(cx, |editor, cx| {
+                        if has_file && !is_project_file && !force_editable {
+                            editor.set_read_only(true);
+                        }
                         let autoscroll = match scroll_offset {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
                             None => Autoscroll::newest(),
@@ -21898,10 +21947,11 @@ impl Editor {
         });
     }
 
-    // For now, don't allow opening excerpts in buffers that aren't backed by
-    // regular project files.
+    // Allow opening excerpts for buffers that either belong to the current project
+    // or represent synthetic/non-local files (e.g., git blobs). File-less buffers
+    // are also supported so tests and other in-memory views keep working.
     fn can_open_excerpts_in_file(file: Option<&Arc<dyn language::File>>) -> bool {
-        file.is_none_or(|file| project::File::from_dyn(Some(file)).is_some())
+        file.is_none_or(|file| project::File::from_dyn(Some(file)).is_some() || !file.is_local())
     }
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
