@@ -4311,16 +4311,24 @@ impl GitPanel {
                     .items_center()
                     .flex_1()
                     .child(h_flex().items_center().flex_1().map(|this| {
-                        self.path_formatted(
-                            this,
-                            entry.parent_dir(path_style),
-                            path_color,
-                            display_name,
-                            label_color,
-                            path_style,
-                            git_path_style,
-                            status.is_deleted(),
-                        )
+                        if let Some(old_path) = old_path {
+                            let old_display = old_path.display(path_style).to_string();
+                            let new_display = entry.repo_path.display(path_style).to_string();
+                            this.child(self.entry_label(old_display, Color::Muted).strikethrough())
+                                .child(self.entry_label(" → ", Color::Muted))
+                                .child(self.entry_label(new_display, label_color))
+                        } else {
+                            self.path_formatted(
+                                this,
+                                entry.parent_dir(path_style),
+                                path_color,
+                                display_name,
+                                label_color,
+                                path_style,
+                                git_path_style,
+                                status.is_deleted(),
+                            )
+                        }
                     })),
             )
             .into_any_element()
