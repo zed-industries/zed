@@ -119,15 +119,14 @@ fn write_aggregated_scores(
     }
 
     if successful.len() > 1 {
-        let completion_scores = successful
+        let edit_scores = successful
             .iter()
-            .filter_map(|r| r.completion_scores.clone())
+            .filter_map(|r| r.edit_scores.clone())
             .collect::<Vec<_>>();
-        let has_edit_predictions = completion_scores.len() > 0;
+        let has_edit_predictions = edit_scores.len() > 0;
         let aggregated_result = EvaluationResult {
             context_scores: Scores::aggregate(successful.iter().map(|r| &r.context_scores)),
-            completion_scores: has_edit_predictions
-                .then(|| CompletionScores::aggregate(&completion_scores)),
+            edit_scores: has_edit_predictions.then(|| EditScores::aggregate(&edit_scores)),
             prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
             generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
                 / successful.len(),
@@ -250,23 +249,23 @@ fn write_eval_result(
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct CompletionScores {
+pub struct EditScores {
     pub line_match: Scores,
     pub chr_f: f64,
 }
 
-impl CompletionScores {
-    pub fn aggregate(scores: &[CompletionScores]) -> CompletionScores {
+impl EditScores {
+    pub fn aggregate(scores: &[EditScores]) -> EditScores {
         let line_match = Scores::aggregate(scores.iter().map(|s| &s.line_match));
         let chr_f = scores.iter().map(|s| s.chr_f).sum::<f64>() / scores.len() as f64;
 
-        CompletionScores { line_match, chr_f }
+        EditScores { line_match, chr_f }
     }
 }
 
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
-    pub completion_scores: Option<CompletionScores>,
+    pub edit_scores: Option<EditScores>,
     pub context_scores: Scores,
     pub prompt_len: usize,
     pub generated_len: usize,
@@ -292,7 +291,7 @@ impl EvaluationResult {
 "#,
             self.context_scores.to_markdown(),
         )?;
-        if let Some(scores) = &self.completion_scores {
+        if let Some(scores) = &self.edit_scores {
             write!(
                 f,
                 r#"
@@ -335,8 +334,8 @@ impl EvaluationResult {
             self.context_scores.recall() * 100.0,
             self.context_scores.f1_score() * 100.0
         )?;
-        if let Some(completion_scores) = &self.completion_scores {
-            let line_match = &completion_scores.line_match;
+        if let Some(edit_scores) = &self.edit_scores {
+            let line_match = &edit_scores.line_match;
             writeln!(f, "Edit Prediction")?;
             writeln!(
                 f,
@@ -351,7 +350,7 @@ impl EvaluationResult {
             writeln!(
                 f,
                 "  └─ diff chrF     {:<6} {:<6} {:<6} {:>8} {:>8}  {:>6.2}",
-                "-", "-", "-", "-", "-", completion_scores.chr_f
+                "-", "-", "-", "-", "-", edit_scores.chr_f
             )?;
         }
         Ok(())
@@ -377,7 +376,7 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
         let line_match = metrics::line_match_score(&expected_patch, &actual_patch);
         let chr_f = metrics::delta_chr_f(&expected_patch, &actual_patch);
 
-        eval_result.completion_scores = Some(CompletionScores { line_match, chr_f });
+        eval_result.edit_scores = Some(EditScores { line_match, chr_f });
     }
 
     eval_result
@@ -459,14 +458,14 @@ fn write_bucketed_analysis(
             .or_insert_with(|| EditBucket {
                 diff: execution_data.diff.clone(),
                 is_correct: {
-                    evaluation_result.completion_scores.as_ref().map_or(
-                        false,
-                        |completion_scores| {
-                            completion_scores.line_match.false_positives == 0
-                                && completion_scores.line_match.false_negatives == 0
-                                && completion_scores.line_match.true_positives > 0
-                        },
-                    )
+                    evaluation_result
+                        .edit_scores
+                        .as_ref()
+                        .map_or(false, |edit_scores| {
+                            edit_scores.line_match.false_positives == 0
+                                && edit_scores.line_match.false_negatives == 0
+                                && edit_scores.line_match.true_positives > 0
+                        })
                 },
                 execution_indices: vec![execution_data.execution_id.clone()],
                 reasoning_samples: vec![execution_data.reasoning.clone()],
