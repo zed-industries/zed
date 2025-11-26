@@ -18,12 +18,16 @@ impl Session {
     pub async fn new() -> Self {
         let old_session_id = KEY_VALUE_STORE.read_kvp(SESSION_ID_KEY).ok().flatten();
 
-        let session_id = Uuid::new_v4().to_string();
-
-        KEY_VALUE_STORE
-            .write_kvp(SESSION_ID_KEY.to_string(), session_id.clone())
-            .await
-            .log_err();
+        let session_id = if let Some(ref id) = old_session_id {
+            id.to_string()
+        } else {
+            let new_session_id = Uuid::new_v4().to_string();
+            KEY_VALUE_STORE
+                .write_kvp(SESSION_ID_KEY.to_string(), new_session_id.clone())
+                .await
+                .log_err();
+            new_session_id
+        };
 
         let old_window_ids = KEY_VALUE_STORE
             .read_kvp(SESSION_WINDOW_STACK_KEY)
