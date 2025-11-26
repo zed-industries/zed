@@ -161,7 +161,7 @@ mod tests {
     use gpui::{AppContext as _, UpdateGlobal as _};
     use indoc::indoc;
     use itertools::Itertools;
-    use language::Capability;
+    use language::{Capability, markdown_lang};
     use languages::rust_lang;
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use pretty_assertions::assert_eq;
@@ -258,6 +258,31 @@ where
 "#,
             &bracket_colors_markup(&mut cx),
             "All brackets should be colored based on their depth"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_bracket_colorization(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {r#"ˇ[LLM-powered features](./ai/overview.md), [bring and configure your own API keys](./ai/llm-providers.md#use-your-own-keys)"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"«1[LLM-powered features]1»«1(./ai/overview.md)1», «1[bring and configure your own API keys]1»«1(./ai/llm-providers.md#use-your-own-keys)1»
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "All markdown brackets should be colored based on their depth"
         );
     }
 
