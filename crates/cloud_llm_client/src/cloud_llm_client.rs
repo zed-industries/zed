@@ -200,10 +200,29 @@ pub struct RejectEditPredictionsBody {
     pub rejections: Vec<EditPredictionRejection>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EditPredictionRejection {
     pub request_id: String,
+    #[serde(default)]
+    pub reason: EditPredictionRejectReason,
     pub was_shown: bool,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum EditPredictionRejectReason {
+    /// New requests were triggered before this one completed
+    Canceled,
+    /// No edits returned
+    Empty,
+    /// Edits returned, but none remained after interpolation
+    InterpolatedEmpty,
+    /// The new prediction was preferred over the current one
+    Replaced,
+    /// The current prediction was preferred over the new one
+    CurrentPreferred,
+    /// The current prediction was discarded
+    #[default]
+    Discarded,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]

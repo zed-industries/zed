@@ -4,7 +4,7 @@ use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
     EditPredictionId, ZedUpdateRequiredError, Zeta,
-    prediction::{EditPrediction, EditPredictionInputs},
+    prediction::{EditPredictionInputs, EditPredictionResult},
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::{
@@ -36,7 +36,7 @@ pub(crate) fn request_prediction_with_zeta1(
     position: language::Anchor,
     events: Vec<Arc<Event>>,
     cx: &mut Context<Zeta>,
-) -> Task<Result<Option<EditPrediction>>> {
+) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
     let client = zeta.client.clone();
@@ -216,7 +216,7 @@ pub(crate) fn request_prediction_with_zeta1(
             );
         }
 
-        edit_prediction
+        edit_prediction.map(Some)
     })
 }
 
@@ -229,7 +229,7 @@ fn process_completion_response(
     buffer_snapshotted_at: Instant,
     received_response_at: Instant,
     cx: &AsyncApp,
-) -> Task<Result<Option<EditPrediction>>> {
+) -> Task<Result<EditPredictionResult>> {
     let snapshot = snapshot.clone();
     let request_id = prediction_response.request_id;
     let output_excerpt = prediction_response.output_excerpt;
@@ -246,8 +246,9 @@ fn process_completion_response(
             .await?
             .into();
 
-        Ok(EditPrediction::new(
-            EditPredictionId(request_id.into()),
+        let id = EditPredictionId(request_id.into());
+        Ok(EditPredictionResult::new(
+            id,
             &buffer,
             &snapshot,
             edits,

@@ -538,7 +538,7 @@ async fn run_edit_prediction(
     let prediction_task = zeta.update(cx, |zeta, cx| {
         zeta.request_prediction(&project, buffer, cursor, cx)
     });
-    prediction_task.await.unwrap().unwrap()
+    prediction_task.await.unwrap().unwrap().prediction.unwrap()
 }
 
 async fn make_test_zeta(
