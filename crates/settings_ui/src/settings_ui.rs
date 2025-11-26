@@ -2455,9 +2455,9 @@ impl SettingsWindow {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.navbar_scroll_handle.clone()),
+                        .track_scroll(&self.navbar_scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.navbar_scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.navbar_scroll_handle, window, cx),
             )
             .child(
                 h_flex()
@@ -3012,10 +3012,10 @@ impl SettingsWindow {
                 window.focus_prev();
             }))
             .when(sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.list_state, window, cx)
             })
             .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.sub_page_scroll_handle, window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()

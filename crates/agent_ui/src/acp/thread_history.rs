@@ -527,14 +527,10 @@ impl Render for AcpThreadHistory {
                         )
                         .p_1()
                         .pr_4()
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                         .flex_grow(),
                     )
-                    .vertical_scrollbar_for(
-                        self.scroll_handle.clone(),
-                        window,
-                        cx,
-                    )
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                 }
             })
             .when(!has_no_history, |this| {
