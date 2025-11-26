@@ -13,11 +13,12 @@ use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
+use offline_mode::OfflineModeSetting;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
 use crate::copilot_responses as responses;
-use settings::watch_config_dir;
+use settings::{Settings, watch_config_dir};
 
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
 
@@ -582,6 +583,15 @@ impl CopilotChat {
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+        let is_offline = cx
+            .update(|cx| OfflineModeSetting::get_global(cx).0)
+            .ok()
+            .unwrap_or(false);
+
+        if is_offline {
+            return Err(anyhow!("AI features unavailable in offline mode"));
+        }
+
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
         let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
@@ -600,6 +610,15 @@ impl CopilotChat {
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
+        let is_offline = cx
+            .update(|cx| OfflineModeSetting::get_global(cx).0)
+            .ok()
+            .unwrap_or(false);
+
+        if is_offline {
+            return Err(anyhow!("AI features unavailable in offline mode"));
+        }
+
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
         let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);

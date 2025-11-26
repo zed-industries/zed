@@ -45,6 +45,7 @@ language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
+offline_mode.workspace = true
 open.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

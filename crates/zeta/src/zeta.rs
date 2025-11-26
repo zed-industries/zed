@@ -36,10 +36,11 @@ use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, File, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use offline_mode::OfflineModeSetting;
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use semver::Version;
-use settings::WorktreeId;
+use settings::{Settings, WorktreeId};
 use std::collections::hash_map;
 use std::mem;
 use std::str::FromStr;
@@ -567,6 +568,10 @@ impl Zeta {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow!("AI features unavailable in offline mode")));
+        }
+
         self.request_completion_impl(project, buffer, position, cx, Self::perform_predict_edits)
     }
 

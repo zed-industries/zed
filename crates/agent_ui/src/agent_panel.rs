@@ -53,6 +53,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
+use offline_mode::OfflineModeSetting;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
@@ -2336,6 +2337,34 @@ impl AgentPanel {
         )
     }
 
+    fn should_show_offline_warning(&self, cx: &App) -> bool {
+        if !OfflineModeSetting::get_global(cx).0 {
+            return false;
+        }
+
+        // Check if current model is a cloud model (not ollama or lmstudio)
+        if let Some(selection) = &AgentSettings::get_global(cx).default_model {
+            let provider_id: &str = selection.provider.0.as_ref();
+            // Only show warning if using a cloud provider
+            provider_id != "ollama" && provider_id != "lmstudio"
+        } else {
+            // No model selected, show warning
+            true
+        }
+    }
+
+    fn render_offline_warning(&self, border_bottom: bool, _cx: &App) -> impl IntoElement {
+        Callout::new()
+            .icon(IconName::Warning)
+            .severity(Severity::Warning)
+            .when(border_bottom, |this| {
+                this.border_position(ui::BorderPosition::Bottom)
+            })
+            .title("Unavailable in Offline Mode - Cloud AI features disabled")
+            .description("Switch to a local model (Ollama or LM Studio) to use AI features while offline.")
+            .into_any_element()
+    }
+
     fn render_configuration_error(
         &self,
         border_bottom: bool,
@@ -2600,17 +2629,22 @@ impl Render for AgentPanel {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     let configuration_error =
                         model_registry.configuration_error(model_registry.default_model(), cx);
+                    let should_show_offline = self.should_show_offline_warning(cx);
                     parent
                         .map(|this| {
-                            if !self.should_render_onboarding(cx)
-                                && let Some(err) = configuration_error.as_ref()
-                            {
-                                this.child(self.render_configuration_error(
-                                    true,
-                                    err,
-                                    &self.focus_handle(cx),
-                                    cx,
-                                ))
+                            if !self.should_render_onboarding(cx) {
+                                if should_show_offline {
+                                    this.child(self.render_offline_warning(true, cx))
+                                } else if let Some(err) = configuration_error.as_ref() {
+                                    this.child(self.render_configuration_error(
+                                        true,
+                                        err,
+                                        &self.focus_handle(cx),
+                                        cx,
+                                    ))
+                                } else {
+                                    this
+                                }
                             } else {
                                 this
                             }

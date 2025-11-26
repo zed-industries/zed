@@ -3,6 +3,7 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
+use offline_mode::OfflineModeSetting;
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME,
     CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
@@ -30,7 +31,7 @@ use release_channel::AppVersion;
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
@@ -745,6 +746,19 @@ impl LanguageModel for CloudLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_offline = cx
+            .update(|cx| OfflineModeSetting::get_global(cx).0)
+            .unwrap_or(false);
+
+        if is_offline {
+            return async move {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "AI features unavailable in offline mode"
+                )))
+            }
+            .boxed();
+        }
+
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;

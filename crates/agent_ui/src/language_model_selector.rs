@@ -9,8 +9,10 @@ use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
     LanguageModelRegistry,
 };
+use offline_mode::OfflineModeSetting;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
+use settings::Settings;
 use ui::{KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use zed_actions::agent::OpenSettings;
 
@@ -366,10 +368,19 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(LanguageModelPickerEntry::Model(_)) => true,
+            Some(LanguageModelPickerEntry::Model(model_info)) => {
+                // Prevent selecting cloud models when offline
+                if OfflineModeSetting::get_global(cx).0 {
+                    let provider_id = model_info.model.provider_id();
+                    let provider_id_str: &str = provider_id.0.as_ref();
+                    provider_id_str == "ollama" || provider_id_str == "lmstudio"
+                } else {
+                    true
+                }
+            }
             Some(LanguageModelPickerEntry::Separator(_)) | None => false,
         }
     }
@@ -489,10 +500,25 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
-                let model_icon_color = if is_selected {
+                // Check if this model is unavailable due to offline mode
+                let is_offline = OfflineModeSetting::get_global(cx).0;
+                let provider_id = model_info.model.provider_id();
+                let provider_id_str: &str = provider_id.0.as_ref();
+                let is_cloud_model = provider_id_str != "ollama" && provider_id_str != "lmstudio";
+                let is_unavailable = is_offline && is_cloud_model;
+
+                let model_icon_color = if is_unavailable {
+                    Color::Disabled
+                } else if is_selected {
                     Color::Accent
                 } else {
                     Color::Muted
+                };
+
+                let label_color = if is_unavailable {
+                    Color::Disabled
+                } else {
+                    Color::Default
                 };
 
                 Some(
@@ -500,6 +526,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
+                        .disabled(is_unavailable)
                         .child(
                             h_flex()
                                 .w_full()
@@ -509,15 +536,27 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                         .color(model_icon_color)
                                         .size(IconSize::Small),
                                 )
-                                .child(Label::new(model_info.model.name().0).truncate()),
+                                .child(
+                                    Label::new(model_info.model.name().0)
+                                        .color(label_color)
+                                        .truncate(),
+                                ),
                         )
-                        .end_slot(div().pr_3().when(is_selected, |this| {
-                            this.child(
-                                Icon::new(IconName::Check)
-                                    .color(Color::Accent)
-                                    .size(IconSize::Small),
-                            )
-                        }))
+                        .end_slot(
+                            div().pr_3().when(is_unavailable, |this| {
+                                this.child(
+                                    Icon::new(IconName::Warning)
+                                        .color(Color::Disabled)
+                                        .size(IconSize::Small),
+                                )
+                            }).when(is_selected && !is_unavailable, |this| {
+                                this.child(
+                                    Icon::new(IconName::Check)
+                                        .color(Color::Accent)
+                                        .size(IconSize::Small),
+                                )
+                            }),
+                        )
                         .into_any_element(),
                 )
             }

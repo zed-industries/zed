@@ -13,6 +13,8 @@ use gpui::{Task, WeakEntity};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};
+use offline_mode::OfflineModeSetting;
+use settings::Settings;
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -150,6 +152,10 @@ impl SlashCommand for FetchSlashCommand {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
+
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow!("Fetch command unavailable in offline mode")));
+        }
 
         let http_client = workspace.read(cx).client().http_client();
         let url = argument.to_string();

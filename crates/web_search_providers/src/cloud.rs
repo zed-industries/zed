@@ -7,6 +7,8 @@ use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use http_client::{HttpClient, Method};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use offline_mode::OfflineModeSetting;
+use settings::Settings;
 use web_search::{WebSearchProvider, WebSearchProviderId};
 
 pub struct CloudWebSearchProvider {
@@ -58,6 +60,12 @@ impl WebSearchProvider for CloudWebSearchProvider {
     }
 
     fn search(&self, query: String, cx: &mut App) -> Task<Result<WebSearchResponse>> {
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Web search unavailable in offline mode"
+            )));
+        }
+
         let state = self.state.read(cx);
         let client = state.client.clone();
         let llm_api_token = state.llm_api_token.clone();

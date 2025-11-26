@@ -30,6 +30,7 @@ use gpui::{
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
+use offline_mode::OfflineModeSetting;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
@@ -545,6 +546,19 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_offline = cx
+            .update(|cx| OfflineModeSetting::get_global(cx).0)
+            .unwrap_or(false);
+
+        if is_offline {
+            return async move {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "AI features unavailable in offline mode"
+                )))
+            }
+            .boxed();
+        }
+
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| state.get_region()) else {
             return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
         };

@@ -8,8 +8,10 @@ use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
+use offline_mode::OfflineModeSetting;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::SharedString;
 use util::markdown::MarkdownEscaped;
 
@@ -143,6 +145,12 @@ impl AgentTool for FetchTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Fetch tool unavailable in offline mode"
+            )));
+        }
+
         let authorize = event_stream.authorize(input.url.clone(), cx);
 
         let text = cx.background_spawn({

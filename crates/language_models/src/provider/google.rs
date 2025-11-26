@@ -8,6 +8,7 @@ use google_ai::{
 };
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
+use offline_mode::OfflineModeSetting;
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
@@ -383,6 +384,19 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_offline = cx
+            .update(|cx| OfflineModeSetting::get_global(cx).0)
+            .unwrap_or(false);
+
+        if is_offline {
+            return async move {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "AI features unavailable in offline mode"
+                )))
+            }
+            .boxed();
+        }
+
         let request = into_google(
             request,
             self.model.request_id().to_string(),

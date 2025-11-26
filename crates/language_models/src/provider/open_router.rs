@@ -3,6 +3,7 @@ use collections::HashMap;
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::HttpClient;
+use offline_mode::OfflineModeSetting;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
@@ -376,6 +377,19 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_offline = cx
+            .update(|cx| OfflineModeSetting::get_global(cx).0)
+            .unwrap_or(false);
+
+        if is_offline {
+            return async move {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "AI features unavailable in offline mode"
+                )))
+            }
+            .boxed();
+        }
+
         let request = into_open_router(request, &self.model, self.max_output_tokens());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {

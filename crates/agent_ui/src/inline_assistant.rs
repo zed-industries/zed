@@ -42,6 +42,7 @@ use language_model::{
     ConfigurationError, ConfiguredModel, LanguageModelRegistry, report_assistant_event,
 };
 use multi_buffer::MultiBufferRow;
+use offline_mode::OfflineModeSetting;
 use parking_lot::Mutex;
 use project::{CodeAction, DisableAiSettings, LspAction, Project, ProjectTransaction};
 use prompt_store::{PromptBuilder, PromptStore};
@@ -260,6 +261,32 @@ impl InlineAssistant {
         ) else {
             return;
         };
+
+        // Check if offline with cloud model
+        if OfflineModeSetting::get_global(cx).0 {
+            if let Some(selection) = &AgentSettings::get_global(cx).default_model {
+                let provider_id: &str = selection.provider.0.as_ref();
+                if provider_id != "ollama" && provider_id != "lmstudio" {
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<Self>(),
+                            "Inline assistant unavailable in offline mode. Switch to a local model (Ollama or LM Studio) to use AI while offline."
+                        ),
+                        cx,
+                    );
+                    return;
+                }
+            } else {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<Self>(),
+                        "Inline assistant unavailable in offline mode. Switch to a local model (Ollama or LM Studio) to use AI while offline."
+                    ),
+                    cx,
+                );
+                return;
+            }
+        }
 
         let configuration_error = || {
             let model_registry = LanguageModelRegistry::read_global(cx);

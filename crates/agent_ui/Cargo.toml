@@ -61,6 +61,7 @@ markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
+offline_mode.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

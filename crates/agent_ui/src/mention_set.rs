@@ -19,6 +19,8 @@ use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
 use language::Buffer;
 use language_model::LanguageModelImage;
+use offline_mode::OfflineModeSetting;
+use settings::Settings;
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -329,6 +331,10 @@ impl MentionSet {
         http_client: Arc<HttpClientWithUrl>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
+        if OfflineModeSetting::get_global(cx).0 {
+            return Task::ready(Err(anyhow!("URL fetching unavailable in offline mode")));
+        }
+
         cx.background_executor().spawn(async move {
             let content = fetch_url_content(http_client, url.to_string()).await?;
             Ok(Mention::Text {

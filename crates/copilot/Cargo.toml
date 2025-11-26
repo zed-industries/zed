@@ -39,6 +39,7 @@ log.workspace = true
 lsp.workspace = true
 menu.workspace = true
 node_runtime.workspace = true
+offline_mode.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
