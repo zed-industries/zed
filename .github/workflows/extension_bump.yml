@@ -60,11 +60,11 @@ jobs:
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |+
-        CURRENT_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+        CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
-        git checkout $(git log -1 --format=%H)~1
+        git checkout "$(git log -1 --format=%H)"~1
 
-        PREV_COMMIT_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+        PREV_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
         [[ "$CURRENT_VERSION" == "$PREV_COMMIT_VERSION" ]] && \
           echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
@@ -97,11 +97,11 @@ jobs:
     - id: bump-version
       name: extension_bump::bump_version
       run: |
-        OLD_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+        OLD_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
         cat <<EOF > .bumpversion.cfg
         [bumpversion]
-        current_version = $OLD_VERSION
+        current_version = "$OLD_VERSION"
 
         [bumpversion:file:Cargo.toml]
 
@@ -110,7 +110,7 @@ jobs:
         EOF
 
         bump2version --verbose ${{ inputs.bump-type }}
-        NEW_VERSION="$(cat extension.toml| sed -n 's/version = \"\(.*\)\"/\1/p')"
+        NEW_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
         cargo update --workspace
 
         rm .bumpversion.cfg
