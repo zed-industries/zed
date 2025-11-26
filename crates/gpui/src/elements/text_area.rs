@@ -968,8 +968,20 @@ fn paint_cursor(
     cursor_color: Hsla,
     window: &mut Window,
 ) {
-    for line in line_layouts {
+    eprintln!(
+        "[paint_cursor] cursor_offset={}, content.len()={}, num_lines={}",
+        cursor_offset,
+        content.len(),
+        line_layouts.len()
+    );
+
+    for (line_idx, line) in line_layouts.iter().enumerate() {
         let line_y = line.y_offset - scroll_offset;
+
+        eprintln!(
+            "[paint_cursor] line {}: text_range={:?}, y_offset={:?}, line_y={:?}, visual_line_count={}",
+            line_idx, line.text_range, line.y_offset, line_y, line.visual_line_count
+        );
 
         if !is_line_visible(
             line_y,
@@ -977,14 +989,20 @@ fn paint_cursor(
             line.visual_line_count,
             bounds.size.height,
         ) {
+            eprintln!("[paint_cursor] -> line not visible, skipping");
             continue;
         }
 
-        if !is_cursor_in_line(cursor_offset, &line.text_range, content.len()) {
+        let in_line = is_cursor_in_line(cursor_offset, &line.text_range, content.len());
+        eprintln!("[paint_cursor] -> is_cursor_in_line={}", in_line);
+
+        if !in_line {
             continue;
         }
 
         let cursor_position = compute_cursor_position(line, cursor_offset, line_height);
+        eprintln!("[paint_cursor] -> cursor_position={:?}", cursor_position);
+
         paint_cursor_at_position(
             bounds,
             line_y,
@@ -1003,12 +1021,24 @@ fn is_cursor_in_line(
     text_range: &std::ops::Range<usize>,
     content_len: usize,
 ) -> bool {
-    if text_range.is_empty() {
+    let result = if text_range.is_empty() {
         cursor_offset == text_range.start
     } else {
         text_range.contains(&cursor_offset)
             || (cursor_offset == text_range.end && cursor_offset == content_len)
-    }
+    };
+
+    eprintln!(
+        "[is_cursor_in_line] cursor_offset={}, text_range={:?}, content_len={}, contains={}, at_end_of_content={}, result={}",
+        cursor_offset,
+        text_range,
+        content_len,
+        text_range.contains(&cursor_offset),
+        cursor_offset == text_range.end && cursor_offset == content_len,
+        result
+    );
+
+    result
 }
 
 /// Computes the visual position of the cursor within a line.
@@ -1019,10 +1049,20 @@ fn compute_cursor_position(
 ) -> Point<Pixels> {
     if let Some(wrapped) = &line.wrapped_line {
         let local_offset = cursor_offset.saturating_sub(line.text_range.start);
-        wrapped
-            .position_for_index(local_offset, line_height)
-            .unwrap_or(point(px(0.), px(0.)))
+        let position_result = wrapped.position_for_index(local_offset, line_height);
+
+        eprintln!(
+            "[compute_cursor_position] cursor_offset={}, line.text_range={:?}, local_offset={}, wrapped.text.len()={}, position_for_index={:?}",
+            cursor_offset,
+            line.text_range,
+            local_offset,
+            wrapped.text.len(),
+            position_result
+        );
+
+        position_result.unwrap_or(point(px(0.), px(0.)))
     } else {
+        eprintln!("[compute_cursor_position] no wrapped line, returning (0, 0)");
         point(px(0.), px(0.))
     }
 }

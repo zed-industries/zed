@@ -517,14 +517,32 @@ impl Input {
         let (visual_line_idx, x_pixels) = self.find_visual_line_and_x_offset(offset);
         let target_visual_line_idx = (visual_line_idx as i32 + direction).max(0) as usize;
 
+        eprintln!(
+            "[move_vertically] offset={}, direction={}, visual_line_idx={}, x_pixels={}, target_visual_line_idx={}",
+            offset, direction, visual_line_idx, x_pixels, target_visual_line_idx
+        );
+
         let mut current_visual_line = 0;
-        for layout in &self.line_layouts {
+        for (layout_idx, layout) in self.line_layouts.iter().enumerate() {
             let visual_lines_in_layout = layout.visual_line_count;
+
+            eprintln!(
+                "[move_vertically] layout {}: current_visual_line={}, visual_lines_in_layout={}, text_range={:?}",
+                layout_idx, current_visual_line, visual_lines_in_layout, layout.text_range
+            );
 
             if target_visual_line_idx < current_visual_line + visual_lines_in_layout {
                 let visual_line_within_layout = target_visual_line_idx - current_visual_line;
+                eprintln!(
+                    "[move_vertically] -> target is in this layout, visual_line_within_layout={}",
+                    visual_line_within_layout
+                );
 
                 if layout.text_range.is_empty() {
+                    eprintln!(
+                        "[move_vertically] -> empty line, returning {}",
+                        layout.text_range.start
+                    );
                     return Some(layout.text_range.start);
                 }
 
@@ -532,13 +550,32 @@ impl Input {
                     let y_within_wrapped = self.line_height * visual_line_within_layout as f32;
                     let target_point = point(px(x_pixels), y_within_wrapped);
 
-                    let closest_idx = wrapped
-                        .closest_index_for_position(target_point, self.line_height)
-                        .unwrap_or_else(|closest| closest);
+                    let closest_result =
+                        wrapped.closest_index_for_position(target_point, self.line_height);
+                    eprintln!(
+                        "[move_vertically] -> closest_index_for_position({:?}) = {:?}",
+                        target_point, closest_result
+                    );
 
-                    return Some(layout.text_range.start + closest_idx.min(wrapped.text.len()));
+                    let closest_idx = closest_result.unwrap_or_else(|closest| closest);
+                    let clamped = closest_idx.min(wrapped.text.len());
+                    let result = layout.text_range.start + clamped;
+
+                    eprintln!(
+                        "[move_vertically] -> closest_idx={}, wrapped.text.len()={}, clamped={}, result={}",
+                        closest_idx,
+                        wrapped.text.len(),
+                        clamped,
+                        result
+                    );
+
+                    return Some(result);
                 }
 
+                eprintln!(
+                    "[move_vertically] -> no wrapped line, returning {}",
+                    layout.text_range.start
+                );
                 return Some(layout.text_range.start);
             }
 
@@ -546,8 +583,13 @@ impl Input {
         }
 
         if direction > 0 {
+            eprintln!(
+                "[move_vertically] -> past end, returning content.len()={}",
+                self.content.len()
+            );
             Some(self.content.len())
         } else {
+            eprintln!("[move_vertically] -> before start, returning None");
             None
         }
     }
@@ -583,15 +625,33 @@ impl Input {
     }
 
     pub(crate) fn index_for_position(&self, position: Point<Pixels>) -> usize {
+        eprintln!(
+            "[index_for_position] position: {:?}, content.len: {}",
+            position,
+            self.content.len()
+        );
+
         if self.content.is_empty() {
+            eprintln!("[index_for_position] empty content, returning 0");
             return 0;
         }
 
-        for line in &self.line_layouts {
+        for (line_idx, line) in self.line_layouts.iter().enumerate() {
             let line_height_total = self.line_height * line.visual_line_count as f32;
 
+            eprintln!(
+                "[index_for_position] line {}: y_offset={:?}, height_total={:?}, text_range={:?}",
+                line_idx, line.y_offset, line_height_total, line.text_range
+            );
+
             if position.y >= line.y_offset && position.y < line.y_offset + line_height_total {
+                eprintln!("[index_for_position] -> position.y in this line's bounds");
+
                 if line.text_range.is_empty() {
+                    eprintln!(
+                        "[index_for_position] -> empty line, returning {}",
+                        line.text_range.start
+                    );
                     return line.text_range.start;
                 }
 
@@ -599,16 +659,43 @@ impl Input {
                     let relative_y = position.y - line.y_offset;
                     let relative_point = point(position.x, relative_y);
 
-                    let local_idx = wrapped
-                        .closest_index_for_position(relative_point, self.line_height)
-                        .unwrap_or_else(|closest| closest);
+                    let closest_result =
+                        wrapped.closest_index_for_position(relative_point, self.line_height);
+                    eprintln!(
+                        "[index_for_position] -> closest_index_for_position({:?}) = {:?}",
+                        relative_point, closest_result
+                    );
 
-                    return line.text_range.start + local_idx.min(wrapped.text.len());
+                    let local_idx = closest_result.unwrap_or_else(|closest| closest);
+                    let clamped = local_idx.min(wrapped.text.len());
+                    let result = line.text_range.start + clamped;
+
+                    eprintln!(
+                        "[index_for_position] -> local_idx={}, wrapped.text.len()={}, clamped={}, result={}",
+                        local_idx,
+                        wrapped.text.len(),
+                        clamped,
+                        result
+                    );
+                    eprintln!(
+                        "[index_for_position] -> wrapped.text={:?}",
+                        wrapped.text.as_ref()
+                    );
+
+                    return result;
                 }
+                eprintln!(
+                    "[index_for_position] -> no wrapped line, returning {}",
+                    line.text_range.start
+                );
                 return line.text_range.start;
             }
         }
 
+        eprintln!(
+            "[index_for_position] -> no line matched, returning content.len()={}",
+            self.content.len()
+        );
         self.content.len()
     }
 
