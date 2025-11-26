@@ -8529,8 +8529,8 @@ impl LspStore {
             }
 
             // Get handler config and language server via VirtualDocumentStore delegation
-            let (config, _language_server, content_task) =
-                lsp_store.update(cx, |lsp_store, cx| {
+            let (config, _language_server, content_task) = lsp_store
+                .update(cx, |lsp_store, cx| {
                     let local = lsp_store
                         .as_local()
                         .context("virtual documents only supported in local mode")?;
@@ -8559,7 +8559,8 @@ impl LspStore {
                         .context("failed to create content fetch task")?;
 
                     anyhow::Ok((config, language_server, content_task))
-                })??;
+                })
+                .flatten()?;
 
             // Fetch the virtual document content
             let content = content_task.await?;
@@ -8641,37 +8642,41 @@ impl LspStore {
                     buffer.update(cx, move |_, cx| {
                         cx.on_release(move |buffer, cx| {
                             let buffer_id = buffer.remote_id();
-                            lsp_store_handle
-                                .update(cx, |lsp_store, _cx| {
-                                    // Send textDocument/didClose to the language server
-                                    if let Some(language_server) =
-                                        lsp_store.language_server_for_id(language_server_id)
+                            if let Err(e) = lsp_store_handle.update(cx, |lsp_store, _cx| {
+                                // Send textDocument/didClose to the language server
+                                if let Some(language_server) =
+                                    lsp_store.language_server_for_id(language_server_id)
+                                {
+                                    language_server.unregister_buffer(uri_for_cleanup.clone());
+                                }
+
+                                // Clean up tracking maps
+                                if let Some(local) = lsp_store.as_local_mut() {
+                                    if let Some(servers) =
+                                        local.buffers_opened_in_servers.get_mut(&buffer_id)
                                     {
-                                        language_server.unregister_buffer(uri_for_cleanup.clone());
-                                    }
-
-                                    // Clean up tracking maps
-                                    if let Some(local) = lsp_store.as_local_mut() {
-                                        if let Some(servers) =
-                                            local.buffers_opened_in_servers.get_mut(&buffer_id)
-                                        {
-                                            servers.remove(&language_server_id);
-                                            if servers.is_empty() {
-                                                local.buffers_opened_in_servers.remove(&buffer_id);
-                                            }
-                                        }
-
-                                        if let Some(snapshots) =
-                                            local.buffer_snapshots.get_mut(&buffer_id)
-                                        {
-                                            snapshots.remove(&language_server_id);
-                                            if snapshots.is_empty() {
-                                                local.buffer_snapshots.remove(&buffer_id);
-                                            }
+                                        servers.remove(&language_server_id);
+                                        if servers.is_empty() {
+                                            local.buffers_opened_in_servers.remove(&buffer_id);
                                         }
                                     }
-                                })
-                                .ok();
+
+                                    if let Some(snapshots) =
+                                        local.buffer_snapshots.get_mut(&buffer_id)
+                                    {
+                                        snapshots.remove(&language_server_id);
+                                        if snapshots.is_empty() {
+                                            local.buffer_snapshots.remove(&buffer_id);
+                                        }
+                                    }
+                                }
+                            }) {
+                                log::warn!(
+                                    "Failed to clean up virtual buffer {}: {}",
+                                    buffer_id,
+                                    e
+                                );
+                            }
                         })
                         .detach()
                     });

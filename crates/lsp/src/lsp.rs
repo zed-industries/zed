@@ -1234,12 +1234,16 @@ impl LanguageServer {
 
     /// Sends a custom LSP request with a dynamic method name.
     /// This is useful for extensions that need to send non-standard LSP requests.
-    pub fn request_custom<P, R>(&self, method: &str, params: P) -> impl LspRequestFuture<R>
+    ///
+    /// The `method` parameter accepts any type that can be converted into a `String`,
+    /// avoiding unnecessary allocations when the caller already has a `String`.
+    pub fn request_custom<M, P, R>(&self, method: M, params: P) -> impl LspRequestFuture<R>
     where
+        M: Into<String>,
         P: Serialize,
         R: 'static + Send + DeserializeOwned,
     {
-        let method = method.to_string();
+        let method: String = method.into();
         let id = self.next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
