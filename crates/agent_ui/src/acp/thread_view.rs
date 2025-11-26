@@ -3989,7 +3989,7 @@ impl AcpThreadView {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();
                 let path_style = file.path_style(cx);
-                let separator = file.path_style(cx).separator();
+                let separator = file.path_style(cx).primary_separator();
 
                 let file_path = path.parent().and_then(|parent| {
                     if parent.is_empty() {
@@ -4103,7 +4103,9 @@ impl AcpThreadView {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
-                                                        vec![Anchor::MIN..Anchor::MAX],
+                                                        vec![Anchor::min_max_range_for_buffer(
+                                                            buffer.read(cx).remote_id(),
+                                                        )],
                                                         Some(telemetry.clone()),
                                                         cx,
                                                     )
@@ -4124,7 +4126,9 @@ impl AcpThreadView {
                                             action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
-                                                    Anchor::MIN..Anchor::MAX,
+                                                    Anchor::min_max_range_for_buffer(
+                                                        buffer.read(cx).remote_id(),
+                                                    ),
                                                     Some(telemetry.clone()),
                                                     cx,
                                                 );
@@ -4743,11 +4747,8 @@ impl AcpThreadView {
                     let buffer = multibuffer.as_singleton();
                     if agent_location.buffer.upgrade() == buffer {
                         let excerpt_id = multibuffer.excerpt_ids().first().cloned();
-                        let anchor = editor::Anchor::in_buffer(
-                            excerpt_id.unwrap(),
-                            buffer.unwrap().read(cx).remote_id(),
-                            agent_location.position,
-                        );
+                        let anchor =
+                            editor::Anchor::in_buffer(excerpt_id.unwrap(), agent_location.position);
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
@@ -5895,7 +5896,7 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                        .vertical_scrollbar_for(&self.list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()

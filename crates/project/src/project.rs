@@ -927,7 +927,7 @@ impl DirectoryLister {
             .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
             .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
             .map(|mut s| {
-                s.push_str(path_style.separator());
+                s.push_str(path_style.primary_separator());
                 s
             })
             .unwrap_or_else(|| {
@@ -4002,7 +4002,8 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
+        let captures =
+            snapshot.debug_variables_query(Anchor::min_for_buffer(snapshot.remote_id())..range.end);
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)

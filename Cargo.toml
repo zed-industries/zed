@@ -583,14 +583,14 @@ partial-json-fixer = "0.5.3"
 parse_int = "0.9"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -655,7 +655,7 @@ sysinfo = "0.37.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "30c32a4522751699adeda0d5840c71c3b75ae73d" }
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "7249f999c5fdf9bf3cc5c288c964454e4dac0c00" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",

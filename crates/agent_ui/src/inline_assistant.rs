@@ -440,7 +440,6 @@ impl InlineAssistant {
         {
             let anchor_range = Anchor::range_in_buffer(
                 excerpt_id,
-                buffer.remote_id(),
                 buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
             );
 

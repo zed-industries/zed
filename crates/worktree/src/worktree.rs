@@ -999,7 +999,7 @@ impl Worktree {
             };
 
             if worktree_relative_path.components().next().is_some() {
-                full_path_string.push_str(self.path_style.separator());
+                full_path_string.push_str(self.path_style.primary_separator());
                 full_path_string.push_str(&worktree_relative_path.display(self.path_style));
             }
 
@@ -2108,8 +2108,8 @@ impl Snapshot {
         if path.file_name().is_some() {
             let mut abs_path = self.abs_path.to_string();
             for component in path.components() {
-                if !abs_path.ends_with(self.path_style.separator()) {
-                    abs_path.push_str(self.path_style.separator());
+                if !abs_path.ends_with(self.path_style.primary_separator()) {
+                    abs_path.push_str(self.path_style.primary_separator());
                 }
                 abs_path.push_str(component);
             }

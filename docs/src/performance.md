@@ -1,10 +1,25 @@
 How to use our internal tools to profile and keep Zed fast.
 
-# Tracy
+# Flamechart/CPU profiling
 
-Get a profile of the zed foreground executor
+See what the CPU spends the most time on. Strongly recommend you use
+[samply](https://github.com/mstange/samply). It opens an interactive profile in
+the browser (specifically a local instance of [firefox_profiler](https://profiler.firefox.com/)).
 
-The profiler always runs in the background. You can save a trace from its UI or look at the results live.
+See [samply](https://github.com/mstange/samply)'s README on how to install and run.
+
+The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile for for. To do that hit the upload local profile button in the top right corner.
+
+<img width="851" height="613" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" />
+
+# Task/Async profiling
+
+Get a profile of the zed foreground executor and background executors. Check if
+anything is blocking the foreground too long or taking too much (clock) time in
+the background.
+
+The profiler always runs in the background. You can save a trace from its UI or
+look at the results live.
 
 ## Setup/Building the importer:
 

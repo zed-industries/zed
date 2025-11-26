@@ -142,9 +142,13 @@ pub struct NamedJob {
 //     }
 // }
 
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
+    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+
 pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
     Expression::new(format!(
-        "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'){}",
+        "{}{}",
+        DEFAULT_REPOSITORY_OWNER_GUARD,
         trigger_always.then_some(" && always()").unwrap_or_default()
     ))
 }
@@ -248,8 +252,10 @@ pub mod named {
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub fn bash(script: &str) -> Step<Run> {
-        Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+    pub fn bash(script: impl AsRef<str>) -> Step<Run> {
+        Step::new(function_name(1))
+            .run(script.as_ref())
+            .shell(BASH_SHELL)
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.

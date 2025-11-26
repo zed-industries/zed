@@ -37,7 +37,7 @@ where
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .filter_map(|selection| Some((selection.head(), selection.head().buffer_id?)))
+        .filter_map(|selection| Some((selection.head(), selection.head().text_anchor.buffer_id?)))
         .unique_by(|(_, buffer_id)| *buffer_id)
         .find_map(|(trigger_anchor, buffer_id)| {
             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;

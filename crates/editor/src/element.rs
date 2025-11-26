@@ -9283,7 +9283,7 @@ impl Element for EditorElement {
                                     HashMap::default();
                                 for selection in all_anchor_selections.iter() {
                                     let head = selection.head();
-                                    if let Some(buffer_id) = head.buffer_id {
+                                    if let Some(buffer_id) = head.text_anchor.buffer_id {
                                         anchors_by_buffer
                                             .entry(buffer_id)
                                             .and_modify(|(latest_id, latest_anchor)| {
@@ -10712,9 +10712,9 @@ impl ScrollbarLayout {
         show_thumb: bool,
         axis: ScrollbarAxis,
     ) -> Self {
-        let text_units_per_page = f64::from(viewport_size / glyph_space);
+        let text_units_per_page = viewport_size.to_f64() / glyph_space.to_f64();
         let visible_range = scroll_position..scroll_position + text_units_per_page;
-        let total_text_units = scroll_range / f64::from(glyph_space);
+        let total_text_units = scroll_range / glyph_space.to_f64();
 
         let thumb_percentage = text_units_per_page / total_text_units;
         let thumb_size = Pixels::from(ScrollOffset::from(track_length) * thumb_percentage)

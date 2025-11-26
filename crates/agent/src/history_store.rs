@@ -188,6 +188,15 @@ impl HistoryStore {
         })
     }
 
+    pub fn delete_threads(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.delete_threads().await?;
+            this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
     pub fn delete_text_thread(
         &mut self,
         path: Arc<Path>,

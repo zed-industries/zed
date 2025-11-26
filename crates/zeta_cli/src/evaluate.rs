@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     io::{IsTerminal, Write},
     sync::Arc,
 };
@@ -125,20 +125,9 @@ fn write_aggregated_scores(
             .peekable();
         let has_edit_predictions = edit_predictions.peek().is_some();
         let aggregated_result = EvaluationResult {
-            context: Scores::aggregate(successful.iter().map(|r| &r.context)),
             edit_prediction: has_edit_predictions.then(|| Scores::aggregate(edit_predictions)),
             prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
             generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
-                / successful.len(),
-            context_lines_found_in_context: successful
-                .iter()
-                .map(|r| r.context_lines_found_in_context)
-                .sum::<usize>()
-                / successful.len(),
-            context_lines_in_expected_patch: successful
-                .iter()
-                .map(|r| r.context_lines_in_expected_patch)
-                .sum::<usize>()
                 / successful.len(),
         };
 
@@ -261,11 +250,8 @@ fn write_eval_result(
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
     pub edit_prediction: Option<Scores>,
-    pub context: Scores,
     pub prompt_len: usize,
     pub generated_len: usize,
-    pub context_lines_in_expected_patch: usize,
-    pub context_lines_found_in_context: usize,
 }
 
 #[derive(Default, Debug)]
@@ -363,14 +349,6 @@ impl std::fmt::Display for EvaluationResult {
 
 impl EvaluationResult {
     fn fmt_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            r#"
-### Context Scores
-{}
-"#,
-            self.context.to_markdown(),
-        )?;
         if let Some(prediction) = &self.edit_prediction {
             write!(
                 f,
@@ -387,34 +365,18 @@ impl EvaluationResult {
         writeln!(f, "### Scores\n")?;
         writeln!(
             f,
-            "                   Prompt  Generated RetrievedContext PatchContext     TP     FP     FN     Precision   Recall     F1"
+            "                   Prompt  Generated  TP     FP     FN     Precision   Recall      F1"
         )?;
         writeln!(
             f,
-            "─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
-        )?;
-        writeln!(
-            f,
-            "Context Retrieval  {:<7} {:<9} {:<16} {:<16} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
-            "",
-            "",
-            "",
-            "",
-            self.context.true_positives,
-            self.context.false_positives,
-            self.context.false_negatives,
-            self.context.precision() * 100.0,
-            self.context.recall() * 100.0,
-            self.context.f1_score() * 100.0
+            "───────────────────────────────────────────────────────────────────────────────────────────────"
         )?;
         if let Some(edit_prediction) = &self.edit_prediction {
             writeln!(
                 f,
-                "Edit Prediction    {:<7} {:<9} {:<16} {:<16} {:<6} {:<6} {:<6} {:>10.2} {:>7.2} {:>7.2}",
+                "Edit Prediction    {:<7} {:<9}  {:<6} {:<6} {:<6} {:>9.2} {:>8.2} {:>7.2}",
                 self.prompt_len,
                 self.generated_len,
-                self.context_lines_found_in_context,
-                self.context_lines_in_expected_patch,
                 edit_prediction.true_positives,
                 edit_prediction.false_positives,
                 edit_prediction.false_negatives,
@@ -434,53 +396,6 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
         ..Default::default()
     };
 
-    let actual_context_lines: HashSet<_> = preds
-        .excerpts
-        .iter()
-        .flat_map(|excerpt| {
-            excerpt
-                .text
-                .lines()
-                .map(|line| format!("{}: {line}", excerpt.path.display()))
-        })
-        .collect();
-
-    let mut false_positive_lines = actual_context_lines.clone();
-
-    for entry in &example.expected_context {
-        let mut best_alternative_score: Option<Scores> = None;
-
-        for alternative in &entry.alternatives {
-            let expected: HashSet<_> = alternative
-                .excerpts
-                .iter()
-                .flat_map(|excerpt| {
-                    excerpt
-                        .text
-                        .lines()
-                        .map(|line| format!("{}: {line}", excerpt.path.display()))
-                })
-                .collect();
-
-            let scores = Scores::new(&expected, &actual_context_lines);
-
-            false_positive_lines.retain(|line| !expected.contains(line));
-
-            if best_alternative_score
-                .as_ref()
-                .is_none_or(|best| scores.recall() > best.recall())
-            {
-                best_alternative_score = Some(scores);
-            }
-        }
-
-        let best_alternative = best_alternative_score.unwrap_or_default();
-        eval_result.context.false_negatives += best_alternative.false_negatives;
-        eval_result.context.true_positives += best_alternative.true_positives;
-    }
-
-    eval_result.context.false_positives = false_positive_lines.len();
-
     if predict {
         // todo: alternatives for patches
         let expected_patch = example
@@ -493,25 +408,6 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
             .map(|line| line.to_string())
             .collect();
-        let expected_context_lines = expected_patch
-            .iter()
-            .filter_map(|line| {
-                if let DiffLine::Context(str) = line {
-                    Some(String::from(*str))
-                } else {
-                    None
-                }
-            })
-            .collect::<BTreeSet<_>>();
-        let actual_context_lines = preds
-            .excerpts
-            .iter()
-            .flat_map(|excerpt| excerpt.text.lines().map(ToOwned::to_owned))
-            .collect::<BTreeSet<_>>();
-
-        let matched = expected_context_lines
-            .intersection(&actual_context_lines)
-            .count();
 
         let actual_patch_lines = preds
             .diff
@@ -522,8 +418,6 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .collect();
 
         eval_result.edit_prediction = Some(Scores::new(&expected_patch_lines, &actual_patch_lines));
-        eval_result.context_lines_in_expected_patch = expected_context_lines.len();
-        eval_result.context_lines_found_in_context = matched;
     }
 
     eval_result

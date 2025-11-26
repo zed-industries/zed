@@ -284,7 +284,7 @@ impl DiagnosticBlock {
                     if range.context.overlaps(&diagnostic.range, &snapshot) {
                         Self::jump_to(
                             editor,
-                            Anchor::range_in_buffer(excerpt_id, buffer_id, diagnostic.range),
+                            Anchor::range_in_buffer(excerpt_id, diagnostic.range),
                             window,
                             cx,
                         );

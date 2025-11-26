@@ -9,7 +9,7 @@ use crate::tasks::workflows::{
 };
 
 const RUN_TESTS_INPUT: &str = "run_tests";
-const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
 
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub(crate) fn extension_tests() -> Workflow {
@@ -77,7 +77,7 @@ fn check_rust() -> NamedJob {
     named::job(job)
 }
 
-fn check_extension() -> NamedJob {
+pub(crate) fn check_extension() -> NamedJob {
     let (cache_download, cache_hit) = cache_zed_extension_cli();
     let job = Job::default()
         .with_repository_owner_guard()

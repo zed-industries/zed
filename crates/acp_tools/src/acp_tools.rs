@@ -528,7 +528,7 @@ impl Render for AcpTools {
                                 .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                                 .size_full(),
                             )
-                            .vertical_scrollbar_for(connection.list_state.clone(), window, cx)
+                            .vertical_scrollbar_for(&connection.list_state, window, cx)
                             .into_any()
                     }
                 }

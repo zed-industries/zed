@@ -992,6 +992,12 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                // If there are matches we need to emit a wake up event to
+                // invalidate the matches and recalculate their locations
+                // in the new terminal layout
+                if !self.matches.is_empty() {
+                    cx.emit(Event::Wakeup);
+                }
             }
             InternalEvent::Clear => {
                 trace!("Clearing");

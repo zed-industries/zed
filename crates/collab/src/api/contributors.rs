@@ -64,6 +64,16 @@ async fn check_is_contributor(
         }));
     }
 
+    if ZedZippyBot::is_zed_zippy_bot(&params) {
+        return Ok(Json(CheckIsContributorResponse {
+            signed_at: Some(
+                ZedZippyBot::created_at()
+                    .and_utc()
+                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+            ),
+        }));
+    }
+
     Ok(Json(CheckIsContributorResponse {
         signed_at: app
             .db
@@ -94,6 +104,36 @@ impl RenovateBot {
 
     /// Returns whether the given contributor selector corresponds to the Renovate bot user.
     fn is_renovate_bot(contributor: &ContributorSelector) -> bool {
+        match contributor {
+            ContributorSelector::GitHubLogin { github_login } => github_login == Self::LOGIN,
+            ContributorSelector::GitHubUserId { github_user_id } => {
+                github_user_id == &Self::USER_ID
+            }
+        }
+    }
+}
+
+/// The Zed Zippy bot GitHub user (`zed-zippy[bot]`).
+///
+/// https://api.github.com/users/zed-zippy[bot]
+struct ZedZippyBot;
+
+impl ZedZippyBot {
+    const LOGIN: &'static str = "zed-zippy[bot]";
+    const USER_ID: i32 = 234243425;
+
+    /// Returns the `created_at` timestamp for the Zed Zippy bot user.
+    fn created_at() -> &'static NaiveDateTime {
+        static CREATED_AT: OnceLock<NaiveDateTime> = OnceLock::new();
+        CREATED_AT.get_or_init(|| {
+            chrono::DateTime::parse_from_rfc3339("2025-09-24T17:00:11Z")
+                .expect("failed to parse 'created_at' for 'zed-zippy[bot]'")
+                .naive_utc()
+        })
+    }
+
+    /// Returns whether the given contributor selector corresponds to the Zed Zippy bot user.
+    fn is_zed_zippy_bot(contributor: &ContributorSelector) -> bool {
         match contributor {
             ContributorSelector::GitHubLogin { github_login } => github_login == Self::LOGIN,
             ContributorSelector::GitHubUserId { github_user_id } => {

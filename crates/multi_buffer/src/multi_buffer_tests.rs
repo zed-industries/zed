@@ -3401,14 +3401,11 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
         ),
     );
 
-    let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
-    let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-
-    let anchor_1 = Anchor::in_buffer(ids[0], id_1, text::Anchor::MIN);
+    let anchor_1 = Anchor::in_buffer(ids[0], text::Anchor::MIN);
     let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
     assert_eq!(point_1, Point::new(0, 0));
 
-    let anchor_2 = Anchor::in_buffer(ids[1], id_2, text::Anchor::MIN);
+    let anchor_2 = Anchor::in_buffer(ids[1], text::Anchor::MIN);
     let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
     assert_eq!(point_2, Point::new(3, 0));
 }

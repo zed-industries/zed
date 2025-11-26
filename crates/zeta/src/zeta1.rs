@@ -32,18 +32,16 @@ pub(crate) fn request_prediction_with_zeta1(
     zeta: &mut Zeta,
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
+    snapshot: BufferSnapshot,
     position: language::Anchor,
+    events: Vec<Arc<Event>>,
     cx: &mut Context<Zeta>,
 ) -> Task<Result<Option<EditPrediction>>> {
     let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
-    let snapshot = buffer.read(cx).snapshot();
     let client = zeta.client.clone();
     let llm_token = zeta.llm_token.clone();
     let app_version = AppVersion::global(cx);
-
-    let zeta_project = zeta.get_or_init_zeta_project(project, cx);
-    let events = Arc::new(zeta_project.events(cx));
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
         let can_collect_file = zeta.can_collect_file(project, file, cx);

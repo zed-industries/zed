@@ -913,7 +913,7 @@ impl Render for StackFrameList {
                 )
             })
             .child(self.render_list(window, cx))
-            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+            .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }
 
