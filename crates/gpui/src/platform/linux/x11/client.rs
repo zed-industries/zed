@@ -1023,11 +1023,14 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for Caps Lock and Num Lock
+                    // Never update xkb state for Caps Lock, Num Lock and Shift Lock
                     // Regular modifiers on regular keyboards should work fine either way but
                     // custom macros on some Linux distributions require the state to be updated
                     // to prevent race conditions and occasional unexpected inputs
-                    if matches!(keysym, Keysym::Caps_Lock | Keysym::Num_Lock) {
+                    if matches!(
+                        keysym,
+                        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Shift_Lock
+                    ) {
                         state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     }
 
@@ -1093,11 +1096,14 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for Caps Lock and Num Lock
+                    // Never update xkb state for Caps Lock, Num Lock and Shift Lock
                     // Regular modifiers on regular keyboards should work fine either way but
                     // custom macros on some Linux distributions require the state to be updated
                     // to prevent race conditions and occasional unexpected inputs
-                    if matches!(keysym, Keysym::Caps_Lock | Keysym::Num_Lock) {
+                    if matches!(
+                        keysym,
+                        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Shift_Lock
+                    ) {
                         state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     }
 
