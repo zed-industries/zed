@@ -5,13 +5,13 @@ use crate::tasks::workflows::steps::FluentBuilder;
 use crate::tasks::workflows::{
     runners,
     steps::{self, NamedJob, named},
-    vars::Input,
+    vars::WorkflowInput,
 };
 
 pub fn compare_perf() -> Workflow {
-    let head = Input::string("head", None);
-    let base = Input::string("base", None);
-    let crate_name = Input::string("crate_name", Some("".to_owned()));
+    let head = WorkflowInput::string("head", None);
+    let base = WorkflowInput::string("base", None);
+    let crate_name = WorkflowInput::string("crate_name", Some("".to_owned()));
     let run_perf = run_perf(&base, &head, &crate_name);
     named::workflow()
         .on(Event::default().workflow_dispatch(
@@ -23,8 +23,12 @@ pub fn compare_perf() -> Workflow {
         .add_job(run_perf.name, run_perf.job)
 }
 
-pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
-    fn cargo_perf_test(ref_name: &Input, crate_name: &Input) -> Step<Run> {
+pub fn run_perf(
+    base: &WorkflowInput,
+    head: &WorkflowInput,
+    crate_name: &WorkflowInput,
+) -> NamedJob {
+    fn cargo_perf_test(ref_name: &WorkflowInput, crate_name: &WorkflowInput) -> Step<Run> {
         named::bash(&format!(
             "
             if [ -n \"{crate_name}\" ]; then
@@ -39,7 +43,7 @@ pub fn run_perf(base: &Input, head: &Input, crate_name: &Input) -> NamedJob {
         named::uses("taiki-e", "install-action", "hyperfine")
     }
 
-    fn compare_runs(head: &Input, base: &Input) -> Step<Run> {
+    fn compare_runs(head: &WorkflowInput, base: &WorkflowInput) -> Step<Run> {
         named::bash(&format!(
             "cargo perf-compare --save=results.md {base} {head}"
         ))
