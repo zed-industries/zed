@@ -424,4 +424,20 @@ impl ThreadsDatabase {
             Ok(())
         })
     }
+
+    pub fn delete_threads(&self) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+
+        self.executor.spawn(async move {
+            let connection = connection.lock();
+
+            let mut delete = connection.exec_bound::<()>(indoc! {"
+                DELETE FROM threads
+            "})?;
+
+            delete(())?;
+
+            Ok(())
+        })
+    }
 }

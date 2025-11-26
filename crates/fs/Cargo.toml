@@ -33,6 +33,7 @@ tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
+is_executable = "1.0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true

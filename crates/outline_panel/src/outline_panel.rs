@@ -111,8 +111,6 @@ pub struct OutlinePanel {
     selected_entry: SelectedEntry,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
-    updating_fs_entries: bool,
-    updating_cached_entries: bool,
     new_entries_for_fs_update: HashSet<ExcerptId>,
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
@@ -853,8 +851,6 @@ impl OutlinePanel {
                 width: None,
                 active_item: None,
                 pending_serialization: Task::ready(None),
-                updating_fs_entries: false,
-                updating_cached_entries: false,
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
                 pending_default_expansion_depth: None,
@@ -2658,7 +2654,6 @@ impl OutlinePanel {
         let repo_snapshots = self.project.update(cx, |project, cx| {
             project.git_store().read(cx).repo_snapshots(cx)
         });
-        self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3016,7 +3011,6 @@ impl OutlinePanel {
 
             outline_panel
                 .update_in(cx, |outline_panel, window, cx| {
-                    outline_panel.updating_fs_entries = false;
                     outline_panel.new_entries_for_fs_update.clear();
                     outline_panel.excerpts = new_excerpts;
                     outline_panel.collapsed_entries = new_collapsed_entries;
@@ -3579,7 +3573,6 @@ impl OutlinePanel {
 
         let is_singleton = self.is_singleton_active(cx);
         let query = self.query(cx);
-        self.updating_cached_entries = true;
         self.cached_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3612,7 +3605,6 @@ impl OutlinePanel {
                     }
 
                     outline_panel.autoscroll(cx);
-                    outline_panel.updating_cached_entries = false;
                     cx.notify();
                 })
                 .ok();
@@ -4542,12 +4534,10 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let contents = if self.cached_entries.is_empty() {
-            let header = if self.updating_fs_entries || self.updating_cached_entries {
-                None
-            } else if query.is_some() {
-                Some("No matches for query")
+            let header = if query.is_some() {
+                "No matches for query"
             } else {
-                Some("No outlines available")
+                "No outlines available"
             };
 
             v_flex()
@@ -4556,33 +4546,28 @@ impl OutlinePanel {
                 .flex_1()
                 .justify_center()
                 .size_full()
-                .when_some(header, |panel, header| {
-                    panel
-                        .child(h_flex().justify_center().child(Label::new(header)))
-                        .when_some(query.clone(), |panel, query| {
-                            panel.child(
-                                h_flex()
-                                    .px_0p5()
-                                    .justify_center()
-                                    .bg(cx.theme().colors().element_selected.opacity(0.2))
-                                    .child(Label::new(query)),
-                            )
-                        })
-                        .child(h_flex().justify_center().child({
-                            let keystroke = match self.position(window, cx) {
-                                DockPosition::Left => {
-                                    window.keystroke_text_for(&workspace::ToggleLeftDock)
-                                }
-                                DockPosition::Bottom => {
-                                    window.keystroke_text_for(&workspace::ToggleBottomDock)
-                                }
-                                DockPosition::Right => {
-                                    window.keystroke_text_for(&workspace::ToggleRightDock)
-                                }
-                            };
-                            Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
-                        }))
+                .child(h_flex().justify_center().child(Label::new(header)))
+                .when_some(query, |panel, query| {
+                    panel.child(
+                        h_flex()
+                            .px_0p5()
+                            .justify_center()
+                            .bg(cx.theme().colors().element_selected.opacity(0.2))
+                            .child(Label::new(query)),
+                    )
                 })
+                .child(h_flex().justify_center().child({
+                    let keystroke = match self.position(window, cx) {
+                        DockPosition::Left => window.keystroke_text_for(&workspace::ToggleLeftDock),
+                        DockPosition::Bottom => {
+                            window.keystroke_text_for(&workspace::ToggleBottomDock)
+                        }
+                        DockPosition::Right => {
+                            window.keystroke_text_for(&workspace::ToggleRightDock)
+                        }
+                    };
+                    Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
+                }))
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
