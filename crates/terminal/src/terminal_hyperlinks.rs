@@ -148,6 +148,19 @@ fn sanitize_url_punctuation<T: EventListener>(
     let mut sanitized_url = url;
     let mut chars_trimmed = 0;
 
+    while let Some(last_char) = sanitized_url.chars().last() {
+        match last_char {
+            // These may be part of an URL but not at the end. It's not that the spec
+            // doesn't allow them, but they are frequently used in plain text as delimiters
+            // where they're not meant to be part of the URL.
+            '?' | '!' | '.' | ',' | ':' | ';' | '*' => {
+                sanitized_url.pop();
+                chars_trimmed += 1;
+            }
+            _ => break,
+        }
+    }
+
     // First, handle parentheses balancing using single traversal
     let (open_parens, close_parens) =
         sanitized_url
@@ -165,26 +178,6 @@ fn sanitize_url_punctuation<T: EventListener>(
             sanitized_url.pop();
             chars_trimmed += 1;
             remaining_close -= 1;
-        }
-    }
-
-    // Handle trailing periods
-    if sanitized_url.ends_with('.') {
-        let trailing_periods = sanitized_url
-            .chars()
-            .rev()
-            .take_while(|&c| c == '.')
-            .count();
-
-        if trailing_periods > 1 {
-            sanitized_url.truncate(sanitized_url.len() - trailing_periods);
-            chars_trimmed += trailing_periods;
-        } else if trailing_periods == 1
-            && let Some(second_last_char) = sanitized_url.chars().rev().nth(1)
-            && (second_last_char.is_alphanumeric() || second_last_char == '/')
-        {
-            sanitized_url.pop();
-            chars_trimmed += 1;
         }
     }
 
@@ -417,10 +410,10 @@ mod tests {
     }
 
     #[test]
-    fn test_url_periods_sanitization() {
-        // Test URLs with trailing periods (sentence punctuation)
+    fn test_url_punctuation_sanitization() {
+        // Test URLs with trailing punctuation (sentence/text punctuation)
+        // The sanitize_url_punctuation function removes ?, !, ., ,, :, ;, * from the end
         let test_cases = vec![
-            // Cases that should be sanitized (trailing periods likely punctuation)
             ("https://example.com.", "https://example.com"),
             (
                 "https://github.com/zed-industries/zed.",
@@ -440,13 +433,46 @@ mod tests {
                 "https://en.wikipedia.org/wiki/C.E.O.",
                 "https://en.wikipedia.org/wiki/C.E.O",
             ),
-            // Cases that should NOT be sanitized (periods are part of URL structure)
+            ("https://example.com?", "https://example.com"),
+            ("https://example.com/search?", "https://example.com/search"),
+            ("https://example.com??", "https://example.com"),
+            ("https://example.com!", "https://example.com"),
+            ("https://example.com/page!", "https://example.com/page"),
+            ("https://example.com!!", "https://example.com"),
+            ("https://example.com,", "https://example.com"),
+            ("https://example.com/path,", "https://example.com/path"),
+            ("https://example.com,,", "https://example.com"),
+            ("https://example.com:", "https://example.com"),
+            ("https://example.com/path:", "https://example.com/path"),
+            ("https://example.com::", "https://example.com"),
+            ("https://example.com;", "https://example.com"),
+            ("https://example.com/path;", "https://example.com/path"),
+            ("https://example.com;;", "https://example.com"),
+            ("https://example.com*", "https://example.com"),
+            ("https://example.com/path*", "https://example.com/path"),
+            ("https://example.com**", "https://example.com"),
+            ("https://example.com.,", "https://example.com"),
+            ("https://example.com!?", "https://example.com"),
+            ("https://example.com.:;", "https://example.com"),
+            ("https://example.com!.", "https://example.com"),
+            ("https://example.com/).", "https://example.com/"),
+            ("https://example.com/);", "https://example.com/"),
+            ("https://example.com/)!", "https://example.com/"),
             (
                 "https://example.com/v1.0/api",
                 "https://example.com/v1.0/api",
             ),
             ("https://192.168.1.1", "https://192.168.1.1"),
             ("https://sub.domain.com", "https://sub.domain.com"),
+            (
+                "https://example.com?query=value",
+                "https://example.com?query=value",
+            ),
+            ("https://example.com?a=1&b=2", "https://example.com?a=1&b=2"),
+            (
+                "https://example.com/path:8080",
+                "https://example.com/path:8080",
+            ),
         ];
 
         for (input, expected) in test_cases {
@@ -458,7 +484,6 @@ mod tests {
             let end_point = AlacPoint::new(Line(0), Column(input.len()));
             let dummy_match = Match::new(start_point, end_point);
 
-            // This test should initially fail since we haven't implemented period sanitization yet
             let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
             assert_eq!(result, expected, "Failed for input: {}", input);
         }
