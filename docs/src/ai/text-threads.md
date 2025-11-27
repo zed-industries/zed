@@ -236,10 +236,10 @@ See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to
 ## Text Threads vs. Threads
 
 For some time, text threads were the only way to interact with AI in Zed.
-In May 2025, we introduced a new version of the agent panel, which, as opposed to being editor-based, optimized for readability.
+In May 2025, we introduced a new version of the agent panel, which, as opposed to being editor-based, is optimized for readability.
 Visit [the Agent Panel page](./agent-panel.md) to learn more about it.
 
-More importantly, though, aside from the many UI differences, the major aspect that sets one apart from the other is that tool calls don't work in Text Threads.
+More importantly, aside from the many UI differences, the major aspect that sets one apart from the other is that tool calls don't work in Text Threads.
 Due to that, it's accurate to say that Text Threads aren't conceptually agentic, as they can't perform any action on your behalf (or any action at all).
 
 Think of it more like a regular/"traditional" AI chat, where the only thing you can get from the model is simply just text.
