@@ -861,7 +861,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
             let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            ContextCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
+            PromptCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
         });
         let Some(state) = state else {
             return Task::ready(Ok(Vec::new()));
@@ -880,7 +880,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         let editor = self.editor.clone();
         let mention_set = self.mention_set.downgrade();
         match state {
-            ContextCompletion::SlashCommand(SlashCommandCompletion {
+            PromptCompletion::SlashCommand(SlashCommandCompletion {
                 command, argument, ..
             }) => {
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
@@ -943,7 +943,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     }])
                 })
             }
-            ContextCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+            PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
@@ -1085,12 +1085,12 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            ContextCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
+            PromptCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
                 .filter(|completion| {
                     // Right now we don't support completing arguments of slash commands
                     let is_slash_command_with_argument = matches!(
                         completion,
-                        ContextCompletion::SlashCommand(SlashCommandCompletion {
+                        PromptCompletion::SlashCommand(SlashCommandCompletion {
                             argument: Some(_),
                             ..
                         })
@@ -1160,12 +1160,13 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
     })
 }
 
-enum ContextCompletion {
+#[derive(Debug, PartialEq)]
+enum PromptCompletion {
     SlashCommand(SlashCommandCompletion),
     Mention(MentionCompletion),
 }
 
-impl ContextCompletion {
+impl PromptCompletion {
     fn source_range(&self) -> Range<usize> {
         match self {
             Self::SlashCommand(completion) => completion.source_range.clone(),
@@ -1178,15 +1179,14 @@ impl ContextCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        if let Some(command) = SlashCommandCompletion::try_parse(line, offset_to_line) {
-            Some(Self::SlashCommand(command))
-        } else if let Some(mention) =
-            MentionCompletion::try_parse(line, offset_to_line, supported_modes)
-        {
-            Some(Self::Mention(mention))
-        } else {
-            None
+        if line.contains('@') {
+            if let Some(mention) =
+                MentionCompletion::try_parse(line, offset_to_line, supported_modes)
+            {
+                return Some(Self::Mention(mention));
+            }
         }
+        SlashCommandCompletion::try_parse(line, offset_to_line).map(Self::SlashCommand)
     }
 }
 
@@ -1652,6 +1652,38 @@ fn selection_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_prompt_completion_parse() {
+        let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+
+        assert_eq!(
+            PromptCompletion::try_parse("/", 0, &supported_modes),
+            Some(PromptCompletion::SlashCommand(SlashCommandCompletion {
+                source_range: 0..1,
+                command: None,
+                argument: None,
+            }))
+        );
+
+        assert_eq!(
+            PromptCompletion::try_parse("@", 0, &supported_modes),
+            Some(PromptCompletion::Mention(MentionCompletion {
+                source_range: 0..1,
+                mode: None,
+                argument: None,
+            }))
+        );
+
+        assert_eq!(
+            PromptCompletion::try_parse("/test @file", 0, &supported_modes),
+            Some(PromptCompletion::Mention(MentionCompletion {
+                source_range: 6..11,
+                mode: Some(PromptContextType::File),
+                argument: None,
+            }))
+        );
+    }
 
     #[test]
     fn test_slash_command_completion_parse() {
