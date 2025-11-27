@@ -195,40 +195,20 @@ fn split_on_whitespace(text: &str, range: &Range<usize>) -> Vec<Range<usize>> {
 
     let slice = &text[range.clone()];
     let mut ranges = Vec::new();
-    let mut offset = 0;
 
-    for line in slice.lines() {
-        let line_start = offset;
-        let line_end = line_start + line.len();
-        offset = line_end + 1; // +1 for the newline character
-        let trimmed = line.trim();
-
-        if !trimmed.is_empty() {
-            let leading = line.len() - line.trim_start().len();
-            let trailing = line.len() - line.trim_end().len();
-            let trimmed_start = range.start + line_start + leading;
-            let trimmed_end = range.start + line_end - trailing;
-
-            // Check if this range covers the entire non-whitespace content of the line in the original text
-            let original_line_start = text[..range.start + line_start]
-                .rfind('\n')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let original_line_end = text[range.start + line_start..]
-                .find('\n')
-                .map(|i| range.start + line_start + i)
-                .unwrap_or(text.len());
-            let original_line = &text[original_line_start..original_line_end];
-            let original_trimmed_start =
-                original_line_start + (original_line.len() - original_line.trim_start().len());
-            let original_trimmed_end =
-                original_line_end - (original_line.len() - original_line.trim_end().len());
-
-            // Skip if the trimmed range covers the whole trimmed line
-            if trimmed_start > original_trimmed_start || trimmed_end < original_trimmed_end {
-                ranges.push(trimmed_start..trimmed_end);
+    let mut word_start = None;
+    for (i, c) in slice.char_indices() {
+        if c.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                ranges.push((range.start + start)..(range.start + i));
             }
+        } else if word_start.is_none() {
+            word_start = Some(i);
         }
+    }
+
+    if let Some(start) = word_start {
+        ranges.push((range.start + start)..(range.start + slice.len()));
     }
 
     ranges

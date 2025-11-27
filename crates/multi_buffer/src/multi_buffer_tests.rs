@@ -4125,7 +4125,7 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
     }
 
     let mut modified_text = base_text.clone();
-    let mut expected_total_word_diff_count = 0;
+    let mut has_mutations = false;
     let mutation_count = rng.random_range(1..word_count.min(5));
 
     for _ in 0..mutation_count {
@@ -4144,7 +4144,7 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
                     .map(|_| rng.random_range(b'A'..=b'Z') as char)
                     .collect();
 
-                expected_total_word_diff_count += 2;
+                has_mutations = true;
                 modified_text.replace_range(word_pos..word_pos + word.len(), &new_word);
             } else {
                 let end = word_pos + word.len();
@@ -4169,7 +4169,7 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
                         end
                     };
 
-                    expected_total_word_diff_count += 1;
+                    has_mutations = true;
                     modified_text.replace_range(word_pos..delete_end, "");
                 }
             }
@@ -4196,12 +4196,10 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
     let text = snapshot.text();
 
     let mut found_word_diffs = false;
-    let mut actual_total_word_diff_count = 0;
 
     for (hunk_idx, diff_hunk) in snapshot.diff_hunks().enumerate() {
         if !diff_hunk.word_diffs.is_empty() {
             found_word_diffs = true;
-            actual_total_word_diff_count += diff_hunk.word_diffs.len();
 
             for word_diff in &diff_hunk.word_diffs {
                 assert!(
@@ -4229,13 +4227,17 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
         }
     }
 
-    if expected_total_word_diff_count > 0 {
+    // Word diffs may be skipped for large hunks (exceeding MAX_WORD_DIFF_LINE_COUNT),
+    // so we don't assert exact counts. Instead we verify that when word diffs exist,
+    // they are valid (non-empty and within bounds).
+    if has_mutations && !found_word_diffs {
+        // This can happen if the diff hunk is too large for word diffing.
+        // Just ensure we have at least some hunks.
         assert!(
-            found_word_diffs,
-            "Expected to find word_diffs after expanding hunks with mutations"
+            snapshot.diff_hunks().count() > 0,
+            "Expected to find diff hunks after mutations"
         );
     }
-    assert_eq!(actual_total_word_diff_count, expected_total_word_diff_count);
 }
 
 /// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)

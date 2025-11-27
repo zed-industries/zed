@@ -96,6 +96,27 @@ struct InternalDiffHunk {
     buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
+impl InternalDiffHunk {
+    fn equivalent(&self, other: &Self, snapshot: &text::BufferSnapshot) -> bool {
+        self.buffer_range
+            .start
+            .cmp(&other.buffer_range.start, snapshot)
+            == Ordering::Equal
+            && self.buffer_range.end.cmp(&other.buffer_range.end, snapshot) == Ordering::Equal
+            && self.diff_base_byte_range == other.diff_base_byte_range
+            && self.base_word_diffs == other.base_word_diffs
+            && self.buffer_word_diffs.len() == other.buffer_word_diffs.len()
+            && self
+                .buffer_word_diffs
+                .iter()
+                .zip(other.buffer_word_diffs.iter())
+                .all(|(a, b)| {
+                    a.start.cmp(&b.start, snapshot) == Ordering::Equal
+                        && a.end.cmp(&b.end, snapshot) == Ordering::Equal
+                })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingHunk {
     buffer_range: Range<Anchor>,
@@ -735,7 +756,7 @@ impl BufferDiffInner {
                             new_cursor.next();
                         }
                         Ordering::Equal => {
-                            if new_hunk != old_hunk {
+                            if !new_hunk.equivalent(old_hunk, new_snapshot) {
                                 start.get_or_insert(new_hunk.buffer_range.start);
                                 if old_hunk
                                     .buffer_range
