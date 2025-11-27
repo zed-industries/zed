@@ -1274,12 +1274,28 @@ impl Room {
         Ok(())
     }
 
-    /// Send agent activity update to all other participants in the room.
+    /// Send agent activity update to all other participants in the room
+    /// and update local participant's agent activity for UI display.
     pub fn update_agent_activity(
-        &self,
+        &mut self,
         activity: proto::AgentActivity,
-        _cx: &App,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
+        // Update local participant's agent activity for UI display
+        self.local_participant.agent_activity = Some(AgentActivity {
+            agent_type: activity.agent_type.clone().into(),
+            status: if activity.status == proto::AgentActivityStatus::AgentActive as i32 {
+                AgentActivityStatus::Active
+            } else {
+                AgentActivityStatus::Idle
+            },
+            prompt_summary: activity.prompt_summary.clone().map(|s| s.into()),
+        });
+
+        // Emit event so UI can update
+        cx.notify();
+
+        // Send to other participants
         self.client.send(proto::UpdateAgentActivity {
             room_id: self.id,
             activity: Some(activity),

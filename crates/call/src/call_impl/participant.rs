@@ -38,6 +38,7 @@ pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
     pub active_project: Option<WeakEntity<Project>>,
     pub role: proto::ChannelRole,
+    pub agent_activity: Option<AgentActivity>,
 }
 
 impl LocalParticipant {

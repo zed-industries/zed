@@ -6,7 +6,6 @@ use crate::{CollaborationPanelSettings, channel_view::ChannelView};
 use anyhow::Context as _;
 use call::{participant::AgentActivityStatus, room, ActiveCall};
 use channel::{Channel, ChannelEvent, ChannelStore};
-use agent_ui::AgentPanel;
 use client::{ChannelId, Client, Contact, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
@@ -529,15 +528,7 @@ impl CollabPanel {
                     ));
                     if !matches.is_empty() {
                         let user_id = user.id;
-
-                        // Get local agent activity
-                        let local_agent_activity = if let Some(workspace) = self.workspace.upgrade() {
-                            workspace.read(cx).panel::<AgentPanel>(cx).and_then(|panel| {
-                                panel.read(cx).active_agent_activity(cx)
-                            })
-                        } else {
-                            None
-                        };
+                        let local_agent_activity = room.local_participant().agent_activity.clone();
 
                         self.entries.push(ListEntry::CallParticipant {
                             user,
