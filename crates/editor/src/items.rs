@@ -1139,7 +1139,7 @@ impl SerializableItem for Editor {
                     buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
-                            buffer.set_language(Some(language), cx);
+                            buffer.set_language_immediate(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {

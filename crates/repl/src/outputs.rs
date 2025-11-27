@@ -282,7 +282,7 @@ impl Output {
                                             );
                                             let buffer = cx.new(|cx| {
                                                 let mut buffer = Buffer::local(full_error, cx)
-                                                    .with_language(
+                                                    .with_language_immediate(
                                                         language::PLAIN_TEXT.clone(),
                                                         cx,
                                                     );

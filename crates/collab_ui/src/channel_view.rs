@@ -171,7 +171,7 @@ impl ChannelView {
                     let Some(markdown) = markdown else {
                         return;
                     };
-                    buffer.set_language(Some(markdown), cx);
+                    buffer.set_language_immediate(Some(markdown), cx);
                 })
             })?;
 
