@@ -343,10 +343,199 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         );
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = OpenAiEventMapper::new();
+            let mapper = OpenAiCompatibleEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
+    }
+}
+
+/// State machine for parsing thinking tags from streaming text
+#[derive(Debug, Clone, PartialEq)]
+enum ParsingState {
+    Normal,
+    InThinkTag,
+}
+
+/// Custom event mapper for OpenAI-compatible providers that extracts thinking tags
+struct OpenAiCompatibleEventMapper {
+    base_mapper: OpenAiEventMapper,
+    text_buffer: String,
+    thinking_buffer: String,
+    state: ParsingState,
+}
+
+impl OpenAiCompatibleEventMapper {
+    fn new() -> Self {
+        Self {
+            base_mapper: OpenAiEventMapper::new(),
+            text_buffer: String::new(),
+            thinking_buffer: String::new(),
+            state: ParsingState::Normal,
+        }
+    }
+
+    fn map_stream(
+        mut self,
+        events: futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+    ) -> impl futures::stream::Stream<
+        Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    > {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+            })
+        })
+    }
+
+    fn map_event(
+        &mut self,
+        event: ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut completion_events = Vec::new();
+
+        // Extract text content from the event before passing to base mapper
+        let text_content = event
+            .choices
+            .first()
+            .and_then(|choice| choice.delta.as_ref())
+            .and_then(|delta| delta.content.clone());
+
+        // Check if this is the end of the stream
+        let is_final = event
+            .choices
+            .first()
+            .and_then(|choice| choice.finish_reason.as_ref())
+            .is_some();
+
+        // Process text content for thinking tags if present
+        if let Some(content) = text_content {
+            let extracted_events = self.extract_thinking_tags(&content);
+            completion_events.extend(extracted_events);
+        }
+
+        // If this is the final chunk, flush any remaining buffers
+        if is_final {
+            completion_events.extend(self.flush_buffers());
+        }
+
+        // Let the base mapper handle the event (this will process tools, usage, etc.)
+        // but we need to strip out the text content since we've already processed it
+        let mut modified_event = event.clone();
+        if let Some(choice) = modified_event.choices.first_mut() {
+            if let Some(delta) = choice.delta.as_mut() {
+                delta.content = None;
+            }
+        }
+
+        let base_events = self.base_mapper.map_event(modified_event);
+        completion_events.extend(base_events);
+
+        completion_events
+    }
+
+    fn extract_thinking_tags(
+        &mut self,
+        content: &str,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        let mut chars = content.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            match self.state {
+                ParsingState::Normal => {
+                    if ch == '<' {
+                        // Check if this is the start of a <think> tag
+                        let remaining: String = chars.clone().collect();
+                        let lookahead = format!("{}{}", ch, remaining);
+
+                        if lookahead.starts_with("<think>") {
+                            // Emit any buffered normal text before switching to thinking
+                            if !self.text_buffer.is_empty() {
+                                events.push(Ok(LanguageModelCompletionEvent::Text(
+                                    self.text_buffer.clone(),
+                                )));
+                                self.text_buffer.clear();
+                            }
+
+                            // Consume the "<think>" tag
+                            for _ in 0..6 {
+                                chars.next();
+                            }
+                            self.state = ParsingState::InThinkTag;
+                        } else if remaining.len() < 6 {
+                            // Not enough characters to determine if it's a tag - buffer it
+                            self.text_buffer.push(ch);
+                        } else {
+                            // It's just a regular '<' character
+                            self.text_buffer.push(ch);
+                        }
+                    } else {
+                        self.text_buffer.push(ch);
+                    }
+                }
+                ParsingState::InThinkTag => {
+                    if ch == '<' {
+                        // Check if this is the start of a </think> tag
+                        let remaining: String = chars.clone().collect();
+                        let lookahead = format!("{}{}", ch, remaining);
+
+                        if lookahead.starts_with("</think>") {
+                            // Emit the thinking content
+                            if !self.thinking_buffer.is_empty() {
+                                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                    text: self.thinking_buffer.clone(),
+                                    signature: None,
+                                }));
+                                self.thinking_buffer.clear();
+                            }
+
+                            // Consume the "</think>" tag
+                            for _ in 0..7 {
+                                chars.next();
+                            }
+                            self.state = ParsingState::Normal;
+                        } else if remaining.len() < 7 {
+                            // Not enough characters to determine if it's a closing tag - buffer it
+                            self.thinking_buffer.push(ch);
+                        } else {
+                            // It's just a regular '<' character inside thinking
+                            self.thinking_buffer.push(ch);
+                        }
+                    } else {
+                        self.thinking_buffer.push(ch);
+                    }
+                }
+            }
+        }
+
+        events
+    }
+
+    fn flush_buffers(
+        &mut self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+
+        // If we're still in a thinking tag, emit it as thinking
+        if !self.thinking_buffer.is_empty() {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: self.thinking_buffer.clone(),
+                signature: None,
+            }));
+            self.thinking_buffer.clear();
+        }
+
+        // Emit any remaining normal text
+        if !self.text_buffer.is_empty() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(
+                self.text_buffer.clone(),
+            )));
+            self.text_buffer.clear();
+        }
+
+        events
     }
 }
 
