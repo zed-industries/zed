@@ -1031,7 +1031,6 @@ impl X11Client {
                         return Some(());
                     }
 
-
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
                         match compose_state.status() {
