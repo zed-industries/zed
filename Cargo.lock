@@ -19734,7 +19734,7 @@ dependencies = [
  "anyhow",
  "command_palette",
  "gpui",
- "schemars 1.0.4",
+ "schemars",
  "serde",
  "settings",
  "theme",

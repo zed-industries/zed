@@ -958,7 +958,6 @@ pub struct ReplSettingsContent {
 }
 
 /// Settings for configuring the which-key popup behaviour.
-#[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WhichKeySettingsContent {
     /// Whether to show the which-key popup when holding down key combinations
