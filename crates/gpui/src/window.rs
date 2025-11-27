@@ -1760,7 +1760,7 @@ impl Window {
 
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
-        self.display_id = display.clone().map(|display| display.id());
+        self.display_id = display.as_ref().map(|display| display.id());
         self.adaptive_display.set(
             display
                 .map(|display| display.adaptive_refresh_rate())
