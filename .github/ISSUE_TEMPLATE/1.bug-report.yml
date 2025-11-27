@@ -1,6 +1,7 @@
 name: Report an issue
 description: Report an issue with Zed.
 type: Bug
+labels: "state:needs triage"
 body:
   - type: markdown
     attributes:
