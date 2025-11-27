@@ -1,8 +1,9 @@
 //! A multi-line text area element.
 //!
-//! The `TextArea` element renders an [`Input`] entity as a multi-line text editor.
-//! It handles layout, painting, and user interaction while the `Input` manages
-//! the text content and selection state.
+//! Input-based elements are made up of two parts:
+//!
+//! - `Input`: a reusable entity that manages text content, insertion and selection state.
+//! - An element: handles layout, painting, interaction and behavior specific to this type of input
 
 use crate::{
     Action, App, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Element, ElementId,
@@ -16,7 +17,7 @@ use crate::{
 const CURSOR_WIDTH: f32 = 2.0;
 const MARKED_TEXT_UNDERLINE_THICKNESS: f32 = 2.0;
 
-/// Creates a new `TextArea` element for the given `Input` entity.
+/// Creates a new `TextArea` element powered by the given `Input`
 #[track_caller]
 pub fn text_area(input: &Entity<Input>) -> TextArea {
     let mut text_area = TextArea {
@@ -272,7 +273,7 @@ impl Element for TextArea {
             window,
             cx,
             |_style, window, cx| {
-                register_mouse_handlers(&input, bounds, window, cx);
+                handle_mouse(&input, bounds, window, cx);
 
                 let state = PaintState::from_input(&input, &focus_handle, bounds, window, cx);
                 let colors = colors.clone();
@@ -381,17 +382,14 @@ struct PaintColors {
 }
 
 /// Registers all mouse event handlers for the text area.
-fn register_mouse_handlers(
-    input: &Entity<Input>,
-    bounds: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &App,
-) {
-    register_mouse_down_handler(input.clone(), bounds, window);
-    register_mouse_up_handler(input.clone(), window);
-    register_mouse_move_handler(input.clone(), bounds, window);
-    register_scroll_handler(input.clone(), bounds, window, cx);
+fn handle_mouse(input: &Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
+    mouse_down(input.clone(), bounds, window);
+    mouse_up(input.clone(), window);
+    mouse_move(input.clone(), bounds, window);
+    handle_scroll(input.clone(), bounds, window, cx);
 }
+
+// todo: TextPosition(Point<Pixels>) to prevent mixing up position types?
 
 /// Converts a screen position to a position relative to the text area origin,
 /// adjusted for scroll offset.
@@ -406,7 +404,7 @@ fn screen_to_text_position(
     )
 }
 
-fn register_mouse_down_handler(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window) {
+fn mouse_down(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
         if phase != DispatchPhase::Bubble {
             return;
@@ -434,7 +432,7 @@ fn register_mouse_down_handler(input: Entity<Input>, bounds: Bounds<Pixels>, win
 
 // todo: basically all of these below can move to TextArea, likely meaning we need to pass less around
 
-fn register_mouse_up_handler(input: Entity<Input>, window: &mut Window) {
+fn mouse_up(input: Entity<Input>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
         if phase != DispatchPhase::Bubble {
             return;
@@ -449,7 +447,7 @@ fn register_mouse_up_handler(input: Entity<Input>, window: &mut Window) {
     });
 }
 
-fn register_mouse_move_handler(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window) {
+fn mouse_move(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, _window, cx| {
         if phase != DispatchPhase::Bubble {
             return;
@@ -463,12 +461,7 @@ fn register_mouse_move_handler(input: Entity<Input>, bounds: Bounds<Pixels>, win
     });
 }
 
-fn register_scroll_handler(
-    input: Entity<Input>,
-    bounds: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &App,
-) {
+fn handle_scroll(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
     let max_scroll = compute_max_scroll(&input, bounds, cx);
 
     window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _window, cx| {
@@ -566,7 +559,7 @@ fn paint_empty_line_selection(
     selection_color: Hsla,
     window: &mut Window,
 ) {
-    let empty_line_selection_width = px(4.);
+    let empty_line_selection_width = px(6.);
     window.paint_quad(fill(
         Bounds::from_corners(
             point(bounds.left(), bounds.top() + line_y),
@@ -610,7 +603,7 @@ fn paint_wrapped_line_selection(
     let end_visual_line = compute_visual_line_index(end_pos.y, line_height);
 
     if start_visual_line == end_visual_line {
-        paint_single_visual_line_selection(
+        paint_single_line_selection(
             bounds,
             line_y,
             start_pos,
@@ -620,7 +613,7 @@ fn paint_wrapped_line_selection(
             window,
         );
     } else {
-        paint_multi_visual_line_selection(
+        paint_multiline_selection(
             wrapped,
             bounds,
             line_y,
@@ -640,7 +633,7 @@ fn compute_visual_line_index(y: Pixels, line_height: Pixels) -> usize {
     (y / line_height).floor() as usize
 }
 
-fn paint_single_visual_line_selection(
+fn paint_single_line_selection(
     bounds: Bounds<Pixels>,
     line_y: Pixels,
     start_pos: Point<Pixels>,
@@ -664,7 +657,7 @@ fn paint_single_visual_line_selection(
     ));
 }
 
-fn paint_multi_visual_line_selection(
+fn paint_multiline_selection(
     wrapped: &crate::WrappedLine,
     bounds: Bounds<Pixels>,
     line_y: Pixels,
