@@ -104,6 +104,7 @@ members = [
     "crates/livekit_client",
     "crates/lmstudio",
     "crates/lsp",
+    "crates/magic_palette",
     "crates/markdown",
     "crates/markdown_preview",
     "crates/media",
@@ -333,6 +334,7 @@ livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+magic_palette = { path = "crates/magic_palette" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 svg_preview = { path = "crates/svg_preview" }
