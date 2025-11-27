@@ -1394,8 +1394,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
     };
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+    let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
     let showed_parse_error = match error {
         Some(error) => {
@@ -1427,7 +1426,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             false
         }
     };
-    let id = NotificationId::Named("failed-to-migrate-settings".into());
+    let id = NotificationId::Named(format!("failed-to-migrate-settings-{is_user}").into());
 
     match result.migration_status {
         settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
