@@ -421,16 +421,18 @@ impl OpenAiCompatibleEventMapper {
         }
 
         // Let the base mapper handle the event (this will process tools, usage, etc.)
-        // but we need to strip out the text content since we've already processed it
-        let mut modified_event = event.clone();
-        if let Some(choice) = modified_event.choices.first_mut() {
-            if let Some(delta) = choice.delta.as_mut() {
-                delta.content = None;
+        // We filter out Text events since we've already processed text content above
+        let base_events = self.base_mapper.map_event(event);
+        for event in base_events {
+            match &event {
+                Ok(LanguageModelCompletionEvent::Text(_)) => {
+                    // Skip text events from base mapper since we've already handled text
+                }
+                _ => {
+                    completion_events.push(event);
+                }
             }
         }
-
-        let base_events = self.base_mapper.map_event(modified_event);
-        completion_events.extend(base_events);
 
         completion_events
     }
