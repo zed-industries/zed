@@ -116,6 +116,14 @@ impl BackgroundExecutor {
 pub struct Task<T>(TaskState<T>);
 
 #[derive(Debug)]
+#[repr(u8)]
+enum TaskPriority {
+    High = 3,
+    Medium = 2,
+    Low = 1,
+}
+
+#[derive(Debug)]
 enum TaskState<T> {
     /// A task that is ready to return a value
     Ready(Option<T>),

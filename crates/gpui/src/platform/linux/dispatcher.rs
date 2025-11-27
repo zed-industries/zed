@@ -8,6 +8,7 @@ use calloop::{
     timer::TimeoutAction,
 };
 use std::{
+    collections::BTreeMap,
     thread,
     time::{Duration, Instant},
 };
@@ -220,5 +221,82 @@ impl PlatformDispatcher for LinuxDispatcher {
         self.timer_sender
             .send(TimerAfter { duration, runnable })
             .ok();
+    }
+}
+
+struct BadPriorityQueue<T> {
+    to_process: BTreeMap<usize, T>,
+    source: calloop::ping::PingSource,
+    ping: calloop::ping::Ping,
+    capacity: usize,
+}
+
+use calloop::channel::ChannelError;
+use calloop::channel::Event;
+
+impl calloop::EventSource for BadPriorityQueue<RunnableVariant> {
+    type Event = Event<RunnableVariant>;
+    type Metadata = ();
+    type Ret = ();
+    type Error = ChannelError;
+
+    fn process_events<F>(
+        &mut self,
+        readiness: calloop::Readiness,
+        token: calloop::Token,
+        callback: F,
+    ) -> Result<calloop::PostAction, Self::Error>
+    where
+        F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
+    {
+        let capacity = self.capacity;
+        let mut clear_readiness = false;
+        let mut disconnected = false;
+
+        let action = self
+            .source
+            .process_events(readiness, token, |(), &mut ()| {
+                let max = std::cmp::min(capacity.saturating_add(1), 1024);
+                for _ in 0..max {
+                    match self.to_process.pop_first() {
+                        Some((_priority, val)) => callback(Event::Msg(val), &mut ()),
+                        None => {
+                            clear_readiness = true;
+                            break;
+                        } // TODO handle disconnected?
+                    }
+                }
+            })
+            .map_err(ChannelError)?;
+
+        if disconnected {
+            Ok(PostAction::Remove)
+        } else if clear_readiness {
+            Ok(action)
+        } else {
+            // Re-notify the ping source so we can try again.
+            self.ping.ping();
+            Ok(PostAction::Continue)
+        }
+    }
+
+    fn register(
+        &mut self,
+        poll: &mut calloop::Poll,
+        token_factory: &mut calloop::TokenFactory,
+    ) -> calloop::Result<()> {
+        todo!()
+    }
+
+    fn reregister(
+        &mut self,
+        poll: &mut calloop::Poll,
+        token_factory: &mut calloop::TokenFactory,
+    ) -> calloop::Result<()> {
+        todo!()
+    }
+
+    fn unregister(&mut self, poll: &mut calloop::Poll) -> calloop::Result<()> {
+        todo!()
     }
 }
