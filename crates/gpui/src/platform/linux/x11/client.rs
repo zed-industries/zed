@@ -2522,9 +2522,9 @@ fn valid_scale_factor(scale_factor: f32) -> bool {
 /// Determines whether to update the internal xkb key state for this keysym.
 ///
 /// Returns `false` (skip update) for:
-/// - Lock modifiers (Caps_Lock, Num_Lock, Scroll_Lock, Shift_Lock): Their state is managed
-///   via XkbStateNotify's locked_mods field, so calling update_key could cause the internal
-///   state to get out of sync with X11's actual state, causing issues with macros.
+/// - Lock modifiers (Caps_Lock, Num_Lock, Scroll_Lock, Shift_Lock): When activated via a single
+///   button, should never have their xkb key state updated in order to properly activate.
+///
 /// - Shift_L/Shift_R when Shift Lock is active: This allows double-tap Shift activation
 ///   of Shift Lock to work properly. Without this, the key release after Shift Lock
 ///   activation would interfere with the locked state.
