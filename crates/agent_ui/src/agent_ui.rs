@@ -1,5 +1,6 @@
 mod acp;
 mod agent_configuration;
+mod agent_debug_panel;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
@@ -44,6 +45,7 @@ use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+pub use crate::agent_debug_panel::AgentDebugPanel;
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
