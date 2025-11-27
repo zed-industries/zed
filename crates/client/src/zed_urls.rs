@@ -59,3 +59,11 @@ pub fn agent_server_docs(cx: &App) -> String {
         server_url = server_url(cx)
     )
 }
+
+/// Returns the URL to Zed's edit prediction documentation.
+pub fn edit_prediction_docs(cx: &App) -> String {
+    format!(
+        "{server_url}/docs/ai/edit-prediction",
+        server_url = server_url(cx)
+    )
+}
