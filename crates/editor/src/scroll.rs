@@ -252,10 +252,10 @@ impl ScrollManager {
             }
         };
         let near_end = self.anchor.near_end(map);
-        // TODO decounce here
-        if near_end {
-            cx.read();
-        }
+        // // TODO call load more here
+        // if near_end {
+        //     cx.read();
+        // }
 
         let scroll_top_row = DisplayRow(scroll_top as u32);
         let scroll_top_buffer_point = map

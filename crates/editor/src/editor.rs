@@ -21248,7 +21248,7 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
-                self.refresh_selected_text_highlights(true, window, cx);
+                // self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
                 // self.refresh_matching_bracket_highlights(window, cx);
                 if self.has_active_edit_prediction() {
@@ -21346,7 +21346,6 @@ impl Editor {
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 // self.refresh_selected_text_highlights(true, window, cx);
-                self.colorize_brackets(true, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));

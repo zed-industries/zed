@@ -34,11 +34,12 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use std::ops::Range;
 use std::{
     any::{Any, TypeId},
+    collections::VecDeque,
     sync::Arc,
 };
+use std::{ops::Range, time::Instant};
 
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
@@ -50,6 +51,8 @@ use workspace::{
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
+
+mod diff_loader;
 
 actions!(
     git,
@@ -273,6 +276,8 @@ impl ProjectDiff {
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
 
+        let loader = diff_loader::start_loader(cx.entity(), window, cx);
+
         let branch_diff_subscription = cx.subscribe_in(
             &branch_diff,
             window,
@@ -281,11 +286,13 @@ impl ProjectDiff {
                     // TODO this does not account for size of paths
                     // maybe a quick fs metadata could get us info on that?
                     // would make number of paths async but thats fine here
-                    let entries = this.first_n_entries(cx, 100);
-                    this._task = window.spawn(cx, {
-                        let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, entries, cx).await
-                    })
+                    // let entries = this.first_n_entries(cx, 100);
+                    loader.update_file_list();
+                    // let
+                    // this._task = window.spawn(cx, {
+                    //     let this = cx.weak_entity();
+                    //     async |cx| Self::refresh(this, entries, cx).await
+                    // })
                 }
             },
         );
@@ -300,7 +307,11 @@ impl ProjectDiff {
             if is_sort_by_path != was_sort_by_path
                 || is_collapse_untracked_diff != was_collapse_untracked_diff
             {
-                todo!();
+                // no idea why we need to do anything here
+                // probably should sort the multibuffer instead of reparsing
+                // everything though!!!
+                todo!("resort multibuffer entries");
+                todo!("assert the entries in the list did not change")
                 // this._task = {
                 //     window.spawn(cx, {
                 //         let this = cx.weak_entity();
@@ -313,19 +324,15 @@ impl ProjectDiff {
         })
         .detach();
 
-        // let entries = cx.read_entity(&cx.entity(), |project_diff, cx| {
-        //     project_diff.first_n_entries(cx, 100)
+        // let task = window.spawn(cx, {
+        //     let this = cx.weak_entity();
+        //     async |cx| {
+        //         let entries = this
+        //             .read_with(cx, |project_diff, cx| project_diff.first_n_entries(cx, 100))
+        //             .unwrap();
+        //         Self::refresh(this, entries, cx).await
+        //     }
         // });
-
-        let task = window.spawn(cx, {
-            let this = cx.weak_entity();
-            async |cx| {
-                let entries = this
-                    .read_with(cx, |project_diff, cx| project_diff.first_n_entries(cx, 100))
-                    .unwrap();
-                Self::refresh(this, entries, cx).await
-            }
-        });
 
         Self {
             project,
@@ -571,9 +578,27 @@ impl ProjectDiff {
         }
     }
 
-    pub fn first_n_entries(&self, cx: &App, n: usize) -> Vec<StatusEntry> {
+    pub fn all_entries(&self, cx: &App) -> Vec<StatusEntry> {
         let Some(ref repo) = self.branch_diff.read(cx).repo else {
             return Vec::new();
+        };
+        repo.read(cx).cached_status().collect()
+    }
+
+    pub fn entries(&self, cx: &App) -> Option<impl Iterator<Item = StatusEntry>> {
+        Some(
+            self.branch_diff
+                .read(cx)
+                .repo
+                .as_ref()?
+                .read(cx)
+                .cached_status(),
+        )
+    }
+
+    pub fn first_n_entries(&self, cx: &App, n: usize) -> VecDeque<StatusEntry> {
+        let Some(ref repo) = self.branch_diff.read(cx).repo else {
+            return VecDeque::new();
         };
         repo.read(cx).cached_status().take(n).collect()
     }
@@ -764,7 +789,7 @@ impl ProjectDiff {
             }
 
             if last_notify.elapsed().as_millis() > 100 {
-                cx.notify();
+                cx.update_entity(&this, |_, cx| cx.notify())?;
                 last_notify = Instant::now();
             }
         }

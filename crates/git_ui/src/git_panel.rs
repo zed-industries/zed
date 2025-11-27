@@ -770,8 +770,6 @@ impl GitPanel {
             // })
             // .unwrap(); // TODO FIXME
 
-            // how do we get the projectdiff here?
-
             let project_diff = if let Some(project_diff) =
                 workspace.read(cx).active_item_as::<ProjectDiff>(cx)
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
@@ -792,6 +790,7 @@ impl GitPanel {
             focus_handle.focus(window); // TODO: should we focus before the file is loaded or wait for that?
 
             let project_diff = project_diff.downgrade();
+            // TODO use the fancy new thing
             self.open_diff_task = Some(cx.spawn_in(window, async move |_, cx| {
                 ProjectDiff::refresh_one(project_diff, entry.repo_path, entry.status, cx)
                     .await
