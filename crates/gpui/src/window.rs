@@ -3667,7 +3667,10 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        self.last_input_timestamp.set(Instant::now());
+        match event {
+            PlatformInput::MouseMove(_) => {}
+            _ => self.last_input_timestamp.set(Instant::now()),
+        };
 
         // Track whether this input was keyboard-based for focus-visible styling
         self.last_input_modality = match &event {
