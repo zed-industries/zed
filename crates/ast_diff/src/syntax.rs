@@ -1,12 +1,6 @@
 //! Syntax tree definitions with change metadata.
 
-use std::{
-    cell::Cell,
-    fmt,
-    hash::Hash,
-    num::NonZeroU32,
-    ops::Range,
-};
+use std::{cell::Cell, fmt, hash::Hash, num::NonZeroU32, ops::Range};
 
 use bumpalo::Bump;
 

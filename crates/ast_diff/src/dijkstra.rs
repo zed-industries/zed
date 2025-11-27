@@ -5,7 +5,7 @@ use radix_heap::RadixHeapMap;
 
 use crate::{
     changes::ChangeMap,
-    graph::{populate_change_map, set_neighbours, Edge, Vertex},
+    graph::{Edge, Vertex, populate_change_map, set_neighbours},
     hash::DftHashMap,
     syntax::Syntax,
 };

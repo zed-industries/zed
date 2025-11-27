@@ -1,4 +1,4 @@
-use crate::{with_parser, CharClassifier, CharKind, CharScopeContext, LanguageScope};
+use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope, with_parser};
 use anyhow::{Context, anyhow};
 use ast_diff::DiffOptions as AstDiffOptions;
 use imara_diff::{
@@ -125,8 +125,14 @@ fn syntax_diff_ranges(
         config.forced_atom_nodes_list(),
     );
 
-    let result =
-        ast_diff::diff_syntax(&old_tree, old_text, &new_tree, new_text, &config, &ast_options);
+    let result = ast_diff::diff_syntax(
+        &old_tree,
+        old_text,
+        &new_tree,
+        new_text,
+        &config,
+        &ast_options,
+    );
 
     match &result {
         Ok((lhs, rhs)) => {

@@ -85,12 +85,8 @@ pub(crate) fn slice_by_hash<'a, T: Eq + Hash>(
                 DiffResult::Left(*id_values.get(id).expect("ID should be present in map"))
             }
             DiffResult::Both(lhs_id, rhs_id) => DiffResult::Both(
-                *id_values
-                    .get(lhs_id)
-                    .expect("ID should be present in map"),
-                *id_values
-                    .get(rhs_id)
-                    .expect("ID should be present in map"),
+                *id_values.get(lhs_id).expect("ID should be present in map"),
+                *id_values.get(rhs_id).expect("ID should be present in map"),
             ),
             DiffResult::Right(id) => {
                 DiffResult::Right(*id_values.get(id).expect("ID should be present in map"))

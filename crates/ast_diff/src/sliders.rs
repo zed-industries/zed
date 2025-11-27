@@ -34,7 +34,7 @@
 //! for a thorough discussion.
 
 use crate::{
-    changes::{insert_deep_novel, insert_deep_unchanged, ChangeKind::*, ChangeMap},
+    changes::{ChangeKind::*, ChangeMap, insert_deep_novel, insert_deep_unchanged},
     syntax::Syntax::{self, *},
 };
 

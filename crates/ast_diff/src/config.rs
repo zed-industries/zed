@@ -238,8 +238,8 @@ mod tests {
 
     #[test]
     fn test_language_diff_config_with_additional_atoms() {
-        let config = LanguageDiffConfig::new(vec![])
-            .with_additional_atoms(["custom_node".to_string()]);
+        let config =
+            LanguageDiffConfig::new(vec![]).with_additional_atoms(["custom_node".to_string()]);
 
         assert!(config.is_atom_node("custom_node"));
         // Should still have default atoms
@@ -248,8 +248,7 @@ mod tests {
 
     #[test]
     fn test_language_diff_config_with_custom_atoms() {
-        let config = LanguageDiffConfig::new(vec![])
-            .with_atom_nodes(["only_this".to_string()]);
+        let config = LanguageDiffConfig::new(vec![]).with_atom_nodes(["only_this".to_string()]);
 
         assert!(config.is_atom_node("only_this"));
         // Should NOT have default atoms

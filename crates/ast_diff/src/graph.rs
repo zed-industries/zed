@@ -9,12 +9,12 @@ use std::{
 
 use bumpalo::Bump;
 use hashbrown::hash_map::RawEntryMut;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use strsim::normalized_levenshtein;
 
 use self::Edge::*;
 use crate::{
-    changes::{insert_deep_unchanged, ChangeKind, ChangeMap},
+    changes::{ChangeKind, ChangeMap, insert_deep_unchanged},
     hash::DftHashMap,
     stack::Stack,
     syntax::{AtomKind, Syntax, SyntaxId},
@@ -185,7 +185,9 @@ fn try_pop_lhs<'s, 'v>(
         Some(EnteredDelimiter::PopEither((lhs_delims, rhs_delims))) => match lhs_delims.peek() {
             Some(lhs_delim) => {
                 let mut entered = entered.pop().expect("Delimiter stack should be non-empty");
-                let new_lhs_delims = lhs_delims.pop().expect("LHS delimiter stack should be non-empty");
+                let new_lhs_delims = lhs_delims
+                    .pop()
+                    .expect("LHS delimiter stack should be non-empty");
 
                 if !new_lhs_delims.is_empty() || !rhs_delims.is_empty() {
                     entered = entered.push(
@@ -210,7 +212,9 @@ fn try_pop_rhs<'s, 'v>(
         Some(EnteredDelimiter::PopEither((lhs_delims, rhs_delims))) => match rhs_delims.peek() {
             Some(rhs_delim) => {
                 let mut entered = entered.pop().expect("Delimiter stack should be non-empty");
-                let new_rhs_delims = rhs_delims.pop().expect("RHS delimiter stack should be non-empty");
+                let new_rhs_delims = rhs_delims
+                    .pop()
+                    .expect("RHS delimiter stack should be non-empty");
 
                 if !lhs_delims.is_empty() || !new_rhs_delims.is_empty() {
                     entered = entered.push(
@@ -237,7 +241,10 @@ fn push_lhs_delimiter<'s, 'v>(
             .pop()
             .expect("Delimiter stack should be non-empty")
             .push(
-                EnteredDelimiter::PopEither((lhs_delims.push(delimiter, alloc), rhs_delims.clone())),
+                EnteredDelimiter::PopEither((
+                    lhs_delims.push(delimiter, alloc),
+                    rhs_delims.clone(),
+                )),
                 alloc,
             ),
         _ => entered.push(
@@ -257,7 +264,10 @@ fn push_rhs_delimiter<'s, 'v>(
             .pop()
             .expect("Delimiter stack should be non-empty")
             .push(
-                EnteredDelimiter::PopEither((lhs_delims.clone(), rhs_delims.push(delimiter, alloc))),
+                EnteredDelimiter::PopEither((
+                    lhs_delims.clone(),
+                    rhs_delims.push(delimiter, alloc),
+                )),
                 alloc,
             ),
         _ => entered.push(

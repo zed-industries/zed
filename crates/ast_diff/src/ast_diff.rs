@@ -18,7 +18,7 @@ pub use changes::{ChangeKind, ChangeMap};
 pub use config::{DefaultConfig, LanguageDiffConfig, SyntaxDiffConfig};
 pub use dijkstra::ExceededGraphLimit;
 pub use sliders::SliderPreference;
-pub use syntax::{init_all_info, AtomKind, StringKind, Syntax, SyntaxId};
+pub use syntax::{AtomKind, StringKind, Syntax, SyntaxId, init_all_info};
 
 use bumpalo::Bump;
 use std::{fmt, ops::Range};
@@ -153,10 +153,10 @@ fn collect_novel_ranges<'a>(
     if ranges.is_empty() {
         return ranges;
     }
-    
+
     ranges.sort_by_key(|r| r.start);
     let mut merged = vec![ranges[0].clone()];
-    
+
     for range in ranges.into_iter().skip(1) {
         let last = merged.last_mut().unwrap();
         if range.start <= last.end {
@@ -165,7 +165,7 @@ fn collect_novel_ranges<'a>(
             merged.push(range);
         }
     }
-    
+
     merged
 }
 
@@ -209,16 +209,13 @@ mod tests {
     #[test]
     fn test_identical_atoms() {
         let arena = Bump::new();
-        
+
         let lhs = make_atom(&arena, "foo", 0);
         let rhs = make_atom(&arena, "foo", 0);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &[lhs],
-            &[rhs],
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&[lhs], &[rhs], &DiffOptions::default()).unwrap();
+
         assert!(lhs_ranges.is_empty(), "Expected no changes on LHS");
         assert!(rhs_ranges.is_empty(), "Expected no changes on RHS");
     }
@@ -226,16 +223,13 @@ mod tests {
     #[test]
     fn test_different_atoms() {
         let arena = Bump::new();
-        
+
         let lhs = make_atom(&arena, "foo", 0);
         let rhs = make_atom(&arena, "bar", 0);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &[lhs],
-            &[rhs],
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&[lhs], &[rhs], &DiffOptions::default()).unwrap();
+
         assert_eq!(lhs_ranges.len(), 1, "Expected one change on LHS");
         assert_eq!(rhs_ranges.len(), 1, "Expected one change on RHS");
         assert_eq!(lhs_ranges[0], 0..3);
@@ -245,19 +239,13 @@ mod tests {
     #[test]
     fn test_added_node() {
         let arena = Bump::new();
-        
+
         let lhs = [make_atom(&arena, "a", 0)];
-        let rhs = [
-            make_atom(&arena, "a", 0),
-            make_atom(&arena, "b", 2),
-        ];
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs,
-            &rhs,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+        let rhs = [make_atom(&arena, "a", 0), make_atom(&arena, "b", 2)];
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs, &rhs, &DiffOptions::default()).unwrap();
+
         assert!(lhs_ranges.is_empty(), "Expected no changes on LHS");
         assert_eq!(rhs_ranges.len(), 1, "Expected one addition on RHS");
         assert_eq!(rhs_ranges[0], 2..3);
@@ -266,33 +254,16 @@ mod tests {
     #[test]
     fn test_list_with_unchanged_delimiters() {
         let arena = Bump::new();
-        
+
         let lhs_child = make_atom(&arena, "old", 1);
-        let lhs = Syntax::new_list(
-            &arena,
-            "(",
-            0..1,
-            vec![lhs_child],
-            ")",
-            4..5,
-        );
-        
+        let lhs = Syntax::new_list(&arena, "(", 0..1, vec![lhs_child], ")", 4..5);
+
         let rhs_child = make_atom(&arena, "new", 1);
-        let rhs = Syntax::new_list(
-            &arena,
-            "(",
-            0..1,
-            vec![rhs_child],
-            ")",
-            4..5,
-        );
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &[lhs],
-            &[rhs],
-            &DiffOptions::default(),
-        ).unwrap();
-        
+        let rhs = Syntax::new_list(&arena, "(", 0..1, vec![rhs_child], ")", 4..5);
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&[lhs], &[rhs], &DiffOptions::default()).unwrap();
+
         assert_eq!(lhs_ranges.len(), 1);
         assert_eq!(rhs_ranges.len(), 1);
         assert_eq!(lhs_ranges[0], 1..4);
@@ -312,41 +283,41 @@ mod tests {
         let arena = Bump::new();
         let config = DefaultConfig::default();
         let source = r#"{"key": "value"}"#;
-        
+
         let tree = parse_json(source);
         let lhs_nodes = build_syntax(&arena, &tree, source, &config);
         let rhs_nodes = build_syntax(&arena, &tree, source, &config);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs_nodes,
-            &rhs_nodes,
-            &DiffOptions::default(),
-        ).unwrap();
-        
-        assert!(lhs_ranges.is_empty(), "Expected no changes for identical JSON");
-        assert!(rhs_ranges.is_empty(), "Expected no changes for identical JSON");
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs_nodes, &rhs_nodes, &DiffOptions::default()).unwrap();
+
+        assert!(
+            lhs_ranges.is_empty(),
+            "Expected no changes for identical JSON"
+        );
+        assert!(
+            rhs_ranges.is_empty(),
+            "Expected no changes for identical JSON"
+        );
     }
 
     #[test]
     fn test_integration_different_json_values() {
         let arena = Bump::new();
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"key": "old"}"#;
         let rhs_source = r#"{"key": "new"}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let lhs_nodes = build_syntax(&arena, &lhs_tree, lhs_source, &config);
         let rhs_nodes = build_syntax(&arena, &rhs_tree, rhs_source, &config);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs_nodes,
-            &rhs_nodes,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs_nodes, &rhs_nodes, &DiffOptions::default()).unwrap();
+
         // Should detect that the string value changed
         assert!(!lhs_ranges.is_empty(), "Expected changes on LHS");
         assert!(!rhs_ranges.is_empty(), "Expected changes on RHS");
@@ -356,24 +327,24 @@ mod tests {
     fn test_integration_added_json_field() {
         let arena = Bump::new();
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"a": 1}"#;
         let rhs_source = r#"{"a": 1, "b": 2}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let lhs_nodes = build_syntax(&arena, &lhs_tree, lhs_source, &config);
         let rhs_nodes = build_syntax(&arena, &rhs_tree, rhs_source, &config);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs_nodes,
-            &rhs_nodes,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs_nodes, &rhs_nodes, &DiffOptions::default()).unwrap();
+
         // LHS should have no changes, RHS should have the added field
-        assert!(lhs_ranges.is_empty(), "Expected no changes on LHS for added field");
+        assert!(
+            lhs_ranges.is_empty(),
+            "Expected no changes on LHS for added field"
+        );
         assert!(!rhs_ranges.is_empty(), "Expected additions on RHS");
     }
 
@@ -381,47 +352,44 @@ mod tests {
     fn test_integration_removed_json_field() {
         let arena = Bump::new();
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"a": 1, "b": 2}"#;
         let rhs_source = r#"{"a": 1}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let lhs_nodes = build_syntax(&arena, &lhs_tree, lhs_source, &config);
         let rhs_nodes = build_syntax(&arena, &rhs_tree, rhs_source, &config);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs_nodes,
-            &rhs_nodes,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs_nodes, &rhs_nodes, &DiffOptions::default()).unwrap();
+
         // LHS should have the removed field, RHS should have no changes
         assert!(!lhs_ranges.is_empty(), "Expected removals on LHS");
-        assert!(rhs_ranges.is_empty(), "Expected no changes on RHS for removed field");
+        assert!(
+            rhs_ranges.is_empty(),
+            "Expected no changes on RHS for removed field"
+        );
     }
 
     #[test]
     fn test_integration_nested_json_change() {
         let arena = Bump::new();
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"outer": {"inner": "old"}}"#;
         let rhs_source = r#"{"outer": {"inner": "new"}}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let lhs_nodes = build_syntax(&arena, &lhs_tree, lhs_source, &config);
         let rhs_nodes = build_syntax(&arena, &rhs_tree, rhs_source, &config);
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs_nodes,
-            &rhs_nodes,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs_nodes, &rhs_nodes, &DiffOptions::default()).unwrap();
+
         // Should detect the nested change
         assert!(!lhs_ranges.is_empty(), "Expected changes on LHS");
         assert!(!rhs_ranges.is_empty(), "Expected changes on RHS");
@@ -430,13 +398,13 @@ mod tests {
     #[test]
     fn test_diff_syntax_high_level_api() {
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"key": "old"}"#;
         let rhs_source = r#"{"key": "new"}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let (lhs_ranges, rhs_ranges) = diff_syntax(
             &lhs_tree,
             lhs_source,
@@ -444,8 +412,9 @@ mod tests {
             rhs_source,
             &config,
             &DiffOptions::default(),
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert!(!lhs_ranges.is_empty(), "Expected changes on LHS");
         assert!(!rhs_ranges.is_empty(), "Expected changes on RHS");
     }
@@ -454,9 +423,9 @@ mod tests {
     fn test_diff_syntax_identical() {
         let config = DefaultConfig::default();
         let source = r#"[1, 2, 3]"#;
-        
+
         let tree = parse_json(source);
-        
+
         let (lhs_ranges, rhs_ranges) = diff_syntax(
             &tree,
             source,
@@ -464,25 +433,29 @@ mod tests {
             source,
             &config,
             &DiffOptions::default(),
-        ).unwrap();
-        
-        assert!(lhs_ranges.is_empty(), "Expected no changes for identical input");
-        assert!(rhs_ranges.is_empty(), "Expected no changes for identical input");
+        )
+        .unwrap();
+
+        assert!(
+            lhs_ranges.is_empty(),
+            "Expected no changes for identical input"
+        );
+        assert!(
+            rhs_ranges.is_empty(),
+            "Expected no changes for identical input"
+        );
     }
 
     #[test]
     fn test_empty_vs_nonempty() {
         let arena = Bump::new();
-        
+
         let lhs: Vec<&Syntax> = vec![];
         let rhs = vec![make_atom(&arena, "x", 0)];
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs,
-            &rhs,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs, &rhs, &DiffOptions::default()).unwrap();
+
         assert!(lhs_ranges.is_empty(), "Expected no changes on empty LHS");
         assert_eq!(rhs_ranges.len(), 1, "Expected one addition on RHS");
     }
@@ -490,16 +463,13 @@ mod tests {
     #[test]
     fn test_nonempty_vs_empty() {
         let arena = Bump::new();
-        
+
         let lhs = vec![make_atom(&arena, "x", 0)];
         let rhs: Vec<&Syntax> = vec![];
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs,
-            &rhs,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs, &rhs, &DiffOptions::default()).unwrap();
+
         assert_eq!(lhs_ranges.len(), 1, "Expected one removal on LHS");
         assert!(rhs_ranges.is_empty(), "Expected no changes on empty RHS");
     }
@@ -508,13 +478,10 @@ mod tests {
     fn test_both_empty() {
         let lhs: Vec<&Syntax> = vec![];
         let rhs: Vec<&Syntax> = vec![];
-        
-        let (lhs_ranges, rhs_ranges) = diff_syntax_roots(
-            &lhs,
-            &rhs,
-            &DiffOptions::default(),
-        ).unwrap();
-        
+
+        let (lhs_ranges, rhs_ranges) =
+            diff_syntax_roots(&lhs, &rhs, &DiffOptions::default()).unwrap();
+
         assert!(lhs_ranges.is_empty());
         assert!(rhs_ranges.is_empty());
     }
@@ -522,18 +489,21 @@ mod tests {
     #[test]
     fn test_graph_limit_exceeded() {
         let arena = Bump::new();
-        
+
         let lhs = make_atom(&arena, "a", 0);
         let rhs = make_atom(&arena, "b", 0);
-        
+
         let options = DiffOptions {
             graph_limit: 1,
             ..Default::default()
         };
-        
+
         let result = diff_syntax_roots(&[lhs], &[rhs], &options);
-        
-        assert!(result.is_err(), "Expected graph limit error with limit of 1");
+
+        assert!(
+            result.is_err(),
+            "Expected graph limit error with limit of 1"
+        );
     }
 
     #[test]
@@ -552,13 +522,13 @@ mod tests {
     #[test]
     fn test_deep_nesting() {
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"a": {"b": {"c": {"d": 1}}}}"#;
         let rhs_source = r#"{"a": {"b": {"c": {"d": 2}}}}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let (lhs_ranges, rhs_ranges) = diff_syntax(
             &lhs_tree,
             lhs_source,
@@ -566,22 +536,29 @@ mod tests {
             rhs_source,
             &config,
             &DiffOptions::default(),
-        ).unwrap();
-        
-        assert!(!lhs_ranges.is_empty(), "Expected changes detected in deeply nested structure");
-        assert!(!rhs_ranges.is_empty(), "Expected changes detected in deeply nested structure");
+        )
+        .unwrap();
+
+        assert!(
+            !lhs_ranges.is_empty(),
+            "Expected changes detected in deeply nested structure"
+        );
+        assert!(
+            !rhs_ranges.is_empty(),
+            "Expected changes detected in deeply nested structure"
+        );
     }
 
     #[test]
     fn test_multiple_changes() {
         let config = DefaultConfig::default();
-        
+
         let lhs_source = r#"{"a": 1, "b": 2, "c": 3}"#;
         let rhs_source = r#"{"a": 9, "b": 2, "c": 8}"#;
-        
+
         let lhs_tree = parse_json(lhs_source);
         let rhs_tree = parse_json(rhs_source);
-        
+
         let (lhs_ranges, rhs_ranges) = diff_syntax(
             &lhs_tree,
             lhs_source,
@@ -589,8 +566,9 @@ mod tests {
             rhs_source,
             &config,
             &DiffOptions::default(),
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert!(!lhs_ranges.is_empty(), "Expected changes on LHS");
         assert!(!rhs_ranges.is_empty(), "Expected changes on RHS");
     }
@@ -622,7 +600,9 @@ mod integration_tests {
         parser
             .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
             .expect("Error loading TypeScript grammar");
-        parser.parse(source, None).expect("Failed to parse TypeScript")
+        parser
+            .parse(source, None)
+            .expect("Failed to parse TypeScript")
     }
 
     fn rust_config() -> LanguageDiffConfig {
@@ -710,8 +690,14 @@ mod integration_tests {
         )
         .unwrap();
 
-        assert!(old_ranges.is_empty(), "Expected no changes for identical Rust code");
-        assert!(new_ranges.is_empty(), "Expected no changes for identical Rust code");
+        assert!(
+            old_ranges.is_empty(),
+            "Expected no changes for identical Rust code"
+        );
+        assert!(
+            new_ranges.is_empty(),
+            "Expected no changes for identical Rust code"
+        );
     }
 
     #[test]
@@ -766,8 +752,14 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert!(!old_ranges.is_empty(), "Expected changes for type modification");
-        assert!(!new_ranges.is_empty(), "Expected changes for type modification");
+        assert!(
+            !old_ranges.is_empty(),
+            "Expected changes for type modification"
+        );
+        assert!(
+            !new_ranges.is_empty(),
+            "Expected changes for type modification"
+        );
     }
 
     #[test]
@@ -791,8 +783,14 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert!(!old_ranges.is_empty(), "Expected changes in Python function");
-        assert!(!new_ranges.is_empty(), "Expected changes in Python function");
+        assert!(
+            !old_ranges.is_empty(),
+            "Expected changes in Python function"
+        );
+        assert!(
+            !new_ranges.is_empty(),
+            "Expected changes in Python function"
+        );
     }
 
     #[test]
@@ -813,8 +811,14 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert!(old_ranges.is_empty(), "Expected no changes for identical Python code");
-        assert!(new_ranges.is_empty(), "Expected no changes for identical Python code");
+        assert!(
+            old_ranges.is_empty(),
+            "Expected no changes for identical Python code"
+        );
+        assert!(
+            new_ranges.is_empty(),
+            "Expected no changes for identical Python code"
+        );
     }
 
     #[test]
@@ -870,7 +874,10 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert!(old_ranges.is_empty(), "Expected no changes on old side when adding field");
+        assert!(
+            old_ranges.is_empty(),
+            "Expected no changes on old side when adding field"
+        );
         assert!(!new_ranges.is_empty(), "Expected additions for new field");
     }
 
@@ -966,8 +973,14 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert_eq!(default_lhs, lang_lhs, "Both configs should produce same result for identical input");
-        assert_eq!(default_rhs, lang_rhs, "Both configs should produce same result for identical input");
+        assert_eq!(
+            default_lhs, lang_lhs,
+            "Both configs should produce same result for identical input"
+        );
+        assert_eq!(
+            default_rhs, lang_rhs,
+            "Both configs should produce same result for identical input"
+        );
     }
 
     #[test]
@@ -1013,7 +1026,10 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert!(!with_lhs.is_empty() || !with_rhs.is_empty(), "Both configs should detect changes");
+        assert!(
+            !with_lhs.is_empty() || !with_rhs.is_empty(),
+            "Both configs should detect changes"
+        );
         assert!(
             !without_lhs.is_empty() || !without_rhs.is_empty(),
             "Both configs should detect changes"
@@ -1121,7 +1137,10 @@ fn two() {}"#;
             &DiffOptions::default(),
         );
 
-        assert!(result.is_ok(), "Should handle whitespace-only changes gracefully");
+        assert!(
+            result.is_ok(),
+            "Should handle whitespace-only changes gracefully"
+        );
     }
 
     #[test]
@@ -1139,9 +1158,19 @@ fn two() {}"#;
             ..Default::default()
         };
 
-        let result = diff_syntax(&tree, &large_source, &tree, &large_source, &config, &options);
+        let result = diff_syntax(
+            &tree,
+            &large_source,
+            &tree,
+            &large_source,
+            &config,
+            &options,
+        );
 
-        assert!(result.is_ok(), "Identical large files should not exceed graph limit");
+        assert!(
+            result.is_ok(),
+            "Identical large files should not exceed graph limit"
+        );
     }
 
     #[test]
@@ -1167,7 +1196,13 @@ fn two() {}"#;
         )
         .unwrap();
 
-        assert!(!old_ranges.is_empty(), "Should detect all old content as changed");
-        assert!(!new_ranges.is_empty(), "Should detect all new content as novel");
+        assert!(
+            !old_ranges.is_empty(),
+            "Should detect all old content as changed"
+        );
+        assert!(
+            !new_ranges.is_empty(),
+            "Should detect all new content as novel"
+        );
     }
 }

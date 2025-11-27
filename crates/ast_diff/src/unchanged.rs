@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::changes::{insert_deep_unchanged, ChangeKind, ChangeMap};
+use crate::changes::{ChangeKind, ChangeMap, insert_deep_unchanged};
 use crate::hash::DftHashSet;
 use crate::lcs_diff;
 use crate::syntax::{ContentId, Syntax};
@@ -310,18 +310,22 @@ fn as_singleton_list_children<'a>(
     rhs_nodes: &[&'a Syntax<'a>],
 ) -> Option<(Vec<&'a Syntax<'a>>, Vec<&'a Syntax<'a>>)> {
     if let (
-        [Syntax::List {
-            open_content: lhs_open,
-            children: lhs_children,
-            close_content: lhs_close,
-            ..
-        }],
-        [Syntax::List {
-            open_content: rhs_open,
-            children: rhs_children,
-            close_content: rhs_close,
-            ..
-        }],
+        [
+            Syntax::List {
+                open_content: lhs_open,
+                children: lhs_children,
+                close_content: lhs_close,
+                ..
+            },
+        ],
+        [
+            Syntax::List {
+                open_content: rhs_open,
+                children: rhs_children,
+                close_content: rhs_close,
+                ..
+            },
+        ],
     ) = (lhs_nodes, rhs_nodes)
     {
         if lhs_open == rhs_open && lhs_close == rhs_close {
@@ -338,18 +342,22 @@ fn shrink_unchanged_delimiters<'a>(
     change_map: &mut ChangeMap<'a>,
 ) -> (bool, Vec<&'a Syntax<'a>>, Vec<&'a Syntax<'a>>) {
     if let (
-        [Syntax::List {
-            open_content: lhs_open,
-            children: lhs_children,
-            close_content: lhs_close,
-            ..
-        }],
-        [Syntax::List {
-            open_content: rhs_open,
-            children: rhs_children,
-            close_content: rhs_close,
-            ..
-        }],
+        [
+            Syntax::List {
+                open_content: lhs_open,
+                children: lhs_children,
+                close_content: lhs_close,
+                ..
+            },
+        ],
+        [
+            Syntax::List {
+                open_content: rhs_open,
+                children: rhs_children,
+                close_content: rhs_close,
+                ..
+            },
+        ],
     ) = (lhs_nodes, rhs_nodes)
     {
         if lhs_open == rhs_open && lhs_close == rhs_close {
