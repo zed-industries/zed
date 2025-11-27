@@ -622,9 +622,10 @@ impl WrapSnapshot {
         if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
-        let input_end = self
-            .to_tab_point(output_end)
-            .min(self.tab_snapshot.max_point());
+        let input_end = self.to_tab_point(output_end);
+        let max_point = self.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         WrapChunks {
             input_chunks: self.tab_snapshot.chunks(
                 input_start..input_end,
@@ -921,10 +922,10 @@ impl WrapChunks<'_> {
         if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
-        let input_end = self
-            .snapshot
-            .to_tab_point(output_end)
-            .min(self.snapshot.tab_snapshot.max_point());
+        let input_end = self.snapshot.to_tab_point(output_end);
+        let max_point = self.snapshot.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         self.input_chunks.seek(input_start..input_end);
         self.input_chunk = Chunk::default();
         self.output_position = output_start;
