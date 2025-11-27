@@ -34,8 +34,6 @@ use workspace::{
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
-    SshSettings::register(cx);
-
     #[cfg(target_os = "windows")]
     cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
         let create_new_window = open_wsl.create_new_window;
@@ -546,6 +544,32 @@ impl PickerDelegate for RecentProjectsDelegate {
             paths,
         };
 
+        let secondary_actions = h_flex()
+            .gap_px()
+            .child(
+                IconButton::new("open_new_window", IconName::ArrowUpRight)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Open Project in New Window"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        this.delegate.set_selected_index(ix, window, cx);
+                        this.delegate.confirm(true, window, cx);
+                    })),
+            )
+            .child(
+                IconButton::new("delete", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Delete from Recent Projects"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+
+                        this.delegate.delete_recent_project(ix, window, cx)
+                    })),
+            )
+            .into_any_element();
+
         Some(
             ListItem::new(ix)
                 .toggle_state(selected)
@@ -579,24 +603,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                         }),
                 )
                 .map(|el| {
-                    let delete_button = div()
-                        .child(
-                            IconButton::new("delete", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-
-                                    this.delegate.delete_recent_project(ix, window, cx)
-                                }))
-                                .tooltip(Tooltip::text("Delete from Recent Projects...")),
-                        )
-                        .into_any_element();
-
                     if self.selected_index() == ix {
-                        el.end_slot::<AnyElement>(delete_button)
+                        el.end_slot(secondary_actions)
                     } else {
-                        el.end_hover_slot::<AnyElement>(delete_button)
+                        el.end_hover_slot(secondary_actions)
                     }
                 })
                 .tooltip(move |_, cx| {
@@ -762,10 +772,9 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
-    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::Project;
+
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -911,12 +920,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            DebuggerSettings::register(cx);
-            Project::init_settings(cx);
             state
         })
     }

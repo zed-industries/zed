@@ -19,7 +19,6 @@ fn main() {
 
     app.run(|cx| {
         settings::init(cx);
-        WorktreeSettings::register(cx);
         let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
 
         cx.spawn(async move |cx| {

@@ -1,6 +1,5 @@
-use editor::{Editor, EditorSettings, VimFlavor};
+use editor::{Editor, EditorSettings};
 use gpui::{Action, Context, Window, actions};
-
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
@@ -196,7 +195,7 @@ impl Vim {
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode,
-                        is_helix_regex_search: false,
+                        helix_select: false,
                     }
                 });
             }
@@ -220,7 +219,7 @@ impl Vim {
         let new_selections = self.editor_selections(window, cx);
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
-            if self.search.is_helix_regex_search {
+            if self.search.helix_select {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.select_all_matches(&Default::default(), window, cx)
                 });
@@ -241,8 +240,7 @@ impl Vim {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                let collapse = !self.mode.is_helix();
-                search_bar.select_match(direction, count, collapse, window, cx);
+                search_bar.select_match(direction, count, window, cx);
                 search_bar.focus_editor(&Default::default(), window, cx);
 
                 let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
@@ -309,8 +307,7 @@ impl Vim {
                 if !search_bar.has_active_match() || !search_bar.show(window, cx) {
                     return false;
                 }
-                let collapse = !self.mode.is_helix();
-                search_bar.select_match(direction, count, collapse, window, cx);
+                search_bar.select_match(direction, count, window, cx);
                 true
             })
         });
@@ -319,7 +316,6 @@ impl Vim {
         }
 
         let new_selections = self.editor_selections(window, cx);
-
         self.search_motion(
             Motion::ZedSearchResult {
                 prior_selections,
@@ -385,8 +381,7 @@ impl Vim {
             cx.spawn_in(window, async move |_, cx| {
                 search.await?;
                 search_bar.update_in(cx, |search_bar, window, cx| {
-                    let collapse = editor::vim_flavor(cx) == Some(VimFlavor::Vim);
-                    search_bar.select_match(direction, count, collapse, window, cx);
+                    search_bar.select_match(direction, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
                         let new_selections = vim.editor_selections(window, cx);
@@ -449,7 +444,7 @@ impl Vim {
                 cx.spawn_in(window, async move |_, cx| {
                     search.await?;
                     search_bar.update_in(cx, |search_bar, window, cx| {
-                        search_bar.select_match(direction, 1, true, window, cx)
+                        search_bar.select_match(direction, 1, window, cx)
                     })?;
                     anyhow::Ok(())
                 })

@@ -10,7 +10,7 @@ on:
     - v*
 jobs:
   run_tests_mac:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-mini-macos
     steps:
     - name: steps::checkout_repo
@@ -29,14 +29,11 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -45,7 +42,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_linux:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -57,16 +54,19 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -75,13 +75,12 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: bash -euxo pipefail {0}
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -90,7 +89,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -109,14 +108,11 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
-    - name: steps::cargo_install_nextest
-      run: cargo install cargo-nextest --locked
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -125,7 +121,7 @@ jobs:
       shell: pwsh
     timeout-minutes: 60
   check_scripts:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -154,7 +150,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   create_draft_release:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -202,6 +198,9 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
       shell: bash -euxo pipefail {0}
@@ -241,6 +240,9 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
@@ -467,10 +469,7 @@ jobs:
   auto_release_preview:
     needs:
     - upload_release_assets
-    if: |
-      false
-      && startsWith(github.ref, 'refs/tags/v')
-      && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
+    if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
@@ -478,14 +477,20 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - name: release::create_sentry_release
-      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
-      with:
-        environment: production
+  notify_on_failure:
+    needs:
+    - upload_release_assets
+    - auto_release_preview
+    if: failure()
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: release::notify_on_failure::notify_slack
+      run: |-
+        curl -X POST -H 'Content-type: application/json'\
+         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+      shell: bash -euxo pipefail {0}
       env:
-        SENTRY_ORG: zed-dev
-        SENTRY_PROJECT: zed
-        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

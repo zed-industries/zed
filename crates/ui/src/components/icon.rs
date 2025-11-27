@@ -115,24 +115,24 @@ impl From<IconName> for Icon {
 /// The source of an icon.
 enum IconSource {
     /// An SVG embedded in the Zed binary.
-    Svg(SharedString),
+    Embedded(SharedString),
     /// An image file located at the specified path.
     ///
-    /// Currently our SVG renderer is missing support for the following features:
-    /// 1. Loading SVGs from external files.
-    /// 2. Rendering polychrome SVGs.
+    /// Currently our SVG renderer is missing support for rendering polychrome SVGs.
     ///
     /// In order to support icon themes, we render the icons as images instead.
-    Image(Arc<Path>),
+    External(Arc<Path>),
+    /// An SVG not embedded in the Zed binary.
+    ExternalSvg(SharedString),
 }
 
 impl IconSource {
     fn from_path(path: impl Into<SharedString>) -> Self {
         let path = path.into();
         if path.starts_with("icons/") {
-            Self::Svg(path)
+            Self::Embedded(path)
         } else {
-            Self::Image(Arc::from(PathBuf::from(path.as_ref())))
+            Self::External(Arc::from(PathBuf::from(path.as_ref())))
         }
     }
 }
@@ -148,7 +148,7 @@ pub struct Icon {
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
-            source: IconSource::Svg(icon.path().into()),
+            source: IconSource::Embedded(icon.path().into()),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -158,6 +158,15 @@ impl Icon {
     pub fn from_path(path: impl Into<SharedString>) -> Self {
         Self {
             source: IconSource::from_path(path),
+            color: Color::default(),
+            size: IconSize::default().rems(),
+            transformation: Transformation::default(),
+        }
+    }
+
+    pub fn from_external_svg(svg: SharedString) -> Self {
+        Self {
+            source: IconSource::ExternalSvg(svg),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -193,14 +202,21 @@ impl Transformable for Icon {
 impl RenderOnce for Icon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         match self.source {
-            IconSource::Svg(path) => svg()
+            IconSource::Embedded(path) => svg()
                 .with_transformation(self.transformation)
                 .size(self.size)
                 .flex_none()
                 .path(path)
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::Image(path) => img(path)
+            IconSource::ExternalSvg(path) => svg()
+                .external_path(path)
+                .with_transformation(self.transformation)
+                .size(self.size)
+                .flex_none()
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+            IconSource::External(path) => img(path)
                 .size(self.size)
                 .flex_none()
                 .text_color(self.color.color(cx))

@@ -127,6 +127,8 @@ pub enum ResponseInputItem {
         arguments: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     FunctionCallOutput {
         call_id: String,
@@ -251,6 +253,8 @@ pub enum ResponseOutputItem {
         arguments: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     Reasoning {
         id: String,
@@ -309,7 +313,8 @@ pub async fn stream_response(
     };
 
     let is_streaming = request.stream;
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {

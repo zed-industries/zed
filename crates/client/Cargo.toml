@@ -70,6 +70,7 @@ settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+semver.workspace = true
 windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

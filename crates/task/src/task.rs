@@ -173,6 +173,9 @@ pub enum VariableName {
     SelectedText,
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
+    /// Open a Picker to select a process ID to use in place
+    /// Can only be used to debug configurations
+    PickProcessId,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -240,6 +243,7 @@ impl std::fmt::Display for VariableName {
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
+            Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"
@@ -346,15 +350,28 @@ pub fn shell_to_proto(shell: Shell) -> proto::Shell {
 }
 
 type VsCodeEnvVariable = String;
+type VsCodeCommand = String;
 type ZedEnvVariable = String;
 
 struct EnvVariableReplacer {
     variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
+    commands: HashMap<VsCodeCommand, ZedEnvVariable>,
 }
 
 impl EnvVariableReplacer {
     fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
-        Self { variables }
+        Self {
+            variables,
+            commands: HashMap::default(),
+        }
+    }
+
+    fn with_commands(
+        mut self,
+        commands: impl IntoIterator<Item = (VsCodeCommand, ZedEnvVariable)>,
+    ) -> Self {
+        self.commands = commands.into_iter().collect();
+        self
     }
 
     fn replace_value(&self, input: serde_json::Value) -> serde_json::Value {
@@ -380,7 +397,13 @@ impl EnvVariableReplacer {
             if left == "env" && !right.is_empty() {
                 let variable_name = &right[1..];
                 return Some(format!("${{{variable_name}}}"));
+            } else if left == "command" && !right.is_empty() {
+                let command_name = &right[1..];
+                if let Some(replacement_command) = self.commands.get(command_name) {
+                    return Some(format!("${{{replacement_command}}}"));
+                }
             }
+
             let (variable_name, default) = (left, right);
             let append_previous_default = |ret: &mut String| {
                 if !default.is_empty() {

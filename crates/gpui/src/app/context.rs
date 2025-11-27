@@ -736,14 +736,17 @@ impl<T> Context<'_, T> {
 impl<T> AppContext for Context<'_, T> {
     type Result<U> = U;
 
+    #[inline]
     fn new<U: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<U>) -> U) -> Entity<U> {
         self.app.new(build_entity)
     }
 
+    #[inline]
     fn reserve_entity<U: 'static>(&mut self) -> Reservation<U> {
         self.app.reserve_entity()
     }
 
+    #[inline]
     fn insert_entity<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
@@ -752,6 +755,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.insert_entity(reservation, build_entity)
     }
 
+    #[inline]
     fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Entity<U>,
@@ -760,6 +764,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.update_entity(handle, update)
     }
 
+    #[inline]
     fn as_mut<'a, E>(&'a mut self, handle: &Entity<E>) -> Self::Result<super::GpuiBorrow<'a, E>>
     where
         E: 'static,
@@ -767,6 +772,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.as_mut(handle)
     }
 
+    #[inline]
     fn read_entity<U, R>(
         &self,
         handle: &Entity<U>,
@@ -778,6 +784,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.read_entity(handle, read)
     }
 
+    #[inline]
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> R,
@@ -785,6 +792,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.update_window(window, update)
     }
 
+    #[inline]
     fn read_window<U, R>(
         &self,
         window: &WindowHandle<U>,
@@ -796,6 +804,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.read_window(window, read)
     }
 
+    #[inline]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -803,6 +812,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.background_executor.spawn(future)
     }
 
+    #[inline]
     fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
     where
         G: Global,

@@ -6,7 +6,7 @@ use editor::{
     hover_popover::diagnostics_markdown_style,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
-use language::{BufferId, Diagnostic, DiagnosticEntryRef};
+use language::{BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
@@ -27,6 +27,7 @@ impl DiagnosticRenderer {
         diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
         let Some(primary_ix) = diagnostic_group
@@ -39,8 +40,8 @@ impl DiagnosticRenderer {
         let group_id = primary.diagnostic.group_id;
         let mut results = vec![];
         for entry in diagnostic_group.iter() {
+            let mut markdown = Self::markdown(&entry.diagnostic);
             if entry.diagnostic.is_primary {
-                let mut markdown = Self::markdown(&entry.diagnostic);
                 let diagnostic = &primary.diagnostic;
                 if diagnostic.source.is_some() || diagnostic.code.is_some() {
                     markdown.push_str(" (");
@@ -75,32 +76,28 @@ impl DiagnosticRenderer {
                         ))
                     }
                 }
+
                 results.push(DiagnosticBlock {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
-                });
-            } else if entry.range.start.row.abs_diff(primary.range.start.row) < 5 {
-                let markdown = Self::markdown(&entry.diagnostic);
-
-                results.push(DiagnosticBlock {
-                    initial_range: entry.range.clone(),
-                    severity: entry.diagnostic.severity,
-                    diagnostics_editor: diagnostics_editor.clone(),
-                    markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
+                    markdown: cx.new(|cx| {
+                        Markdown::new(markdown.into(), language_registry.clone(), None, cx)
+                    }),
                 });
             } else {
-                let mut markdown = Self::markdown(&entry.diagnostic);
-                markdown.push_str(&format!(
-                    " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
-                ));
-
+                if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
+                    markdown.push_str(&format!(
+                        " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
+                    ));
+                }
                 results.push(DiagnosticBlock {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
+                    markdown: cx.new(|cx| {
+                        Markdown::new(markdown.into(), language_registry.clone(), None, cx)
+                    }),
                 });
             }
         }
@@ -127,9 +124,16 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>> {
-        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
+        let blocks = Self::diagnostic_blocks_for_group(
+            diagnostic_group,
+            buffer_id,
+            None,
+            language_registry,
+            cx,
+        );
 
         blocks
             .into_iter()
@@ -155,9 +159,16 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
+        language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Option<Entity<Markdown>> {
-        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
+        let blocks = Self::diagnostic_blocks_for_group(
+            diagnostic_group,
+            buffer_id,
+            None,
+            language_registry,
+            cx,
+        );
         blocks
             .into_iter()
             .find_map(|block| (block.initial_range == range).then(|| block.markdown))
@@ -215,6 +226,11 @@ impl DiagnosticBlock {
                     self.markdown.clone(),
                     diagnostics_markdown_style(bcx.window, cx),
                 )
+                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                    copy_button: false,
+                    copy_button_on_hover: false,
+                    border: false,
+                })
                 .on_url_click({
                     move |link, window, cx| {
                         editor
@@ -268,7 +284,7 @@ impl DiagnosticBlock {
                     if range.context.overlaps(&diagnostic.range, &snapshot) {
                         Self::jump_to(
                             editor,
-                            Anchor::range_in_buffer(excerpt_id, buffer_id, diagnostic.range),
+                            Anchor::range_in_buffer(excerpt_id, diagnostic.range),
                             window,
                             cx,
                         );

@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use util::{
     ResultExt,
     paths::{PathMatcher, PathStyle},
     rel_path::RelPath,
 };
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, RegisterSetting)]
 pub struct WorktreeSettings {
     pub project_name: Option<String>,
     /// Whether to prevent this project from being shared in public channels.
@@ -66,7 +66,7 @@ impl Settings for WorktreeSettings {
             .collect();
 
         Self {
-            project_name: worktree.project_name.into_inner(),
+            project_name: worktree.project_name,
             prevent_sharing_in_public_channels: worktree.prevent_sharing_in_public_channels,
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()

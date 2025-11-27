@@ -280,10 +280,8 @@ fn display_name(profile_name: &Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client;
     use editor;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
-    use language;
     use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -302,12 +300,8 @@ mod tests {
             cx.set_global(settings_store);
             settings::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            client::init_settings(cx);
-            language::init(cx);
             super::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         });
 

@@ -26,7 +26,6 @@ language.workspace = true
 log.workspace = true
 menu.workspace = true
 picker.workspace = true
-project.workspace = true
 reqwest_client.workspace = true
 rust-embed.workspace = true
 settings.workspace = true
@@ -36,7 +35,6 @@ strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
-workspace.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -1,7 +1,4 @@
-use crate::{
-    Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle,
-    worktree_settings::WorktreeSettings,
-};
+use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
@@ -12,7 +9,7 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::{
     env,
     fmt::Write,
@@ -382,6 +379,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         fs::RenameOptions {
             overwrite: true,
             ignore_if_exists: true,
+            create_parents: false,
         },
     )
     .await
@@ -1989,6 +1987,7 @@ async fn randomly_mutate_fs(
                 fs::RenameOptions {
                     overwrite: true,
                     ignore_if_exists: true,
+                    create_parents: false,
                 },
             )
             .await
@@ -2269,6 +2268,5 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        WorktreeSettings::register(cx);
     });
 }

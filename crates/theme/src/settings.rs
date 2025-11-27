@@ -11,8 +11,8 @@ use gpui::{
 use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
-use settings::{Settings, SettingsContent};
+pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -94,7 +94,7 @@ impl From<settings::UiDensity> for UiDensity {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, RegisterSetting)]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.
@@ -208,7 +208,7 @@ pub enum ThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The theme to use for light mode.
         light: ThemeName,
         /// The theme to use for dark mode.
@@ -233,9 +233,9 @@ impl ThemeSelection {
         match self {
             Self::Static(theme) => theme.clone(),
             Self::Dynamic { mode, light, dark } => match mode {
-                ThemeMode::Light => light.clone(),
-                ThemeMode::Dark => dark.clone(),
-                ThemeMode::System => match system_appearance {
+                ThemeAppearanceMode::Light => light.clone(),
+                ThemeAppearanceMode::Dark => dark.clone(),
+                ThemeAppearanceMode::System => match system_appearance {
                     Appearance::Light => light.clone(),
                     Appearance::Dark => dark.clone(),
                 },
@@ -244,7 +244,7 @@ impl ThemeSelection {
     }
 
     /// Returns the [ThemeMode] for the [ThemeSelection].
-    pub fn mode(&self) -> Option<ThemeMode> {
+    pub fn mode(&self) -> Option<ThemeAppearanceMode> {
         match self {
             ThemeSelection::Static(_) => None,
             ThemeSelection::Dynamic { mode, .. } => Some(*mode),
@@ -260,7 +260,7 @@ pub enum IconThemeSelection {
     /// A dynamic icon theme selection, which can change based on the [`ThemeMode`].
     Dynamic {
         /// The mode used to determine which theme to use.
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The icon theme to use for light mode.
         light: IconThemeName,
         /// The icon theme to use for dark mode.
@@ -285,9 +285,9 @@ impl IconThemeSelection {
         match self {
             Self::Static(theme) => theme.clone(),
             Self::Dynamic { mode, light, dark } => match mode {
-                ThemeMode::Light => light.clone(),
-                ThemeMode::Dark => dark.clone(),
-                ThemeMode::System => match system_appearance {
+                ThemeAppearanceMode::Light => light.clone(),
+                ThemeAppearanceMode::Dark => dark.clone(),
+                ThemeAppearanceMode::System => match system_appearance {
                     Appearance::Light => light.clone(),
                     Appearance::Dark => dark.clone(),
                 },
@@ -296,7 +296,7 @@ impl IconThemeSelection {
     }
 
     /// Returns the [`ThemeMode`] for the [`IconThemeSelection`].
-    pub fn mode(&self) -> Option<ThemeMode> {
+    pub fn mode(&self) -> Option<ThemeAppearanceMode> {
         match self {
             IconThemeSelection::Static(_) => None,
             IconThemeSelection::Dynamic { mode, .. } => Some(*mode),
@@ -315,9 +315,9 @@ pub fn set_theme(
         let theme_to_update = match selection {
             settings::ThemeSelection::Static(theme) => theme,
             settings::ThemeSelection::Dynamic { mode, light, dark } => match mode {
-                ThemeMode::Light => light,
-                ThemeMode::Dark => dark,
-                ThemeMode::System => match appearance {
+                ThemeAppearanceMode::Light => light,
+                ThemeAppearanceMode::Dark => dark,
+                ThemeAppearanceMode::System => match appearance {
                     Appearance::Light => light,
                     Appearance::Dark => dark,
                 },
@@ -342,9 +342,9 @@ pub fn set_icon_theme(
         let icon_theme_to_update = match selection {
             settings::IconThemeSelection::Static(theme) => theme,
             settings::IconThemeSelection::Dynamic { mode, light, dark } => match mode {
-                ThemeMode::Light => light,
-                ThemeMode::Dark => dark,
-                ThemeMode::System => match appearance {
+                ThemeAppearanceMode::Light => light,
+                ThemeAppearanceMode::Dark => dark,
+                ThemeAppearanceMode::System => match appearance {
                     Appearance::Light => light,
                     Appearance::Dark => dark,
                 },
@@ -358,7 +358,7 @@ pub fn set_icon_theme(
 }
 
 /// Sets the mode for the theme.
-pub fn set_mode(content: &mut SettingsContent, mode: ThemeMode) {
+pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     let theme = content.theme.as_mut();
 
     if let Some(selection) = theme.theme.as_mut() {

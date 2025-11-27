@@ -43,6 +43,14 @@ pub struct WrapSnapshot {
     interpolated: bool,
 }
 
+impl std::ops::Deref for WrapSnapshot {
+    type Target = TabSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tab_snapshot
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Transform {
     summary: TransformSummary,
@@ -614,9 +622,10 @@ impl WrapSnapshot {
         if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
-        let input_end = self
-            .to_tab_point(output_end)
-            .min(self.tab_snapshot.max_point());
+        let input_end = self.to_tab_point(output_end);
+        let max_point = self.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         WrapChunks {
             input_chunks: self.tab_snapshot.chunks(
                 input_start..input_end,
@@ -913,10 +922,10 @@ impl WrapChunks<'_> {
         if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
-        let input_end = self
-            .snapshot
-            .to_tab_point(output_end)
-            .min(self.snapshot.tab_snapshot.max_point());
+        let input_end = self.snapshot.to_tab_point(output_end);
+        let max_point = self.snapshot.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         self.input_chunks.seek(input_start..input_end);
         self.input_chunk = Chunk::default();
         self.output_position = output_start;
@@ -957,7 +966,7 @@ impl<'a> Iterator for WrapChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            self.input_chunk = self.input_chunks.next().unwrap();
+            self.input_chunk = self.input_chunks.next()?;
         }
 
         let mut input_len = 0;
@@ -1025,6 +1034,7 @@ impl Iterator for WrapRows<'_> {
                 multibuffer_row: None,
                 diff_status,
                 expand_info: None,
+                wrapped_buffer_row: buffer_row.buffer_row,
             }
         } else {
             buffer_row

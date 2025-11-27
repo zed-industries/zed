@@ -401,19 +401,18 @@ mod tests {
     use acp_thread::{AgentConnection, StubAgentConnection};
     use agent::HistoryStore;
     use agent_client_protocol as acp;
-    use agent_settings::AgentSettings;
     use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-    use editor::{EditorSettings, RowInfo};
+    use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
 
     use crate::acp::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use util::path;
     use workspace::Workspace;
 
@@ -539,13 +538,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
-            EditorSettings::register(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }
 }

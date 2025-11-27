@@ -1,14 +1,12 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
 use gpui::AsyncApp;
 use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
-use smol::fs;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -198,19 +196,10 @@ async fn get_cached_server_binary(
     node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
-        let mut last_version_dir = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
-        while let Some(entry) = entries.next().await {
-            let entry = entry?;
-            if entry.file_type().await?.is_dir() {
-                last_version_dir = Some(entry.path());
-            }
-        }
-        let last_version_dir = last_version_dir.context("no cached binary")?;
-        let server_path = last_version_dir.join(SERVER_PATH);
+        let server_path = container_dir.join(SERVER_PATH);
         anyhow::ensure!(
             server_path.exists(),
-            "missing executable in directory {last_version_dir:?}"
+            "missing executable in directory {server_path:?}"
         );
         Ok(LanguageServerBinary {
             path: node.binary_path().await?,

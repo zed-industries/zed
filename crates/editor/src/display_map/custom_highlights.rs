@@ -1,7 +1,7 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
 use std::{
     cmp,
     iter::{self, Peekable},
@@ -14,7 +14,7 @@ use crate::display_map::{HighlightKey, TextHighlights};
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
-    offset: usize,
+    offset: MultiBufferOffset,
     multibuffer_snapshot: &'a MultiBufferSnapshot,
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
@@ -24,14 +24,14 @@ pub struct CustomHighlightsChunks<'a> {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct HighlightEndpoint {
-    offset: usize,
+    offset: MultiBufferOffset,
     tag: HighlightKey,
     style: Option<HighlightStyle>,
 }
 
 impl<'a> CustomHighlightsChunks<'a> {
     pub fn new(
-        range: Range<usize>,
+        range: Range<MultiBufferOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
@@ -40,7 +40,6 @@ impl<'a> CustomHighlightsChunks<'a> {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
             buffer_chunk: None,
             offset: range.start,
-
             text_highlights,
             highlight_endpoints: create_highlight_endpoints(
                 &range,
@@ -52,7 +51,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         }
     }
 
-    pub fn seek(&mut self, new_range: Range<usize>) {
+    pub fn seek(&mut self, new_range: Range<MultiBufferOffset>) {
         self.highlight_endpoints =
             create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
         self.offset = new_range.start;
@@ -63,7 +62,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 }
 
 fn create_highlight_endpoints(
-    range: &Range<usize>,
+    range: &Range<MultiBufferOffset>,
     text_highlights: Option<&TextHighlights>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
@@ -75,16 +74,9 @@ fn create_highlight_endpoints(
             let style = text_highlights.0;
             let ranges = &text_highlights.1;
 
-            let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe.end.cmp(&start, buffer);
-                if cmp.is_gt() {
-                    cmp::Ordering::Greater
-                } else {
-                    cmp::Ordering::Less
-                }
-            }) {
-                Ok(i) | Err(i) => i,
-            };
+            let start_ix = ranges
+                .binary_search_by(|probe| probe.end.cmp(&start, buffer).then(cmp::Ordering::Less))
+                .unwrap_or_else(|i| i);
 
             for range in &ranges[start_ix..] {
                 if range.start.cmp(&end, buffer).is_ge() {
@@ -117,7 +109,7 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut next_highlight_endpoint = usize::MAX;
+        let mut next_highlight_endpoint = MultiBufferOffset(usize::MAX);
         while let Some(endpoint) = self.highlight_endpoints.peek().copied() {
             if endpoint.offset <= self.offset {
                 if let Some(style) = endpoint.style {
@@ -224,20 +216,22 @@ mod tests {
             let range_count = rng.random_range(1..10);
             let text = buffer_snapshot.text();
             for _ in 0..range_count {
-                if buffer_snapshot.len() == 0 {
+                if buffer_snapshot.len() == MultiBufferOffset(0) {
                     continue;
                 }
 
-                let mut start = rng.random_range(0..=buffer_snapshot.len().saturating_sub(10));
+                let mut start = rng.random_range(
+                    MultiBufferOffset(0)..=buffer_snapshot.len().saturating_sub_usize(10),
+                );
 
-                while !text.is_char_boundary(start) {
-                    start = start.saturating_sub(1);
+                while !text.is_char_boundary(start.0) {
+                    start = start.saturating_sub_usize(1);
                 }
 
-                let end_end = buffer_snapshot.len().min(start + 100);
+                let end_end = buffer_snapshot.len().min(start + 100usize);
                 let mut end = rng.random_range(start..=end_end);
-                while !text.is_char_boundary(end) {
-                    end = end.saturating_sub(1);
+                while !text.is_char_boundary(end.0) {
+                    end = end.saturating_sub_usize(1);
                 }
 
                 if start < end {
@@ -253,8 +247,12 @@ mod tests {
         }
 
         // Get all chunks and verify their bitmaps
-        let chunks =
-            CustomHighlightsChunks::new(0..buffer_snapshot.len(), false, None, &buffer_snapshot);
+        let chunks = CustomHighlightsChunks::new(
+            MultiBufferOffset(0)..buffer_snapshot.len(),
+            false,
+            None,
+            &buffer_snapshot,
+        );
 
         for chunk in chunks {
             let chunk_text = chunk.text;

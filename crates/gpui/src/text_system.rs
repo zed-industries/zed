@@ -739,7 +739,7 @@ impl Display for FontStyle {
 }
 
 /// A styled run of text, for use in [`crate::TextLayout`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct TextRun {
     /// A number of utf8 bytes
     pub len: usize,
@@ -811,6 +811,12 @@ pub struct Font {
 
     /// The font style.
     pub style: FontStyle,
+}
+
+impl Default for Font {
+    fn default() -> Self {
+        font(".SystemUIFont")
+    }
 }
 
 /// Get a [`Font`] for a given name.

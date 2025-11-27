@@ -234,11 +234,14 @@ impl DirectXAtlasState {
     }
 
     fn texture(&self, id: AtlasTextureId) -> &DirectXAtlasTexture {
-        let textures = match id.kind {
-            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
-            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-        };
-        textures[id.index as usize].as_ref().unwrap()
+        match id.kind {
+            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures[id.index as usize]
+                .as_ref()
+                .unwrap(),
+            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures[id.index as usize]
+                .as_ref()
+                .unwrap(),
+        }
     }
 }
 

@@ -374,6 +374,7 @@ impl PartialEq<str> for RelPath {
     }
 }
 
+#[derive(Default)]
 pub struct RelPathComponents<'a>(&'a str);
 
 pub struct RelPathAncestors<'a>(Option<&'a str>);

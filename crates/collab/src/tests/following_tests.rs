@@ -6,7 +6,7 @@ use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
-use editor::{Editor, MultiBuffer, PathKey, SelectionEffects};
+use editor::{Editor, MultiBuffer, MultiBufferOffset, PathKey, SelectionEffects};
 use gpui::{
     AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
     VisualContext, VisualTestContext, point,
@@ -124,7 +124,7 @@ async fn test_basic_following(
         editor.select_left(&Default::default(), window, cx);
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            vec![3..2]
+            vec![MultiBufferOffset(3)..MultiBufferOffset(2)]
         );
     });
     editor_a2.update_in(cx_a, |editor, window, cx| {
@@ -133,7 +133,7 @@ async fn test_basic_following(
         editor.select_left(&Default::default(), window, cx);
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            vec![2..1]
+            vec![MultiBufferOffset(2)..MultiBufferOffset(1)]
         );
     });
 
@@ -158,13 +158,13 @@ async fn test_basic_following(
         editor_b2.update(cx_b, |editor, cx| editor
             .selections
             .ranges(&editor.display_snapshot(cx))),
-        vec![2..1]
+        vec![MultiBufferOffset(2)..MultiBufferOffset(1)]
     );
     assert_eq!(
         editor_b1.update(cx_b, |editor, cx| editor
             .selections
             .ranges(&editor.display_snapshot(cx))),
-        vec![3..3]
+        vec![MultiBufferOffset(3)..MultiBufferOffset(3)]
     );
 
     executor.run_until_parked();
@@ -386,7 +386,10 @@ async fn test_basic_following(
     // Changes to client A's editor are reflected on client B.
     editor_a1.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([1..1, 2..2])
+            s.select_ranges([
+                MultiBufferOffset(1)..MultiBufferOffset(1),
+                MultiBufferOffset(2)..MultiBufferOffset(2),
+            ])
         });
     });
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -396,7 +399,10 @@ async fn test_basic_following(
     editor_b1.update(cx_b, |editor, cx| {
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            &[1..1, 2..2]
+            &[
+                MultiBufferOffset(1)..MultiBufferOffset(1),
+                MultiBufferOffset(2)..MultiBufferOffset(2)
+            ]
         );
     });
 
@@ -408,7 +414,7 @@ async fn test_basic_following(
 
     editor_a1.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([3..3])
+            s.select_ranges([MultiBufferOffset(3)..MultiBufferOffset(3)])
         });
         editor.set_scroll_position(point(0., 100.), window, cx);
     });
@@ -417,7 +423,7 @@ async fn test_basic_following(
     editor_b1.update(cx_b, |editor, cx| {
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            &[3..3]
+            &[MultiBufferOffset(3)..MultiBufferOffset(3)]
         );
     });
 
@@ -523,7 +529,7 @@ async fn test_basic_following(
         });
 
         // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-        let panel = cx_b.new(|cx| TestPanel::new(DockPosition::Left, cx));
+        let panel = cx_b.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
         workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.add_panel(panel, window, cx);
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
@@ -1694,7 +1700,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     // b should follow a to position 1
     editor_a.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([1..1])
+            s.select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)])
         })
     });
     cx_a.executor()
@@ -1703,7 +1709,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     editor_b.update(cx_b, |editor, cx| {
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            vec![1..1]
+            vec![MultiBufferOffset(1)..MultiBufferOffset(1)]
         )
     });
 
@@ -1719,7 +1725,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     // b should not follow a to position 2
     editor_a.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([2..2])
+            s.select_ranges([MultiBufferOffset(2)..MultiBufferOffset(2)])
         })
     });
     cx_a.executor()
@@ -1728,7 +1734,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     editor_b.update(cx_b, |editor, cx| {
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            vec![1..1]
+            vec![MultiBufferOffset(1)..MultiBufferOffset(1)]
         )
     });
     cx_b.update(|_, cx| {
@@ -1829,7 +1835,7 @@ async fn test_following_into_excluded_file(
         editor.select_left(&Default::default(), window, cx);
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            vec![3..2]
+            vec![MultiBufferOffset(3)..MultiBufferOffset(2)]
         );
     });
     editor_for_excluded_a.update_in(cx_a, |editor, window, cx| {
@@ -1838,7 +1844,7 @@ async fn test_following_into_excluded_file(
         editor.select_left(&Default::default(), window, cx);
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
-            vec![18..17]
+            vec![MultiBufferOffset(18)..MultiBufferOffset(17)]
         );
     });
 
@@ -1864,7 +1870,7 @@ async fn test_following_into_excluded_file(
         editor_for_excluded_b.update(cx_b, |editor, cx| editor
             .selections
             .ranges(&editor.display_snapshot(cx))),
-        vec![18..17]
+        vec![MultiBufferOffset(18)..MultiBufferOffset(17)]
     );
 
     editor_for_excluded_a.update_in(cx_a, |editor, window, cx| {
@@ -2040,7 +2046,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         notes.editor.update(cx, |editor, cx| {
             editor.insert("Hello from A.", window, cx);
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                selections.select_ranges(vec![3..4]);
+                selections.select_ranges(vec![MultiBufferOffset(3)..MultiBufferOffset(4)]);
             });
         });
     });
@@ -2076,8 +2082,8 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             assert_eq!(
                 editor
                     .selections
-                    .ranges::<usize>(&editor.display_snapshot(cx)),
-                &[3..4]
+                    .ranges::<MultiBufferOffset>(&editor.display_snapshot(cx)),
+                &[MultiBufferOffset(3)..MultiBufferOffset(4)]
             );
         })
     });

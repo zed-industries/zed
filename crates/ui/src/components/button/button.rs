@@ -285,6 +285,10 @@ impl Disableable for Button {
     /// This results in a button that is disabled and does not respond to click events.
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
+        self.key_binding = self
+            .key_binding
+            .take()
+            .map(|binding| binding.disabled(disabled));
         self
     }
 }

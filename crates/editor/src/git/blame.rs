@@ -67,7 +67,7 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 struct GitBlameBuffer {
     entries: SumTree<GitBlameEntry>,
     buffer_snapshot: BufferSnapshot,
-    buffer_edits: text::Subscription,
+    buffer_edits: text::Subscription<usize>,
     commit_details: HashMap<Oid, ParsedCommitMessage>,
 }
 
@@ -763,11 +763,6 @@ mod tests {
             cx.set_global(settings);
 
             theme::init(theme::LoadThemes::JustBase, cx);
-
-            language::init(cx);
-            client::init_settings(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
 
             crate::init(cx);
         });

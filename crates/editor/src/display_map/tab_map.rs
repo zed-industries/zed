@@ -167,6 +167,14 @@ pub struct TabSnapshot {
     pub version: usize,
 }
 
+impl std::ops::Deref for TabSnapshot {
+    type Target = FoldSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fold_snapshot
+    }
+}
+
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
@@ -640,6 +648,7 @@ mod tests {
             inlay_map::InlayMap,
         },
     };
+    use multi_buffer::MultiBufferOffset;
     use rand::{Rng, prelude::StdRng};
     use util;
 
@@ -1148,7 +1157,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
-            FoldOffset(0)..fold_snapshot.len(),
+            FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
             false,
             Default::default(),
         );
@@ -1310,7 +1319,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
-            FoldOffset(0)..fold_snapshot.len(),
+            FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
             false,
             Default::default(),
         );

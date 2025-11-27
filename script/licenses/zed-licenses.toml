@@ -1,5 +1,16 @@
 no-clearly-defined = true
 private = { ignore = true }
+# Licenses allowed in Zed's dependencies. AGPL should not be added to
+# this list as use of AGPL software is sometimes disallowed. When
+# adding to this list, please check the following open source license
+# policies:
+#
+# * https://opensource.google/documentation/reference/thirdparty/licenses
+#
+# The Zed project does have AGPL crates, but these are only involved
+# in servers and are not built into the binaries in the release
+# tarball. `script/check-licenses` checks that AGPL crates are not
+# involved in release binaries.
 accepted = [
     "Apache-2.0",
     "MIT",

@@ -412,7 +412,6 @@ impl ProjectItem for ImageView {
 }
 
 pub fn init(cx: &mut App) {
-    ImageViewerSettings::register(cx);
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
 }

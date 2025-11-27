@@ -12,6 +12,6 @@ workspace = true
 path = "src/telemetry_events.rs"
 
 [dependencies]
-semantic_version.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

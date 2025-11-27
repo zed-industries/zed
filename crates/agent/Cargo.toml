@@ -63,7 +63,6 @@ streaming_diff.workspace = true
 strsim.workspace = true
 task.workspace = true
 telemetry.workspace = true
-terminal.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true

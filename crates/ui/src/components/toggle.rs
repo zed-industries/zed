@@ -1,7 +1,8 @@
 use gpui::{
-    AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
-    prelude::*,
+    AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, KeybindingKeystroke, Keystroke,
+    Styled, Window, div, hsla, prelude::*,
 };
+use settings::KeybindSource;
 use std::{rc::Rc, sync::Arc};
 
 use crate::utils::is_light;
@@ -50,6 +51,8 @@ pub struct Checkbox {
     style: ToggleStyle,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     label: Option<SharedString>,
+    label_size: LabelSize,
+    label_color: Color,
 }
 
 impl Checkbox {
@@ -64,6 +67,8 @@ impl Checkbox {
             style: ToggleStyle::default(),
             tooltip: None,
             label: None,
+            label_size: LabelSize::Default,
+            label_color: Color::Muted,
             placeholder: false,
         }
     }
@@ -128,6 +133,16 @@ impl Checkbox {
         self.label = Some(label.into());
         self
     }
+
+    pub fn label_size(mut self, size: LabelSize) -> Self {
+        self.label_size = size;
+        self
+    }
+
+    pub fn label_color(mut self, color: Color) -> Self {
+        self.label_color = color;
+        self
+    }
 }
 
 impl Checkbox {
@@ -155,7 +170,6 @@ impl Checkbox {
         }
     }
 
-    /// container size
     pub fn container_size() -> Pixels {
         px(20.0)
     }
@@ -169,6 +183,7 @@ impl RenderOnce for Checkbox {
         } else {
             Color::Selected
         };
+
         let icon = match self.toggle_state {
             ToggleState::Selected => {
                 if self.placeholder {
@@ -232,6 +247,7 @@ impl RenderOnce for Checkbox {
 
         h_flex()
             .id(self.id)
+            .cursor_pointer()
             .gap(DynamicSpacing::Base06.rems(cx))
             .child(checkbox)
             .when_some(
@@ -242,110 +258,15 @@ impl RenderOnce for Checkbox {
                     })
                 },
             )
-            // TODO: Allow label size to be different from default.
-            // TODO: Allow label color to be different from muted.
             .when_some(self.label, |this, label| {
-                this.child(Label::new(label).color(Color::Muted))
+                this.child(
+                    Label::new(label)
+                        .color(self.label_color)
+                        .size(self.label_size),
+                )
             })
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
-            })
-    }
-}
-
-/// A [`Checkbox`] that has a [`Label`].
-#[derive(IntoElement, RegisterComponent)]
-pub struct CheckboxWithLabel {
-    id: ElementId,
-    label: Label,
-    checked: ToggleState,
-    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
-    filled: bool,
-    style: ToggleStyle,
-    checkbox_position: IconPosition,
-}
-
-// TODO: Remove `CheckboxWithLabel` now that `label` is a method of `Checkbox`.
-impl CheckboxWithLabel {
-    /// Creates a checkbox with an attached label.
-    pub fn new(
-        id: impl Into<ElementId>,
-        label: Label,
-        checked: ToggleState,
-        on_click: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label,
-            checked,
-            on_click: Arc::new(on_click),
-            filled: false,
-            style: ToggleStyle::default(),
-            checkbox_position: IconPosition::Start,
-        }
-    }
-
-    /// Sets the style of the checkbox using the specified [`ToggleStyle`].
-    pub fn style(mut self, style: ToggleStyle) -> Self {
-        self.style = style;
-        self
-    }
-
-    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
-    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
-        self.style = ToggleStyle::ElevationBased(elevation);
-        self
-    }
-
-    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
-    pub fn fill(mut self) -> Self {
-        self.filled = true;
-        self
-    }
-
-    pub fn checkbox_position(mut self, position: IconPosition) -> Self {
-        self.checkbox_position = position;
-        self
-    }
-}
-
-impl RenderOnce for CheckboxWithLabel {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        h_flex()
-            .gap(DynamicSpacing::Base08.rems(cx))
-            .when(self.checkbox_position == IconPosition::Start, |this| {
-                this.child(
-                    Checkbox::new(self.id.clone(), self.checked)
-                        .style(self.style.clone())
-                        .when(self.filled, Checkbox::fill)
-                        .on_click({
-                            let on_click = self.on_click.clone();
-                            move |checked, window, cx| {
-                                (on_click)(checked, window, cx);
-                            }
-                        }),
-                )
-            })
-            .child(
-                div()
-                    .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click({
-                        let on_click = self.on_click.clone();
-                        move |_event, window, cx| {
-                            (on_click)(&self.checked.inverse(), window, cx);
-                        }
-                    })
-                    .child(self.label),
-            )
-            .when(self.checkbox_position == IconPosition::End, |this| {
-                this.child(
-                    Checkbox::new(self.id.clone(), self.checked)
-                        .style(self.style)
-                        .when(self.filled, Checkbox::fill)
-                        .on_click(move |checked, window, cx| {
-                            (self.on_click)(checked, window, cx);
-                        }),
-                )
             })
     }
 }
@@ -412,6 +333,14 @@ impl From<SwitchColor> for Color {
     }
 }
 
+/// Defines the color for a switch component.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum SwitchLabelPosition {
+    Start,
+    #[default]
+    End,
+}
+
 /// # Switch
 ///
 /// Switches are used to represent opposite states, such as enabled or disabled.
@@ -422,6 +351,9 @@ pub struct Switch {
     disabled: bool,
     on_click: Option<Rc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
     label: Option<SharedString>,
+    label_position: Option<SwitchLabelPosition>,
+    label_size: LabelSize,
+    full_width: bool,
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
     tab_index: Option<isize>,
@@ -436,6 +368,9 @@ impl Switch {
             disabled: false,
             on_click: None,
             label: None,
+            label_position: None,
+            label_size: LabelSize::Small,
+            full_width: false,
             key_binding: None,
             color: SwitchColor::default(),
             tab_index: None,
@@ -466,6 +401,24 @@ impl Switch {
     /// Sets the label of the [`Switch`].
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    pub fn label_position(
+        mut self,
+        label_position: impl Into<Option<SwitchLabelPosition>>,
+    ) -> Self {
+        self.label_position = label_position.into();
+        self
+    }
+
+    pub fn label_size(mut self, size: LabelSize) -> Self {
+        self.label_size = size;
+        self
+    }
+
+    pub fn full_width(mut self, full_width: bool) -> Self {
+        self.full_width = full_width;
         self
     }
 
@@ -503,6 +456,7 @@ impl RenderOnce for Switch {
         };
 
         let group_id = format!("switch_group_{:?}", self.id);
+        let label = self.label;
 
         let switch = div()
             .id((self.id.clone(), "switch"))
@@ -555,9 +509,27 @@ impl RenderOnce for Switch {
 
         h_flex()
             .id(self.id)
-            .gap(DynamicSpacing::Base06.rems(cx))
             .cursor_pointer()
+            .gap(DynamicSpacing::Base06.rems(cx))
+            .when(self.full_width, |this| this.w_full().justify_between())
+            .when(
+                self.label_position == Some(SwitchLabelPosition::Start),
+                |this| {
+                    this.when_some(label.clone(), |this, label| {
+                        this.child(Label::new(label).size(self.label_size))
+                    })
+                },
+            )
             .child(switch)
+            .when(
+                self.label_position == Some(SwitchLabelPosition::End),
+                |this| {
+                    this.when_some(label, |this, label| {
+                        this.child(Label::new(label).size(self.label_size))
+                    })
+                },
+            )
+            .children(self.key_binding)
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
@@ -566,10 +538,6 @@ impl RenderOnce for Switch {
                     })
                 },
             )
-            .when_some(self.label, |this, label| {
-                this.child(Label::new(label).size(LabelSize::Small))
-            })
-            .children(self.key_binding)
     }
 }
 
@@ -1070,74 +1038,54 @@ impl Component for Switch {
                         "With Label",
                         vec![
                             single_example(
-                                "Label",
-                                Switch::new("switch_with_label", ToggleState::Selected)
+                                "Start Label",
+                                Switch::new("switch_with_label_start", ToggleState::Selected)
                                     .label("Always save on quit")
+                                    .label_position(SwitchLabelPosition::Start)
                                     .into_any_element(),
                             ),
-                            // TODO: Where did theme_preview_keybinding go?
-                            // single_example(
-                            //     "Keybinding",
-                            //     Switch::new("switch_with_keybinding", ToggleState::Selected)
-                            //         .key_binding(theme_preview_keybinding("cmd-shift-e"))
-                            //         .into_any_element(),
-                            // ),
+                            single_example(
+                                "End Label",
+                                Switch::new("switch_with_label_end", ToggleState::Selected)
+                                    .label("Always save on quit")
+                                    .label_position(SwitchLabelPosition::End)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Default Size Label",
+                                Switch::new(
+                                    "switch_with_label_default_size",
+                                    ToggleState::Selected,
+                                )
+                                .label("Always save on quit")
+                                .label_size(LabelSize::Default)
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Small Size Label",
+                                Switch::new("switch_with_label_small_size", ToggleState::Selected)
+                                    .label("Always save on quit")
+                                    .label_size(LabelSize::Small)
+                                    .into_any_element(),
+                            ),
                         ],
                     ),
+                    example_group_with_title(
+                        "With Keybinding",
+                        vec![single_example(
+                            "Keybinding",
+                            Switch::new("switch_with_keybinding", ToggleState::Selected)
+                                .key_binding(Some(KeyBinding::from_keystrokes(
+                                    vec![KeybindingKeystroke::from_keystroke(
+                                        Keystroke::parse("cmd-s").unwrap(),
+                                    )]
+                                    .into(),
+                                    KeybindSource::Base,
+                                )))
+                                .into_any_element(),
+                        )],
+                    ),
                 ])
-                .into_any_element(),
-        )
-    }
-}
-
-impl Component for CheckboxWithLabel {
-    fn scope() -> ComponentScope {
-        ComponentScope::Input
-    }
-
-    fn description() -> Option<&'static str> {
-        Some("A checkbox component with an attached label")
-    }
-
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group_with_title(
-                    "States",
-                    vec![
-                        single_example(
-                            "Unselected",
-                            CheckboxWithLabel::new(
-                                "checkbox_with_label_unselected",
-                                Label::new("Always save on quit"),
-                                ToggleState::Unselected,
-                                |_, _, _| {},
-                            )
-                            .into_any_element(),
-                        ),
-                        single_example(
-                            "Indeterminate",
-                            CheckboxWithLabel::new(
-                                "checkbox_with_label_indeterminate",
-                                Label::new("Always save on quit"),
-                                ToggleState::Indeterminate,
-                                |_, _, _| {},
-                            )
-                            .into_any_element(),
-                        ),
-                        single_example(
-                            "Selected",
-                            CheckboxWithLabel::new(
-                                "checkbox_with_label_selected",
-                                Label::new("Always save on quit"),
-                                ToggleState::Selected,
-                                |_, _, _| {},
-                            )
-                            .into_any_element(),
-                        ),
-                    ],
-                )])
                 .into_any_element(),
         )
     }
