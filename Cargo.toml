@@ -6,6 +6,7 @@ members = [
     "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
+    "crates/ast_diff",
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",
@@ -247,6 +248,7 @@ ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
+ast_diff = { path = "crates/ast_diff" }
 assistant_text_thread = { path = "crates/assistant_text_thread" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }

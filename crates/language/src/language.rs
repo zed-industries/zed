@@ -25,6 +25,7 @@ pub mod buffer_tests;
 use crate::language_settings::SoftWrap;
 pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
+use ast_diff::LanguageDiffConfig;
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
 use futures::Future;
@@ -2178,6 +2179,26 @@ impl LanguageScope {
         override_config.values.get(&id).map(|e| e.name.as_str())
     }
 
+    /// Returns the grammar for this language scope, if available.
+    pub fn grammar(&self) -> Option<&Arc<Grammar>> {
+        self.language.grammar()
+    }
+
+    /// Returns a diff configuration derived from this language's bracket pairs.
+    ///
+    /// This extracts delimiter tokens from the language's `config.toml` brackets
+    /// configuration and combines them with a default set of atom node kinds
+    /// for syntax-aware diffing.
+    pub fn diff_config(&self) -> LanguageDiffConfig {
+        let delimiters: Vec<(String, String)> = self
+            .brackets()
+            .filter(|(_, enabled)| *enabled)
+            .map(|(pair, _)| (pair.start.clone(), pair.end.clone()))
+            .collect();
+
+        LanguageDiffConfig::new(delimiters)
+    }
+
     fn config_override(&self) -> Option<&LanguageConfigOverride> {
         let id = self.override_id?;
         let grammar = self.language.grammar.as_ref()?;
@@ -2718,6 +2739,7 @@ pub fn markdown_lang() -> Arc<Language> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ast_diff::SyntaxDiffConfig;
     use gpui::TestAppContext;
     use pretty_assertions::assert_matches;
 
@@ -2951,5 +2973,228 @@ mod tests {
             assert_eq!(config.prefix.as_ref(), "");
             assert_eq!(config.tab_size, 0);
         }
+    }
+
+    #[test]
+    fn test_diff_config_from_brackets() {
+        let config: LanguageConfig = ::toml::from_str(
+            r#"
+            name = "TestLang"
+            brackets = [
+                { start = "{", end = "}", close = true, newline = true },
+                { start = "[", end = "]", close = true, newline = true },
+                { start = "(", end = ")", close = true, newline = true },
+            ]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.brackets.pairs.len(), 3);
+        assert_eq!(config.brackets.pairs[0].start, "{");
+        assert_eq!(config.brackets.pairs[0].end, "}");
+        assert_eq!(config.brackets.pairs[1].start, "[");
+        assert_eq!(config.brackets.pairs[1].end, "]");
+        assert_eq!(config.brackets.pairs[2].start, "(");
+        assert_eq!(config.brackets.pairs[2].end, ")");
+    }
+
+    #[test]
+    fn test_diff_config_with_string_brackets() {
+        let config: LanguageConfig = ::toml::from_str(
+            r#"
+            name = "TestLang"
+            brackets = [
+                { start = "{", end = "}", close = true, newline = true },
+                { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+                { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+            ]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.brackets.pairs.len(), 3);
+
+        let quote_pair = &config.brackets.pairs[1];
+        assert_eq!(quote_pair.start, "\"");
+        assert_eq!(quote_pair.end, "\"");
+
+        let single_quote_pair = &config.brackets.pairs[2];
+        assert_eq!(single_quote_pair.start, "'");
+        assert_eq!(single_quote_pair.end, "'");
+    }
+
+    #[test]
+    fn test_diff_config_with_multichar_brackets() {
+        let config: LanguageConfig = ::toml::from_str(
+            r#"
+            name = "Rust"
+            brackets = [
+                { start = "{", end = "}", close = true, newline = true },
+                { start = "/*", end = "*/", close = true, newline = true, not_in = ["string", "comment"] },
+            ]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.brackets.pairs.len(), 2);
+
+        let comment_pair = &config.brackets.pairs[1];
+        assert_eq!(comment_pair.start, "/*");
+        assert_eq!(comment_pair.end, "*/");
+    }
+
+    #[test]
+    fn test_diff_config_disabled_scopes() {
+        let config: LanguageConfig = ::toml::from_str(
+            r#"
+            name = "TestLang"
+            brackets = [
+                { start = "{", end = "}", close = true, newline = true },
+                { start = "<", end = ">", close = false, newline = true, not_in = ["string", "comment"] },
+            ]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.brackets.pairs.len(), 2);
+        assert_eq!(config.brackets.disabled_scopes_by_bracket_ix.len(), 2);
+
+        assert!(config.brackets.disabled_scopes_by_bracket_ix[0].is_empty());
+
+        let angle_bracket_disabled = &config.brackets.disabled_scopes_by_bracket_ix[1];
+        assert!(angle_bracket_disabled.contains(&"string".to_string()));
+        assert!(angle_bracket_disabled.contains(&"comment".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_language_scope_diff_config(cx: &mut TestAppContext) {
+        let languages = LanguageRegistry::test(cx.executor());
+        let languages = Arc::new(languages);
+        languages.register_native_grammars([("json", tree_sitter_json::LANGUAGE)]);
+        languages.register_test_language(LanguageConfig {
+            name: "JSON".into(),
+            grammar: Some("json".into()),
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".into(),
+                        end: "]".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                ],
+                disabled_scopes_by_bracket_ix: vec![vec![], vec![]],
+            },
+            ..Default::default()
+        });
+
+        let json = languages.language_for_name("JSON").await.unwrap();
+        let scope = json.default_scope();
+
+        let diff_config = scope.diff_config();
+
+        assert!(diff_config.is_open_delimiter("{"));
+        assert!(diff_config.is_close_delimiter("}"));
+        assert!(diff_config.is_open_delimiter("["));
+        assert!(diff_config.is_close_delimiter("]"));
+        assert!(!diff_config.is_delimiter("("));
+
+        assert_eq!(diff_config.get_matching_delimiter("{"), Some("}"));
+        assert_eq!(diff_config.get_matching_delimiter("["), Some("]"));
+
+        assert!(diff_config.is_atom_node("string"));
+        assert!(diff_config.is_atom_node("comment"));
+        assert!(diff_config.is_atom_node("number"));
+        assert!(!diff_config.is_atom_node("identifier"));
+    }
+
+    #[gpui::test]
+    async fn test_language_scope_diff_config_with_complex_brackets(cx: &mut TestAppContext) {
+        let languages = LanguageRegistry::test(cx.executor());
+        let languages = Arc::new(languages);
+        languages.register_native_grammars([("rust", tree_sitter_rust::LANGUAGE)]);
+        languages.register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            grammar: Some("rust".into()),
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".into(),
+                        end: "*/".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "<".into(),
+                        end: ">".into(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                ],
+                disabled_scopes_by_bracket_ix: vec![
+                    vec![],
+                    vec!["string".into()],
+                    vec!["string".into(), "comment".into()],
+                ],
+            },
+            ..Default::default()
+        });
+
+        let rust = languages.language_for_name("Rust").await.unwrap();
+        let scope = rust.default_scope();
+
+        let diff_config = scope.diff_config();
+
+        assert!(diff_config.is_open_delimiter("{"));
+        assert!(diff_config.is_close_delimiter("}"));
+        assert!(diff_config.is_open_delimiter("/*"));
+        assert!(diff_config.is_close_delimiter("*/"));
+        assert!(diff_config.is_open_delimiter("<"));
+        assert!(diff_config.is_close_delimiter(">"));
+
+        assert_eq!(diff_config.get_matching_delimiter("/*"), Some("*/"));
+        assert_eq!(diff_config.get_matching_delimiter("<"), Some(">"));
+    }
+
+    #[gpui::test]
+    async fn test_language_scope_diff_config_empty_brackets(cx: &mut TestAppContext) {
+        let languages = LanguageRegistry::test(cx.executor());
+        let languages = Arc::new(languages);
+        languages.register_native_grammars([("json", tree_sitter_json::LANGUAGE)]);
+        languages.register_test_language(LanguageConfig {
+            name: "PlainText".into(),
+            grammar: Some("json".into()),
+            brackets: BracketPairConfig::default(),
+            ..Default::default()
+        });
+
+        let plain = languages.language_for_name("PlainText").await.unwrap();
+        let scope = plain.default_scope();
+
+        let diff_config = scope.diff_config();
+
+        assert!(!diff_config.is_delimiter("{"));
+        assert!(!diff_config.is_delimiter("}"));
+        assert_eq!(diff_config.get_matching_delimiter("{"), None);
+
+        assert!(diff_config.is_atom_node("string"));
+        assert!(diff_config.is_atom_node("comment"));
     }
 }

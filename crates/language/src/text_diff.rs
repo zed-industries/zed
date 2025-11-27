@@ -1,5 +1,6 @@
-use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope};
+use crate::{with_parser, CharClassifier, CharKind, CharScopeContext, LanguageScope};
 use anyhow::{Context, anyhow};
+use ast_diff::DiffOptions as AstDiffOptions;
 use imara_diff::{
     Algorithm, UnifiedDiffBuilder, diff,
     intern::{InternedInput, Token},
@@ -49,7 +50,102 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
 /// Returns a tuple of (old_ranges, new_ranges) where each vector contains
 /// the byte ranges of changed words in the respective text.
 /// Whitespace-only changes are excluded from the results.
+///
+/// If `options.syntax_aware` is true and a language grammar is available,
+/// AST-aware syntax diffing is attempted first. Falls back to token-based
+/// word diffing if syntax diffing fails or is unavailable.
 pub fn word_diff_ranges(
+    old_text: &str,
+    new_text: &str,
+    options: DiffOptions,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    // Try syntax-aware diff first if enabled and language scope is available
+    if options.syntax_aware {
+        if let Some(ref scope) = options.language_scope {
+            match syntax_diff_ranges(old_text, new_text, scope) {
+                Ok((old_ranges, new_ranges)) => {
+                    return (old_ranges, new_ranges);
+                }
+                Err(reason) => {
+                    log::debug!(
+                        "Syntax diff unavailable for {}, falling back to word diff: {}",
+                        scope.language_name(),
+                        reason
+                    );
+                }
+            }
+        } else {
+            log::debug!("Syntax diff enabled but no language scope available, using word diff");
+        }
+    }
+
+    // Fall back to token-based word diff
+    log::debug!(
+        "Using token-based word diff (syntax_aware={}, old_len={}, new_len={})",
+        options.syntax_aware,
+        old_text.len(),
+        new_text.len()
+    );
+    word_diff_ranges_tokenized(old_text, new_text, options)
+}
+
+/// Computes syntax-aware diff ranges using AST diffing.
+///
+/// Returns an error with a reason string if:
+/// - The language doesn't have a grammar
+/// - Parsing fails
+/// - The diff graph exceeds the configured limit
+fn syntax_diff_ranges(
+    old_text: &str,
+    new_text: &str,
+    language_scope: &LanguageScope,
+) -> Result<(Vec<Range<usize>>, Vec<Range<usize>>), &'static str> {
+    let grammar = language_scope.grammar().ok_or("no grammar available")?;
+    let ts_language = &grammar.ts_language;
+
+    let (old_tree, new_tree) = with_parser(|parser| {
+        parser
+            .set_language(ts_language)
+            .expect("incompatible grammar");
+
+        let old_tree = parser.parse(old_text, None)?;
+        let new_tree = parser.parse(new_text, None)?;
+        Some((old_tree, new_tree))
+    })
+    .ok_or("parsing failed")?;
+
+    // Get language-specific diff config derived from bracket pairs
+    let config = language_scope.diff_config();
+    let ast_options = AstDiffOptions::default();
+
+    log::debug!(
+        "Syntax diff for {}: delimiters={:?}, forced_atom_nodes={:?}",
+        language_scope.language_name(),
+        config.delimiter_tokens_list(),
+        config.forced_atom_nodes_list(),
+    );
+
+    let result =
+        ast_diff::diff_syntax(&old_tree, old_text, &new_tree, new_text, &config, &ast_options);
+
+    match &result {
+        Ok((lhs, rhs)) => {
+            log::debug!(
+                "Syntax diff succeeded: {} LHS ranges, {} RHS ranges",
+                lhs.len(),
+                rhs.len()
+            );
+        }
+        Err(_) => {
+            log::debug!("Syntax diff failed: graph exceeded limit");
+        }
+    }
+
+    result.map_err(|_| "diff graph exceeded limit")
+}
+
+/// Token-based word diff implementation (the original algorithm).
+fn word_diff_ranges_tokenized(
     old_text: &str,
     new_text: &str,
     options: DiffOptions,
@@ -136,6 +232,11 @@ pub struct DiffOptions {
     pub language_scope: Option<LanguageScope>,
     pub max_word_diff_len: usize,
     pub max_word_diff_line_count: usize,
+    /// Whether to use AST-aware syntax diffing when a language grammar is available.
+    /// Falls back to token-based word diffing if syntax diffing fails or is unavailable.
+    /// When enabled, syntax diff always runs regardless of hunk size since the ast_diff
+    /// crate has its own graph limit to handle complexity.
+    pub syntax_aware: bool,
 }
 
 impl Default for DiffOptions {
@@ -144,6 +245,7 @@ impl Default for DiffOptions {
             language_scope: Default::default(),
             max_word_diff_len: MAX_WORD_DIFF_LEN,
             max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+            syntax_aware: false,
         }
     }
 }
@@ -373,5 +475,43 @@ mod tests {
         let new_text = "one two\nthree FOUR five\nsix SEVEN eight nine\nten\nELEVEN\n";
         let patch = unified_diff(old_text, new_text);
         assert_eq!(apply_diff_patch(old_text, &patch).unwrap(), new_text);
+    }
+
+    #[test]
+    fn test_word_diff_ranges_without_syntax() {
+        let old_text = "foo bar baz";
+        let new_text = "foo BAR baz";
+
+        let (old_ranges, new_ranges) = word_diff_ranges(
+            old_text,
+            new_text,
+            DiffOptions {
+                syntax_aware: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(old_ranges, vec![4..7]);
+        assert_eq!(new_ranges, vec![4..7]);
+    }
+
+    #[test]
+    fn test_word_diff_ranges_syntax_aware_without_scope() {
+        let old_text = "foo bar baz";
+        let new_text = "foo BAR baz";
+
+        let (old_ranges, new_ranges) = word_diff_ranges(
+            old_text,
+            new_text,
+            DiffOptions {
+                syntax_aware: true,
+                language_scope: None,
+                ..Default::default()
+            },
+        );
+
+        // Falls back to token diff since there's no language scope
+        assert_eq!(old_ranges, vec![4..7]);
+        assert_eq!(new_ranges, vec![4..7]);
     }
 }

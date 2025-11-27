@@ -1,0 +1,30 @@
+[package]
+name = "ast_diff"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/ast_diff.rs"
+
+[dependencies]
+bumpalo = "3.16"
+radix-heap = "0.4"
+smallvec.workspace = true
+rustc-hash.workspace = true
+hashbrown.workspace = true
+strsim.workspace = true
+log.workspace = true
+tree-sitter.workspace = true
+wu-diff = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1.0"
+tree-sitter-json.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
