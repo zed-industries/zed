@@ -37,7 +37,7 @@ impl WhichKeyModal {
 
         let handle = cx.weak_entity();
         let mut this = Self {
-            _workspace: workspace.clone(),
+            _workspace: workspace,
             focus_handle: focus_handle.clone(),
             scroll_handle: ScrollHandle::new(),
             bindings: Vec::new(),
