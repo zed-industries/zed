@@ -134,6 +134,7 @@ fn manifest() -> ExtensionManifest {
         context_servers: BTreeMap::default(),
         agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
+        custom_actions: BTreeMap::default(),
         snippets: None,
         capabilities: vec![ExtensionCapability::ProcessExec(
             extension::ProcessExecCapability {

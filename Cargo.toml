@@ -43,6 +43,7 @@ members = [
     "crates/copilot",
     "crates/crashes",
     "crates/credentials_provider",
+    "crates/custom_action_provider",
     "crates/dap",
     "crates/dap_adapters",
     "crates/db",
@@ -209,6 +210,7 @@ members = [
     # Extensions
     #
 
+    "extensions/custom-actions-example",
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
@@ -387,6 +389,7 @@ settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
+custom_action_provider = { path = "crates/custom_action_provider" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }

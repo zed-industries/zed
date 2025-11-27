@@ -19,6 +19,7 @@ pub use wit::{
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
+    zed::extension::custom_action::CustomAction,
     zed::extension::dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
         DebugAdapterBinary, DebugConfig, DebugRequest, DebugScenario, DebugTaskDefinition,
@@ -155,6 +156,11 @@ pub trait Extension: Send + Sync {
         _worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
+    }
+
+    /// Runs the provided custom action with the given arguments and returns the result.
+    fn run_action(&self, _action: String, _arguments: Vec<String>) -> Result<String, String> {
+        Err("`run_action` not implemented".to_string())
     }
 
     /// Returns the command used to start a context server.
@@ -448,6 +454,10 @@ impl wit::Guest for Component {
         worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, args, worktree)
+    }
+
+    fn run_action(action: CustomAction, args: Vec<String>) -> Result<String, String> {
+        extension().run_action(action.name, args)
     }
 
     fn context_server_command(
