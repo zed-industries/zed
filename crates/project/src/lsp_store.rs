@@ -7189,24 +7189,22 @@ impl LspStore {
                             .merge_lsp_diagnostics(
                                 DiagnosticSourceKind::Pulled,
                                 diagnostic_updates,
-                                |buffer, old_diagnostic, cx| {
-                                    File::from_dyn(buffer.file())
-                                        .and_then(|file| {
-                                            let abs_path = file.as_local()?.abs_path(cx);
-                                            lsp::Uri::from_file_path(abs_path).ok()
-                                        })
-                                        .is_none_or(|buffer_uri| match old_diagnostic.source_kind {
+                                |document_uri, old_diagnostic, _| {
+                                    document_uri.as_ref().is_none_or(|document_uri| {
+                                        match old_diagnostic.source_kind {
                                             DiagnosticSourceKind::Pulled => {
                                                 old_diagnostic.registration_id != registration_id
                                                     || unchanged_buffers
                                                         .get(&old_diagnostic.registration_id)
                                                         .is_some_and(|unchanged_buffers| {
-                                                            unchanged_buffers.contains(&buffer_uri)
+                                                            unchanged_buffers
+                                                                .contains(&document_uri)
                                                         })
                                             }
                                             DiagnosticSourceKind::Other
                                             | DiagnosticSourceKind::Pushed => true,
-                                        })
+                                        }
+                                    })
                                 },
                                 cx,
                             )
@@ -8243,7 +8241,7 @@ impl LspStore {
     pub fn merge_diagnostic_entries<'a>(
         &mut self,
         diagnostic_updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
-        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(&Option<lsp::Uri>, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let mut diagnostics_summary = None::<proto::UpdateDiagnosticSummary>;
@@ -8264,13 +8262,14 @@ impl LspStore {
                 path: relative_path,
             };
 
+            let document_uri = lsp::Uri::from_file_path(abs_path).ok();
             if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
                 let reused_diagnostics = buffer
                     .buffer_diagnostics(Some(server_id))
                     .iter()
-                    .filter(|v| merge(buffer, &v.diagnostic, cx))
+                    .filter(|v| merge(&document_uri, &v.diagnostic, cx))
                     .map(|v| {
                         let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                         let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
@@ -8294,6 +8293,25 @@ impl LspStore {
                     )?;
 
                 update.diagnostics.diagnostics.extend(reused_diagnostics);
+            } else if let Some(local) = self.as_local() {
+                let reused_diagnostics = local
+                    .diagnostics
+                    .get(&worktree_id)
+                    .and_then(|diagnostics_for_tree| diagnostics_for_tree.get(&project_path.path))
+                    .and_then(|diagnostics_by_server_id| {
+                        diagnostics_by_server_id
+                            .binary_search_by_key(&server_id, |e| e.0)
+                            .ok()
+                            .map(|ix| &diagnostics_by_server_id[ix].1)
+                    })
+                    .into_iter()
+                    .flatten()
+                    .filter(|v| merge(&document_uri, &v.diagnostic, cx));
+
+                update
+                    .diagnostics
+                    .diagnostics
+                    .extend(reused_diagnostics.cloned());
             }
 
             let updated = worktree.update(cx, |worktree, cx| {
@@ -10992,7 +11010,7 @@ impl LspStore {
         &mut self,
         source_kind: DiagnosticSourceKind,
         lsp_diagnostics: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
-        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(&Option<lsp::Uri>, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
@@ -12088,23 +12106,20 @@ impl LspStore {
                 self.merge_lsp_diagnostics(
                     DiagnosticSourceKind::Pulled,
                     diagnostic_updates,
-                    |buffer, old_diagnostic, cx| {
-                        File::from_dyn(buffer.file())
-                            .and_then(|file| {
-                                let abs_path = file.as_local()?.abs_path(cx);
-                                lsp::Uri::from_file_path(abs_path).ok()
-                            })
-                            .is_none_or(|buffer_uri| match old_diagnostic.source_kind {
+                    |document_uri, old_diagnostic, _| {
+                        document_uri.as_ref().is_none_or(|document_uri| {
+                            match old_diagnostic.source_kind {
                                 DiagnosticSourceKind::Pulled => {
                                     old_diagnostic.registration_id != registration_id
                                         || unchanged_buffers
                                             .get(&old_diagnostic.registration_id)
                                             .is_some_and(|unchanged_buffers| {
-                                                unchanged_buffers.contains(&buffer_uri)
+                                                unchanged_buffers.contains(&document_uri)
                                             })
                                 }
                                 DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
-                            })
+                            }
+                        })
                     },
                     cx,
                 )
