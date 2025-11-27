@@ -4353,7 +4353,7 @@ impl LspStore {
                         }
 
                         for buffer in buffers_with_unknown_injections {
-                            buffer.update(cx, |buffer, cx| buffer.reparse(cx));
+                            buffer.update(cx, |buffer, cx| buffer.reparse(cx, false));
                         }
                     })
                     .ok();

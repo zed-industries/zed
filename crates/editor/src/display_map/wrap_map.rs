@@ -670,6 +670,7 @@ impl WrapSnapshot {
         let start = WrapPoint::new(rows.start, 0);
         let end = WrapPoint::new(rows.end, 0);
 
+        // Retain this wrap cursor
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());

@@ -31,7 +31,7 @@ pub struct InlayMap {
 #[derive(Clone)]
 pub struct InlaySnapshot {
     pub buffer: MultiBufferSnapshot,
-    transforms: SumTree<Transform>,
+    pub transforms: SumTree<Transform>,
     pub version: usize,
 }
 
@@ -43,8 +43,11 @@ impl std::ops::Deref for InlaySnapshot {
     }
 }
 
+pub type InlayOffsetCursor<'a> =
+    Cursor<'a, 'static, Transform, Dimensions<InlayOffset, MultiBufferOffset>>;
+
 #[derive(Clone, Debug)]
-enum Transform {
+pub enum Transform {
     Isomorphic(MBTextSummary),
     Inlay(Inlay),
 }
@@ -67,7 +70,7 @@ impl sum_tree::Item for Transform {
 }
 
 #[derive(Clone, Debug, Default)]
-struct TransformSummary {
+pub struct TransformSummary {
     input: MBTextSummary,
     output: MBTextSummary,
 }
@@ -207,7 +210,7 @@ pub struct InlayBufferRows<'a> {
 }
 
 pub struct InlayChunks<'a> {
-    transforms: Cursor<'a, 'static, Transform, Dimensions<InlayOffset, MultiBufferOffset>>,
+    transforms: InlayOffsetCursor,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
@@ -988,13 +991,28 @@ impl InlaySnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> MBTextSummary {
-        let mut summary = MBTextSummary::default();
-
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<InlayOffset, MultiBufferOffset>>(());
-        cursor.seek(&range.start, Bias::Right);
+        let mut mbcursor = self
+            .buffer
+            .diff_transforms
+            .cursor::<multi_buffer::CursorType>(());
+        self.text_summary_for_range_(&mut mbcursor, &mut cursor, range)
+    }
 
+    pub fn text_summary_for_range_(
+        &self,
+        mbcursor: &mut multi_buffer::MBDiffCursor<'_>,
+        cursor: &mut InlayOffsetCursor,
+        range: Range<InlayOffset>,
+    ) -> MBTextSummary {
+        if cursor.did_seek() {
+            cursor.seek_forward(&range.start, Bias::Right);
+        } else {
+            cursor.seek(&range.start, Bias::Right);
+        }
+        let mut summary = MBTextSummary::default();
         let overshoot = range.start.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -1002,7 +1020,9 @@ impl InlaySnapshot {
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
                     buffer_start + (cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0);
-                summary = self.buffer.text_summary_for_range(suffix_start..suffix_end);
+                summary = self
+                    .buffer
+                    .text_summary_for_range_(mbcursor, suffix_start..suffix_end);
                 cursor.next();
             }
             Some(Transform::Inlay(inlay)) => {
@@ -1029,9 +1049,10 @@ impl InlaySnapshot {
                 Some(Transform::Isomorphic(_)) => {
                     let prefix_start = cursor.start().1;
                     let prefix_end = prefix_start + overshoot;
-                    summary += self
-                        .buffer
-                        .text_summary_for_range::<MBTextSummary, _>(prefix_start..prefix_end);
+                    summary += self.buffer.text_summary_for_range_::<MBTextSummary, _>(
+                        mbcursor,
+                        prefix_start..prefix_end,
+                    );
                 }
                 Some(Transform::Inlay(inlay)) => {
                     let prefix_end = overshoot;

@@ -1,4 +1,4 @@
-use crate::display_map::inlay_map::InlayChunk;
+use crate::display_map::inlay_map::{self, InlayChunk};
 
 use super::{
     Highlights,
@@ -22,6 +22,8 @@ use std::{
 use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary, TreeMap};
 use ui::IntoElement as _;
 use util::post_inc;
+
+pub type FoldCursor<'a> = Cursor<'a, 'static, Transform, Dimensions<FoldPoint, InlayPoint>>;
 
 #[derive(Clone)]
 pub struct FoldPlaceholder {
@@ -666,12 +668,34 @@ impl FoldSnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> MBTextSummary {
-        let mut summary = MBTextSummary::default();
-
-        let mut cursor = self
+        let mut fold_cursor = self
             .transforms
             .cursor::<Dimensions<FoldPoint, InlayPoint>>(());
-        cursor.seek(&range.start, Bias::Right);
+        let mut inlay_cursor = self
+            .inlay_snapshot
+            .transforms
+            .cursor::<Dimensions<InlayOffset, MultiBufferOffset>>(());
+        let mut mbcursor = self
+            .buffer
+            .diff_transforms
+            .cursor::<multi_buffer::CursorType>(());
+        self.text_summary_for_range_(&mut mbcursor, &mut inlay_cursor, &mut fold_cursor, range)
+    }
+
+    pub fn text_summary_for_range_(
+        &self,
+        mbcursor: &mut multi_buffer::MBDiffCursor<'_>,
+        inlay_cursor: &mut inlay_map::InlayOffsetCursor<'_>,
+        cursor: &mut FoldCursor<'_>,
+        range: Range<FoldPoint>,
+    ) -> MBTextSummary {
+        let mut summary = MBTextSummary::default();
+
+        if cursor.did_seek() {
+            cursor.seek_forward(&range.start, Bias::Right);
+        } else {
+            cursor.seek(&range.start, Bias::Right);
+        }
         if let Some(transform) = cursor.item() {
             let start_in_transform = range.start.0 - cursor.start().0.0;
             let end_in_transform = cmp::min(range.end, cursor.end().0).0 - cursor.start().0.0;
@@ -687,9 +711,11 @@ impl FoldSnapshot {
                 let inlay_end = self
                     .inlay_snapshot
                     .to_offset(InlayPoint(cursor.start().1.0 + end_in_transform));
-                summary = self
-                    .inlay_snapshot
-                    .text_summary_for_range(inlay_start..inlay_end);
+                summary = self.inlay_snapshot.text_summary_for_range_(
+                    mbcursor,
+                    inlay_cursor,
+                    inlay_start..inlay_end,
+                );
             }
         }
 
@@ -1079,7 +1105,7 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Transform {
+pub struct Transform {
     summary: TransformSummary,
     placeholder: Option<TransformPlaceholder>,
 }
@@ -1098,7 +1124,7 @@ impl Transform {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct TransformSummary {
+pub struct TransformSummary {
     output: MBTextSummary,
     input: MBTextSummary,
 }

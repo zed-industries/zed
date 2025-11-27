@@ -66,6 +66,14 @@ pub struct ExcerptId(u32);
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BaseTextRow(pub u32);
 
+pub type MBDiffCursor<'a> = Cursor<
+    'a,
+    'static,
+    DiffTransform,
+    Dimensions<MultiBufferOffset, ExcerptDimension<MultiBufferOffset>>,
+>;
+pub type CursorType = Dimensions<MultiBufferOffset, ExcerptDimension<MultiBufferOffset>>;
+
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
 /// See <https://zed.dev/features#multi-buffers>
@@ -545,7 +553,7 @@ impl DiffState {
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     diffs: TreeMap<BufferId, BufferDiffSnapshot>,
-    diff_transforms: SumTree<DiffTransform>,
+    pub diff_transforms: SumTree<DiffTransform>,
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
@@ -561,7 +569,7 @@ pub struct MultiBufferSnapshot {
 }
 
 #[derive(Debug, Clone)]
-enum DiffTransform {
+pub enum DiffTransform {
     Unmodified {
         summary: MBTextSummary,
     },
@@ -4762,11 +4770,23 @@ impl MultiBufferSnapshot {
         MBD: MultiBufferDimension + AddAssign,
         O: ToOffset,
     {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self
             .diff_transforms
             .cursor::<Dimensions<MultiBufferOffset, ExcerptOffset>>(());
-        cursor.seek(&range.start, Bias::Right);
+        self.text_summary_for_range_(&mut cursor, range)
+    }
+
+    pub fn text_summary_for_range_<MBD, O>(&self, cursor: &mut MBDiffCursor, range: Range<O>) -> MBD
+    where
+        MBD: MultiBufferDimension + AddAssign,
+        O: ToOffset,
+    {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        if cursor.did_seek() {
+            cursor.seek_forward(&range.start, Bias::Right);
+        } else {
+            cursor.seek(&range.start, Bias::Right);
+        }
 
         let Some(first_transform) = cursor.item() else {
             return MBD::from_summary(&MBTextSummary::default());
@@ -7399,7 +7419,7 @@ where
 }
 
 #[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
-struct ExcerptDimension<T>(T);
+pub struct ExcerptDimension<T>(T);
 
 impl<T: PartialEq> PartialEq<T> for ExcerptDimension<T> {
     fn eq(&self, other: &T) -> bool {

@@ -1210,7 +1210,7 @@ impl Buffer {
             }
 
             // Reparse the branch buffer so that we get syntax highlighting immediately.
-            branch.reparse(cx);
+            branch.reparse(cx, true);
 
             branch
         })
@@ -1367,7 +1367,7 @@ impl Buffer {
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.was_changed();
-        self.reparse(cx);
+        self.reparse(cx, false);
         cx.emit(BufferEvent::LanguageChanged);
     }
 
@@ -1623,7 +1623,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    pub fn reparse(&mut self, cx: &mut Context<Self>) {
+    pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.reparse.is_some() {
             return;
         }
@@ -1652,43 +1652,31 @@ impl Buffer {
         });
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        match cx
-            .background_executor()
-            .block_with_timeout(self.sync_parse_timeout, parse_task)
-        {
-            Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, cx);
-                self.reparse = None;
-            }
-            Err(parse_task) => {
-                // todo(lw): hot foreground spawn
-                self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = cx.background_spawn(parse_task).await;
-                    this.update(cx, move |this, cx| {
-                        let grammar_changed = || {
-                            this.language.as_ref().is_none_or(|current_language| {
-                                !Arc::ptr_eq(&language, current_language)
-                            })
-                        };
-                        let language_registry_changed = || {
-                            new_syntax_map.contains_unknown_injections()
-                                && language_registry.is_some_and(|registry| {
-                                    registry.version() != new_syntax_map.language_registry_version()
-                                })
-                        };
-                        let parse_again = this.version.changed_since(&parsed_version)
-                            || language_registry_changed()
-                            || grammar_changed();
-                        this.did_finish_parsing(new_syntax_map, cx);
-                        this.reparse = None;
-                        if parse_again {
-                            this.reparse(cx);
-                        }
-                    })
-                    .ok();
-                }));
-            }
-        }
+        self.reparse = Some(cx.spawn(async move |this, cx| {
+            let new_syntax_map = cx.background_spawn(parse_task).await;
+            this.update(cx, move |this, cx| {
+                let grammar_changed = || {
+                    this.language
+                        .as_ref()
+                        .is_none_or(|current_language| !Arc::ptr_eq(&language, current_language))
+                };
+                let language_registry_changed = || {
+                    new_syntax_map.contains_unknown_injections()
+                        && language_registry.is_some_and(|registry| {
+                            registry.version() != new_syntax_map.language_registry_version()
+                        })
+                };
+                let parse_again = this.version.changed_since(&parsed_version)
+                    || language_registry_changed()
+                    || grammar_changed();
+                this.did_finish_parsing(new_syntax_map, cx);
+                this.reparse = None;
+                if parse_again {
+                    this.reparse(cx, may_block);
+                }
+            })
+            .ok();
+        }));
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
@@ -2588,7 +2576,7 @@ impl Buffer {
             return;
         }
 
-        self.reparse(cx);
+        self.reparse(cx, true);
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);

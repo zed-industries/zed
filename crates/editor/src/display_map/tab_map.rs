@@ -195,12 +195,21 @@ impl TabSnapshot {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
 
-    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {}
+
+    pub fn text_summary_for_range_(&self,
+        mbcursor: &mut multi_buffer::MBDiffCursor<'_>,
+        inlay_cursor: &mut inlay_map::InlayOffsetCursor<'_>,
+        fold_cursor: &mut FoldCursor<'_>,
+        cursor: &mut <'_>,
+        range: Range<TabPoint>) -> TextSummary {
+        // we can use cursor here
         let input_start = self.tab_point_to_fold_point(range.start, Bias::Left).0;
+        // we can use cursor here
         let input_end = self.tab_point_to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
             .fold_snapshot
-            .text_summary_for_range(input_start..input_end);
+            .text_summary_for_range_(input_start..input_end);
 
         let line_end = if range.start.row() == range.end.row() {
             range.end

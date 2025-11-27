@@ -561,6 +561,11 @@ impl BlockMap {
         let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
         let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
+        let mut inlay_point_cursor2 = wrap_snapshot.inlay_point_cursor();
+        let mut tab_point_cursor2 = wrap_snapshot.tab_point_cursor();
+        let mut fold_point_cursor2 = wrap_snapshot.fold_point_cursor();
+        let mut wrap_point_cursor2 = wrap_snapshot.wrap_point_cursor();
+
         while let Some(edit) = edits.next() {
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
@@ -946,6 +951,7 @@ impl BlockMap {
     }
 }
 
+// This is called whenever we push actual text (nonisomorphic is inlay hints and blocks)
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot: &WrapSnapshot) {
     if rows == RowDelta(0) {
         return;

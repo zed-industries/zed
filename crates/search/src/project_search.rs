@@ -377,6 +377,7 @@ impl ProjectSearch {
                     })
                     .ok()?;
                 while let Some(new_ranges) = new_ranges.next().await {
+                    smol::future::yield_now().await;
                     project_search
                         .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
