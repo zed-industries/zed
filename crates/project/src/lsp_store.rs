@@ -13633,7 +13633,7 @@ pub fn language_server_settings<'a>(
     )
 }
 
-pub(crate) fn language_server_settings_for<'a>(
+pub fn language_server_settings_for<'a>(
     location: SettingsLocation<'a>,
     language: &LanguageServerName,
     cx: &'a App,

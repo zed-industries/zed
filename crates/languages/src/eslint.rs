@@ -8,16 +8,18 @@ use http_client::{
 use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
+use project::lsp_store::language_server_settings_for;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use settings::SettingsLocation;
 use smol::{fs, stream::StreamExt};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::fs::remove_matching;
 use util::merge_json_value_into;
+use util::{fs::remove_matching, rel_path::RelPath};
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![
@@ -167,13 +169,13 @@ impl LspAdapter for EsLintLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
-        _: Option<Uri>,
+        requested_uri: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let workspace_root = delegate.worktree_root_path();
+        let worktree_root = delegate.worktree_root_path();
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
-            .any(|file| workspace_root.join(file).is_file());
+            .any(|file| worktree_root.join(file).is_file());
 
         let mut default_workspace_configuration = json!({
             "validate": "on",
@@ -184,9 +186,9 @@ impl LspAdapter for EsLintLspAdapter {
                 "mode": "auto"
             },
             "workspaceFolder": {
-                "uri": workspace_root,
-                "name": workspace_root.file_name()
-                    .unwrap_or(workspace_root.as_os_str())
+                "uri": worktree_root,
+                "name": worktree_root.file_name()
+                    .unwrap_or(worktree_root.as_os_str())
                     .to_string_lossy(),
             },
             "problems": {},
@@ -209,13 +211,56 @@ impl LspAdapter for EsLintLspAdapter {
             }
         });
 
+        let file_path = requested_uri
+            .as_ref()
+            .and_then(|uri| {
+                (uri.scheme() == "file")
+                    .then(|| uri.to_file_path().ok())
+                    .flatten()
+            })
+            .and_then(|abs_path| {
+                abs_path
+                    .strip_prefix(&worktree_root)
+                    .ok()
+                    .map(ToOwned::to_owned)
+            });
+        let file_path = file_path
+            .and_then(|p| RelPath::unix(&p).ok().map(ToOwned::to_owned))
+            .unwrap_or_else(|| RelPath::empty().to_owned());
         let override_options = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
+            language_server_settings_for(
+                SettingsLocation {
+                    worktree_id: delegate.worktree_id(),
+                    path: &file_path,
+                },
+                &Self::SERVER_NAME,
+                cx,
+            )
+            .and_then(|s| s.settings.clone())
         })?;
 
         if let Some(override_options) = override_options {
+            let working_directories = override_options.get("workingDirectories").and_then(|wd| {
+                serde_json::from_value::<WorkingDirectories>(wd.clone())
+                    .ok()
+                    .and_then(|wd| wd.0)
+            });
+
             merge_json_value_into(override_options, &mut default_workspace_configuration);
+
+            let working_directory = working_directories
+                .zip(requested_uri)
+                .and_then(|(wd, uri)| {
+                    determine_working_directory(uri, wd, worktree_root.to_owned())
+                });
+
+            dbg!(&working_directory);
+
+            if let Some(working_directory) = working_directory
+                && let Some(wd) = default_workspace_configuration.get_mut("workingDirectory")
+            {
+                *wd = serde_json::to_value(working_directory)?;
+            }
         }
 
         Ok(json!({
@@ -226,6 +271,107 @@ impl LspAdapter for EsLintLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
+}
+
+fn determine_working_directory(
+    uri: Uri,
+    working_directories: Vec<WorkingDirectory>,
+    workspace_folder_path: PathBuf,
+) -> Option<ResultWorkingDirectory> {
+    let mut working_directory = None;
+
+    for item in working_directories {
+        let mut directory: Option<String> = None;
+        let mut pattern: Option<String> = None;
+        let mut no_cwd = false;
+        match item {
+            WorkingDirectory::String(contents) => {
+                directory = Some(contents);
+            }
+            WorkingDirectory::LegacyDirectoryItem(legacy_directory_item) => {
+                directory = Some(legacy_directory_item.directory);
+                no_cwd = !legacy_directory_item.change_process_cwd;
+            }
+            WorkingDirectory::DirectoryItem(directory_item) => {
+                directory = Some(directory_item.directory);
+                if let Some(not_cwd) = directory_item.not_cwd {
+                    no_cwd = not_cwd;
+                }
+            }
+            WorkingDirectory::PatternItem(pattern_item) => {
+                pattern = Some(pattern_item.pattern);
+                if let Some(not_cwd) = pattern_item.not_cwd {
+                    no_cwd = not_cwd;
+                }
+            }
+            WorkingDirectory::ModeItem(mode_item) => {
+                working_directory = Some(ResultWorkingDirectory::ModeItem(mode_item));
+                continue;
+            }
+        }
+
+        let mut item_value: Option<String> = None;
+        if directory.is_some() || pattern.is_some() {
+            let file_path: Option<PathBuf> = (uri.scheme() == "file")
+                .then(|| uri.to_file_path().ok())
+                .flatten();
+            if let Some(file_path) = file_path {
+                if let Some(mut directory) = directory {
+                    // todo: toOSPATH
+                    directory = directory;
+                    if Path::new(&directory).is_relative() {
+                        directory = workspace_folder_path
+                            .join(directory)
+                            .to_string_lossy()
+                            .to_string();
+                    }
+                    if !directory.ends_with(std::path::MAIN_SEPARATOR) {
+                        directory.push(std::path::MAIN_SEPARATOR);
+                    }
+                    if file_path.starts_with(&directory) {
+                        item_value = Some(directory);
+                    }
+                } else if let Some(mut pattern) = pattern
+                    && !pattern.is_empty()
+                {
+                    if Path::new(&pattern).is_relative() {
+                        pattern = workspace_folder_path
+                            .join(pattern)
+                            .to_string_lossy()
+                            .to_string();
+                    }
+                    if !pattern.ends_with(std::path::MAIN_SEPARATOR) {
+                        pattern.push(std::path::MAIN_SEPARATOR);
+                    }
+                    // Is this compatible with what VSC is running?
+                    let regex = regex::Regex::new(&pattern);
+                    if let Ok(regex) = regex
+                        && let Some(m) = regex.find(&file_path.to_string_lossy())
+                    {
+                        item_value = Some(m.as_str().to_owned());
+                    }
+                }
+            }
+        }
+        if let Some(item_value) = item_value {
+            if working_directory
+                .as_ref()
+                .is_none_or(|wd| matches!(wd, ResultWorkingDirectory::ModeItem(_)))
+            {
+                working_directory = Some(ResultWorkingDirectory::DirectoryItem(DirectoryItem {
+                    directory: item_value,
+                    not_cwd: Some(no_cwd),
+                }));
+            } else if let Some(ResultWorkingDirectory::DirectoryItem(item)) = &mut working_directory
+                && item.directory.len() < item_value.len()
+            {
+                item.directory = item_value;
+                item.not_cwd = Some(no_cwd);
+            }
+        }
+    }
+
+    working_directory
 }
 
 #[cfg(target_os = "windows")]
@@ -246,4 +392,56 @@ async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
         fs::copy(&entry_path, &dest_path).await?;
     }
     Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyDirectoryItem {
+    directory: String,
+    #[serde(rename = "changeProcessCWD")]
+    change_process_cwd: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct DirectoryItem {
+    directory: String,
+    #[serde(rename = "!cwd")]
+    not_cwd: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PatternItem {
+    pattern: String,
+    #[serde(rename = "!cwd")]
+    not_cwd: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ModeItem {
+    mode: ModeEnum,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+enum ModeEnum {
+    Auto,
+    Location,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum WorkingDirectory {
+    String(String),
+    LegacyDirectoryItem(LegacyDirectoryItem),
+    DirectoryItem(DirectoryItem),
+    PatternItem(PatternItem),
+    ModeItem(ModeItem),
+}
+#[derive(Serialize, Deserialize)]
+struct WorkingDirectories(Option<Vec<WorkingDirectory>>);
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+enum ResultWorkingDirectory {
+    ModeItem(ModeItem),
+    DirectoryItem(DirectoryItem),
 }
