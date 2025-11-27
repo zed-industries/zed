@@ -1,6 +1,7 @@
 mod evaluate;
 mod example;
 mod headless;
+mod metrics;
 mod paths;
 mod predict;
 mod source_location;
