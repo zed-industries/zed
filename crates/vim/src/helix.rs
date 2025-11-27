@@ -19,9 +19,7 @@ use search::{BufferSearchBar, SearchOptions};
 use settings::{RegisterSetting, Settings};
 use text::{Bias, SelectionGoal};
 use ui::prelude::*;
-use workspace::searchable;
-use workspace::searchable::FilteredSearchRange;
-use workspace::searchable::{self, Direction};
+use workspace::searchable::{self, Direction, FilteredSearchRange};
 
 use crate::motion::{self, MotionKind};
 use crate::state::SearchState;
@@ -942,11 +940,11 @@ impl Vim {
 
     fn build_helix_jump_ui_data(
         buffer: &MultiBufferSnapshot,
-        start_offset: usize,
-        end_offset: usize,
+        start_offset: MultiBufferOffset,
+        end_offset: MultiBufferOffset,
         accent: Hsla,
-        skip_points: &[usize],
-        skip_ranges: &[Range<usize>],
+        skip_points: &[MultiBufferOffset],
+        skip_ranges: &[Range<MultiBufferOffset>],
     ) -> HelixJumpUiData {
         if start_offset >= end_offset {
             return HelixJumpUiData::default();
@@ -1036,7 +1034,7 @@ impl Vim {
     fn selection_skip_offsets(
         buffer: &MultiBufferSnapshot,
         selections: &[Selection<Point>],
-    ) -> (Vec<usize>, Vec<Range<usize>>) {
+    ) -> (Vec<MultiBufferOffset>, Vec<Range<MultiBufferOffset>>) {
         let mut skip_points = Vec::with_capacity(selections.len());
         let mut skip_ranges = Vec::new();
 
@@ -1058,10 +1056,10 @@ impl Vim {
     }
 
     fn should_skip_jump_candidate(
-        word_start: usize,
-        word_end: usize,
-        skip_points: &[usize],
-        skip_ranges: &[Range<usize>],
+        word_start: MultiBufferOffset,
+        word_end: MultiBufferOffset,
+        skip_points: &[MultiBufferOffset],
+        skip_ranges: &[Range<MultiBufferOffset>],
     ) -> bool {
         skip_points
             .iter()
@@ -1074,9 +1072,9 @@ impl Vim {
 
     fn finalize_jump_candidate(
         buffer: &MultiBufferSnapshot,
-        word_start: usize,
-        word_end: usize,
-        first_two_end: usize,
+        word_start: MultiBufferOffset,
+        word_end: MultiBufferOffset,
+        first_two_end: MultiBufferOffset,
         char_count: usize,
         accent: Hsla,
         labels: &mut Vec<HelixJumpLabel>,
@@ -2004,6 +2002,5 @@ mod test {
         cx.simulate_keystrokes("g w");
 
         assert!(matches!(cx.active_operator(), Some(Operator::HelixJump { .. })), "expected HelixJump operator to be active")
-    };
-        
+    }
 }

@@ -679,12 +679,12 @@ pub struct VimSettingsContent {
 }
 
 /// Settings that control Helix-specific behaviour.
-#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema, MergeFrom)]
 pub struct HelixSettingsContent {
     /// Accent color used when rendering Helix jump labels.
     ///
     /// Default: `#e63333`
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jump_label_accent: Option<Hsla>,
 }
 
