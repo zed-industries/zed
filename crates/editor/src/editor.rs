@@ -106,7 +106,7 @@ use gpui::{
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
-    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
+    Rgba, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
     TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
     WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
@@ -22097,6 +22097,78 @@ impl Editor {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(lines));
+    }
+
+    /// Copy the selected text with syntax highlighting as HTML for pasting into rich text editors.
+    fn copy_with_syntax_highlighting(
+        &mut self,
+        _: &CopyWithSyntaxHighlighting,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let range = self
+            .selected_text_range(false, window, cx)
+            .and_then(|selection| {
+                if selection.range.is_empty() {
+                    None
+                } else {
+                    Some(
+                        snapshot.offset_utf16_to_offset(MultiBufferOffsetUtf16(OffsetUtf16(
+                            selection.range.start,
+                        )))
+                            ..snapshot.offset_utf16_to_offset(MultiBufferOffsetUtf16(OffsetUtf16(
+                                selection.range.end,
+                            ))),
+                    )
+                }
+            })
+            .unwrap_or_else(|| MultiBufferOffset(0)..snapshot.len());
+
+        let Some(style) = self.style.as_ref() else {
+            return;
+        };
+
+        let chunks = snapshot.chunks(range, true);
+        let mut plain_text = String::new();
+        let mut html = String::new();
+
+        html.push_str("<pre style=\"font-family: monospace;\">");
+
+        for chunk in chunks {
+            let escaped_text = chunk
+                .text
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('\n', "<br>");
+
+            plain_text.push_str(chunk.text);
+
+            if let Some(color) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(&style.syntax))
+                .and_then(|style| style.color)
+            {
+                let rgba: Rgba = color.into();
+                let hex = format!(
+                    "#{:02x}{:02x}{:02x}",
+                    (rgba.r * 255.0) as u8,
+                    (rgba.g * 255.0) as u8,
+                    (rgba.b * 255.0) as u8
+                );
+                html.push_str(&format!(
+                    "<span style=\"color: {}\">{}</span>",
+                    hex, escaped_text
+                ));
+            } else {
+                html.push_str(&escaped_text);
+            }
+        }
+
+        html.push_str("</pre>");
+
+        cx.write_to_clipboard(ClipboardItem::new_string_with_html(plain_text, html));
     }
 
     pub fn open_context_menu(

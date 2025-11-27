@@ -2025,7 +2025,9 @@ impl Zeta {
 
                 let mut body = Vec::new();
                 response.body_mut().read_to_end(&mut body).await?;
-                return Ok((serde_json::from_slice(&body)?, usage));
+                // Treat empty responses as null (allows deserializing to () for endpoints that return no body)
+                let body_to_parse: &[u8] = if body.is_empty() { b"null" } else { &body };
+                return Ok((serde_json::from_slice(body_to_parse)?, usage));
             } else if !did_retry
                 && response
                     .headers()

@@ -491,6 +491,7 @@ impl EditorElement {
         register_action(editor, window, Editor::copy_file_name);
         register_action(editor, window, Editor::copy_file_name_without_extension);
         register_action(editor, window, Editor::copy_highlight_json);
+        register_action(editor, window, Editor::copy_with_syntax_highlighting);
         register_action(editor, window, Editor::copy_permalink_to_line);
         register_action(editor, window, Editor::open_permalink_to_line);
         register_action(editor, window, Editor::copy_file_location);
