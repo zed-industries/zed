@@ -1204,6 +1204,10 @@ impl Thread {
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
+                // Signal that the agent is now active, including the model provider name
+                let agent_type = Some(model.upstream_provider_name().0);
+                event_stream.send_activity_changed(true, agent_type);
+
                 let turn_result = Self::run_turn_internal(&this, model, &event_stream, cx).await;
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
@@ -2365,6 +2369,12 @@ impl ThreadEventStream {
     fn send_thinking(&self, text: &str) {
         self.0
             .unbounded_send(Ok(ThreadEvent::AgentThinking(text.to_string())))
+            .ok();
+    }
+
+    fn send_activity_changed(&self, active: bool, agent_type: Option<SharedString>) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ActivityChanged { active, agent_type }))
             .ok();
     }
 

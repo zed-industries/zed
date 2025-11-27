@@ -825,6 +825,18 @@ async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -
             event => {
                 panic!("Unexpected event {event:?}");
             }
+    loop {
+        let event = events
+            .next()
+            .await
+            .expect("no tool call event received")
+            .unwrap();
+        match event {
+            ThreadEvent::ActivityChanged { .. } => continue,
+            ThreadEvent::ToolCall(tool_call) => return tool_call,
+            event => {
+                panic!("Unexpected event {event:?}");
+            }
         }
     }
 }
@@ -843,6 +855,18 @@ async fn expect_tool_call_update_fields(
                 return update
             }
             ThreadEvent::ActivityChanged { .. } => continue,
+            event => {
+                panic!("Unexpected event {event:?}");
+            }
+    loop {
+        let event = events
+            .next()
+            .await
+            .expect("no tool call update event received")
+            .unwrap();
+        match event {
+            ThreadEvent::ActivityChanged { .. } => continue,
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => return update,
             event => {
                 panic!("Unexpected event {event:?}");
             }

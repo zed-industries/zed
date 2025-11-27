@@ -10,6 +10,8 @@ use agent::{
     HistoryStore, NativeAgentConnection, NativeAgentServer,
 };
 use agent_client_protocol::{self as acp, PromptCapabilities};
+use call::ActiveCall;
+use client::proto;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};

@@ -2588,6 +2588,27 @@ async fn unfollow(request: proto::Unfollow, session: MessageContext) -> Result<(
     Ok(())
 }
 
+async fn update_agent_activity(
+    message: proto::UpdateAgentActivity,
+    session: MessageContext,
+) -> Result<()> {
+    let room_id = RoomId::from_proto(message.room_id);
+    let connection_ids = session
+        .db
+        .lock()
+        .await
+        .room_connection_ids(room_id, session.connection_id)
+        .await?;
+
+    for connection_id in connection_ids.iter().cloned() {
+        session
+            .peer
+            .send(connection_id, message.clone())
+            .trace_err();
+    }
+    Ok(())
+}
+
 /// Notify everyone following you of your current location.
 async fn update_followers(request: proto::UpdateFollowers, session: MessageContext) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);

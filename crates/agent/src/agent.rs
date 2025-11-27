@@ -13,6 +13,7 @@ mod tools;
 mod tests;
 
 pub use agent_activity::{ActivityStatusChanged, AgentActivityStatus, AgentActivityTracker};
+pub use agent_activity::*;
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
