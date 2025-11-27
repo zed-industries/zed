@@ -1112,7 +1112,8 @@ impl Window {
                 // last input to prevent the display from underclocking the refresh rate.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get()
+                    || (cfg!(target_os = "macos")
+                        && active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
