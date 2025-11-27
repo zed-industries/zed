@@ -819,17 +819,16 @@ impl WindowsPlatformInner {
         loop {
             loop {
                 if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
-                    // requeue main thread dispatch and bail, allowing more system messages to be processed
-                    unsafe {
-                        PostMessageW(
-                            Some(self.dispatcher.platform_window_handle.as_raw()),
-                            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
-                            WPARAM(self.validation_number),
-                            LPARAM(0),
-                        )
-                        .log_err();
+                    // we spent our budget on gpui tasks, we likely have a lot of work queued so drain system events first
+                    // before returning to main thread task work
+                    let mut msg = MSG::default();
+                    let peek_msg_type = PM_REMOVE | PM_QS_INPUT | PM_QS_PAINT;
+                    while unsafe { PeekMessageW(&mut msg, None, 0, 0, peek_msg_type) }.as_bool() {
+                        if translate_accelerator(&msg).is_none() {
+                            _ = unsafe { TranslateMessage(&msg) };
+                            unsafe { DispatchMessageW(&msg) };
+                        }
                     }
-                    return Some(0);
                 }
                 match self.main_receiver.try_recv() {
                     Err(_) => break,
