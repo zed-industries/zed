@@ -5174,41 +5174,51 @@ impl Repository {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
         let fs_cloned = fs.clone();
 
-        cx.spawn(async move |_, cx| {
-            let environment = project_environment
-                .upgrade()
-                .context("missing project environment")?
-                .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
-                })?
-                .await
-                .unwrap_or_else(|| {
-                    log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
-                    HashMap::default()
-                });
-            let search_paths = environment.get("PATH").map(|val| val.to_owned());
-            let backend = cx
-                .background_spawn(async move {
-                    let system_git_binary_path = search_paths.and_then(|search_paths| which::which_in("git", Some(search_paths), &work_directory_abs_path).ok())
-                        .or_else(|| which::which("git").ok());
-                    fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
-                        .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
-                })
-                .await?;
+        let worker_task = cx.spawn(async move |_, cx| {
+            // Try to initialize the git backend, but continue processing jobs even if this fails
+            let state_result: Result<RepositoryState> = async {
+                let environment = project_environment
+                    .upgrade()
+                    .context("missing project environment")?
+                    .update(cx, |project_environment, cx| {
+                        project_environment.local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
+                    })?
+                    .await
+                    .unwrap_or_else(|| {
+                        log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
+                        HashMap::default()
+                    });
+    let search_paths = environment.get("PATH").map(|val| val.to_owned());
+                let backend = cx
+                    .background_spawn(async move {
+                        let system_git_binary_path = search_paths.and_then(|search_paths| which::which_in("git", Some(search_paths), &work_directory_abs_path).ok())
+                            .or_else(|| which::which("git").ok());
+                        fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
+                            .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
+                    })
+                    .await?;
 
-            if let Some(git_hosting_provider_registry) =
-                cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?
-            {
-                git_hosting_providers::register_additional_providers(
-                    git_hosting_provider_registry,
-                    backend.clone(),
-                );
+                if let Some(git_hosting_provider_registry) =
+                    cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?
+                {
+                    git_hosting_providers::register_additional_providers(
+                        git_hosting_provider_registry,
+                        backend.clone(),
+                    );
+                }
+                Ok(RepositoryState::Local {
+                    fs: fs_cloned,
+                    backend,
+                    environment: Arc::new(environment),
+                })
+            }.await;
+
+            if let Err(ref err) = state_result {
+                log::error!("failed to initialize git worker for {dot_git_abs_path:?}: {err:?}");
             }
-            let state = RepositoryState::Local {
-                fs: fs_cloned,
-                backend,
-                environment: Arc::new(environment),
-            };
+
+            // Always process jobs, even if initialization failed
+            // This prevents barrier() calls from hanging forever
             let mut jobs = VecDeque::new();
             loop {
                 while let Ok(Some(next_job)) = job_rx.try_next() {
@@ -5223,7 +5233,12 @@ impl Repository {
                         {
                             continue;
                         }
-                    (job.job)(state.clone(), cx).await;
+                    // Only execute jobs if we have a valid state
+                    if let Ok(ref state) = state_result {
+                        (job.job)(state.clone(), cx).await;
+                    }
+                    // If state initialization failed, jobs are silently dropped
+                    // Their receivers will get Err when the sender is dropped
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
                 } else {
@@ -5231,8 +5246,9 @@ impl Repository {
                 }
             }
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
+        
+        worker_task.detach_and_log_err(cx);
 
         job_tx
     }
