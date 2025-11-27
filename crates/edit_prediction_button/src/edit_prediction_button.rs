@@ -408,7 +408,7 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
-                    .when(user.clone().is_some(), |popover_menu| {
+                    .when(user.is_some(), |popover_menu| {
                         let this = this.clone();
 
                         popover_menu.menu(move |window, cx| {
@@ -418,7 +418,7 @@ impl Render for EditPredictionButton {
                             .ok()
                         })
                     })
-                    .when(user.clone().is_none(), |popover_menu| {
+                    .when(user.is_none(), |popover_menu| {
                         let this = this.clone();
 
                         popover_menu.menu(move |window, cx| {
