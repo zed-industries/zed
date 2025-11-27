@@ -29,6 +29,23 @@ In the panel you can see the state of your project at a glance—which repositor
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
+### Configuration
+
+You can configure how Zed hard wraps commit messages with the `preferred-line-length` setting of the "Git Commit" language. The default is `72`, but it can be set to any number of characters `0` or more.
+
+The Git Panel also allows configuring the `soft_wrap` setting to adjust how commit messages display while you are typing them in the Git Panel. The default setting is `editor_width`, however, `none`, `preferred_line_length`, and `bounded` are also options.
+
+#### Example
+
+```json
+"languages": {
+  "Git Commit": {
+    "soft_wrap": "editor_width",
+    "preferred_line_length": 72
+  },
+}
+```
+
 ## Project Diff
 
 You can see all of the changes captured by Git in Zed by opening the Project Diff ({#kb git::Diff}), accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.
