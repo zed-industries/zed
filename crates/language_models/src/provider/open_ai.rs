@@ -363,7 +363,7 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    if !text.trim().is_empty() {
+                    if !text.is_empty() {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
@@ -507,12 +507,16 @@ fn add_message_content_part(
 
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    // accumulated_output_text: String,
+    // has_received_any_content: bool,
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            // accumulated_output_text: String::new(),
+            // has_received_any_content: false,
         }
     }
 
@@ -548,8 +552,25 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            // if !self.has_received_any_content && delta.content.is_some() {
+            //     self.has_received_any_content = true;
+            // }
+
+            // Handle reasoning content (thinking blocks)
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                if !reasoning_content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: reasoning_content,
+                        signature: None,
+                    }));
+                }
+            }
+            // Only accumulate non-empty content to allow proper thinking block display
             if let Some(content) = delta.content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                if !content.is_empty() {
+                    // self.accumulated_output_text.push_str(&content);
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
@@ -572,6 +593,14 @@ impl OpenAiEventMapper {
                 }
             }
         }
+
+        // This handles providers that might not send finish_reason (prob not needed)
+        // if choice.finish_reason.is_none()
+        //     && self.has_received_any_content
+        // {
+        //     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+        //     return events;
+        // }
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
