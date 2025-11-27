@@ -38,7 +38,7 @@ use x11rb::{
 };
 use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, Keysym, STATE_LAYOUT_EFFECTIVE};
+use xkbcommon::xkb::{self as xkbc, Keysym, STATE_LAYOUT_EFFECTIVE, STATE_MODS_LOCKED};
 
 use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
@@ -1023,20 +1023,23 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for Caps Lock, Num Lock and Shift Lock
+                    // Never update xkb state for Caps Lock, Num Lock, Shift Lock and Scroll Lock
                     // Regular modifiers on regular keyboards should work fine either way but
                     // custom macros on some Linux distributions require the state to be updated
                     // to prevent race conditions and occasional unexpected inputs
-                    if matches!(
-                        keysym,
-                        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Shift_Lock
-                    ) {
+                    //
+                    // Also skip updating for Shift_L/Shift_R when Shift Lock is active,
+                    // to allow double-tap Shift activation/deactivation of Shift Lock to work properly.
+                    let is_shift_key_while_locked = matches!(keysym, Keysym::Shift_L | Keysym::Shift_R)
+                        && state.xkb.mod_name_is_active(xkbc::MOD_NAME_SHIFT, STATE_MODS_LOCKED);
+                    if !is_lock_modifier(keysym) && !is_shift_key_while_locked {
                         state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     }
 
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
 
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
@@ -1096,14 +1099,18 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for Caps Lock, Num Lock and Shift Lock
+                    // Never update xkb state for Caps Lock, Num Lock, Shift Lock and Scroll Lock
                     // Regular modifiers on regular keyboards should work fine either way but
                     // custom macros on some Linux distributions require the state to be updated
                     // to prevent race conditions and occasional unexpected inputs
-                    if matches!(
-                        keysym,
-                        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Shift_Lock
-                    ) {
+                    //
+                    // Also skip updating for Shift_L/Shift_R when Shift Lock is active,
+                    // to allow double-tap Shift activation of Shift Lock to work properly.
+                    // Without this, the key release after Shift Lock activation would interfere
+                    // with the locked state.
+                    let is_shift_key_while_locked = matches!(keysym, Keysym::Shift_L | Keysym::Shift_R)
+                        && state.xkb.mod_name_is_active(xkbc::MOD_NAME_SHIFT, STATE_MODS_LOCKED);
+                    if !is_lock_modifier(keysym) && !is_shift_key_while_locked {
                         state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     }
 
@@ -2531,4 +2538,12 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[inline]
+fn is_lock_modifier(keysym: Keysym) -> bool {
+    matches!(
+        keysym,
+        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Scroll_Lock | Keysym::Shift_Lock
+    )
 }
