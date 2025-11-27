@@ -1,20 +1,25 @@
 //! Modal implementation for the which-key display.
 
+use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AvailableSpace, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Keystroke, Subscription, WeakEntity, Window, size,
+    Keystroke, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
 use std::collections::HashMap;
 use theme::ThemeSettings;
-use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
+use ui::{
+    Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
+    text_for_keystrokes,
+};
 use workspace::{ModalView, Workspace};
 
 use crate::FILTERED_KEYSTROKES;
 
 pub struct WhichKeyModal {
-    workspace: WeakEntity<Workspace>,
+    _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+    scroll_handle: ScrollHandle,
     bindings: Vec<(SharedString, SharedString)>,
     pending_keys: SharedString,
     _pending_input_subscription: Subscription,
@@ -32,8 +37,9 @@ impl WhichKeyModal {
 
         let handle = cx.weak_entity();
         let mut this = Self {
-            workspace: workspace.clone(),
+            _workspace: workspace.clone(),
             focus_handle: focus_handle.clone(),
+            scroll_handle: ScrollHandle::new(),
             bindings: Vec::new(),
             pending_keys: SharedString::new_static(""),
             _pending_input_subscription: cx.observe_pending_input(
@@ -131,192 +137,212 @@ impl WhichKeyModal {
 
 impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-        let status_bar_height = DynamicSpacing::Base08.px(cx) * 2.0 + ui_font_size;
+        let margin_bottom = px(16.);
+        let margin_right = px(16.);
+        let panel_padding_x = px(12.);
+        let panel_padding_y = px(8.);
+        let key_action_gap = px(8.);
+        let row_gap = px(2.);
+        let row_padding_y = px(2.);
+        let title_gap = px(2.);
+        let divider_gap = px(2.);
 
-        let is_zoomed = self
-            .workspace
-            .read_with(cx, |workspace, _cx| workspace.zoomed_item().is_some())
-            .unwrap_or(false);
+        let row_count = self.bindings.len();
+        let has_rows = row_count > 0;
+        let viewport_size = window.viewport_size();
 
-        // Get dock widths and bottom dock height for dynamic padding
-        // If workspace is zoomed, ignore panel padding and render at bottom of buffer
-        let (left_margin, right_margin) = if let Ok(margins) =
-            self.workspace.read_with(cx, |workspace, cx| {
-                if is_zoomed {
-                    return (Pixels::ZERO, Pixels::ZERO);
-                }
+        // Push above status bar when visible
+        // Estimate the status bar height dynamically using spacing constants
+        // and theme font size since the API doesn’t provide it directly
+        let status_height = self
+            ._workspace
+            .upgrade()
+            .and_then(|workspace| {
+                workspace.read_with(cx, |workspace, cx| {
+                    if workspace.status_bar_visible(cx) {
+                        Some(
+                            DynamicSpacing::Base04.px(cx) * 2.0
+                                + ThemeSettings::get_global(cx).ui_font_size(cx),
+                        )
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(px(0.));
+        let bottom_offset = margin_bottom + status_height;
 
-                let left_width = workspace
-                    .left_dock()
-                    .read(cx)
-                    .active_panel_size(window, cx)
-                    .unwrap_or_default();
-                let right_width = workspace
-                    .right_dock()
-                    .read(cx)
-                    .active_panel_size(window, cx)
-                    .unwrap_or_default();
+        // Title section
+        let title_text: SharedString = self.pending_keys.clone();
+        let build_title_section = || -> AnyElement {
+            let mut column = v_flex().gap(px(0.)).child(
+                div()
+                    .child(
+                        Label::new(title_text.clone())
+                            .size(LabelSize::Small)
+                            .weight(FontWeight::MEDIUM)
+                            .color(Color::Muted),
+                    )
+                    .mb(title_gap),
+            );
 
-                (left_width, right_width)
-            }) {
-            margins
-        } else {
-            (Pixels::ZERO, Pixels::ZERO)
+            if has_rows {
+                column = column.child(
+                    div()
+                        .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                        .mb(divider_gap),
+                );
+            }
+
+            column.into_any_element()
         };
 
-        let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
-        let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
-        let content_gap = DynamicSpacing::Base08.px(cx); // Gap between current pending keystroke and grid of keys+actions
-        let margin = DynamicSpacing::Base08.px(cx); // Margin around the panel
-        let padding = DynamicSpacing::Base16.px(cx); // Padding inside the panel
-
-        // Calculate column width based on UI font size (as maximum)
-        let max_column_width = ui_font_size * 125.0;
-
-        // Calculate actual column width based on largest binding element
-        let largest_binding = self
+        // Compute consistent key column width
+        let key_column_width = self
             .bindings
             .iter()
-            .max_by_key(|(remaining_keystrokes, action_name)| {
-                remaining_keystrokes.len() + action_name.len()
+            .map(|(keystrokes, _)| {
+                Label::new(keystrokes.clone())
+                    .size(LabelSize::Default)
+                    .into_any_element()
+                    .layout_as_root(AvailableSpace::min_size(), window, cx)
+                    .width
             })
-            .map(|(remaining_keystrokes, action_name)| {
-                create_aligned_binding_element(
-                    remaining_keystrokes.clone(),
-                    action_name.clone(),
-                    None,
-                )
-                .into_any_element()
-                .layout_as_root(AvailableSpace::min_size(), window, cx)
-            })
-            .unwrap_or(size(Pixels::ZERO, Pixels::ZERO));
+            .max()
+            .unwrap_or(px(0.))
+            .max(px(28.));
 
-        // Final width of the columns
-        let column_width = largest_binding.width.min(max_column_width);
+        // Measure rows (unconstrained) to derive natural width
+        let mut max_row_width = px(0.);
+        for (keystrokes, action_name) in &self.bindings {
+            let row_size = measure_binding_row(
+                keystrokes.clone(),
+                action_name.clone(),
+                key_column_width,
+                key_action_gap,
+                row_padding_y,
+                None,
+                window,
+                cx,
+            );
 
-        // Calculate available width (window width minus padding)
-        let window_width = largest_binding.width.min(max_column_width);
-        let available_width =
-            window_width - (left_margin + right_margin + (margin * 2.0) + (padding * 2.0));
-
-        // Calculate number of columns that can fit
-        let columns = ((available_width + column_gap) / (column_width + column_gap))
-            .floor()
-            .max(1.0) as usize;
-
-        // Calculate rows per column
-        let total_items = self.bindings.len();
-        let rows_per_column = (total_items + columns - 1).div_ceil(columns);
-
-        // Create columns
-        let mut column_elements = Vec::new();
-        for col in 0..columns {
-            let start_idx = col * rows_per_column;
-            let end_idx = ((col + 1) * rows_per_column).min(total_items);
-
-            if start_idx >= total_items {
-                break;
-            }
-
-            let column_items = &self.bindings[start_idx..end_idx];
-
-            // Find the longest_keystroke text width for this column
-            let column_longest_keystroke_width = column_items
-                .iter()
-                .max_by_key(|(remaining_keystrokes, _)| {
-                    (
-                        remaining_keystrokes.len(),
-                        remaining_keystrokes.ends_with(|c| c == 'm' || c == 'w'),
-                    )
-                })
-                .map(|(remaining_keystrokes, _)| {
-                    Label::new(remaining_keystrokes.clone())
-                        .into_any_element()
-                        .layout_as_root(AvailableSpace::min_size(), window, cx)
-                        .width
-                        + px(10.)
-                });
-
-            let column = v_flex().gap(row_gap).children(column_items.iter().map(
-                |(remaining_keystrokes, action_name)| {
-                    create_aligned_binding_element(
-                        remaining_keystrokes.clone(),
-                        action_name.clone(),
-                        column_longest_keystroke_width,
-                    )
-                },
-            ));
-
-            column_elements.push(column);
+            max_row_width = max_row_width.max(row_size.width);
         }
 
-        // Calculate real size of 1 row
-        let row_height = largest_binding.height;
+        // Width: tight to content with clamps
+        // Review the hard coded min/max value
+        let min_panel_width = px(220.);
+        let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
+        let mut panel_width = max_row_width + (panel_padding_x * 2.0);
+        panel_width = panel_width.clamp(min_panel_width, max_panel_width);
 
-        // Calculate height
-        let base_height = (padding * 2) /* Container padding */
-            + (row_height) /* Pending keys */
-            + content_gap; /* Pending keys gap */
-        let total_height = base_height
-            + (rows_per_column * row_height) /* Rows */
-            + ((rows_per_column - 1) * row_gap); /* Rows gap */
+        let available_content_width = panel_width - (panel_padding_x * 2.0);
 
-        // Calculate minimum height (to show ~2.5 rows, using 2.15 as the last row spills over in the margin)
-        let minimum_rows = (rows_per_column as f32).min(2.15);
-        let minimum_height = base_height
-            + (minimum_rows * row_height) /* Rows */
-            + ((minimum_rows - 1.0) * row_gap); /* Rows gap */
+        // Remeasure title/rows with width constraint to get accurate heights/wrapping
+        let title_section_height = build_title_section()
+            .layout_as_root(
+                gpui::Size {
+                    width: AvailableSpace::Definite(available_content_width),
+                    height: AvailableSpace::MinContent,
+                },
+                window,
+                cx,
+            )
+            .height;
 
-        let cursor_position = self
-            .workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .active_item(cx)
-                    .and_then(|item| item.pixel_position_of_cursor(cx))
-            })
-            .unwrap_or(None);
+        let mut row_height = px(0.);
+        for (keystrokes, action_name) in &self.bindings {
+            let row_size = measure_binding_row(
+                keystrokes.clone(),
+                action_name.clone(),
+                key_column_width,
+                key_action_gap,
+                row_padding_y,
+                Some(available_content_width),
+                window,
+                cx,
+            );
 
-        let panel_bottom_y = status_bar_height + margin;
+            row_height = row_height.max(row_size.height);
+        }
 
-        // Adjust height to avoid covering cursor
-        let adjusted_height = if let Some(cursor_pos) = cursor_position {
-            let cursor_padding = (ThemeSettings::get_global(cx).buffer_font_size(cx)
-                * ThemeSettings::get_global(cx).line_height())
-                + margin;
-            let window_height = window.viewport_size().height;
-            // Calculate available space from cursor to bottom of panel
-            let available_space = window_height - panel_bottom_y - cursor_pos.y - cursor_padding;
-            if available_space > px(0.0) {
-                total_height.min(available_space).max(minimum_height)
-            } else {
-                total_height
-            }
+        if row_height == px(0.) {
+            row_height = measure_binding_row(
+                SharedString::new_static(""),
+                SharedString::new_static(""),
+                key_column_width,
+                key_action_gap,
+                row_padding_y,
+                Some(available_content_width),
+                window,
+                cx,
+            )
+            .height;
+        }
+
+        let content_height = if row_count > 0 {
+            (row_height * row_count) + (row_gap * row_count.saturating_sub(1))
         } else {
-            total_height
+            px(0.)
         };
+
+        let panel_vert_padding = panel_padding_y * 2.0;
+        let desired_height = panel_vert_padding + title_section_height + content_height;
+        let available_height_above_margin =
+            (f32::from(viewport_size.height) - f32::from(bottom_offset)).max(0.0);
+        let max_panel_height = px((f32::from(viewport_size.height) * 0.6).floor())
+            .min(px(available_height_above_margin));
+        let min_panel_height = panel_vert_padding + title_section_height;
+        let panel_height = if max_panel_height < min_panel_height {
+            max_panel_height
+        } else {
+            desired_height.clamp(min_panel_height, max_panel_height)
+        };
+
+        let list_container_height =
+            (panel_height - panel_vert_padding - title_section_height).max(px(0.));
+
+        let rows = v_flex()
+            .id("which-key-rows")
+            .gap(row_gap)
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
+            .children(self.bindings.iter().map(|(keystrokes, action_name)| {
+                binding_row(
+                    keystrokes.clone(),
+                    action_name.clone(),
+                    key_column_width,
+                    key_action_gap,
+                    row_padding_y,
+                )
+                .into_any_element()
+            }));
 
         div()
             .id("which-key-buffer-panel-scroll")
             .occlude()
             .absolute()
-            .bottom(panel_bottom_y)
-            .left(left_margin + margin)
-            .right(right_margin + margin)
+            .bottom(bottom_offset)
+            .right(margin_right)
+            .w(panel_width)
+            .h(panel_height)
             .elevation_3(cx)
-            .p(padding)
-            .overflow_y_scroll()
-            .h(adjusted_height)
+            .pl(panel_padding_x)
+            .pr(panel_padding_x)
+            .pt(panel_padding_y)
+            .pb(panel_padding_y)
             .child(
                 v_flex()
-                    .gap(content_gap)
-                    .child(Label::new(self.pending_keys.clone()).weight(FontWeight::BOLD))
-                    .child(
-                        h_flex()
-                            .gap(column_gap)
-                            .items_start()
-                            .children(column_elements),
-                    ),
+                    .gap(px(0.))
+                    .child(build_title_section())
+                    .when(has_rows, |content| {
+                        content.child(
+                            div()
+                                .h(list_container_height)
+                                .child(rows.h(list_container_height))
+                                .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                        )
+                    }),
             )
     }
 }
@@ -370,24 +396,74 @@ fn group_bindings(
     result
 }
 
-fn create_aligned_binding_element(
+fn binding_row(
     keystrokes: SharedString,
     action_name: SharedString,
-    keystroke_width: Option<Pixels>,
+    key_column_width: Pixels,
+    key_action_gap: Pixels,
+    row_padding_y: Pixels,
 ) -> impl IntoElement {
-    let keystroke = div()
-        .when_some(keystroke_width, |div, width| div.w(width))
-        .child(Label::new(keystrokes).color({
-            if action_name.starts_with('+') {
-                Color::Success
-            } else {
-                Color::Accent
-            }
-        }))
-        .text_align(gpui::TextAlign::Right);
+    let is_group = action_name.starts_with('+');
+    let label_color = if is_group {
+        Color::Success
+    } else {
+        Color::Default
+    };
 
-    h_flex().items_center().gap_1p5().children([
-        keystroke.into_any_element(),
-        Label::new(action_name).truncate().into_any_element(),
-    ])
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .items_center()
+        .gap(key_action_gap)
+        .py(row_padding_y)
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(key_column_width)
+                .child(
+                    Label::new(keystrokes)
+                        .size(LabelSize::Default)
+                        .color(Color::Accent),
+                )
+                .text_align(gpui::TextAlign::Right),
+        )
+        .child(
+            div().flex_1().min_w_0().child(
+                Label::new(action_name)
+                    .size(LabelSize::Default)
+                    .color(label_color)
+                    .single_line()
+                    .truncate(),
+            ),
+        )
+}
+
+fn measure_binding_row(
+    keystrokes: SharedString,
+    action_name: SharedString,
+    key_column_width: Pixels,
+    key_action_gap: Pixels,
+    row_padding_y: Pixels,
+    available_width: Option<Pixels>,
+    window: &mut Window,
+    cx: &mut Context<WhichKeyModal>,
+) -> gpui::Size<Pixels> {
+    binding_row(
+        keystrokes,
+        action_name,
+        key_column_width,
+        key_action_gap,
+        row_padding_y,
+    )
+    .into_any_element()
+    .layout_as_root(
+        gpui::Size {
+            width: available_width
+                .map(AvailableSpace::Definite)
+                .unwrap_or(AvailableSpace::MinContent),
+            height: AvailableSpace::MinContent,
+        },
+        window,
+        cx,
+    )
 }
