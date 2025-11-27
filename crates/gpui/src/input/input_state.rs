@@ -86,6 +86,7 @@ pub struct InputState {
     click_count: usize,
     pub(crate) scroll_offset: Pixels,
     pub(crate) available_height: Pixels,
+    multiline: bool,
 }
 
 /// Layout information for a single logical line of text in an input.
@@ -105,7 +106,17 @@ pub struct InputLineLayout {
 }
 
 impl InputState {
-    /// Creates a new `Input` with empty content.
+    /// Creates a new multiline `Input` with empty content.
+    pub fn new_multiline(cx: &mut Context<Self>) -> Self {
+        Self::new(cx).multiline(true)
+    }
+
+    /// Creates a new singleline `Input` with empty content.
+    pub fn new_singleline(cx: &mut Context<Self>) -> Self {
+        Self::new(cx).multiline(false)
+    }
+
+    /// Creates a new `Input` with the specified multiline setting.
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -123,7 +134,14 @@ impl InputState {
             click_count: 0,
             scroll_offset: px(0.),
             available_height: px(0.),
+            multiline: false,
         }
+    }
+
+    /// Returns whether this input allows multiple lines.
+    pub fn multiline(mut self, multiline: bool) -> Self {
+        self.multiline = multiline;
+        self
     }
 
     /// Returns the current text content.
@@ -133,7 +151,13 @@ impl InputState {
 
     /// Sets the text content, resetting selection to the beginning.
     pub fn set_content(&mut self, content: impl Into<String>, cx: &mut Context<Self>) {
-        self.content = content.into();
+        let content = content.into();
+        self.content = if self.multiline {
+            content
+        } else {
+            // Strip newlines for single-line input
+            content.replace('\n', " ").replace('\r', "")
+        };
         self.selected_range = 0..0;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -206,6 +230,14 @@ impl InputState {
     }
 
     pub(crate) fn up(&mut self, _: &Up, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multiline {
+            // In single-line mode, up moves to start
+            self.selected_range = 0..0;
+            self.selection_reversed = false;
+            self.scroll_to_cursor();
+            cx.notify();
+            return;
+        }
         if let Some(new_offset) = self.move_vertically(self.cursor_offset(), -1) {
             self.selected_range = new_offset..new_offset;
             self.selection_reversed = false;
@@ -215,6 +247,15 @@ impl InputState {
     }
 
     pub(crate) fn down(&mut self, _: &Down, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multiline {
+            // In single-line mode, down moves to end
+            let end = self.content.len();
+            self.selected_range = end..end;
+            self.selection_reversed = false;
+            self.scroll_to_cursor();
+            cx.notify();
+            return;
+        }
         if let Some(new_offset) = self.move_vertically(self.cursor_offset(), 1) {
             self.selected_range = new_offset..new_offset;
             self.selection_reversed = false;
@@ -232,6 +273,11 @@ impl InputState {
     }
 
     pub(crate) fn select_up(&mut self, _: &SelectUp, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multiline {
+            // In single-line mode, select_up selects to start
+            self.select_to(0, cx);
+            return;
+        }
         if let Some(new_offset) = self.move_vertically(self.cursor_offset(), -1) {
             if self.selection_reversed {
                 self.selected_range.start = new_offset;
@@ -253,6 +299,11 @@ impl InputState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.multiline {
+            // In single-line mode, select_down selects to end
+            self.select_to(self.content.len(), cx);
+            return;
+        }
         if let Some(new_offset) = self.move_vertically(self.cursor_offset(), 1) {
             if self.selection_reversed {
                 self.selected_range.start = new_offset;
@@ -340,7 +391,9 @@ impl InputState {
     }
 
     pub(crate) fn enter(&mut self, _: &Enter, window: &mut Window, cx: &mut Context<Self>) {
-        self.replace_text_in_range(None, "\n", window, cx);
+        if self.multiline {
+            self.replace_text_in_range(None, "\n", window, cx);
+        }
     }
 
     pub(crate) fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
@@ -363,7 +416,13 @@ impl InputState {
 
     pub(crate) fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text, window, cx);
+            if self.multiline {
+                self.replace_text_in_range(None, &text, window, cx);
+            } else {
+                // Strip newlines for single-line input
+                let text = text.replace('\n', " ").replace('\r', "");
+                self.replace_text_in_range(None, &text, window, cx);
+            }
         }
     }
 
@@ -1009,9 +1068,19 @@ impl EntityInputHandler for InputState {
 
         let range = range.start.min(self.content.len())..range.end.min(self.content.len());
 
+        // Strip newlines for single-line input
+        let sanitized_text;
+        let text_to_insert = if self.multiline {
+            new_text
+        } else {
+            sanitized_text = new_text.replace('\n', " ").replace('\r', "");
+            &sanitized_text
+        };
+
         self.content =
-            self.content[0..range.start].to_owned() + new_text + &self.content[range.end..];
-        self.selected_range = range.start + new_text.len()..range.start + new_text.len();
+            self.content[0..range.start].to_owned() + text_to_insert + &self.content[range.end..];
+        self.selected_range =
+            range.start + text_to_insert.len()..range.start + text_to_insert.len();
         self.marked_range.take();
         self.needs_layout = true;
         cx.notify();
@@ -1033,11 +1102,20 @@ impl EntityInputHandler for InputState {
 
         let range = range.start.min(self.content.len())..range.end.min(self.content.len());
 
-        self.content =
-            self.content[0..range.start].to_owned() + new_text + &self.content[range.end..];
+        // Strip newlines for single-line input
+        let sanitized_text;
+        let text_to_insert = if self.multiline {
+            new_text
+        } else {
+            sanitized_text = new_text.replace('\n', " ").replace('\r', "");
+            &sanitized_text
+        };
 
-        if !new_text.is_empty() {
-            self.marked_range = Some(range.start..range.start + new_text.len());
+        self.content =
+            self.content[0..range.start].to_owned() + text_to_insert + &self.content[range.end..];
+
+        if !text_to_insert.is_empty() {
+            self.marked_range = Some(range.start..range.start + text_to_insert.len());
         } else {
             self.marked_range = None;
         }
@@ -1046,7 +1124,9 @@ impl EntityInputHandler for InputState {
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .map(|new_range| new_range.start + range.start..new_range.end + range.start)
-            .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+            .unwrap_or_else(|| {
+                range.start + text_to_insert.len()..range.start + text_to_insert.len()
+            });
 
         self.needs_layout = true;
         cx.notify();
@@ -1159,7 +1239,7 @@ mod tests {
     ) -> crate::WindowHandle<TestView> {
         cx.add_window(|_window, cx| {
             let input = cx.new(|cx| {
-                let mut input = InputState::new(cx);
+                let mut input = InputState::new_multiline(cx);
                 input.content = content.to_string();
                 input.selected_range = range;
                 input
@@ -2094,5 +2174,118 @@ mod tests {
             });
         })
         .unwrap();
+    }
+
+    // Single-line input tests
+
+    fn create_single_line_input(
+        cx: &mut TestAppContext,
+        content: &str,
+        selected_range: Range<usize>,
+    ) -> crate::WindowHandle<TestView> {
+        cx.add_window(|_window, cx| {
+            let input = cx.new(|cx| {
+                let mut input = InputState::new_singleline(cx);
+                input.content = content.to_string();
+                input.selected_range = selected_range;
+                input
+            });
+            TestView { input }
+        })
+    }
+
+    #[crate::test]
+    fn test_single_line_enter_does_nothing(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.enter(&Enter, window, cx);
+                assert_eq!(input.content(), "hello");
+                assert_eq!(input.selected_range, 5..5);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_single_line_set_content_strips_newlines(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_content("hello\nworld\r\nfoo", cx);
+                assert_eq!(input.content(), "hello world foo");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_single_line_up_moves_to_start(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.up(&Up, window, cx);
+                assert_eq!(input.selected_range, 0..0);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_single_line_down_moves_to_end(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.down(&Down, window, cx);
+                assert_eq!(input.selected_range, 11..11); // "hello world".len() == 11
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_single_line_select_up_selects_to_start(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.select_up(&SelectUp, window, cx);
+                assert_eq!(input.selected_range, 0..5);
+                assert!(input.selection_reversed);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_single_line_select_down_selects_to_end(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.select_down(&SelectDown, window, cx);
+                assert_eq!(input.selected_range, 5..11); // "hello world".len() == 11
+                assert!(!input.selection_reversed);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_single_line_multiline_getter(cx: &mut TestAppContext) {
+        let view = create_single_line_input(cx, "hello", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(!input.multiline);
+            });
+        })
+        .unwrap();
+
+        let multiline_view = create_test_input(cx, "hello", 0..0);
+        multiline_view
+            .update(cx, |view, _window, cx| {
+                view.input.update(cx, |input, _cx| {
+                    assert!(input.multiline);
+                });
+            })
+            .unwrap();
     }
 }

@@ -21,7 +21,7 @@ struct TextAreaExample {
 impl TextAreaExample {
     fn new(cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            let mut input = InputState::new(cx);
+            let mut input = InputState::new_multiline(cx);
             input.set_content("Hello, world!\n\nThis is a multi-line text area.\nTry typing, selecting text, and scrolling.", cx);
             input.set_placeholder("Type something...", cx);
             input
