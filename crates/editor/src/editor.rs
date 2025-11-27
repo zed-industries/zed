@@ -105,8 +105,8 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
-    Rgba, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
+    MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render, Rgba,
+    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
     TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
     WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
