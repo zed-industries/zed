@@ -1,3 +1,4 @@
+mod agent_activity;
 mod db;
 mod edit_agent;
 mod history_store;
@@ -11,6 +12,7 @@ mod tools;
 #[cfg(test)]
 mod tests;
 
+pub use agent_activity::*;
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
@@ -244,6 +246,8 @@ pub struct NativeAgent {
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
+    /// Tracks agent activity status for collaborative sync
+    activity_tracker: Entity<AgentActivityTracker>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -292,6 +296,7 @@ impl NativeAgent {
                 project,
                 prompt_store,
                 fs,
+                activity_tracker: cx.new(|_| AgentActivityTracker::new()),
                 _subscriptions: subscriptions,
             }
         })
@@ -360,6 +365,12 @@ impl NativeAgent {
 
     pub fn models(&self) -> &LanguageModels {
         &self.models
+    }
+
+    /// Returns a reference to the activity tracker entity.
+    /// Subscribe to its `ActivityStatusChanged` events to be notified of agent activity changes.
+    pub fn activity_tracker(&self) -> &Entity<AgentActivityTracker> {
+        &self.activity_tracker
     }
 
     async fn maintain_project_context(
@@ -737,6 +748,12 @@ impl NativeAgentConnection {
 
     pub fn load_thread(&self, id: acp::SessionId, cx: &mut App) -> Task<Result<Entity<Thread>>> {
         self.0.update(cx, |this, cx| this.load_thread(id, cx))
+    }
+
+    /// Returns a reference to the activity tracker for this native agent.
+    /// This can be used to subscribe to agent activity changes for collaborative features.
+    pub fn activity_tracker(&self, cx: &App) -> Entity<AgentActivityTracker> {
+        self.0.read(cx).activity_tracker().clone()
     }
 
     fn run_turn(

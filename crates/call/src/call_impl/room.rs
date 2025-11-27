@@ -1,6 +1,6 @@
 use crate::{
     call_settings::CallSettings,
-    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
+    participant::{AgentActivity, AgentActivityStatus, LocalParticipant, ParticipantLocation, RemoteParticipant},
 };
 use anyhow::{Context as _, Result, anyhow};
 use audio::{Audio, Sound};
@@ -152,6 +152,7 @@ impl Room {
             pending_call_count: 0,
             client_subscriptions: vec![
                 client.add_message_handler(cx.weak_entity(), Self::handle_room_updated),
+                client.add_message_handler(cx.weak_entity(), Self::handle_agent_activity_update),
             ],
             _subscriptions: vec![
                 cx.on_release(Self::released),
@@ -654,6 +655,35 @@ impl Room {
     ) -> Result<()> {
         let room = envelope.payload.room.context("invalid room")?;
         this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?
+    }
+
+    async fn handle_agent_activity_update(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdateAgentActivity>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            if let Some(activity) = envelope.payload.activity {
+                let user_id = activity.user_id;
+                if let Some(participant) = this.remote_participants.get_mut(&user_id) {
+                    participant.agent_activity = Some(AgentActivity {
+                        agent_type: activity.agent_type.into(),
+                        status: if activity.status == proto::AgentActivityStatus::AgentActive as i32
+                        {
+                            AgentActivityStatus::Active
+                        } else {
+                            AgentActivityStatus::Idle
+                        },
+                        prompt_summary: activity.prompt_summary.map(|s| s.into()),
+                    });
+                    cx.emit(Event::ParticipantAgentActivityChanged {
+                        peer_id: participant.peer_id,
+                    });
+                    cx.notify();
+                }
+            }
+        })?;
+        Ok(())
     }
 
     fn apply_room_update(&mut self, room: proto::Room, cx: &mut Context<Self>) -> Result<()> {
@@ -1548,6 +1578,34 @@ impl Room {
                 Ok(())
             }
         }
+    }
+
+    /// Send agent activity update to all other participants in the room
+    /// and update local participant's agent activity for UI display.
+    pub fn update_agent_activity(
+        &mut self,
+        activity: proto::AgentActivity,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // Update local participant's agent activity for UI display
+        self.local_participant.agent_activity = Some(AgentActivity {
+            agent_type: activity.agent_type.clone().into(),
+            status: if activity.status == proto::AgentActivityStatus::AgentActive as i32 {
+                AgentActivityStatus::Active
+            } else {
+                AgentActivityStatus::Idle
+            },
+            prompt_summary: activity.prompt_summary.clone().map(|s| s.into()),
+        });
+
+        // Emit event so UI can update
+        cx.notify();
+
+        // Send to other participants
+        self.client.send(proto::UpdateAgentActivity {
+            room_id: self.id,
+            activity: Some(activity),
+        })
     }
 
     fn set_deafened(&mut self, deafened: bool, cx: &mut Context<Self>) -> Option<()> {

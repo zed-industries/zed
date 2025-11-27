@@ -473,7 +473,8 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
+            .add_message_handler(update_agent_activity);
 
         Arc::new(server)
     }
@@ -2583,6 +2584,27 @@ async fn unfollow(request: proto::Unfollow, session: MessageContext) -> Result<(
         room_updated(&room, &session.peer);
     }
 
+    Ok(())
+}
+
+async fn update_agent_activity(
+    message: proto::UpdateAgentActivity,
+    session: MessageContext,
+) -> Result<()> {
+    let room_id = RoomId::from_proto(message.room_id);
+    let connection_ids = session
+        .db
+        .lock()
+        .await
+        .room_connection_ids(room_id, session.connection_id)
+        .await?;
+
+    for connection_id in connection_ids.iter().cloned() {
+        session
+            .peer
+            .send(connection_id, message.clone())
+            .trace_err();
+    }
     Ok(())
 }
 
