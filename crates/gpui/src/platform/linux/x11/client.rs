@@ -1023,16 +1023,7 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for Caps Lock, Num Lock, Shift Lock and Scroll Lock
-                    // Regular modifiers on regular keyboards should work fine either way but
-                    // custom macros on some Linux distributions require the state to be updated
-                    // to prevent race conditions and occasional unexpected inputs
-                    //
-                    // Also skip updating for Shift_L/Shift_R when Shift Lock is active,
-                    // to allow double-tap Shift activation/deactivation of Shift Lock to work properly.
-                    let is_shift_key_while_locked = matches!(keysym, Keysym::Shift_L | Keysym::Shift_R)
-                        && state.xkb.mod_name_is_active(xkbc::MOD_NAME_SHIFT, STATE_MODS_LOCKED);
-                    if !is_lock_modifier(keysym) && !is_shift_key_while_locked {
+                    if should_update_xkb_key_state(keysym, &state.xkb) {
                         state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     }
 
@@ -1099,18 +1090,7 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // Never update xkb state for Caps Lock, Num Lock, Shift Lock and Scroll Lock
-                    // Regular modifiers on regular keyboards should work fine either way but
-                    // custom macros on some Linux distributions require the state to be updated
-                    // to prevent race conditions and occasional unexpected inputs
-                    //
-                    // Also skip updating for Shift_L/Shift_R when Shift Lock is active,
-                    // to allow double-tap Shift activation of Shift Lock to work properly.
-                    // Without this, the key release after Shift Lock activation would interfere
-                    // with the locked state.
-                    let is_shift_key_while_locked = matches!(keysym, Keysym::Shift_L | Keysym::Shift_R)
-                        && state.xkb.mod_name_is_active(xkbc::MOD_NAME_SHIFT, STATE_MODS_LOCKED);
-                    if !is_lock_modifier(keysym) && !is_shift_key_while_locked {
+                    if should_update_xkb_key_state(keysym, &state.xkb) {
                         state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     }
 
@@ -2540,10 +2520,35 @@ fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
 }
 
+/// Determines whether to update the internal xkb key state for this keysym.
+///
+/// Returns `false` (skip update) for:
+/// - Lock modifiers (Caps_Lock, Num_Lock, Scroll_Lock, Shift_Lock): Their state is managed
+///   via XkbStateNotify's locked_mods field, so calling update_key could cause the internal
+///   state to get out of sync with X11's actual state, causing issues with macros.
+/// - Shift_L/Shift_R when Shift Lock is active: This allows double-tap Shift activation
+///   of Shift Lock to work properly. Without this, the key release after Shift Lock
+///   activation would interfere with the locked state.
+///
+/// Returns `true` for all other keys, as update_key is needed for proper state tracking
+/// to prevent race conditions with custom macros on some Linux distributions.
 #[inline]
-fn is_lock_modifier(keysym: Keysym) -> bool {
-    matches!(
+fn should_update_xkb_key_state(keysym: Keysym, xkb_state: &xkbc::State) -> bool {
+    // Lock modifiers are managed via XkbStateNotify, not individual key events
+    if matches!(
         keysym,
         Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Scroll_Lock | Keysym::Shift_Lock
-    )
+    ) {
+        return false;
+    }
+
+    // Skip updating for Shift keys when Shift Lock is active to allow
+    // double-tap Shift activation/deactivation to work correctly
+    if matches!(keysym, Keysym::Shift_L | Keysym::Shift_R)
+        && xkb_state.mod_name_is_active(xkbc::MOD_NAME_SHIFT, STATE_MODS_LOCKED)
+    {
+        return false;
+    }
+
+    true
 }
