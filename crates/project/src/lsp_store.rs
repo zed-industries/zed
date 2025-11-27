@@ -720,25 +720,41 @@ impl LocalLspStore {
                                 )
                             })?
                             .context("Expected the LSP store to be in a local mode")?;
-                        let workspace_config = Self::workspace_configuration_for_adapter(
-                            adapter.clone(),
-                            &delegate,
-                            toolchain_for_id,
-                            &mut cx,
-                        )
-                        .await?;
+
+                        let mut scope_uri_to_workspace_config = BTreeMap::new();
+                        for item in &params.items {
+                            let scope_uri = item.scope_uri.clone();
+                            let std::collections::btree_map::Entry::Vacant(new_scope_uri) =
+                                scope_uri_to_workspace_config.entry(scope_uri)
+                            else {
+                                // We've already queried workspace configuration of this URI.
+                                continue;
+                            };
+                            let workspace_config = Self::workspace_configuration_for_adapter(
+                                adapter.clone(),
+                                &delegate,
+                                toolchain_for_id.clone(),
+                                &mut cx,
+                            )
+                            .await?;
+                            new_scope_uri.insert(workspace_config);
+                        }
 
                         Ok(params
                             .items
                             .into_iter()
-                            .map(|item| {
+                            .filter_map(|item| {
+                                let workspace_config =
+                                    scope_uri_to_workspace_config.get(&item.scope_uri)?;
                                 if let Some(section) = &item.section {
-                                    workspace_config
-                                        .get(section)
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null)
+                                    Some(
+                                        workspace_config
+                                            .get(section)
+                                            .cloned()
+                                            .unwrap_or(serde_json::Value::Null),
+                                    )
                                 } else {
-                                    workspace_config.clone()
+                                    Some(workspace_config.clone())
                                 }
                             })
                             .collect())
