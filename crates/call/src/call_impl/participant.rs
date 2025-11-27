@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use client::{ParticipantIndex, User, proto};
 use collections::HashMap;
 use gpui::{SharedString, WeakEntity};
+use gpui::{SharedString, WeakEntity};
 use livekit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
@@ -88,4 +89,17 @@ impl RemoteParticipant {
             proto::ChannelRole::Admin | proto::ChannelRole::Member
         )
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentActivity {
+    pub agent_type: SharedString,
+    pub status: AgentActivityStatus,
+    pub prompt_summary: Option<SharedString>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentActivityStatus {
+    Idle,
+    Active,
 }
