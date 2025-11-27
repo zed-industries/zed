@@ -121,6 +121,10 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
+    (GetIncomingCalls, Background),
+    (GetIncomingCallsResponse, Background),
+    (GetOutgoingCalls, Background),
+    (GetOutgoingCallsResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -194,6 +198,8 @@ messages!(
     (PerformRename, Background),
     (PerformRenameResponse, Background),
     (Ping, Foreground),
+    (PrepareCallHierarchy, Background),
+    (PrepareCallHierarchyResponse, Background),
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
@@ -410,6 +416,9 @@ request_messages!(
     (OpenNewBuffer, OpenBufferResponse),
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
+    (PrepareCallHierarchy, PrepareCallHierarchyResponse),
+    (GetIncomingCalls, GetIncomingCallsResponse),
+    (GetOutgoingCalls, GetOutgoingCallsResponse),
     (PrepareRename, PrepareRenameResponse),
     (RefreshInlayHints, Ack),
     (RefreshCodeLens, Ack),
@@ -538,7 +547,56 @@ lsp_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
     (InlayHints, InlayHintsResponse, false),
+    (PrepareCallHierarchy, PrepareCallHierarchyResponse, true),
 );
+
+impl LspRequestMessage for GetIncomingCalls {
+    type Response = GetIncomingCallsResponse;
+
+    fn to_proto_query(self) -> lsp_query::Request {
+        lsp_query::Request::GetIncomingCalls(self)
+    }
+
+    fn response_to_proto_query(response: Self::Response) -> lsp_response::Response {
+        lsp_response::Response::GetIncomingCallsResponse(response)
+    }
+
+    fn buffer_id(&self) -> u64 {
+        0
+    }
+
+    fn buffer_version(&self) -> &[VectorClockEntry] {
+        &[]
+    }
+
+    fn stop_previous_requests() -> bool {
+        true
+    }
+}
+
+impl LspRequestMessage for GetOutgoingCalls {
+    type Response = GetOutgoingCallsResponse;
+
+    fn to_proto_query(self) -> lsp_query::Request {
+        lsp_query::Request::GetOutgoingCalls(self)
+    }
+
+    fn response_to_proto_query(response: Self::Response) -> lsp_response::Response {
+        lsp_response::Response::GetOutgoingCallsResponse(response)
+    }
+
+    fn buffer_id(&self) -> u64 {
+        0
+    }
+
+    fn buffer_version(&self) -> &[VectorClockEntry] {
+        &[]
+    }
+
+    fn stop_previous_requests() -> bool {
+        true
+    }
+}
 
 entity_messages!(
     {project_id, ShareProject},
@@ -878,6 +936,9 @@ impl LspQuery {
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
             Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
+            Some(lsp_query::Request::PrepareCallHierarchy(_)) => ("PrepareCallHierarchy", false),
+            Some(lsp_query::Request::GetIncomingCalls(_)) => ("GetIncomingCalls", false),
+            Some(lsp_query::Request::GetOutgoingCalls(_)) => ("GetOutgoingCalls", false),
             None => ("<unknown>", true),
         }
     }
