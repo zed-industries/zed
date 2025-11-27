@@ -813,9 +813,28 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
+        const MAIN_TASK_TIMEOUT: u128 = 10;
+
+        let start = std::time::Instant::now();
         loop {
-            for runnable in self.main_receiver.drain() {
-                WindowsDispatcher::execute_runnable(runnable);
+            loop {
+                if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
+                    // requeue main thread dispatch and bail, allowing more system messages to be processed
+                    unsafe {
+                        PostMessageW(
+                            Some(self.dispatcher.platform_window_handle.as_raw()),
+                            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                            WPARAM(self.validation_number),
+                            LPARAM(0),
+                        )
+                        .log_err();
+                    }
+                    return Some(0);
+                }
+                match self.main_receiver.try_recv() {
+                    Err(_) => break,
+                    Ok(runnable) => WindowsDispatcher::execute_runnable(runnable),
+                }
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
