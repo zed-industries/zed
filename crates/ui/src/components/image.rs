@@ -128,7 +128,10 @@ impl Component for Vector {
                             ),
                             single_example(
                                 "Custom Size",
-                                Vector::new(VectorName::ZedLogo, rems(12.), rems(6.))
+                                h_flex()
+                                    .h(rems(13.))
+                                    .justify_center()
+                                    .child(Vector::new(VectorName::ZedLogo, rems(12.), rems(6.)))
                                     .into_any_element(),
                             ),
                         ],
