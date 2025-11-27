@@ -254,8 +254,6 @@ impl LspAdapter for EsLintLspAdapter {
                     determine_working_directory(uri, wd, worktree_root.to_owned())
                 });
 
-            dbg!(&working_directory);
-
             if let Some(working_directory) = working_directory
                 && let Some(wd) = default_workspace_configuration.get_mut("workingDirectory")
             {
