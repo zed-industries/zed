@@ -19731,10 +19731,8 @@ dependencies = [
 name = "which_key"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "command_palette",
  "gpui",
- "schemars",
  "serde",
  "settings",
  "theme",

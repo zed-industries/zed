@@ -13,10 +13,8 @@ path = "src/which_key.rs"
 doctest = false
 
 [dependencies]
-anyhow.workspace = true
 command_palette.workspace = true
 gpui.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true
