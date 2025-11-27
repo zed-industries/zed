@@ -15,6 +15,7 @@ use serde_json::json;
 use settings::Settings as _;
 use smol::fs::{self};
 use std::fmt::Display;
+use std::fmt::Write;
 use std::ops::Range;
 use std::{
     borrow::Cow,
@@ -352,6 +353,66 @@ impl LspAdapter for RustLspAdapter {
                     }
                     _ => None,
                 });
+
+                // todo! maybe this shouldn't be specific to rust?
+                if completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+                    && let Some(
+                        lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                            new_text,
+                            ..
+                        })
+                        | lsp::CompletionTextEdit::Edit(lsp::TextEdit { new_text, .. }),
+                    ) = completion.text_edit.as_ref()
+                    && let Ok(mut snippet) = snippet::Snippet::parse(new_text)
+                {
+                    let mut runs = vec![];
+                    let mut label = String::new();
+
+                    if let Some(first_stop_pos) = snippet.tabstops.first().map(|stop| {
+                        stop.ranges.first().map(|r| r.start).unwrap_or_default() as usize
+                    }) {
+                        snippet.tabstops.remove(snippet.tabstops.len() - 1);
+
+                        let secondary_highlight =
+                            language.grammar()?.highlight_id_for_name("comment")?;
+                        let primary_highlight =
+                            language.grammar()?.highlight_id_for_name("type")?;
+
+                        snippet.tabstops.sort_unstable_by_key(|f| {
+                            f.ranges.first().map(|r| r.start).unwrap_or_default()
+                        });
+
+                        let mut text_pos = 0;
+
+                        for tabstop in snippet.tabstops {
+                            // todo! figure out why there are multiple ranges
+                            let Some(range) = tabstop.ranges.first() else {
+                                continue;
+                            };
+
+                            let pos = range.start as usize;
+                            label.push_str(&snippet.text[text_pos..pos]);
+                            text_pos = pos;
+
+                            let caret_start = label.len();
+                            label.push('…');
+                            runs.push((
+                                caret_start..label.len(),
+                                if pos == first_stop_pos {
+                                    primary_highlight
+                                } else {
+                                    secondary_highlight
+                                },
+                            ));
+                        }
+
+                        label.push_str(&snippet.text[text_pos..]);
+                    }
+
+                    let label_len = label.len();
+
+                    return Some(mk_label(label, &|| 0..label_len, runs));
+                }
 
                 let label = completion.label.clone();
                 let mut runs = vec![];

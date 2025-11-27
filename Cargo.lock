@@ -9040,6 +9040,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "snippet",
  "task",
  "terminal",
  "text",
