@@ -4292,7 +4292,13 @@ impl BufferSnapshot {
                                 continue;
                             }
 
-                            if !pattern.rainbow_exclude {
+                            if !pattern.rainbow_exclude
+                                // Also, certain languages have "brackets" that are not brackets, e.g. tags. and such
+                                // bracket will match the entire tag with all text inside.
+                                // For now, avoid highlighting any pair that has more than single char in each bracket.
+                                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                                && (open_range.len() == 1 || close_range.len() == 1)
+                            {
                                 // Certain tree-sitter grammars may return more bracket pairs than needed:
                                 // see `test_markdown_bracket_colorization` for a set-up that returns pairs with the same start bracket and different end one.
                                 // Pick the pair with the shortest range in case of ambiguity.
@@ -4321,11 +4327,11 @@ impl BufferSnapshot {
                     let new_matches = tree_sitter_matches
                         .into_iter()
                         .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
-                            let participates_in_coloring =
+                            let participates_in_colorizing =
                                 bracket_matches_to_color.get(&open_range).is_some_and(
                                     |close_range_to_color| close_range_to_color == &close_range,
                                 );
-                            let color_index = if participates_in_coloring {
+                            let color_index = if participates_in_colorizing {
                                 while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
                                     if last_bracket_end <= open_range.start {
                                         bracket_pairs_ends.pop();
