@@ -7077,6 +7077,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
+ "itertools 0.14.0",
  "pretty_assertions",
  "regex",
  "serde",
