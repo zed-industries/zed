@@ -31,13 +31,19 @@ pub unsafe fn new_renderer(
     impl rwh::HasWindowHandle for RawWindow {
         fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
             let view = NonNull::new(self.view).unwrap();
+            #[cfg(target_os = "macos")]
             let handle = rwh::AppKitWindowHandle::new(view);
+            #[cfg(target_os = "ios")]
+            let handle = rwh::UiKitWindowHandle::new(view);
             Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
         }
     }
     impl rwh::HasDisplayHandle for RawWindow {
         fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+            #[cfg(target_os = "macos")]
             let handle = rwh::AppKitDisplayHandle::new();
+            #[cfg(target_os = "ios")]
+            let handle = rwh::UiKitDisplayHandle::new();
             Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
         }
     }
