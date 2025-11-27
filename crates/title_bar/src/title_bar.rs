@@ -328,9 +328,7 @@ impl TitleBar {
                 (options.nickname.map(|nick| nick.into()), IconName::Server)
             }
             RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
-            RemoteConnectionOptions::DockerExec(_dev_container_connection) => {
-                (None, IconName::Linux)
-            } // TODO
+            RemoteConnectionOptions::DockerExec(_dev_container_connection) => (None, IconName::Box),
         };
         let nickname = nickname.unwrap_or_else(|| host.clone());
 

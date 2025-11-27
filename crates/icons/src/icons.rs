@@ -49,6 +49,7 @@ pub enum IconName {
     BoltFilled,
     Book,
     BookCopy,
+    Box,
     CaseSensitive,
     Chat,
     Check,
