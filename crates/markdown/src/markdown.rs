@@ -796,7 +796,7 @@ impl Element for MarkdownElement {
         let mut code_block_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
-        for (range, event) in parsed_markdown.events.iter() {
+        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -949,29 +949,23 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_4(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let source = &parsed_markdown.source()[range.clone()];
-                            let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
+                            let bullet = if let Some((_, MarkdownEvent::TaskListMarker(checked))) =
+                                parsed_markdown.events.get(index.saturating_add(1))
+                            {
+                                let source = &parsed_markdown.source()[range.clone()];
+
+                                Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    if *checked {
+                                        ToggleState::Selected
+                                    } else {
+                                        ToggleState::Unselected
+                                    },
+                                )
+                                .disabled(true)
+                                .into_any_element()
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
                                 div().child(format!("{}.", bullet_index)).into_any_element()
-                            } else if source.starts_with("- [ ]") {
-                                div()
-                                    .child(
-                                        Checkbox::new(
-                                            ElementId::Name(source.to_string().into()),
-                                            ToggleState::Unselected,
-                                        )
-                                        .disabled(true),
-                                    )
-                                    .into_any_element()
-                            } else if source.starts_with("- [x]") {
-                                div()
-                                    .child(
-                                        Checkbox::new(
-                                            ElementId::Name(source.to_string().into()),
-                                            ToggleState::Selected,
-                                        )
-                                        .disabled(true),
-                                    )
-                                    .into_any_element()
                             } else {
                                 div().child("•").into_any_element()
                             };
@@ -1239,6 +1233,9 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::TaskListMarker(_) => {
+                    // handled inside the `MarkdownTag::Item` case
+                }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }
         }
