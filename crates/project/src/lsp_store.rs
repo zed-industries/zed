@@ -436,6 +436,7 @@ impl LocalLspStore {
                         adapter.adapter.clone(),
                         &delegate,
                         toolchain,
+                        None,
                         cx,
                     )
                     .await?;
@@ -725,7 +726,7 @@ impl LocalLspStore {
                         for item in &params.items {
                             let scope_uri = item.scope_uri.clone();
                             let std::collections::btree_map::Entry::Vacant(new_scope_uri) =
-                                scope_uri_to_workspace_config.entry(scope_uri)
+                                scope_uri_to_workspace_config.entry(scope_uri.clone())
                             else {
                                 // We've already queried workspace configuration of this URI.
                                 continue;
@@ -734,6 +735,7 @@ impl LocalLspStore {
                                 adapter.clone(),
                                 &delegate,
                                 toolchain_for_id.clone(),
+                                scope_uri,
                                 &mut cx,
                             )
                             .await?;
@@ -3537,11 +3539,12 @@ impl LocalLspStore {
         adapter: Arc<dyn LspAdapter>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        requested_uri: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(delegate, toolchain, cx)
+            .workspace_configuration(delegate, toolchain, requested_uri, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -7973,6 +7976,7 @@ impl LspStore {
                                                 adapter.adapter.clone(),
                                                 &delegate,
                                                 toolchain,
+                                                None,
                                                 cx,
                                             )
                                             .await

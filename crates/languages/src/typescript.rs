@@ -9,7 +9,7 @@ use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
@@ -801,9 +801,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {

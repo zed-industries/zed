@@ -6,7 +6,7 @@ use http_client::{
     github_download::download_server_binary,
 };
 use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -167,6 +167,7 @@ impl LspAdapter for EsLintLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
