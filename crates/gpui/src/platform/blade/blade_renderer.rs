@@ -909,6 +909,7 @@ impl BladeRenderer {
                         ShaderInstance::pack_instances(
                             instance_buf.data(),
                             instances,
+                            &scene.shader_data,
                             *instance_data_size,
                             *instance_data_align,
                         )

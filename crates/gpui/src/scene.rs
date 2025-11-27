@@ -3,7 +3,6 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, CustomShaderId, Edges,
@@ -33,6 +32,7 @@ pub(crate) struct Scene {
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) shaders: Vec<ShaderInstance>,
+    pub(crate) shader_data: Vec<u8>,
     pub(crate) surfaces: Vec<PaintSurface>,
 }
 
@@ -121,13 +121,41 @@ impl Scene {
             .push(PaintOperation::Primitive(primitive));
     }
 
+    pub fn push_shader_data(&mut self, data: &[u8]) -> Range<usize> {
+        let range = self.shader_data.len()..self.shader_data.len() + data.len();
+        self.shader_data.extend_from_slice(data);
+        range
+    }
+
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        let mut shader_data_range: Option<Range<usize>> = None;
+        let mut shader_data_tail = self.shader_data.len();
+
         for operation in &prev_scene.paint_operations[range] {
             match operation {
+                PaintOperation::Primitive(Primitive::Shader(shader_instance)) => {
+                    if let Some(shader_data_range) = shader_data_range.as_mut() {
+                        shader_data_range.end = shader_instance.data_range.end;
+                    } else {
+                        shader_data_range = Some(shader_instance.data_range.clone());
+                    }
+
+                    let mut shader_instance = shader_instance.clone();
+                    shader_instance.data_range =
+                        shader_data_tail..shader_data_tail + shader_instance.data_range.len();
+                    shader_data_tail += shader_instance.data_range.len();
+
+                    self.insert_primitive(shader_instance);
+                }
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
+        }
+
+        if let Some(shader_data_range) = shader_data_range {
+            self.shader_data
+                .extend_from_slice(&prev_scene.shader_data[shader_data_range]);
         }
     }
 
@@ -714,7 +742,7 @@ pub(crate) struct ShaderInstance {
     pub order: DrawOrder,
     pub shader_id: CustomShaderId,
     pub base_data: ShaderInstanceBase,
-    pub data: SmallVec<[u8; 64]>,
+    pub data_range: Range<usize>,
 }
 
 #[allow(unused)]
@@ -734,6 +762,7 @@ impl ShaderInstance {
     pub unsafe fn pack_instances(
         buffer: *mut u8,
         instances: &[Self],
+        data_buffer: &[u8],
         data_size: usize,
         data_align: usize,
     ) {
@@ -751,9 +780,9 @@ impl ShaderInstance {
                 std::ptr::copy_nonoverlapping(src, dst, size_of::<ShaderInstanceBase>());
 
                 if data_size > 0 {
-                    debug_assert_eq!(data_size, instance.data.len());
+                    debug_assert_eq!(data_size, instance.data_range.len());
 
-                    let src = instance.data.as_ptr();
+                    let src = data_buffer[instance.data_range.clone()].as_ptr();
                     let dst = dst.add(data_offset);
                     std::ptr::copy_nonoverlapping(src, dst, data_size);
                 }

@@ -633,6 +633,7 @@ impl MetalRenderer {
                 ),
                 PrimitiveBatch::Shaders(shaders) => self.draw_custom_shaders(
                     shaders,
+                    &scene.shader_data,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
@@ -1182,6 +1183,7 @@ impl MetalRenderer {
     fn draw_custom_shaders(
         &mut self,
         instances: &[ShaderInstance],
+        shader_data: &[u8],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
@@ -1248,6 +1250,7 @@ impl MetalRenderer {
             ShaderInstance::pack_instances(
                 buffer_contents,
                 instances,
+                shader_data,
                 *instance_data_size,
                 *instance_data_align,
             );
