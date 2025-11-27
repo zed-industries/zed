@@ -1216,6 +1216,15 @@
   //
   // Default: true
   "word_diff_enabled": true,
+  // Whether to use AST-aware syntax diffing for word highlights.
+  //
+  // When enabled and a language grammar is available, uses tree-sitter
+  // to parse and diff syntax trees for more accurate change detection.
+  // Falls back to token-based word diffing if syntax diffing fails or
+  // the language doesn't have a grammar.
+  //
+  // Default: false
+  "syntax_diff_enabled": false,
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.

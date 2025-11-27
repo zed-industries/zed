@@ -96,6 +96,27 @@ struct InternalDiffHunk {
     buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
+impl InternalDiffHunk {
+    fn equivalent(&self, other: &Self, snapshot: &text::BufferSnapshot) -> bool {
+        self.buffer_range
+            .start
+            .cmp(&other.buffer_range.start, snapshot)
+            == Ordering::Equal
+            && self.buffer_range.end.cmp(&other.buffer_range.end, snapshot) == Ordering::Equal
+            && self.diff_base_byte_range == other.diff_base_byte_range
+            && self.base_word_diffs == other.base_word_diffs
+            && self.buffer_word_diffs.len() == other.buffer_word_diffs.len()
+            && self
+                .buffer_word_diffs
+                .iter()
+                .zip(other.buffer_word_diffs.iter())
+                .all(|(a, b)| {
+                    a.start.cmp(&b.start, snapshot) == Ordering::Equal
+                        && a.end.cmp(&b.end, snapshot) == Ordering::Equal
+                })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingHunk {
     buffer_range: Range<Anchor>,
@@ -735,7 +756,7 @@ impl BufferDiffInner {
                             new_cursor.next();
                         }
                         Ordering::Equal => {
-                            if new_hunk != old_hunk {
+                            if !new_hunk.equivalent(old_hunk, new_snapshot) {
                                 start.get_or_insert(new_hunk.buffer_range.start);
                                 if old_hunk
                                     .buffer_range
@@ -794,13 +815,13 @@ fn build_diff_options(
         }
     }
 
-    language_settings(language, file, cx)
-        .word_diff_enabled
-        .then_some(DiffOptions {
-            language_scope,
-            max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
-            ..Default::default()
-        })
+    let settings = language_settings(language, file, cx);
+    settings.word_diff_enabled.then_some(DiffOptions {
+        language_scope,
+        max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+        syntax_aware: settings.syntax_diff_enabled,
+        ..Default::default()
+    })
 }
 
 fn compute_hunks(
@@ -945,37 +966,55 @@ fn process_patch_hunk(
         .len()
         .max(line_item_count.saturating_sub(buffer_row_range.len()));
 
+    // Use different line count limits for syntax vs word diffing.
+    // For syntax diff, we always attempt the diff regardless of size since:
+    // 1. The ast_diff crate has its own graph limit to handle complexity
+    // 2. We want consistent semantic diffing like difftastic provides
+    // For word diff, we still apply the line count limit to avoid performance issues
     let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
         && !diff_base_byte_range.is_empty()
         && !buffer_row_range.is_empty()
-        && diff_options.max_word_diff_line_count >= largest_diff_line_count
     {
-        let base_text: String = diff_base
-            .chunks_in_range(diff_base_byte_range.clone())
-            .collect();
+        // Syntax diff always runs - it has its own complexity limits via graph_limit.
+        // Word diff is limited to avoid performance issues with large hunks.
+        let should_skip = !diff_options.syntax_aware
+            && diff_options.max_word_diff_line_count < largest_diff_line_count;
 
-        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
+        if should_skip {
+            log::debug!(
+                "Skipping word diff for hunk with {} lines (limit: {})",
+                largest_diff_line_count,
+                diff_options.max_word_diff_line_count
+            );
+            (Vec::default(), Vec::default())
+        } else {
+            let base_text: String = diff_base
+                .chunks_in_range(diff_base_byte_range.clone())
+                .collect();
 
-        let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
-            &base_text,
-            &buffer_text,
-            DiffOptions {
-                language_scope: diff_options.language_scope.clone(),
-                ..*diff_options
-            },
-        );
+            let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
-        let buffer_start_offset = buffer_range.start.to_offset(buffer);
-        let buffer_word_diffs = buffer_word_diffs_relative
-            .into_iter()
-            .map(|range| {
-                let start = buffer.anchor_after(buffer_start_offset + range.start);
-                let end = buffer.anchor_after(buffer_start_offset + range.end);
-                start..end
-            })
-            .collect();
+            let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
+                &base_text,
+                &buffer_text,
+                DiffOptions {
+                    language_scope: diff_options.language_scope.clone(),
+                    ..*diff_options
+                },
+            );
 
-        (base_word_diffs, buffer_word_diffs)
+            let buffer_start_offset = buffer_range.start.to_offset(buffer);
+            let buffer_word_diffs = buffer_word_diffs_relative
+                .into_iter()
+                .map(|range| {
+                    let start = buffer.anchor_after(buffer_start_offset + range.start);
+                    let end = buffer.anchor_after(buffer_start_offset + range.end);
+                    start..end
+                })
+                .collect();
+
+            (base_word_diffs, buffer_word_diffs)
+        }
     } else {
         (Vec::default(), Vec::default())
     };

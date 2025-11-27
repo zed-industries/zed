@@ -914,6 +914,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ast_diff"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "hashbrown 0.15.5",
+ "log",
+ "pretty_assertions",
+ "radix-heap",
+ "rustc-hash 2.1.1",
+ "smallvec",
+ "strsim",
+ "tree-sitter",
+ "tree-sitter-json",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "wu-diff",
+]
+
+[[package]]
 name = "async-attributes"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8767,6 +8787,7 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ast_diff",
  "async-trait",
  "clock",
  "collections",
@@ -13544,6 +13565,12 @@ name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
+
+[[package]]
+name = "radix-heap"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ffec9df464013295b499298811e6a3de31bf8128092135826517db12dee601"
 
 [[package]]
 name = "rand"
@@ -20829,6 +20856,12 @@ name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea2f10b9bb0928dfb1b42b65e1f9e36f7f54dbdf08457afefb38afcdec4fa2bb"
+
+[[package]]
+name = "wu-diff"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e3e6735fcde06432870db8dc9d7e3ab1b93727c14eaef329969426299f28893"
 
 [[package]]
 name = "wyz"

@@ -160,6 +160,15 @@ pub struct LanguageSettings {
     ///
     /// Default: `true`
     pub word_diff_enabled: bool,
+    /// Whether to use AST-aware syntax diffing for word highlights.
+    ///
+    /// When enabled and a language grammar is available, uses tree-sitter
+    /// to parse and diff syntax trees for more accurate change detection.
+    /// Falls back to token-based word diffing if syntax diffing fails or
+    /// the language doesn't have a grammar.
+    ///
+    /// Default: `false`
+    pub syntax_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -603,6 +612,7 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 debuggers: settings.debuggers.unwrap(),
                 word_diff_enabled: settings.word_diff_enabled.unwrap(),
+                syntax_diff_enabled: settings.syntax_diff_enabled.unwrap(),
             }
         }
 
