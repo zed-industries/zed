@@ -218,3 +218,27 @@ message NewExternalAgentVersionAvailable {
     string name = 2;
     string version = 3;
 }
+
+// Agent activity sync for collaborative sessions
+enum AgentActivityStatus {
+    AgentIdle = 0;
+    AgentActive = 1;
+}
+
+message AgentActivity {
+    uint64 user_id = 1;
+    string agent_type = 2;  // "Anthropic", "OpenAI", "Google AI", "xAI"
+    AgentActivityStatus status = 3;
+    optional string prompt_summary = 4;
+}
+
+message UpdateAgentActivity {
+    uint64 room_id = 1;
+    AgentActivity activity = 2;
+}
+
+message AgentDocChanged {
+    uint64 room_id = 1;
+    uint64 user_id = 2;
+    string path = 3;  // relative path within .agent-docs/
+}
