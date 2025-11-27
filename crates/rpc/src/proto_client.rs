@@ -383,6 +383,13 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetDocumentSymbolsResponse(response) => {
+                            Response::PrepareCallHierarchyResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetIncomingCallsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetOutgoingCallsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };
