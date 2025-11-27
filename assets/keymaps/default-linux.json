@@ -895,8 +895,8 @@
   {
     "context": "GitPanel && ChangesList",
     "bindings": {
-      "up": "menu::SelectPrevious",
-      "down": "menu::SelectNext",
+      "up": "git_panel::PreviousEntry",
+      "down": "git_panel::NextEntry",
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "alt-shift-y": "git::UnstageFile",
