@@ -317,8 +317,6 @@ fn determine_working_directory(
                 .flatten();
             if let Some(file_path) = file_path {
                 if let Some(mut directory) = directory {
-                    // todo: toOSPATH
-                    directory = directory;
                     if Path::new(&directory).is_relative() {
                         directory = workspace_folder_path
                             .join(directory)
@@ -343,12 +341,8 @@ fn determine_working_directory(
                     if !pattern.ends_with(std::path::MAIN_SEPARATOR) {
                         pattern.push(std::path::MAIN_SEPARATOR);
                     }
-                    // Is this compatible with what VSC is running?
-                    let regex = regex::Regex::new(&pattern);
-                    if let Ok(regex) = regex
-                        && let Some(m) = regex.find(&file_path.to_string_lossy())
-                    {
-                        item_value = Some(m.as_str().to_owned());
+                    if let Some(matched) = match_glob_pattern(&pattern, &file_path) {
+                        item_value = Some(matched);
                     }
                 }
             }
@@ -374,6 +368,32 @@ fn determine_working_directory(
     working_directory
 }
 
+fn match_glob_pattern(pattern: &str, file_path: &Path) -> Option<String> {
+    use globset::GlobBuilder;
+
+    let glob = GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .ok()?
+        .compile_matcher();
+
+    let mut current = file_path.to_path_buf();
+    let mut matched: Option<String> = None;
+
+    while let Some(parent) = current.parent() {
+        let mut prefix = parent.to_string_lossy().to_string();
+        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+        if glob.is_match(&prefix) {
+            matched = Some(prefix);
+        }
+        current = parent.to_path_buf();
+    }
+
+    matched
+}
+
 #[cfg(target_os = "windows")]
 async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
     anyhow::ensure!(
@@ -394,7 +414,7 @@ async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct LegacyDirectoryItem {
     directory: String,
     #[serde(rename = "changeProcessCWD")]
@@ -408,7 +428,7 @@ struct DirectoryItem {
     not_cwd: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct PatternItem {
     pattern: String,
     #[serde(rename = "!cwd")]
@@ -427,7 +447,7 @@ enum ModeEnum {
     Location,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 enum WorkingDirectory {
     String(String),
@@ -444,4 +464,132 @@ struct WorkingDirectories(Option<Vec<WorkingDirectory>>);
 enum ResultWorkingDirectory {
     ModeItem(ModeItem),
     DirectoryItem(DirectoryItem),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_match_glob_pattern() {
+        let pattern = "/test/*/";
+        let file_path = Path::new("/test/foo/bar/file.txt");
+        let matched = match_glob_pattern(pattern, file_path);
+        assert_eq!(matched, Some("/test/foo/".to_string()));
+    }
+
+    #[test]
+    fn test_match_glob_pattern_globstar() {
+        let pattern = "/workspace/**/src/";
+        let file_path = Path::new("/workspace/packages/core/src/index.ts");
+        let matched = match_glob_pattern(pattern, file_path);
+        assert_eq!(matched, Some("/workspace/packages/core/src/".to_string()));
+    }
+
+    #[test]
+    fn test_match_glob_pattern_no_match() {
+        let pattern = "/other/*/";
+        let file_path = Path::new("/test/foo/bar/file.txt");
+        let matched = match_glob_pattern(pattern, file_path);
+        assert_eq!(matched, None);
+    }
+
+    #[test]
+    fn test_working_directory_string() {
+        let uri = make_uri("/workspace/packages/foo/src/file.ts");
+        let working_directories = vec![WorkingDirectory::String("packages/foo".to_string())];
+        let workspace_folder = PathBuf::from("/workspace");
+
+        let result = determine_working_directory(uri, working_directories, workspace_folder);
+        assert_directory_result(result, "/workspace/packages/foo/", false);
+    }
+
+    #[test]
+    fn test_working_directory_absolute_path() {
+        let uri = make_uri("/workspace/packages/foo/src/file.ts");
+        let working_directories = vec![WorkingDirectory::String(
+            "/workspace/packages/foo".to_string(),
+        )];
+        let workspace_folder = PathBuf::from("/workspace");
+
+        let result = determine_working_directory(uri, working_directories, workspace_folder);
+        assert_directory_result(result, "/workspace/packages/foo/", false);
+    }
+
+    #[test]
+    fn test_working_directory_directory_item() {
+        let uri = make_uri("/workspace/packages/foo/src/file.ts");
+        let working_directories = vec![WorkingDirectory::DirectoryItem(DirectoryItem {
+            directory: "packages/foo".to_string(),
+            not_cwd: Some(true),
+        })];
+        let workspace_folder = PathBuf::from("/workspace");
+
+        let result = determine_working_directory(uri, working_directories, workspace_folder);
+        assert_directory_result(result, "/workspace/packages/foo/", true);
+    }
+
+    #[test]
+    fn test_working_directory_legacy_item() {
+        let uri = make_uri("/workspace/packages/foo/src/file.ts");
+        let working_directories =
+            vec![WorkingDirectory::LegacyDirectoryItem(LegacyDirectoryItem {
+                directory: "packages/foo".to_string(),
+                change_process_cwd: false,
+            })];
+        let workspace_folder = PathBuf::from("/workspace");
+
+        let result = determine_working_directory(uri, working_directories, workspace_folder);
+        assert_directory_result(result, "/workspace/packages/foo/", true);
+    }
+
+    #[test]
+    fn test_working_directory_pattern_item() {
+        let uri = make_uri("/workspace/packages/foo/src/file.ts");
+        let working_directories = vec![WorkingDirectory::PatternItem(PatternItem {
+            pattern: "packages/*/".to_string(),
+            not_cwd: Some(false),
+        })];
+        let workspace_folder = PathBuf::from("/workspace");
+
+        let result = determine_working_directory(uri, working_directories, workspace_folder);
+        assert_directory_result(result, "/workspace/packages/foo/", false);
+    }
+
+    #[test]
+    fn test_working_directory_multiple_patterns() {
+        let uri = make_uri("/workspace/apps/web/src/file.ts");
+        let working_directories = vec![
+            WorkingDirectory::PatternItem(PatternItem {
+                pattern: "packages/*/".to_string(),
+                not_cwd: None,
+            }),
+            WorkingDirectory::PatternItem(PatternItem {
+                pattern: "apps/*/".to_string(),
+                not_cwd: None,
+            }),
+        ];
+        let workspace_folder = PathBuf::from("/workspace");
+
+        let result = determine_working_directory(uri, working_directories, workspace_folder);
+        assert_directory_result(result, "/workspace/apps/web/", false);
+    }
+
+    fn make_uri(path: &str) -> Uri {
+        Uri::from_file_path(path).unwrap()
+    }
+
+    fn assert_directory_result(
+        result: Option<ResultWorkingDirectory>,
+        expected_directory: &str,
+        expected_not_cwd: bool,
+    ) {
+        match result {
+            Some(ResultWorkingDirectory::DirectoryItem(item)) => {
+                assert_eq!(item.directory, expected_directory);
+                assert_eq!(item.not_cwd, Some(expected_not_cwd));
+            }
+            other => panic!("Expected DirectoryItem, got {:?}", other),
+        }
+    }
 }

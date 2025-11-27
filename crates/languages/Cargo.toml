@@ -42,6 +42,7 @@ async-trait.workspace = true
 chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
+globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 json_schema_store.workspace = true
