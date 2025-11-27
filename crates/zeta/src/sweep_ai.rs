@@ -164,6 +164,7 @@ impl SweepAi {
                 file_chunks,
                 retrieval_chunks: vec![],
                 recent_user_actions: vec![],
+                use_bytes: true,
                 // TODO
                 privacy_mode_enabled: false,
             };
@@ -275,6 +276,7 @@ struct AutocompleteRequest {
     pub multiple_suggestions: bool,
     pub privacy_mode_enabled: bool,
     pub changes_above_cursor: bool,
+    pub use_bytes: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
