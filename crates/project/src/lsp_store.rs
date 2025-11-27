@@ -2243,6 +2243,7 @@ impl LocalLspStore {
                     server_id,
                     None,
                     None,
+                    None,
                     Vec::new(),
                     diagnostics,
                     cx,
@@ -2322,6 +2323,7 @@ impl LocalLspStore {
         &mut self,
         buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
+        registration_id: Option<Option<SharedString>>,
         result_id: Option<String>,
         version: Option<i32>,
         new_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -2356,7 +2358,6 @@ impl LocalLspStore {
 
         let mut sanitized_diagnostics = Vec::with_capacity(diagnostics.len());
 
-        let mut registration_id = None;
         for (new_diagnostic, entry) in diagnostics {
             let start;
             let end;
@@ -2385,10 +2386,6 @@ impl LocalLspStore {
                     range.start.column -= 1;
                     range.start = snapshot.clip_point_utf16(Unclipped(range.start), Bias::Left);
                 }
-            }
-
-            if new_diagnostic {
-                registration_id = Some(entry.diagnostic.registration_id.clone());
             }
 
             sanitized_diagnostics.push(DiagnosticEntry {
@@ -8285,6 +8282,7 @@ impl LspStore {
                     .update_buffer_diagnostics(
                         &buffer_handle,
                         server_id,
+                        Some(update.registration_id),
                         update.result_id,
                         update.diagnostics.version,
                         update.diagnostics.diagnostics.clone(),
