@@ -1,7 +1,7 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
-use crate::{Oid, SHORT_SHA_LENGTH};
+use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -400,6 +400,7 @@ pub trait GitRepository: Send + Sync {
         path: RepoPath,
         content: Option<String>,
         env: Arc<HashMap<String, String>>,
+        is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
@@ -482,6 +483,12 @@ pub trait GitRepository: Send + Sync {
     fn unstage_paths(
         &self,
         paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn run_hook(
+        &self,
+        hook: RunHook,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -981,12 +988,15 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Option<String>,
         env: Arc<HashMap<String, String>>,
+        is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
+                let mode = if is_executable { "100755" } else { "100644" };
+
                 if let Some(content) = content {
                     let mut child = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
@@ -1007,7 +1017,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--cacheinfo", "100644", sha])
+                        .args(["update-index", "--add", "--cacheinfo", mode, sha])
                         .arg(path.as_unix_str())
                         .output()
                         .await?;
@@ -1643,6 +1653,7 @@ impl GitRepository for RealGitRepository {
                 .args(["commit", "--quiet", "-m"])
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
+                .arg("--no-verify")
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
@@ -2037,6 +2048,26 @@ impl GitRepository for RealGitRepository {
             })
             .boxed()
     }
+
+    fn run_hook(
+        &self,
+        hook: RunHook,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor)
+                    .envs(HashMap::clone(&env));
+                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                    .await?;
+                Ok(())
+            })
+            .boxed()
+    }
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
@@ -2387,22 +2418,37 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
             continue;
         }
         let mut fields = line.split('\x00');
-        let is_current_branch = fields.next().context("no HEAD")? == "*";
-        let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
-        let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
-        let ref_name = fields.next().context("no refname")?.to_string().into();
-        let upstream_name = fields.next().context("no upstream")?.to_string();
-        let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
-        let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
-        let author_name = fields.next().context("no authorname")?.to_string().into();
-        let subject: SharedString = fields
-            .next()
-            .context("no contents:subject")?
-            .to_string()
-            .into();
+        let Some(head) = fields.next() else {
+            continue;
+        };
+        let Some(head_sha) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(parent_sha) = fields.next().map(|f| f.to_string()) else {
+            continue;
+        };
+        let Some(ref_name) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(upstream_name) = fields.next().map(|f| f.to_string()) else {
+            continue;
+        };
+        let Some(upstream_tracking) = fields.next().and_then(|f| parse_upstream_track(f).ok())
+        else {
+            continue;
+        };
+        let Some(commiterdate) = fields.next().and_then(|f| f.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(author_name) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
+        let Some(subject) = fields.next().map(|f| f.to_string().into()) else {
+            continue;
+        };
 
         branches.push(Branch {
-            is_head: is_current_branch,
+            is_head: head == "*",
             ref_name,
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
@@ -2741,6 +2787,44 @@ mod tests {
                     has_parent: false,
                 })
             }]
+        )
+    }
+
+    #[test]
+    fn test_branches_parsing_containing_refs_with_missing_fields() {
+        #[allow(clippy::octal_escapes)]
+        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0refs/heads/broken\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\0\01762948725\0Zed\0Add feature\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\0\01762948695\0Zed\0Initial commit\n";
+
+        let branches = parse_branch_input(input).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert_eq!(
+            branches,
+            vec![
+                Branch {
+                    is_head: false,
+                    ref_name: "refs/heads/dev".into(),
+                    upstream: None,
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "eb0cae33272689bd11030822939dd2701c52f81e".into(),
+                        subject: "Add feature".into(),
+                        commit_timestamp: 1762948725,
+                        author_name: SharedString::new("Zed"),
+                        has_parent: true,
+                    })
+                },
+                Branch {
+                    is_head: true,
+                    ref_name: "refs/heads/main".into(),
+                    upstream: None,
+                    most_recent_commit: Some(CommitSummary {
+                        sha: "895951d681e5561478c0acdd6905e8aacdfd2249".into(),
+                        subject: "Initial commit".into(),
+                        commit_timestamp: 1762948695,
+                        author_name: SharedString::new("Zed"),
+                        has_parent: false,
+                    })
+                }
+            ]
         )
     }
 

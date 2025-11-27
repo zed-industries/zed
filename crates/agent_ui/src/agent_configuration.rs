@@ -1,5 +1,5 @@
 mod add_llm_provider_modal;
-mod configure_context_server_modal;
+pub mod configure_context_server_modal;
 mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -12,7 +12,7 @@ use client::zed_urls;
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
-use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
@@ -46,9 +46,8 @@ pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
-use crate::{
-    AddContextServer,
-    agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+use crate::agent_configuration::add_llm_provider_modal::{
+    AddLlmProviderModal, LlmCompatibleProvider,
 };
 
 pub struct AgentConfiguration {
@@ -553,7 +552,9 @@ impl AgentConfiguration {
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Add Custom Server", None, {
-                            |window, cx| window.dispatch_action(AddContextServer.boxed_clone(), cx)
+                            |window, cx| {
+                                window.dispatch_action(crate::AddContextServer.boxed_clone(), cx)
+                            }
                         })
                         .entry("Install from Extensions", None, {
                             |window, cx| {
@@ -651,7 +652,7 @@ impl AgentConfiguration {
         let is_running = matches!(server_status, ContextServerStatus::Running);
         let item_id = SharedString::from(context_server_id.0.clone());
         // Servers without a configuration can only be provided by extensions.
-        let provided_by_extension = server_configuration.is_none_or(|config| {
+        let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
             matches!(
                 config.as_ref(),
                 ContextServerConfiguration::Extension { .. }
@@ -707,7 +708,10 @@ impl AgentConfiguration {
                 "Server is stopped.",
             ),
         };
-
+        let is_remote = server_configuration
+            .as_ref()
+            .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
+            .unwrap_or(false);
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
@@ -730,14 +734,25 @@ impl AgentConfiguration {
                             let language_registry = language_registry.clone();
                             let workspace = workspace.clone();
                             move |window, cx| {
-                                ConfigureContextServerModal::show_modal_for_existing_server(
-                                    context_server_id.clone(),
-                                    language_registry.clone(),
-                                    workspace.clone(),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
+                                if is_remote {
+                                    crate::agent_configuration::configure_context_server_modal::ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                                } else {
+                                    ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                                }
                             }
                         }).when(tool_count > 0, |this| this.entry("View Tools", None, {
                             let context_server_id = context_server_id.clone();
@@ -1194,7 +1209,7 @@ impl Render for AgentConfiguration {
                             .child(self.render_context_servers_section(window, cx))
                             .child(self.render_provider_configuration_section(cx)),
                     )
-                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
@@ -1328,11 +1343,12 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         .custom
                         .insert(
                             server_name,
-                            settings::CustomAgentServerSettings {
+                            settings::CustomAgentServerSettings::Custom {
                                 path: "path_to_executable".into(),
                                 args: vec![],
                                 env: Some(HashMap::default()),
                                 default_mode: None,
+                                default_model: None,
                             },
                         );
                 }
@@ -1347,7 +1363,15 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                 .map(|(range, _)| range.clone())
                 .collect::<Vec<_>>();
 
-            item.edit(edits, cx);
+            item.edit(
+                edits.into_iter().map(|(range, s)| {
+                    (
+                        MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
+                        s,
+                    )
+                }),
+                cx,
+            );
             if let Some((unique_server_name, buffer)) =
                 unique_server_name.zip(item.buffer().read(cx).as_singleton())
             {
@@ -1360,7 +1384,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         window,
                         cx,
                         |selections| {
-                            selections.select_ranges(vec![range]);
+                            selections.select_ranges(vec![
+                                MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
+                            ]);
                         },
                     );
                 }

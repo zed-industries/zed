@@ -249,10 +249,15 @@ impl PasswordProxy {
         fs::write(&askpass_script_path, askpass_script)
             .await
             .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
-        make_file_executable(&askpass_script_path).await?;
+        make_file_executable(&askpass_script_path)
+            .await
+            .with_context(|| {
+                format!("marking askpass script executable at {askpass_script_path:?}")
+            })?;
+        // todo(shell): There might be no powershell on the system
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
-            "powershell.exe -ExecutionPolicy Bypass -File {}",
+            "powershell.exe -ExecutionPolicy Bypass -File '{}'",
             askpass_script_path.display()
         );
 
@@ -374,7 +379,7 @@ fn generate_askpass_script(
     Ok(format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & {askpass_program} --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
     ))
 }

@@ -25,7 +25,7 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, Oid,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, RunHook,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -48,7 +48,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
-use pending_op::{PendingOp, PendingOpId, PendingOps};
+use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -255,7 +255,6 @@ pub struct MergeDetails {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
-    pub pending_ops_by_path: SumTree<PendingOps>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -285,6 +284,7 @@ pub struct Repository {
     paths_needing_status_update: BTreeSet<RepoPath>,
     job_sender: mpsc::UnboundedSender<GitJob>,
     active_jobs: HashMap<JobId, JobInfo>,
+    pending_ops: SumTree<PendingOps>,
     job_id: JobId,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
@@ -301,6 +301,7 @@ impl std::ops::Deref for Repository {
 #[derive(Clone)]
 pub enum RepositoryState {
     Local {
+        fs: Arc<dyn Fs>,
         backend: Arc<dyn GitRepository>,
         environment: Arc<HashMap<String, String>>,
     },
@@ -312,16 +313,11 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    StatusesChanged {
-        // TODO could report which statuses changed here
-        full_scan: bool,
-    },
+    StatusesChanged,
     MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
-    PendingOpsChanged {
-        pending_ops: SumTree<pending_op::PendingOps>,
-    },
+    PendingOpsChanged { pending_ops: SumTree<PendingOps> },
 }
 
 #[derive(Clone, Debug)]
@@ -438,6 +434,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_stash_apply);
         client.add_entity_request_handler(Self::handle_stash_drop);
         client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
@@ -1987,6 +1984,22 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_run_hook(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RunGitHook>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let hook = RunHook::from_proto(envelope.payload.hook).context("invalid hook")?;
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.run_hook(hook, cx)
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
     async fn handle_commit(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Commit>,
@@ -3065,7 +3078,6 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
-            pending_ops_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3193,12 +3205,6 @@ impl RepositorySnapshot {
             .cloned()
     }
 
-    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<PendingOps> {
-        self.pending_ops_by_path
-            .get(&PathKey(path.as_ref().clone()), ())
-            .cloned()
-    }
-
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
@@ -3216,10 +3222,8 @@ impl RepositorySnapshot {
         abs_path: &Path,
         path_style: PathStyle,
     ) -> Option<RepoPath> {
-        abs_path
-            .strip_prefix(&work_directory_abs_path)
-            .ok()
-            .and_then(|path| RepoPath::from_std_path(path, path_style).ok())
+        let rel_path = path_style.strip_prefix(abs_path, work_directory_abs_path)?;
+        Some(RepoPath::from_rel_path(&rel_path))
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
@@ -3334,6 +3338,20 @@ impl Repository {
         self.snapshot.clone()
     }
 
+    pub fn pending_ops(&self) -> impl Iterator<Item = PendingOps> + '_ {
+        self.pending_ops.iter().cloned()
+    }
+
+    pub fn pending_ops_summary(&self) -> PathSummary<PendingOpsSummary> {
+        self.pending_ops.summary().clone()
+    }
+
+    pub fn pending_ops_for_path(&self, path: &RepoPath) -> Option<PendingOps> {
+        self.pending_ops
+            .get(&PathKey(path.as_ref().clone()), ())
+            .cloned()
+    }
+
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
@@ -3351,6 +3369,7 @@ impl Repository {
             this: cx.weak_entity(),
             git_store,
             snapshot,
+            pending_ops: Default::default(),
             commit_message_buffer: None,
             askpass_delegates: Default::default(),
             paths_needing_status_update: Default::default(),
@@ -3384,6 +3403,7 @@ impl Repository {
             snapshot,
             commit_message_buffer: None,
             git_store,
+            pending_ops: Default::default(),
             paths_needing_status_update: Default::default(),
             job_sender: Self::spawn_remote_git_worker(project_id, client, cx),
             askpass_delegates: Default::default(),
@@ -4060,7 +4080,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_staged() {
+                } else if entry.status.staging().is_fully_staged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4080,7 +4100,7 @@ impl Repository {
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().has_unstaged() {
+                } else if entry.status.staging().is_fully_unstaged() {
                     None
                 } else {
                     Some(entry.repo_path)
@@ -4258,19 +4278,50 @@ impl Repository {
         })
     }
 
+    pub fn run_hook(&mut self, hook: RunHook, _cx: &mut App) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git hook {}", hook.as_str()).into()),
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local {
+                        backend,
+                        environment,
+                        ..
+                    } => backend.run_hook(hook, environment.clone()).await,
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::RunGitHook {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                hook: hook.to_proto(),
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn commit(
         &mut self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
+        let rx = self.run_hook(RunHook::PreCommit, cx);
+
         self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
+            rx.await??;
+
             match git_repo {
                 RepositoryState::Local {
                     backend,
@@ -4529,6 +4580,7 @@ impl Repository {
         let id = self.id;
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
+        let abs_path = self.snapshot.repo_path_to_abs_path(&path);
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(vec![path.clone()])),
             None,
@@ -4537,14 +4589,21 @@ impl Repository {
                     "start updating index text for buffer {}",
                     path.as_unix_str()
                 );
+
                 match git_repo {
                     RepositoryState::Local {
+                        fs,
                         backend,
                         environment,
                         ..
                     } => {
+                        let executable = match fs.metadata(&abs_path).await {
+                            Ok(Some(meta)) => meta.is_executable,
+                            Ok(None) => false,
+                            Err(_err) => false,
+                        };
                         backend
-                            .set_index_text(path.clone(), content, environment.clone())
+                            .set_index_text(path.clone(), content, environment.clone(), executable)
                             .await?;
                     }
                     RepositoryState::Remote { project_id, client } => {
@@ -4989,12 +5048,13 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         if !edits.is_empty() {
-            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+            cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
+        self.clear_pending_ops(cx);
         Ok(())
     }
 
@@ -5030,6 +5090,32 @@ impl Repository {
         })
     }
 
+    fn clear_pending_ops(&mut self, cx: &mut Context<Self>) {
+        let updated = SumTree::from_iter(
+            self.pending_ops.iter().filter_map(|ops| {
+                let inner_ops: Vec<PendingOp> =
+                    ops.ops.iter().filter(|op| op.running()).cloned().collect();
+                if inner_ops.is_empty() {
+                    None
+                } else {
+                    Some(PendingOps {
+                        repo_path: ops.repo_path.clone(),
+                        ops: inner_ops,
+                    })
+                }
+            }),
+            (),
+        );
+
+        if updated != self.pending_ops {
+            cx.emit(RepositoryEvent::PendingOpsChanged {
+                pending_ops: self.pending_ops.clone(),
+            })
+        }
+
+        self.pending_ops = updated;
+    }
+
     fn schedule_scan(
         &mut self,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
@@ -5061,6 +5147,7 @@ impl Repository {
                     .await?;
                 this.update(&mut cx, |this, cx| {
                     this.snapshot = snapshot.clone();
+                    this.clear_pending_ops(cx);
                     for event in events {
                         cx.emit(event);
                     }
@@ -5085,6 +5172,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+        let fs_cloned = fs.clone();
 
         cx.spawn(async move |_, cx| {
             let environment = project_environment
@@ -5116,8 +5204,8 @@ impl Repository {
                     backend.clone(),
                 );
             }
-
             let state = RepositoryState::Local {
+                fs: fs_cloned,
                 backend,
                 environment: Arc::new(environment),
             };
@@ -5343,7 +5431,7 @@ impl Repository {
                     }
 
                     if !changed_path_statuses.is_empty() {
-                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
+                        cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
@@ -5393,14 +5481,18 @@ impl Repository {
             this.update(cx, |this, _| {
                 let mut edits = Vec::with_capacity(ids.len());
                 for (id, entry) in ids {
-                    if let Some(mut ops) = this.snapshot.pending_ops_for_path(&entry) {
+                    if let Some(mut ops) = this
+                        .pending_ops
+                        .get(&PathKey(entry.as_ref().clone()), ())
+                        .cloned()
+                    {
                         if let Some(op) = ops.op_by_id_mut(id) {
                             op.job_status = job_status;
                         }
                         edits.push(sum_tree::Edit::Insert(ops));
                     }
                 }
-                this.snapshot.pending_ops_by_path.edit(edits, ());
+                this.pending_ops.edit(edits, ());
             })?;
 
             result
@@ -5416,8 +5508,9 @@ impl Repository {
         let mut ids = Vec::with_capacity(paths.len());
         for path in paths {
             let mut ops = self
-                .snapshot
-                .pending_ops_for_path(&path)
+                .pending_ops
+                .get(&PathKey(path.as_ref().clone()), ())
+                .cloned()
                 .unwrap_or_else(|| PendingOps::new(&path));
             let id = ops.max_id() + 1;
             ops.ops.push(PendingOp {
@@ -5428,7 +5521,7 @@ impl Repository {
             edits.push(sum_tree::Edit::Insert(ops));
             ids.push((id, path));
         }
-        self.snapshot.pending_ops_by_path.edit(edits, ());
+        self.pending_ops.edit(edits, ());
         ids
     }
 }
@@ -5698,34 +5791,12 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    let pending_ops_by_path = SumTree::from_iter(
-        prev_snapshot.pending_ops_by_path.iter().filter_map(|ops| {
-            let inner_ops: Vec<PendingOp> =
-                ops.ops.iter().filter(|op| op.running()).cloned().collect();
-            if inner_ops.is_empty() {
-                None
-            } else {
-                Some(PendingOps {
-                    repo_path: ops.repo_path.clone(),
-                    ops: inner_ops,
-                })
-            }
-        }),
-        (),
-    );
-
-    if pending_ops_by_path != prev_snapshot.pending_ops_by_path {
-        events.push(RepositoryEvent::PendingOpsChanged {
-            pending_ops: prev_snapshot.pending_ops_by_path.clone(),
-        })
-    }
-
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
     if statuses_by_path != prev_snapshot.statuses_by_path {
-        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
+        events.push(RepositoryEvent::StatusesChanged)
     }
 
     // Useful when branch is None in detached head state
@@ -5745,7 +5816,6 @@ async fn compute_snapshot(
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
-        pending_ops_by_path,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,

@@ -19,7 +19,7 @@ use git::{
     status::FileStatus,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
@@ -383,12 +383,8 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
         if !ranges.iter().any(|range| range.start != range.end) {
             selection = false;
-            if let Some((excerpt_id, buffer, range)) = self.editor.read(cx).active_excerpt(cx) {
-                ranges = vec![multi_buffer::Anchor::range_in_buffer(
-                    excerpt_id,
-                    buffer.read(cx).remote_id(),
-                    range,
-                )];
+            if let Some((excerpt_id, _, range)) = self.editor.read(cx).active_excerpt(cx) {
+                ranges = vec![multi_buffer::Anchor::range_in_buffer(excerpt_id, range)];
             } else {
                 ranges = Vec::default();
             }
@@ -488,7 +484,11 @@ impl ProjectDiff {
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
         let diff_hunk_ranges = diff_read
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+            .hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(diff_read.buffer_id),
+                &snapshot,
+                cx,
+            )
             .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
@@ -520,7 +520,8 @@ impl ProjectDiff {
             if was_empty {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     // TODO select the very beginning (possibly inside a deletion)
-                    selections.select_ranges([0..0])
+                    selections
+                        .select_ranges([multi_buffer::Anchor::min()..multi_buffer::Anchor::min()])
                 });
             }
             if is_excerpt_newly_added
@@ -774,11 +775,11 @@ impl Item for ProjectDiff {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

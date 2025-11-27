@@ -210,10 +210,15 @@ fn find_target(
         .map_or(false, |ch| ch.is_ascii_hexdigit());
     let mut pre_char = String::new();
 
+    let next_offset = offset
+        + snapshot
+            .chars_at(start_offset)
+            .next()
+            .map_or(0, |ch| ch.len_utf8());
     // Backward scan to find the start of the number, but stop at start_offset
-    for ch in snapshot.reversed_chars_at(offset + 1) {
+    for ch in snapshot.reversed_chars_at(next_offset) {
         // Search boundaries
-        if offset == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
+        if offset.0 == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
             break;
         }
 
@@ -818,6 +823,14 @@ mod test {
         cx.set_state("trueˇ 1 2 3", Mode::Normal);
         cx.simulate_keystrokes("ctrl-a");
         cx.assert_state("true ˇ2 2 3", Mode::Normal);
+
+        cx.set_state("falseˇ", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("truˇe", Mode::Normal);
+
+        cx.set_state("⚡️ˇ⚡️", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("⚡️ˇ⚡️", Mode::Normal);
     }
 
     #[gpui::test]

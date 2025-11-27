@@ -4,14 +4,13 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod completion_provider;
 mod context;
-mod context_picker;
 mod context_server_configuration;
-mod context_store;
-mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
+mod mention_set;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
@@ -35,10 +34,9 @@ use language::{
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
-use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,8 +55,6 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
-        /// Toggles the context picker interface for adding files, symbols, or other context.
-        ToggleContextPicker,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
@@ -71,10 +67,10 @@ actions!(
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
-        /// Removes all added context from the current conversation.
-        RemoveAllContext,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Removes all thread history.
+        RemoveHistory,
         /// Opens the conversation history view.
         OpenHistory,
         /// Adds a context server to the configuration.
@@ -95,10 +91,6 @@ actions!(
         FocusLeft,
         /// Moves focus right in the interface.
         FocusRight,
-        /// Removes the currently focused context item.
-        RemoveFocusedContext,
-        /// Accepts the suggested context item.
-        AcceptSuggestedContext,
         /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
@@ -162,18 +154,7 @@ pub enum ExternalAgent {
     ClaudeCode,
     Codex,
     NativeAgent,
-    Custom {
-        name: SharedString,
-        command: AgentServerCommand,
-    },
-}
-
-fn placeholder_command() -> AgentServerCommand {
-    AgentServerCommand {
-        path: "/placeholder".into(),
-        args: vec![],
-        env: None,
-    }
+    Custom { name: SharedString },
 }
 
 impl ExternalAgent {
@@ -197,9 +178,7 @@ impl ExternalAgent {
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, command: _ } => {
-                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
-            }
+            Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
 }
@@ -233,11 +212,6 @@ impl ModelUsageContext {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
         }
-    }
-
-    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.configured_model(cx)
-            .map(|configured_model| configured_model.model)
     }
 }
 
@@ -346,7 +320,9 @@ fn update_command_palette_filter(cx: &mut App) {
                     filter.show_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
-                EditPredictionProvider::Zed | EditPredictionProvider::Codestral => {
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Codestral
+                | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.hide_namespace("supermaven");

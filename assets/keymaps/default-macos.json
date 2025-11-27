@@ -49,8 +49,7 @@
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
-      "ctrl-cmd-l": "lsp_tool::ToggleMenu",
-      "cmd-alt-.": "project_panel::ToggleHideHidden"
+      "ctrl-cmd-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -279,13 +278,11 @@
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
-      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
-      "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
@@ -313,7 +310,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
-      "cmd-alt-t": "agent::NewThread"
+      "cmd-alt-n": "agent::NewExternalAgentThread"
     }
   },
   {
@@ -364,18 +361,6 @@
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
       "alt-enter": "editor::Newline"
-    }
-  },
-  {
-    "context": "ContextStrip",
-    "use_key_equivalents": true,
-    "bindings": {
-      "up": "agent::FocusUp",
-      "right": "agent::FocusRight",
-      "left": "agent::FocusLeft",
-      "down": "agent::FocusDown",
-      "backspace": "agent::RemoveFocusedContext",
-      "enter": "agent::AcceptSuggestedContext"
     }
   },
   {
@@ -890,9 +875,7 @@
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-alt-/": "agent::ToggleModelSelector",
-      "cmd-alt-e": "agent::RemoveAllContext",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist"
     }
@@ -936,6 +919,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
+      "cmd-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
       "cmd-n": "project_panel::NewFile",
       "cmd-d": "project_panel::Duplicate",
@@ -1234,23 +1218,23 @@
     }
   },
   {
-    "context": "RateCompletionModal",
+    "context": "RatePredictionsModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
-      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion",
+      "cmd-shift-enter": "zeta::ThumbsUpActivePrediction",
+      "cmd-shift-backspace": "zeta::ThumbsDownActivePrediction",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
-      "right": "zeta::PreviewCompletion"
+      "right": "zeta::PreviewPrediction"
     }
   },
   {
-    "context": "RateCompletionModal > Editor",
+    "context": "RatePredictionsModal > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "escape": "zeta::FocusCompletions",
-      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
-      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
+      "escape": "zeta::FocusPredictions",
+      "cmd-shift-enter": "zeta::ThumbsUpActivePrediction",
+      "cmd-shift-backspace": "zeta::ThumbsDownActivePrediction"
     }
   },
   {
@@ -1356,9 +1340,23 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetUiFontSize", { "persist": false }],
       "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
+    }
+  },
+  {
+    "context": "Welcome",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetUiFontSize", { "persist": false }]
     }
   },
   {

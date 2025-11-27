@@ -15,7 +15,7 @@ use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsContent, SettingsStore};
+use settings::{Settings, SettingsContent, SettingsStore, initial_project_settings_content};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -35,7 +35,7 @@ use ui::{
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
-use zed_actions::{OpenSettings, OpenSettingsAt};
+use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
     EnumVariantDropdown, SettingsInputField, font_picker, icon_theme_picker, theme_picker,
@@ -379,42 +379,55 @@ pub fn init(cx: &mut App) {
     init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action(
-            |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+        workspace
+            .register_action(
+                |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+                    let window_handle = window
+                        .window_handle()
+                        .downcast::<Workspace>()
+                        .expect("Workspaces are root Windows");
+                    open_settings_editor(workspace, Some(&path), false, window_handle, cx);
+                },
+            )
+            .register_action(|workspace, _: &OpenSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
                     .downcast::<Workspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, Some(&path), window_handle, cx);
-            },
-        );
-    })
-    .detach();
-
-    cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action(|workspace, _: &OpenSettings, window, cx| {
-            let window_handle = window
-                .window_handle()
-                .downcast::<Workspace>()
-                .expect("Workspaces are root Windows");
-            open_settings_editor(workspace, None, window_handle, cx);
-        });
+                open_settings_editor(workspace, None, false, window_handle, cx);
+            })
+            .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
+                let window_handle = window
+                    .window_handle()
+                    .downcast::<Workspace>()
+                    .expect("Workspaces are root Windows");
+                open_settings_editor(workspace, None, true, window_handle, cx);
+            });
     })
     .detach();
 }
 
 fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
-        .add_basic_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
-            Button::new("open-in-settings-file", "Edit in settings.json")
-                .style(ButtonStyle::Outlined)
-                .size(ButtonSize::Medium)
-                .tab_index(0_isize)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(OpenCurrentFile), cx);
-                })
-                .into_any_element()
-        })
+        .add_renderer::<UnimplementedSettingField>(
+            |settings_window, item, _, settings_file, _, sub_field, _, cx| {
+                render_settings_item(
+                    settings_window,
+                    item,
+                    settings_file,
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .tab_index(0_isize)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
+                        }))
+                        .into_any_element(),
+                    sub_field,
+                    cx,
+                )
+            },
+        )
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
@@ -439,6 +452,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
@@ -447,6 +461,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelSortMode>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
@@ -493,12 +508,12 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
-        .add_basic_renderer::<settings::MaybeDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
         .add_basic_renderer::<settings::ShowIndentGuides>(render_dropdown)
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
+        .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -506,6 +521,7 @@ fn init_renderers(cx: &mut App) {
 pub fn open_settings_editor(
     _workspace: &mut Workspace,
     path: Option<&str>,
+    open_project_settings: bool,
     workspace_handle: WindowHandle<Workspace>,
     cx: &mut App,
 ) {
@@ -514,6 +530,8 @@ pub fn open_settings_editor(
     /// Assumes a settings GUI window is already open
     fn open_path(
         path: &str,
+        // Note: This option is unsupported right now
+        _open_project_settings: bool,
         settings_window: &mut SettingsWindow,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -540,7 +558,17 @@ pub fn open_settings_editor(
                 settings_window.original_window = Some(workspace_handle);
                 window.activate_window();
                 if let Some(path) = path {
-                    open_path(path, settings_window, window, cx);
+                    open_path(path, open_project_settings, settings_window, window, cx);
+                } else if open_project_settings {
+                    if let Some(file_index) = settings_window
+                        .files
+                        .iter()
+                        .position(|(file, _)| file.worktree_id().is_some())
+                    {
+                        settings_window.change_file(file_index, window, cx);
+                    }
+
+                    cx.notify();
                 }
             })
             .ok();
@@ -579,7 +607,10 @@ pub fn open_settings_editor(
                 window_background: cx.theme().window_background_appearance(),
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
-                window_min_size: Some(scaled_bounds),
+                window_min_size: Some(gpui::Size {
+                    width: px(360.0),
+                    height: px(240.0),
+                }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },
@@ -588,7 +619,17 @@ pub fn open_settings_editor(
                     cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
-                        open_path(&path, settings_window, window, cx);
+                        open_path(&path, open_project_settings, settings_window, window, cx);
+                    } else if open_project_settings {
+                        if let Some(file_index) = settings_window
+                            .files
+                            .iter()
+                            .position(|(file, _)| file.worktree_id().is_some())
+                        {
+                            settings_window.change_file(file_index, window, cx);
+                        }
+
+                        settings_window.fetch_files(window, cx);
                     }
                 });
 
@@ -1159,7 +1200,7 @@ fn all_language_names(cx: &App) -> Vec<SharedString> {
 }
 
 #[allow(unused)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum SettingsUiFile {
     User,                                // Uses all settings.
     Project((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
@@ -1283,8 +1324,25 @@ impl SettingsWindow {
                 })
                 .collect::<Vec<_>>()
             {
+                cx.observe_release_in(&project, window, |this, _, window, cx| {
+                    this.fetch_files(window, cx)
+                })
+                .detach();
                 cx.subscribe_in(&project, window, Self::handle_project_event)
                     .detach();
+            }
+
+            for workspace in app_state
+                .workspace_store
+                .read(cx)
+                .workspaces()
+                .iter()
+                .filter_map(|space| space.entity(cx).ok())
+            {
+                cx.observe_release_in(&workspace, window, |this, _, window, cx| {
+                    this.fetch_files(window, cx)
+                })
+                .detach();
             }
         } else {
             log::error!("App state doesn't exist when creating a new settings window");
@@ -1292,6 +1350,8 @@ impl SettingsWindow {
 
         let this_weak = cx.weak_entity();
         cx.observe_new::<Project>({
+            let this_weak = this_weak.clone();
+
             move |_, window, cx| {
                 let project = cx.entity();
                 let Some(window) = window else {
@@ -1299,12 +1359,36 @@ impl SettingsWindow {
                 };
 
                 this_weak
-                    .update(cx, |_, cx| {
+                    .update(cx, |this, cx| {
+                        this.fetch_files(window, cx);
+                        cx.observe_release_in(&project, window, |_, _, window, cx| {
+                            cx.defer_in(window, |this, window, cx| this.fetch_files(window, cx));
+                        })
+                        .detach();
+
                         cx.subscribe_in(&project, window, Self::handle_project_event)
                             .detach();
                     })
                     .ok();
             }
+        })
+        .detach();
+
+        cx.observe_new::<Workspace>(move |_, window, cx| {
+            let workspace = cx.entity();
+            let Some(window) = window else {
+                return;
+            };
+
+            this_weak
+                .update(cx, |this, cx| {
+                    this.fetch_files(window, cx);
+                    cx.observe_release_in(&workspace, window, |this, _, window, cx| {
+                        this.fetch_files(window, cx)
+                    })
+                    .detach();
+                })
+                .ok();
         })
         .detach();
 
@@ -1818,6 +1902,7 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    #[track_caller]
     fn fetch_files(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.worktree_root_dirs.clear();
         let prev_files = self.files.clone();
@@ -1870,7 +1955,7 @@ impl SettingsWindow {
         let mut missing_worktrees = Vec::new();
 
         for worktree in all_projects(cx)
-            .flat_map(|project| project.read(cx).worktrees(cx))
+            .flat_map(|project| project.read(cx).visible_worktrees(cx))
             .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
         {
             let worktree = worktree.read(cx);
@@ -2107,7 +2192,7 @@ impl SettingsWindow {
                         format!(
                             "{}{}{}",
                             directory_name,
-                            path_style.separator(),
+                            path_style.primary_separator(),
                             path.display(path_style)
                         )
                     }
@@ -2370,9 +2455,9 @@ impl SettingsWindow {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.navbar_scroll_handle.clone()),
+                        .track_scroll(&self.navbar_scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.navbar_scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.navbar_scroll_handle, window, cx),
             )
             .child(
                 h_flex()
@@ -2760,17 +2845,30 @@ impl SettingsWindow {
                 .into_any_element();
         } else {
             page_header = h_flex()
-                .ml_neg_1p5()
-                .gap_1()
+                .w_full()
+                .justify_between()
                 .child(
-                    IconButton::new("back-btn", IconName::ArrowLeft)
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.pop_sub_page(cx);
+                    h_flex()
+                        .ml_neg_1p5()
+                        .gap_1()
+                        .child(
+                            IconButton::new("back-btn", IconName::ArrowLeft)
+                                .icon_size(IconSize::Small)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.pop_sub_page(cx);
+                                })),
+                        )
+                        .child(self.render_sub_page_breadcrumbs()),
+                )
+                .child(
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .tab_index(0_isize)
+                        .style(ButtonStyle::OutlinedGhost)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
                         })),
                 )
-                .child(self.render_sub_page_breadcrumbs())
                 .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
@@ -2914,10 +3012,10 @@ impl SettingsWindow {
                 window.focus_prev();
             }))
             .when(sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.list_state, window, cx)
             })
             .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.sub_page_scroll_handle, window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()
@@ -3028,7 +3126,7 @@ impl SettingsWindow {
                         tree.create_entry(
                             settings_path.clone(),
                             false,
-                            Some("{\n\n}".as_bytes().to_vec()),
+                            Some(initial_project_settings_content().as_bytes().to_vec()),
                             cx,
                         )
                     }))

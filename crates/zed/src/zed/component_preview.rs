@@ -627,7 +627,7 @@ impl Render for ComponentPreview {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.nav_scroll_handle.clone())
+                        .track_scroll(&self.nav_scroll_handle)
                         .p_2p5()
                         .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()
@@ -934,15 +934,16 @@ impl ComponentPreviewPage {
 
     fn render_header(&self, _: &Window, cx: &App) -> impl IntoElement {
         v_flex()
-            .py_12()
-            .px_16()
+            .min_w_0()
+            .w_full()
+            .p_12()
             .gap_6()
             .bg(cx.theme().colors().surface_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(
                         Label::new(self.component.scope().to_string())
                             .size(LabelSize::Small)
@@ -959,7 +960,7 @@ impl ComponentPreviewPage {
                     ),
             )
             .when_some(self.component.description(), |this, description| {
-                this.child(div().text_sm().child(description))
+                this.child(Label::new(description).size(LabelSize::Small))
             })
     }
 

@@ -8,6 +8,7 @@ use gpui::{
 use itertools::Itertools;
 use language::CodeLabel;
 use language::{Buffer, LanguageName, LanguageRegistry};
+use lsp::CompletionItemTag;
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
@@ -840,7 +841,16 @@ impl CompletionsMenu {
                                     if completion
                                         .source
                                         .lsp_completion(false)
-                                        .and_then(|lsp_completion| lsp_completion.deprecated)
+                                        .and_then(|lsp_completion| {
+                                            match (lsp_completion.deprecated, &lsp_completion.tags)
+                                            {
+                                                (Some(true), _) => Some(true),
+                                                (_, Some(tags)) => Some(
+                                                    tags.contains(&CompletionItemTag::DEPRECATED),
+                                                ),
+                                                _ => None,
+                                            }
+                                        })
                                         .unwrap_or(false)
                                     {
                                         highlight.strikethrough = Some(StrikethroughStyle {
@@ -923,7 +933,7 @@ impl CompletionsMenu {
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .with_sizing_behavior(ListSizingBehavior::Infer)
         .map(|this| {
             if self.display_options.dynamic_width {
@@ -938,7 +948,7 @@ impl CompletionsMenu {
                 div().child(list).custom_scrollbars(
                     Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
                         .show_along(ScrollAxes::Vertical)
-                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                        .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
                 ),
@@ -1589,7 +1599,7 @@ impl CodeActionsMenu {
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .with_width_from_item(
             self.actions
                 .iter()

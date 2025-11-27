@@ -54,6 +54,7 @@ pub struct HeadingLevelStyles {
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
+    pub container_style: StyleRefinement,
     pub code_block: StyleRefinement,
     pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
@@ -66,7 +67,6 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
-    pub table_overflow_x_scroll: bool,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
 }
@@ -75,6 +75,7 @@ impl Default for MarkdownStyle {
     fn default() -> Self {
         Self {
             base_text_style: Default::default(),
+            container_style: Default::default(),
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
@@ -87,7 +88,6 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
-            table_overflow_x_scroll: false,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
         }
@@ -750,6 +750,12 @@ impl MarkdownElement {
     }
 }
 
+impl Styled for MarkdownElement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style.container_style
+    }
+}
+
 impl Element for MarkdownElement {
     type RequestLayoutState = RenderedMarkdown;
     type PrepaintState = Hitbox;
@@ -770,6 +776,7 @@ impl Element for MarkdownElement {
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
@@ -882,7 +889,7 @@ impl Element for MarkdownElement {
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
                                             .id(("markdown-code-block-scrollbar", range.start))
-                                            .tracked_scroll_handle(scroll_handle.clone())
+                                            .tracked_scroll_handle(scroll_handle)
                                             .with_track_along(
                                                 ScrollAxes::Horizontal,
                                                 cx.theme().colors().editor_background,
@@ -992,54 +999,54 @@ impl Element for MarkdownElement {
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
                             builder.table_alignments = alignments.clone();
+
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .flex()
+                                    .min_w_0()
+                                    .size_full()
+                                    .mb_2()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .when(self.style.table_overflow_x_scroll, |mut table| {
-                                        table.style().restrict_scroll_to_axis = Some(true);
-                                        table.overflow_x_scroll()
-                                    }),
+                                    .overflow_hidden(),
                                 range,
                                 markdown_end,
                             );
-                            // This inner `v_flex` is so the table rows will stack vertically without disrupting the `overflow_x_scroll`.
-                            builder.push_div(div().v_flex().flex_grow(), range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
                                 div()
-                                    .flex()
-                                    .justify_between()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border),
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .bg(cx.theme().colors().title_bar_background),
                                 range,
                                 markdown_end,
                             );
                             builder.push_text_style(TextStyleRefinement {
-                                font_weight: Some(FontWeight::BOLD),
+                                font_weight: Some(FontWeight::SEMIBOLD),
                                 ..Default::default()
                             });
                         }
                         MarkdownTag::TableRow => {
+                            let column_count = builder.table_alignments.len();
+
                             builder.push_div(
-                                div().h_flex().justify_between().px_1().py_0p5(),
+                                div().grid().grid_cols(column_count as u16),
                                 range,
                                 markdown_end,
                             );
                         }
                         MarkdownTag::TableCell => {
-                            let column_count = builder.table_alignments.len();
-
                             builder.push_div(
                                 div()
-                                    .flex()
+                                    .min_w_0()
+                                    .border(px(0.5))
+                                    .border_color(cx.theme().colors().border)
                                     .px_1()
-                                    .w(relative(1. / column_count as f32))
-                                    .truncate(),
+                                    .py_0p5(),
                                 range,
                                 markdown_end,
                             );
@@ -1154,7 +1161,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table_alignments.clear();
                     }
@@ -1444,9 +1450,17 @@ struct ListStackEntry {
 }
 
 impl MarkdownElementBuilder {
-    fn new(base_text_style: TextStyle, syntax_theme: Arc<SyntaxTheme>) -> Self {
+    fn new(
+        container_style: &StyleRefinement,
+        base_text_style: TextStyle,
+        syntax_theme: Arc<SyntaxTheme>,
+    ) -> Self {
         Self {
-            div_stack: vec![div().debug_selector(|| "inner".into()).into()],
+            div_stack: vec![{
+                let mut base_div = div();
+                base_div.style().refine(container_style);
+                base_div.debug_selector(|| "inner".into()).into()
+            }],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),

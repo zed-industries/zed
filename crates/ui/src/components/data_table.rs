@@ -641,11 +641,10 @@ pub fn render_table_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(Some));
 
     let mut row = h_flex()
-        .h_full()
         .id(("table_row", row_index))
-        .w_full()
-        .justify_between()
+        .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
+        .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
         .when(!is_striped, |row| {
             row.border_b_1()
                 .border_color(transparent_black())
@@ -873,7 +872,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 interaction_state.as_ref(),
                                 |this, state| {
                                     this.track_scroll(
-                                        state.read_with(cx, |s, _| s.scroll_handle.clone()),
+                                        &state.read_with(cx, |s, _| s.scroll_handle.clone()),
                                     )
                                 },
                             ),
@@ -907,7 +906,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
                     content
                         .custom_scrollbars(
-                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            scrollbars.tracked_scroll_handle(&state.read(cx).scroll_handle),
                             window,
                             cx,
                         )

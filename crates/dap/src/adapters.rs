@@ -324,6 +324,7 @@ pub async fn download_adapter_from_github(
             extract_zip(&version_path, file)
                 .await
                 // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
+                .inspect_err(|e| log::warn!("ZIP extraction error: {}. Ignoring...", e))
                 .ok();
 
             util::fs::remove_matching(&adapter_path, |entry| {
