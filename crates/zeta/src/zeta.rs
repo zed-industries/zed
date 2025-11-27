@@ -3018,9 +3018,9 @@ mod tests {
                     finish_reason: None,
                 }],
                 usage: Usage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+                    prompt_tokens: Some(0),
+                    completion_tokens: Some(0),
+                    total_tokens: Some(0),
                 },
             })
             .unwrap();
@@ -3834,9 +3834,9 @@ mod tests {
                 finish_reason: None,
             }],
             usage: Usage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+                total_tokens: Some(0),
             },
         }
     }
