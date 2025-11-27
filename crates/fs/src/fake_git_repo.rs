@@ -577,7 +577,16 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn get_remotes(&self, _branch: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
-        unimplemented!()
+        self.with_state_async(false, move |state| {
+            let remotes = state
+                .remotes
+                .keys()
+                .map(|r| Remote {
+                    name: r.clone().into(),
+                })
+                .collect::<Vec<_>>();
+            Ok(remotes)
+        })
     }
 
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<gpui::SharedString>>> {
