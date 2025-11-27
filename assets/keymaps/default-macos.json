@@ -898,6 +898,14 @@
     }
   },
   {
+    "context": "CallHierarchyPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "call_hierarchy_panel::CollapseSelectedEntry",
+      "right": "call_hierarchy_panel::ExpandSelectedEntry"
+    }
+  },
+  {
     "context": "OutlinePanel && not_editing",
     "use_key_equivalents": true,
     "bindings": {

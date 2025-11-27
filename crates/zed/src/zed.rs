@@ -15,6 +15,7 @@ pub use app_menus::*;
 use assets::Assets;
 use audio::{AudioSettings, REPLAY_DURATION};
 use breadcrumbs::Breadcrumbs;
+use call_hierarchy_panel::CallHierarchyPanel;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
@@ -646,6 +647,7 @@ fn initialize_panels(
     cx.spawn_in(window, async move |workspace_handle, cx| {
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
+        let call_hierarchy_panel = CallHierarchyPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
@@ -674,6 +676,7 @@ fn initialize_panels(
         futures::join!(
             add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(call_hierarchy_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
@@ -1026,6 +1029,15 @@ fn register_actions(
                 workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
             },
         )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &call_hierarchy_panel::ToggleFocus,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                workspace.toggle_panel_focus::<CallHierarchyPanel>(window, cx);
+            },
+        )
+        .register_action(call_hierarchy_panel::CallHierarchyPanel::show_call_hierarchy)
         .register_action(
             |workspace: &mut Workspace,
              _: &collab_ui::collab_panel::ToggleFocus,
@@ -4735,6 +4747,8 @@ mod tests {
                 "bedrock",
                 "branches",
                 "buffer_search",
+                "call_hierarchy",
+                "call_hierarchy_panel",
                 "channel_modal",
                 "cli",
                 "client",
@@ -4931,6 +4945,7 @@ mod tests {
             git_ui::init(cx);
             project_panel::init(cx);
             outline_panel::init(cx);
+            call_hierarchy_panel::init(cx);
             terminal_view::init(cx);
             copilot::copilot_chat::init(
                 app_state.fs.clone(),

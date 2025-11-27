@@ -455,6 +455,8 @@ actions!(
         ExpandMacroRecursively,
         /// Finds all references to the symbol at cursor.
         FindAllReferences,
+        /// Shows call hierarchy for the symbol at cursor.
+        ShowCallHierarchy,
         /// Finds the next match in the search.
         FindNextMatch,
         /// Finds the previous match in the search.

@@ -830,6 +830,13 @@
     }
   },
   {
+    "context": "CallHierarchyPanel",
+    "bindings": {
+      "left": "call_hierarchy_panel::CollapseSelectedEntry",
+      "right": "call_hierarchy_panel::ExpandSelectedEntry"
+    }
+  },
+  {
     "context": "OutlinePanel && not_editing",
     "bindings": {
       "escape": "menu::Cancel",
