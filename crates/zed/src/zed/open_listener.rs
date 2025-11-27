@@ -57,6 +57,10 @@ pub enum OpenRequestKind {
         // None just opens settings without navigating to a specific path
         setting_path: Option<String>,
     },
+    GitCommit {
+        path: String,
+        sha: String,
+    },
 }
 
 impl OpenRequest {
@@ -109,6 +113,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
+            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+                this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
@@ -125,6 +131,29 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_git_commit_url(&mut self, commit_path: &str) -> Result<()> {
+        // Parse the URL to extract path and fragment (sha)
+        // Format: <path>#<sha>
+        if let Some((path, sha)) = commit_path.split_once('#') {
+            let decoded_path = urlencoding::decode(path)
+                .context("failed to decode git commit path")?
+                .into_owned();
+
+            // If a path is provided, add it to open_paths so workspace routing works correctly
+            if !decoded_path.is_empty() {
+                self.open_paths.push(decoded_path.clone());
+            }
+
+            self.kind = Some(OpenRequestKind::GitCommit {
+                path: decoded_path,
+                sha: sha.to_string(),
+            });
+        } else {
+            anyhow::bail!("invalid git commit url: missing sha after #");
+        }
+        Ok(())
     }
 
     fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
@@ -689,6 +718,93 @@ mod tests {
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_commit_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        // Test basic git commit URL
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/path/to/repo#abc123".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { path, sha } => {
+                assert_eq!(path, "path/to/repo");
+                assert_eq!(sha, "abc123");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        // Verify path was added to open_paths for workspace routing
+        assert_eq!(request.open_paths, vec!["path/to/repo"]);
+
+        // Test with URL encoded path
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/path%20with%20spaces#def456".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { path, sha } => {
+                assert_eq!(path, "path with spaces");
+                assert_eq!(sha, "def456");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+
+        // Test with empty path
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/#abc123".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { path, sha } => {
+                assert_eq!(path, "");
+                assert_eq!(sha, "abc123");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        // Verify empty path was NOT added to open_paths
+        assert!(request.open_paths.is_empty());
+
+        // Test error case: missing SHA
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/path/to/repo".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing sha after #")
+        );
     }
 
     #[gpui::test]
