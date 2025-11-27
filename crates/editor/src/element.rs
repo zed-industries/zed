@@ -3973,9 +3973,9 @@ impl EditorElement {
                                             move |_window, cx| {
                                                 Tooltip::with_meta_in(
                                                     if is_folded_for_tooltip {
-                                                        "Toggle Excerpt Unfold"
+                                                        "Unfold Excerpt"
                                                     } else {
-                                                        "Toggle Excerpt Fold"
+                                                        "Fold Excerpt"
                                                     },
                                                     Some(&ToggleFold),
                                                     format!(
