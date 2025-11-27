@@ -32,6 +32,7 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
+use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::ops::Range;
 use std::sync::Arc;
@@ -584,6 +585,9 @@ impl ProjectDiff {
 
         for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
+                // We might be lagging behind enough that all future entry.load futures are no longer pending.
+                // If that is the case, this task will never yield, starving the foreground thread of execution time.
+                yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
