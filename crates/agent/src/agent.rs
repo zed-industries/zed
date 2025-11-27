@@ -1,3 +1,4 @@
+mod agent_activity;
 mod db;
 mod edit_agent;
 mod history_store;
@@ -11,6 +12,7 @@ mod tools;
 #[cfg(test)]
 mod tests;
 
+pub use agent_activity::{ActivityStatusChanged, AgentActivityStatus, AgentActivityTracker};
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
@@ -244,6 +246,8 @@ pub struct NativeAgent {
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
+    /// Tracks agent activity status for collaborative sync
+    activity_tracker: Entity<AgentActivityTracker>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -292,6 +296,7 @@ impl NativeAgent {
                 project,
                 prompt_store,
                 fs,
+                activity_tracker: cx.new(|_| AgentActivityTracker::new()),
                 _subscriptions: subscriptions,
             }
         })
@@ -360,6 +365,12 @@ impl NativeAgent {
 
     pub fn models(&self) -> &LanguageModels {
         &self.models
+    }
+
+    /// Returns a reference to the activity tracker entity.
+    /// Subscribe to its `ActivityStatusChanged` events to be notified of agent activity changes.
+    pub fn activity_tracker(&self) -> &Entity<AgentActivityTracker> {
+        &self.activity_tracker
     }
 
     async fn maintain_project_context(
@@ -663,13 +674,19 @@ impl NativeAgent {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.load_thread(id, cx);
+        let activity_tracker = self.activity_tracker.clone();
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
             let acp_thread =
                 this.update(cx, |this, cx| this.register_session(thread.clone(), cx))?;
             let events = thread.update(cx, |thread, cx| thread.replay(cx))?;
             cx.update(|cx| {
-                NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
+                NativeAgentConnection::handle_thread_events(
+                    events,
+                    acp_thread.downgrade(),
+                    activity_tracker,
+                    cx,
+                )
             })?
             .await?;
             Ok(acp_thread)
@@ -739,6 +756,12 @@ impl NativeAgentConnection {
         self.0.update(cx, |this, cx| this.load_thread(id, cx))
     }
 
+    /// Returns a reference to the activity tracker for this native agent.
+    /// This can be used to subscribe to agent activity changes for collaborative features.
+    pub fn activity_tracker(&self, cx: &App) -> Entity<AgentActivityTracker> {
+        self.0.read(cx).activity_tracker().clone()
+    }
+
     fn run_turn(
         &self,
         session_id: acp::SessionId,
@@ -746,11 +769,14 @@ impl NativeAgentConnection {
         f: impl 'static
         + FnOnce(Entity<Thread>, &mut App) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>,
     ) -> Task<Result<acp::PromptResponse>> {
-        let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
-            agent
-                .sessions
-                .get_mut(&session_id)
-                .map(|s| (s.thread.clone(), s.acp_thread.clone()))
+        let Some((thread, acp_thread, activity_tracker)) = self.0.update(cx, |agent, _cx| {
+            agent.sessions.get_mut(&session_id).map(|s| {
+                (
+                    s.thread.clone(),
+                    s.acp_thread.clone(),
+                    agent.activity_tracker.clone(),
+                )
+            })
         }) else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
@@ -760,12 +786,13 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread, cx)
+        Self::handle_thread_events(response_stream, acp_thread, activity_tracker, cx)
     }
 
     fn handle_thread_events(
         mut events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
         acp_thread: WeakEntity<AcpThread>,
+        activity_tracker: Entity<AgentActivityTracker>,
         cx: &App,
     ) -> Task<Result<acp::PromptResponse>> {
         cx.spawn(async move |cx| {
@@ -856,6 +883,18 @@ impl NativeAgentConnection {
                                     stop_reason,
                                     meta: None,
                                 });
+                            }
+                            ThreadEvent::ActivityChanged { active, agent_type } => {
+                                activity_tracker.update(cx, |tracker, cx| {
+                                    if active {
+                                        if let Some(agent_type) = agent_type {
+                                            tracker.set_agent_type(agent_type);
+                                        }
+                                        tracker.set_active_status(cx);
+                                    } else {
+                                        tracker.set_idle(cx);
+                                    }
+                                })?;
                             }
                         }
                     }

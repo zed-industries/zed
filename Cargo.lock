@@ -326,6 +326,7 @@ dependencies = [
  "async-fs",
  "audio",
  "buffer_diff",
+ "call",
  "chrono",
  "client",
  "cloud_llm_client",
@@ -3447,6 +3448,7 @@ dependencies = [
 name = "collab_ui"
 version = "0.1.0"
 dependencies = [
+ "agent_ui",
  "anyhow",
  "call",
  "channel",

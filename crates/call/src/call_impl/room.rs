@@ -1,6 +1,9 @@
 use crate::{
     call_settings::CallSettings,
-    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
+    participant::{
+        AgentActivity, AgentActivityStatus, LocalParticipant, ParticipantLocation,
+        RemoteParticipant,
+    },
 };
 use anyhow::{Context as _, Result, anyhow};
 use audio::{Audio, Sound};
@@ -61,6 +64,13 @@ pub enum Event {
     },
     RoomLeft {
         channel_id: Option<ChannelId>,
+    },
+    ParticipantAgentActivityChanged {
+        peer_id: proto::PeerId,
+    },
+    AgentDocChanged {
+        user_id: u64,
+        path: String,
     },
 }
 
@@ -145,6 +155,8 @@ impl Room {
             pending_call_count: 0,
             client_subscriptions: vec![
                 client.add_message_handler(cx.weak_entity(), Self::handle_room_updated),
+                client.add_message_handler(cx.weak_entity(), Self::handle_agent_activity_update),
+                client.add_message_handler(cx.weak_entity(), Self::handle_agent_doc_changed),
             ],
             _subscriptions: vec![
                 cx.on_release(Self::released),
@@ -649,6 +661,49 @@ impl Room {
         this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?
     }
 
+    async fn handle_agent_activity_update(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdateAgentActivity>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            if let Some(activity) = envelope.payload.activity {
+                let user_id = activity.user_id;
+                if let Some(participant) = this.remote_participants.get_mut(&user_id) {
+                    participant.agent_activity = Some(AgentActivity {
+                        agent_type: activity.agent_type.into(),
+                        status: if activity.status == proto::AgentActivityStatus::AgentActive as i32
+                        {
+                            AgentActivityStatus::Active
+                        } else {
+                            AgentActivityStatus::Idle
+                        },
+                        prompt_summary: activity.prompt_summary.map(|s| s.into()),
+                    });
+                    cx.emit(Event::ParticipantAgentActivityChanged {
+                        peer_id: participant.peer_id,
+                    });
+                    cx.notify();
+                }
+            }
+        })?;
+        Ok(())
+    }
+
+    async fn handle_agent_doc_changed(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::AgentDocChanged>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |_this, cx| {
+            cx.emit(Event::AgentDocChanged {
+                user_id: envelope.payload.user_id,
+                path: envelope.payload.path,
+            });
+        })?;
+        Ok(())
+    }
+
     fn apply_room_update(&mut self, room: proto::Room, cx: &mut Context<Self>) -> Result<()> {
         log::trace!(
             "client {:?}. room update: {:?}",
@@ -826,6 +881,7 @@ impl Room {
                                     speaking: false,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
+                                    agent_activity: None,
                                 },
                             );
 
@@ -1216,6 +1272,28 @@ impl Room {
             self.set_location(Some(&project), cx).detach_and_log_err(cx);
         }
         Ok(())
+    }
+
+    /// Send agent activity update to all other participants in the room.
+    pub fn update_agent_activity(
+        &self,
+        activity: proto::AgentActivity,
+        _cx: &App,
+    ) -> Result<()> {
+        self.client.send(proto::UpdateAgentActivity {
+            room_id: self.id,
+            activity: Some(activity),
+        })
+    }
+
+    /// Notify other participants that an agent doc file was written.
+    pub fn send_agent_doc_changed(&self, path: String, _cx: &App) -> Result<()> {
+        let user_id = self.client.user_id().context("not signed in")?;
+        self.client.send(proto::AgentDocChanged {
+            room_id: self.id,
+            user_id,
+            path,
+        })
     }
 
     pub(crate) fn set_location(

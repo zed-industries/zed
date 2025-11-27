@@ -4,8 +4,9 @@ mod contact_finder;
 use self::channel_modal::ChannelModal;
 use crate::{CollaborationPanelSettings, channel_view::ChannelView};
 use anyhow::Context as _;
-use call::ActiveCall;
+use call::{participant::AgentActivityStatus, room, ActiveCall};
 use channel::{Channel, ChannelEvent, ChannelStore};
+use agent_ui::AgentPanel;
 use client::{ChannelId, Client, Contact, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
@@ -244,6 +245,7 @@ enum ListEntry {
         peer_id: Option<PeerId>,
         is_pending: bool,
         role: proto::ChannelRole,
+        agent_activity: Option<call::participant::AgentActivity>,
     },
     ParticipantProject {
         project_id: u64,
@@ -385,6 +387,16 @@ impl CollabPanel {
                 },
             ));
 
+            this.subscriptions.push(cx.subscribe_in(
+                &active_call,
+                window,
+                |this, _active_call, event, _window, cx| {
+                    if let room::Event::ParticipantAgentActivityChanged { .. } = event {
+                        this.update_entries(true, cx);
+                    }
+                },
+            ));
+
             this
         })
     }
@@ -517,11 +529,22 @@ impl CollabPanel {
                     ));
                     if !matches.is_empty() {
                         let user_id = user.id;
+
+                        // Get local agent activity
+                        let local_agent_activity = if let Some(workspace) = self.workspace.upgrade() {
+                            workspace.read(cx).panel::<AgentPanel>(cx).and_then(|panel| {
+                                panel.read(cx).active_agent_activity(cx)
+                            })
+                        } else {
+                            None
+                        };
+
                         self.entries.push(ListEntry::CallParticipant {
                             user,
                             peer_id: None,
                             is_pending: false,
                             role: room.local_participant().role,
+                            agent_activity: local_agent_activity,
                         });
                         let mut projects = room.local_participant().projects.iter().peekable();
                         while let Some(project) = projects.next() {
@@ -576,6 +599,7 @@ impl CollabPanel {
                         peer_id: Some(participant.peer_id),
                         is_pending: false,
                         role: participant.role,
+                        agent_activity: participant.agent_activity.clone(),
                     });
                     let mut projects = participant.projects.iter().peekable();
                     while let Some(project) = projects.next() {
@@ -617,6 +641,7 @@ impl CollabPanel {
                         peer_id: None,
                         is_pending: true,
                         role: proto::ChannelRole::Member,
+                        agent_activity: None,
                     }));
             }
         }
@@ -946,6 +971,7 @@ impl CollabPanel {
         peer_id: Option<PeerId>,
         is_pending: bool,
         role: proto::ChannelRole,
+        agent_activity: Option<&call::participant::AgentActivity>,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> ListItem {
@@ -962,28 +988,70 @@ impl CollabPanel {
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(render_participant_name_and_handle(user))
             .toggle_state(is_selected)
-            .end_slot(if is_pending {
-                Label::new("Calling").color(Color::Muted).into_any_element()
-            } else if is_current_user {
-                IconButton::new("leave-call", IconName::Exit)
-                    .style(ButtonStyle::Subtle)
-                    .on_click(move |_, window, cx| Self::leave_call(window, cx))
-                    .tooltip(Tooltip::text("Leave Call"))
-                    .into_any_element()
-            } else if role == proto::ChannelRole::Guest {
-                Label::new("Guest").color(Color::Muted).into_any_element()
-            } else if role == proto::ChannelRole::Talker {
-                Label::new("Mic only")
-                    .color(Color::Muted)
-                    .into_any_element()
-            } else {
-                div().into_any_element()
+            .end_slot({
+                let agent_element = agent_activity.map(|activity| {
+                    let label_text = format!("{} Agent", activity.agent_type);
+                    let label = Label::new(label_text).size(ui::LabelSize::Small);
+
+                    // Color based on status
+                    let label = match activity.status {
+                        AgentActivityStatus::Active => label.color(Color::Success),
+                        AgentActivityStatus::Idle => label.color(Color::Muted),
+                    };
+
+                    label.into_any_element()
+                });
+
+                if is_pending {
+                    Label::new("Calling").color(Color::Muted).into_any_element()
+                } else if is_current_user {
+                    h_flex()
+                        .gap_1()
+                        .when_some(agent_element, |this, agent| this.child(agent))
+                        .child(
+                            IconButton::new("leave-call", IconName::Exit)
+                                .style(ButtonStyle::Subtle)
+                                .on_click(move |_, window, cx| Self::leave_call(window, cx))
+                                .tooltip(Tooltip::text("Leave Call"))
+                        )
+                        .into_any_element()
+                } else if role == proto::ChannelRole::Guest {
+                    h_flex()
+                        .gap_1()
+                        .when_some(agent_element, |this, agent| this.child(agent))
+                        .child(Label::new("Guest").color(Color::Muted))
+                        .into_any_element()
+                } else if role == proto::ChannelRole::Talker {
+                    h_flex()
+                        .gap_1()
+                        .when_some(agent_element, |this, agent| this.child(agent))
+                        .child(Label::new("Mic only").color(Color::Muted))
+                        .into_any_element()
+                } else {
+                    agent_element
+                        .unwrap_or_else(|| div().into_any_element())
+                }
             })
             .when_some(peer_id, |el, peer_id| {
                 if role == proto::ChannelRole::Guest {
                     return el;
                 }
-                el.tooltip(Tooltip::text(tooltip.clone()))
+
+                let tooltip_text = if let Some(activity) = agent_activity {
+                    if activity.status == AgentActivityStatus::Active {
+                        if let Some(summary) = &activity.prompt_summary {
+                            format!("{} • {} Agent: {}", tooltip, activity.agent_type, summary)
+                        } else {
+                            format!("{} • {} Agent (Active)", tooltip, activity.agent_type)
+                        }
+                    } else {
+                        format!("{} • {} Agent (Idle)", tooltip, activity.agent_type)
+                    }
+                } else {
+                    tooltip.clone()
+                };
+
+                el.tooltip(Tooltip::text(tooltip_text))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| workspace.follow(peer_id, window, cx))
@@ -2378,8 +2446,17 @@ impl CollabPanel {
                 peer_id,
                 is_pending,
                 role,
+                agent_activity,
             } => self
-                .render_call_participant(user, *peer_id, *is_pending, *role, is_selected, cx)
+                .render_call_participant(
+                    user,
+                    *peer_id,
+                    *is_pending,
+                    *role,
+                    agent_activity.as_ref(),
+                    is_selected,
+                    cx,
+                )
                 .into_any_element(),
             ListEntry::ParticipantProject {
                 project_id,

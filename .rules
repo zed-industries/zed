@@ -1,3 +1,157 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# Zed Code Editor
+
+Zed is a high-performance, multiplayer code editor built with Rust. It uses GPUI, a custom GPU-accelerated UI framework, and supports collaborative editing via CRDTs, remote development over SSH, and a WebAssembly-based extension system.
+
+# Building and Testing
+
+## Building Zed
+
+Debug build:
+```sh
+cargo run
+```
+
+Release build:
+```sh
+cargo run --release
+```
+
+On Linux, you can also run the CLI crate directly:
+```sh
+cargo run -p cli
+```
+
+## Running Tests
+
+All tests:
+```sh
+cargo test --workspace
+```
+
+Single test:
+```sh
+cargo test --package <crate_name> <test_name>
+```
+
+Specific crate tests:
+```sh
+cargo test -p <crate_name>
+```
+
+For systems that hit file descriptor limits, use cargo-nextest:
+```sh
+cargo install cargo-nextest --locked
+cargo nextest run --workspace --no-fail-fast
+```
+
+## Linting
+
+Use the custom clippy script instead of `cargo clippy`:
+```sh
+./script/clippy
+```
+
+# Codebase Architecture
+
+## Key Crates
+
+**Core Infrastructure:**
+- `gpui`: GPU-accelerated UI framework providing immediate-mode UI, entity-based state management, flexbox layout, and cross-platform windowing
+- `zed`: Main application crate that assembles all components and manages application lifecycle
+- `workspace`: Top-level container for editing sessions, manages panes, docks, panels, and coordinates collaboration
+- `project`: Semantics-aware entity managing worktrees, LSP servers, tasks, and git operations. Can be local or remote.
+- `editor`: Core text editing component with rendering, selections, syntax highlighting, diagnostics, and vim mode
+
+**Text Foundation:**
+- `text`: CRDT-based text buffer supporting collaborative editing with operational transformation
+- `rope`: High-performance rope data structure for efficient text operations
+- `sum_tree`: B-tree variant optimized for dimensional queries, foundation for text buffers
+
+**Language Support:**
+- `language`: Language infrastructure for Tree-sitter syntax highlighting, outline parsing, indentation
+- `lsp`: LSP client managing language server communication and request routing
+- `languages`: Built-in language definitions (more can be added via extensions)
+
+**Extension System:**
+- `extension`: Core extension infrastructure and API
+- `extension_host`: Hosts WASM extensions using Wasmtime with sandboxed execution
+- `extension_api`: Public API exposed to extensions via WIT bindings
+
+**Remote Development:**
+- `remote`: Client-side remote development, manages SSH connections
+- `remote_server`: Headless daemon on remote machines providing project access over RPC
+- `rpc`: Bidirectional RPC using Protocol Buffers
+- `proto`: Protocol Buffer definitions for all RPC messages
+
+**Collaboration:**
+- `collab`: Server-side collaboration infrastructure (AGPL-licensed)
+- `collab_ui`: UI components for channels, calls, and shared projects
+- `client`: Client connection to Zed servers for auth and collaboration
+- `call`: Voice/video calling via LiveKit
+- `channel`: Channels system for team organization
+
+**Other Important Crates:**
+- `settings`: Cascading configuration with JSON schema validation and live reloading
+- `theme`: Theme system for color schemes and UI customization
+- `ui`: Reusable UI components built on GPUI
+- `task`: Task system for builds, tests, and custom commands
+- `terminal`: Terminal emulator based on Alacritty
+- `search`: Project-wide search using ripgrep
+- `vim`: Vim mode implementation
+- `fs`: Abstract file system with real and fake implementations for testing
+- `worktree`: File tree managing file watching and git status
+- `git`: Git integration via libgit2
+
+## Architectural Patterns
+
+### Entity Hierarchy
+```
+Workspace (window-level container)
+├── Panes (tab groups with splits)
+│   ├── Editor (items)
+│   ├── Terminal
+│   └── Other items
+├── Docks (left/right/bottom panels)
+│   ├── Project Panel
+│   ├── Outline Panel
+│   └── Other panels
+└── Project (manages worktrees and LSP)
+    ├── Worktrees (file trees)
+    ├── LSP Servers
+    ├── Task definitions
+    └── Git repositories
+```
+
+### CRDT Collaborative Editing
+- Text buffers use Conflict-free Replicated Data Types for real-time collaboration
+- Each replica has a unique `ReplicaId` with Lamport clock timestamps
+- Operations can be applied in any order and converge to the same state
+- Anchors track positions across edits using insertion fragments
+
+### Extension System
+- Extensions compiled to WASM components, sandboxed in Wasmtime
+- Capability-based security controls access
+- Can provide: languages, LSP servers, themes, slash commands, debuggers
+- Installed in `~/.config/zed/extensions/`
+- Hot reloading supported for development
+
+### Remote Development
+- Client runs full UI, server runs headlessly on remote machine via SSH
+- RPC synchronizes file system, LSP, tasks, and terminal
+- Source code stays remote, only diffs transferred
+- Server binary auto-downloads or uploads over SSH
+
+### LSP Integration
+- `LspStore` manages all language server lifecycle
+- Multiple LSP servers per worktree supported
+- Capabilities queried and cached
+- Diagnostics aggregated across servers
+- Extensions can provide custom LSP implementations
+
 # Rust coding guidelines
 
 * Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.

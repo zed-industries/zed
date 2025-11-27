@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use call::participant::{AgentActivity, AgentActivityStatus};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
@@ -1268,6 +1269,20 @@ impl AgentPanel {
                 text_thread_editor, ..
             } => Some(text_thread_editor.clone()),
             _ => None,
+        }
+    }
+
+    pub fn active_agent_activity(&self, _cx: &App) -> Option<AgentActivity> {
+        // For MVP, return basic active status when agent panel has active thread
+        // TODO: Access actual activity tracker state when needed
+        if self.active_text_thread_editor().is_some() {
+            Some(AgentActivity {
+                agent_type: "Assistant".into(), // Default for now
+                status: AgentActivityStatus::Active,
+                prompt_summary: None,
+            })
+        } else {
+            None
         }
     }
 

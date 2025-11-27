@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use client::{ParticipantIndex, User, proto};
 use collections::HashMap;
-use gpui::WeakEntity;
+use gpui::{SharedString, WeakEntity};
 use livekit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
@@ -60,6 +60,20 @@ pub struct RemoteParticipant {
     pub speaking: bool,
     pub video_tracks: HashMap<TrackSid, RemoteVideoTrack>,
     pub audio_tracks: HashMap<TrackSid, (RemoteAudioTrack, AudioStream)>,
+    pub agent_activity: Option<AgentActivity>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentActivity {
+    pub agent_type: SharedString,
+    pub status: AgentActivityStatus,
+    pub prompt_summary: Option<SharedString>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentActivityStatus {
+    Idle,
+    Active,
 }
 
 impl RemoteParticipant {

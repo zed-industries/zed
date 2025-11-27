@@ -473,7 +473,9 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
+            .add_message_handler(update_agent_activity)
+            .add_message_handler(agent_doc_changed);
 
         Arc::new(server)
     }
@@ -2614,6 +2616,50 @@ async fn update_followers(request: proto::UpdateFollowers, session: MessageConte
                 .peer
                 .forward_send(session.connection_id, connection_id, request.clone())?;
         }
+    }
+    Ok(())
+}
+
+/// Broadcast agent activity update to all other participants in a room.
+async fn update_agent_activity(
+    message: proto::UpdateAgentActivity,
+    session: MessageContext,
+) -> Result<()> {
+    let room_id = RoomId::from_proto(message.room_id);
+    let connection_ids = session
+        .db
+        .lock()
+        .await
+        .room_connection_ids(room_id, session.connection_id)
+        .await?;
+
+    for connection_id in connection_ids.iter().cloned() {
+        session
+            .peer
+            .send(connection_id, message.clone())
+            .trace_err();
+    }
+    Ok(())
+}
+
+/// Broadcast agent doc change notification to all other participants in a room.
+async fn agent_doc_changed(
+    message: proto::AgentDocChanged,
+    session: MessageContext,
+) -> Result<()> {
+    let room_id = RoomId::from_proto(message.room_id);
+    let connection_ids = session
+        .db
+        .lock()
+        .await
+        .room_connection_ids(room_id, session.connection_id)
+        .await?;
+
+    for connection_id in connection_ids.iter().cloned() {
+        session
+            .peer
+            .send(connection_id, message.clone())
+            .trace_err();
     }
     Ok(())
 }

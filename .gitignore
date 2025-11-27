@@ -1,3 +1,5 @@
+/thoughts/
+.Rhistory
 **/*.db
 **/cargo-target
 **/target

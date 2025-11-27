@@ -5,7 +5,10 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
+use agent::{
+    ActivityStatusChanged, AgentActivityStatus, DbThreadMetadata, HistoryEntry, HistoryEntryId,
+    HistoryStore, NativeAgentConnection, NativeAgentServer,
+};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
@@ -13,6 +16,7 @@ use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
+use call::ActiveCall;
 use client::zed_urls;
 use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
@@ -646,6 +650,71 @@ impl AcpThreadView {
                             } else {
                                 None
                             };
+
+                        // Subscribe to agent activity changes for room broadcasting
+                        if let Some(native_connection) = thread.read(cx)
+                            .connection()
+                            .clone()
+                            .downcast::<NativeAgentConnection>()
+                        {
+                            let activity_tracker = native_connection.activity_tracker(cx);
+                            let client = this.workspace.upgrade().and_then(|workspace| {
+                                workspace.read(cx).app_state().client.clone().into()
+                            });
+                            
+                            if let Some(client) = client {
+                                // Send initial state if agent is already active and we're in a room
+                                if let Some(room) = ActiveCall::try_global(cx)
+                                    .and_then(|call| call.read(cx).room().cloned())
+                                {
+                                    if let Some(user_id) = client.user_id() {
+                                        let tracker = activity_tracker.read(cx);
+                                        if *tracker.status() == AgentActivityStatus::Active {
+                                            let proto_activity = proto::AgentActivity {
+                                                user_id,
+                                                agent_type: tracker.agent_type().map(|s| s.to_string()).unwrap_or_default(),
+                                                status: proto::AgentActivityStatus::AgentActive as i32,
+                                                prompt_summary: tracker.prompt_summary().map(|s| s.to_string()),
+                                            };
+                                            room.update(cx, |room, cx| {
+                                                room.update_agent_activity(proto_activity, cx).log_err();
+                                            });
+                                        }
+                                    }
+                                }
+                                
+                                subscriptions.push(cx.subscribe(
+                                    &activity_tracker,
+                                    move |_this, _tracker, event: &ActivityStatusChanged, cx| {
+                                        // Broadcast activity to room participants
+                                        let room = match ActiveCall::try_global(cx)
+                                            .and_then(|call| call.read(cx).room().cloned())
+                                        {
+                                            Some(room) => room,
+                                            None => return,
+                                        };
+                                        
+                                        let Some(user_id) = client.user_id() else {
+                                            return;
+                                        };
+                                        
+                                        let proto_activity = proto::AgentActivity {
+                                            user_id,
+                                            agent_type: event.agent_type.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                                            status: match event.status {
+                                                AgentActivityStatus::Active => proto::AgentActivityStatus::AgentActive as i32,
+                                                AgentActivityStatus::Idle => proto::AgentActivityStatus::AgentIdle as i32,
+                                            },
+                                            prompt_summary: event.prompt_summary.as_ref().map(|s| s.to_string()),
+                                        };
+                                        
+                                        room.update(cx, |room, cx| {
+                                            room.update_agent_activity(proto_activity, cx).log_err();
+                                        });
+                                    }
+                                ));
+                            }
+                        }
 
                         this.thread_state = ThreadState::Ready {
                             thread,

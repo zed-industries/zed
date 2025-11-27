@@ -60,6 +60,7 @@ title_bar.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+agent_ui.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
