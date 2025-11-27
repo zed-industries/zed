@@ -4,6 +4,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use collections::HashMap;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use semver::Version as SemanticVersion;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
@@ -17,7 +18,7 @@ use util::{
 };
 
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
-use gpui::{App, AppContext, AsyncApp, SemanticVersion, Task};
+use gpui::{App, AppContext, AsyncApp, Task};
 use rpc::proto::Envelope;
 
 use crate::{
@@ -206,7 +207,12 @@ impl DockerExecConnection {
         );
         if !self.connection_options.upload_binary_over_docker_exec
             && let Some(url) = delegate
-                .get_download_url(remote_platform.clone(), release_channel, wanted_version, cx)
+                .get_download_url(
+                    remote_platform.clone(),
+                    release_channel,
+                    wanted_version.clone(),
+                    cx,
+                )
                 .await?
         {
             match self
