@@ -1,8 +1,11 @@
 mod dev_container;
+mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
 mod remote_servers;
 mod ssh_config;
+
+use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
 mod wsl_picker;
@@ -32,7 +35,7 @@ use workspace::{
     WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
     with_active_or_new_workspace,
 };
-use zed_actions::{OpenRecent, OpenRemote};
+use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "windows")]
@@ -161,6 +164,85 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+
+    cx.on_action(|_: &OpenDevContainer, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            let replace_window = window.window_handle().downcast::<Workspace>();
+
+            cx.spawn_in(window, async move |_, mut cx| {
+                let (connection, starting_dir) =
+                    match dev_container::start_dev_container(&mut cx).await {
+                        Ok((c, s)) => (c, s),
+                        Err(e) => {
+                            log::error!("Failed to start Dev Container: {:?}", e);
+                            cx.prompt(
+                                gpui::PromptLevel::Critical,
+                                "Failed to start Dev Container",
+                                Some(&format!("{:?}", e)),
+                                &["Ok"],
+                            )
+                            .await
+                            .ok();
+                            return;
+                        }
+                    };
+
+                let result = open_remote_project(
+                    connection.into(),
+                    vec![starting_dir].into_iter().map(PathBuf::from).collect(),
+                    app_state,
+                    OpenOptions {
+                        replace_window,
+                        ..OpenOptions::default()
+                    },
+                    &mut cx,
+                )
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("Failed to connect: {e:#}");
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Failed to connect",
+                        Some(&e.to_string()),
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                }
+            })
+            .detach();
+        });
+    });
+
+    // Subscribe to worktree additions to suggest opening the project in a dev container
+    cx.observe_new(
+        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+            let Some(window) = window else {
+                return;
+            };
+            cx.subscribe_in(
+                workspace.project(),
+                window,
+                move |_, project, event, window, cx| {
+                    if let project::Event::WorktreeUpdatedEntries(worktree_id, updated_entries) =
+                        event
+                    {
+                        dev_container_suggest::suggest_on_worktree_updated(
+                            *worktree_id,
+                            updated_entries,
+                            project,
+                            window,
+                            cx,
+                        );
+                    }
+                },
+            )
+            .detach();
+        },
+    )
+    .detach();
 }
 
 #[cfg(target_os = "windows")]

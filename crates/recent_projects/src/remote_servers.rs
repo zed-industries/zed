@@ -652,6 +652,24 @@ impl RemoteServerProjects {
         )
     }
 
+    /// Creates a new RemoteServerProjects modal that opens directly in dev container creation mode.
+    /// Used when suggesting dev container connection from toast notification.
+    pub fn new_dev_container(
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(window, cx)),
+            false,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
     fn new_inner(
         mode: Mode,
         create_new_window: bool,
