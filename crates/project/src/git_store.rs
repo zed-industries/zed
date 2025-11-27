@@ -5175,6 +5175,9 @@ impl Repository {
         let fs_cloned = fs.clone();
 
         let worker_task = cx.spawn(async move |_, cx| {
+            // Clone for use in error logging after the async block moves the original
+            let dot_git_path_for_error = dot_git_abs_path.clone();
+
             // Try to initialize the git backend, but continue processing jobs even if this fails
             let state_result: Result<RepositoryState> = async {
                 let environment = project_environment
@@ -5214,7 +5217,7 @@ impl Repository {
             }.await;
 
             if let Err(ref err) = state_result {
-                log::error!("failed to initialize git worker for {dot_git_abs_path:?}: {err:?}");
+                log::error!("failed to initialize git worker for {dot_git_path_for_error:?}: {err:?}");
             }
 
             // Always process jobs, even if initialization failed
@@ -5247,7 +5250,7 @@ impl Repository {
             }
             anyhow::Ok(())
         });
-        
+
         worker_task.detach_and_log_err(cx);
 
         job_tx
