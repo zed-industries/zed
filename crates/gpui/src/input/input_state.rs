@@ -64,15 +64,13 @@ actions!(
     ]
 );
 
-/// A text input model that manages content, selection, and cursor state.
-///
 /// `Input` is the state model for text input components. It handles:
 /// - Text content storage and manipulation
 /// - Selection and cursor management
 /// - Keyboard navigation and editing actions
 /// - IME (Input Method Editor) support via `EntityInputHandler`
 /// ```
-pub struct Input {
+pub struct InputState {
     focus_handle: FocusHandle,
     content: String,
     placeholder: SharedString,
@@ -106,7 +104,7 @@ pub struct InputLineLayout {
     pub visual_line_count: usize,
 }
 
-impl Input {
+impl InputState {
     /// Creates a new `Input` with empty content.
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
@@ -956,7 +954,7 @@ impl Input {
     }
 }
 
-impl EntityInputHandler for Input {
+impl EntityInputHandler for InputState {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -1133,7 +1131,7 @@ impl EntityInputHandler for Input {
     }
 }
 
-impl Focusable for Input {
+impl Focusable for InputState {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -1145,7 +1143,7 @@ mod tests {
     use crate::{AppContext, Entity, IntoElement, Render, TestAppContext, div};
 
     struct TestView {
-        input: Entity<Input>,
+        input: Entity<InputState>,
     }
 
     impl Render for TestView {
@@ -1161,7 +1159,7 @@ mod tests {
     ) -> crate::WindowHandle<TestView> {
         cx.add_window(|_window, cx| {
             let input = cx.new(|cx| {
-                let mut input = Input::new(cx);
+                let mut input = InputState::new(cx);
                 input.content = content.to_string();
                 input.selected_range = range;
                 input

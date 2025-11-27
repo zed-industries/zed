@@ -3,8 +3,8 @@
 //! Run with: `cargo run -p gpui --example text_area`
 
 use gpui::{
-    App, Application, Bounds, Context, Entity, FocusHandle, Focusable, Input, KeyBinding, Window,
-    WindowBounds, WindowOptions, div, prelude::*, px, rgb, rgba, size, text_area,
+    App, Application, Bounds, Context, Entity, FocusHandle, Focusable, InputState, KeyBinding,
+    Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, rgba, size, text_area,
 };
 
 // todo: move to keymap
@@ -15,13 +15,13 @@ use gpui::input::{
 };
 
 struct TextAreaExample {
-    input: Entity<Input>,
+    input: Entity<InputState>,
 }
 
 impl TextAreaExample {
     fn new(cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            let mut input = Input::new(cx);
+            let mut input = InputState::new(cx);
             input.set_content("Hello, world!\n\nThis is a multi-line text area.\nTry typing, selecting text, and scrolling.", cx);
             input.set_placeholder("Type something...", cx);
             input

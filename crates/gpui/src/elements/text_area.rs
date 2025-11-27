@@ -8,7 +8,7 @@
 use crate::{
     Action, App, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, Input, InputLineLayout, InspectorElementId, InteractiveElement, Interactivity,
+    Hsla, InputLineLayout, InputState, InspectorElementId, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextRun, TextStyle,
     Window, colors, fill, point, px, relative, size,
@@ -19,7 +19,7 @@ const MARKED_TEXT_UNDERLINE_THICKNESS: f32 = 2.0;
 
 /// Creates a new `TextArea` element powered by the given `Input`
 #[track_caller]
-pub fn text_area(input: &Entity<Input>) -> TextArea {
+pub fn text_area(input: &Entity<InputState>) -> TextArea {
     let mut text_area = TextArea {
         input: input.clone(),
         interactivity: Interactivity::new(),
@@ -33,7 +33,7 @@ pub fn text_area(input: &Entity<Input>) -> TextArea {
 
 /// A multi-line text editing element.
 pub struct TextArea {
-    input: Entity<Input>,
+    input: Entity<InputState>,
     interactivity: Interactivity,
     placeholder: Option<SharedString>,
     selection_color: Option<Hsla>,
@@ -71,55 +71,75 @@ impl TextArea {
     }
 
     fn register_actions(&mut self) {
-        register_action(&mut self.interactivity, &self.input, Input::left);
-        register_action(&mut self.interactivity, &self.input, Input::right);
-        register_action(&mut self.interactivity, &self.input, Input::up);
-        register_action(&mut self.interactivity, &self.input, Input::down);
-        register_action(&mut self.interactivity, &self.input, Input::select_left);
-        register_action(&mut self.interactivity, &self.input, Input::select_right);
-        register_action(&mut self.interactivity, &self.input, Input::select_up);
-        register_action(&mut self.interactivity, &self.input, Input::select_down);
-        register_action(&mut self.interactivity, &self.input, Input::select_all);
-        register_action(&mut self.interactivity, &self.input, Input::home);
-        register_action(&mut self.interactivity, &self.input, Input::end);
+        register_action(&mut self.interactivity, &self.input, InputState::left);
+        register_action(&mut self.interactivity, &self.input, InputState::right);
+        register_action(&mut self.interactivity, &self.input, InputState::up);
+        register_action(&mut self.interactivity, &self.input, InputState::down);
         register_action(
             &mut self.interactivity,
             &self.input,
-            Input::move_to_beginning,
-        );
-        register_action(&mut self.interactivity, &self.input, Input::move_to_end);
-        register_action(
-            &mut self.interactivity,
-            &self.input,
-            Input::select_to_beginning,
-        );
-        register_action(&mut self.interactivity, &self.input, Input::select_to_end);
-        register_action(&mut self.interactivity, &self.input, Input::word_left);
-        register_action(&mut self.interactivity, &self.input, Input::word_right);
-        register_action(
-            &mut self.interactivity,
-            &self.input,
-            Input::select_word_left,
+            InputState::select_left,
         );
         register_action(
             &mut self.interactivity,
             &self.input,
-            Input::select_word_right,
+            InputState::select_right,
         );
-        register_action(&mut self.interactivity, &self.input, Input::backspace);
-        register_action(&mut self.interactivity, &self.input, Input::delete);
-        register_action(&mut self.interactivity, &self.input, Input::enter);
-        register_action(&mut self.interactivity, &self.input, Input::tab);
-        register_action(&mut self.interactivity, &self.input, Input::paste);
-        register_action(&mut self.interactivity, &self.input, Input::copy);
-        register_action(&mut self.interactivity, &self.input, Input::cut);
+        register_action(&mut self.interactivity, &self.input, InputState::select_up);
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::select_down,
+        );
+        register_action(&mut self.interactivity, &self.input, InputState::select_all);
+        register_action(&mut self.interactivity, &self.input, InputState::home);
+        register_action(&mut self.interactivity, &self.input, InputState::end);
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::move_to_beginning,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::move_to_end,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::select_to_beginning,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::select_to_end,
+        );
+        register_action(&mut self.interactivity, &self.input, InputState::word_left);
+        register_action(&mut self.interactivity, &self.input, InputState::word_right);
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::select_word_left,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::select_word_right,
+        );
+        register_action(&mut self.interactivity, &self.input, InputState::backspace);
+        register_action(&mut self.interactivity, &self.input, InputState::delete);
+        register_action(&mut self.interactivity, &self.input, InputState::enter);
+        register_action(&mut self.interactivity, &self.input, InputState::tab);
+        register_action(&mut self.interactivity, &self.input, InputState::paste);
+        register_action(&mut self.interactivity, &self.input, InputState::copy);
+        register_action(&mut self.interactivity, &self.input, InputState::cut);
     }
 }
 
 fn register_action<A: Action>(
     interactivity: &mut Interactivity,
-    input: &Entity<Input>,
-    listener: fn(&mut Input, &A, &mut Window, &mut Context<Input>),
+    input: &Entity<InputState>,
+    listener: fn(&mut InputState, &A, &mut Window, &mut Context<InputState>),
 ) {
     let input = input.clone();
     interactivity.on_action::<A>(move |action, window, cx| {
@@ -354,7 +374,7 @@ struct PaintState {
 
 impl PaintState {
     fn from_input(
-        input: &Entity<Input>,
+        input: &Entity<InputState>,
         focus_handle: &FocusHandle,
         _bounds: Bounds<Pixels>,
         window: &Window,
@@ -382,7 +402,7 @@ struct PaintColors {
 }
 
 /// Registers all mouse event handlers for the text area.
-fn handle_mouse(input: &Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
+fn handle_mouse(input: &Entity<InputState>, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
     mouse_down(input.clone(), bounds, window);
     mouse_up(input.clone(), window);
     mouse_move(input.clone(), bounds, window);
@@ -404,7 +424,7 @@ fn screen_to_text_position(
     )
 }
 
-fn mouse_down(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window) {
+fn mouse_down(input: Entity<InputState>, bounds: Bounds<Pixels>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
         if phase != DispatchPhase::Bubble {
             return;
@@ -432,7 +452,7 @@ fn mouse_down(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window)
 
 // todo: basically all of these below can move to TextArea, likely meaning we need to pass less around
 
-fn mouse_up(input: Entity<Input>, window: &mut Window) {
+fn mouse_up(input: Entity<InputState>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
         if phase != DispatchPhase::Bubble {
             return;
@@ -447,7 +467,7 @@ fn mouse_up(input: Entity<Input>, window: &mut Window) {
     });
 }
 
-fn mouse_move(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window) {
+fn mouse_move(input: Entity<InputState>, bounds: Bounds<Pixels>, window: &mut Window) {
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, _window, cx| {
         if phase != DispatchPhase::Bubble {
             return;
@@ -461,7 +481,7 @@ fn mouse_move(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window)
     });
 }
 
-fn handle_scroll(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
+fn handle_scroll(input: Entity<InputState>, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
     let max_scroll = compute_max_scroll(&input, bounds, cx);
 
     window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _window, cx| {
@@ -481,7 +501,7 @@ fn handle_scroll(input: Entity<Input>, bounds: Bounds<Pixels>, window: &mut Wind
 }
 
 /// Computes the maximum scroll offset based on content height and visible area.
-fn compute_max_scroll(input: &Entity<Input>, bounds: Bounds<Pixels>, cx: &App) -> Pixels {
+fn compute_max_scroll(input: &Entity<InputState>, bounds: Bounds<Pixels>, cx: &App) -> Pixels {
     let total_height = input.read(cx).total_content_height();
     (total_height - bounds.size.height).max(px(0.))
 }
