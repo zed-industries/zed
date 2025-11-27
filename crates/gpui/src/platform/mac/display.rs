@@ -102,6 +102,10 @@ impl PlatformDisplay for MacDisplay {
         ]))
     }
 
+    fn adaptive_refresh_rate(&self) -> bool {
+        true
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         unsafe {
             // CGDisplayBounds is in "global display" coordinates, where 0 is

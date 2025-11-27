@@ -39,4 +39,8 @@ impl PlatformDisplay for WaylandDisplay {
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
+
+    fn adaptive_refresh_rate(&self) -> bool {
+        false
+    }
 }
