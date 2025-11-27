@@ -1116,8 +1116,8 @@ impl Window {
                         .log_err();
                 }
 
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
+                // On displays with adaptive refresh rates (e.g., macOS ProMotion), keep presenting
+                // for 1 second after input to prevent the display from underclocking during interaction.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
                     || (adaptive_display.get()
