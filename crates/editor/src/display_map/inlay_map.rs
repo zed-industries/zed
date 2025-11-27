@@ -879,37 +879,16 @@ impl InlaySnapshot {
             }
         }
     }
+
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
-        cursor.seek(&point, Bias::Left);
-        loop {
-            match cursor.item() {
-                Some(Transform::Isomorphic(_)) => {
-                    if point == cursor.end().0 {
-                        while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
-                                break;
-                            } else {
-                                cursor.next();
-                            }
-                        }
-                        return cursor.end().1;
-                    } else {
-                        let overshoot = point - cursor.start().0;
-                        return InlayPoint(cursor.start().1.0 + overshoot);
-                    }
-                }
-                Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left {
-                        cursor.next();
-                    } else {
-                        return cursor.start().1;
-                    }
-                }
-                None => {
-                    return self.max_point();
-                }
-            }
+        self.inlay_point_cursor().map(point)
+    }
+
+    pub fn inlay_point_cursor(&self) -> InlayPointCursor<'_> {
+        let cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
+        InlayPointCursor {
+            cursor,
+            transforms: &self.transforms,
         }
     }
 
@@ -1156,6 +1135,51 @@ impl InlaySnapshot {
                         !transform_is_isomorphic || !next_transform_is_isomorphic,
                         "two adjacent isomorphic transforms"
                     );
+                }
+            }
+        }
+    }
+}
+
+pub struct InlayPointCursor<'transforms> {
+    cursor: Cursor<'transforms, 'static, Transform, Dimensions<Point, InlayPoint>>,
+    transforms: &'transforms SumTree<Transform>,
+}
+
+impl InlayPointCursor<'_> {
+    pub fn map(&mut self, point: Point) -> InlayPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&point, Bias::Left);
+        } else {
+            cursor.seek(&point, Bias::Left);
+        }
+        loop {
+            match cursor.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    if point == cursor.end().0 {
+                        while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                            if inlay.position.bias() == Bias::Right {
+                                break;
+                            } else {
+                                cursor.next();
+                            }
+                        }
+                        return cursor.end().1;
+                    } else {
+                        let overshoot = point - cursor.start().0;
+                        return InlayPoint(cursor.start().1.0 + overshoot);
+                    }
+                }
+                Some(Transform::Inlay(inlay)) => {
+                    if inlay.position.bias() == Bias::Left {
+                        cursor.next();
+                    } else {
+                        return cursor.start().1;
+                    }
+                }
+                None => {
+                    return InlayPoint(self.transforms.summary().output.lines);
                 }
             }
         }

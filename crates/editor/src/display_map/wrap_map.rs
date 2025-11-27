@@ -778,11 +778,12 @@ impl WrapSnapshot {
     }
 
     pub fn to_point(&self, point: WrapPoint, bias: Bias) -> Point {
-        self.tab_snapshot.to_point(self.to_tab_point(point), bias)
+        self.tab_snapshot
+            .tab_point_to_point(self.to_tab_point(point), bias)
     }
 
     pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
-        self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias))
+        self.tab_point_to_wrap_point(self.tab_snapshot.point_to_tab_point(point, bias))
     }
 
     pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
@@ -790,6 +791,14 @@ impl WrapSnapshot {
             self.transforms
                 .find::<Dimensions<TabPoint, WrapPoint>, _>((), &point, Bias::Right);
         WrapPoint(start.1.0 + (point.0 - start.0.0))
+    }
+
+    pub fn wrap_point_cursor(&self) -> WrapPointCursor<'_> {
+        WrapPointCursor {
+            cursor: self
+                .transforms
+                .cursor::<Dimensions<TabPoint, WrapPoint>>(()),
+        }
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
@@ -910,6 +919,22 @@ impl WrapSnapshot {
                 );
             }
         }
+    }
+}
+
+pub struct WrapPointCursor<'transforms> {
+    cursor: Cursor<'transforms, 'static, Transform, Dimensions<TabPoint, WrapPoint>>,
+}
+
+impl WrapPointCursor<'_> {
+    pub fn map(&mut self, point: TabPoint) -> WrapPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&point, Bias::Right);
+        } else {
+            cursor.seek(&point, Bias::Right);
+        }
+        WrapPoint(cursor.start().1.0 + (point.0 - cursor.start().0.0))
     }
 }
 
