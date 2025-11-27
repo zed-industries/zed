@@ -348,7 +348,7 @@ impl DirectXRenderer {
                     texture_id,
                     sprites,
                 } => self.draw_polychrome_sprites(texture_id, sprites),
-                PrimitiveBatch::Shaders(shaders) => self.draw_custom_shaders(shaders),
+                PrimitiveBatch::Shaders(shaders) => self.draw_custom_shaders(shaders, &scene.shader_data),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
             }
             .context(format!(
@@ -648,7 +648,11 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_custom_shaders(&mut self, shaders: &[ShaderInstance]) -> Result<()> {
+    fn draw_custom_shaders(
+        &mut self,
+        shaders: &[ShaderInstance],
+        shader_data: &[u8],
+    ) -> Result<()> {
         if shaders.is_empty() {
             return Ok(());
         }
@@ -694,6 +698,7 @@ impl DirectXRenderer {
             ShaderInstance::pack_instances(
                 dst.pData as _,
                 shaders,
+                shader_data,
                 *instance_data_size,
                 *instance_data_align,
             );
