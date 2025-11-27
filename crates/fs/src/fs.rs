@@ -193,6 +193,8 @@ pub struct CopyOptions {
 pub struct RenameOptions {
     pub overwrite: bool,
     pub ignore_if_exists: bool,
+    /// Whether to create parent directories if they do not exist.
+    pub create_parents: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -576,6 +578,12 @@ impl Fs for RealFs {
                 return Ok(());
             } else {
                 anyhow::bail!("{target:?} already exists");
+            }
+        }
+
+        if options.create_parents {
+            if let Some(parent) = target.parent() {
+                self.create_dir(parent).await?;
             }
         }
 
@@ -2357,6 +2365,12 @@ impl Fs for FakeFs {
         let old_path = normalize_path(old_path);
         let new_path = normalize_path(new_path);
 
+        if options.create_parents {
+            if let Some(parent) = new_path.parent() {
+                self.create_dir(parent).await?;
+            }
+        }
+
         let mut state = self.state.lock();
         let moved_entry = state.write_path(&old_path, |e| {
             if let btree_map::Entry::Occupied(e) = e {
@@ -3395,5 +3409,64 @@ mod tests {
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "Hello");
+    }
+
+    #[gpui::test]
+    async fn test_rename(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "file_a.txt": "content a",
+                    "file_b.txt": "content b"
+                }
+            }),
+        )
+        .await;
+
+        fs.rename(
+            Path::new(path!("/root/src/file_a.txt")),
+            Path::new(path!("/root/src/new/renamed_a.txt")),
+            RenameOptions {
+                create_parents: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        // Assert that the `file_a.txt` file was being renamed and moved to a
+        // different directory that did not exist before.
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/root/src/file_b.txt")),
+                PathBuf::from(path!("/root/src/new/renamed_a.txt")),
+            ]
+        );
+
+        let result = fs
+            .rename(
+                Path::new(path!("/root/src/file_b.txt")),
+                Path::new(path!("/root/src/old/renamed_b.txt")),
+                RenameOptions {
+                    create_parents: false,
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        // Assert that the `file_b.txt` file was not renamed nor moved, as
+        // `create_parents` was set to `false`.
+        // different directory that did not exist before.
+        assert!(result.is_err());
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/root/src/file_b.txt")),
+                PathBuf::from(path!("/root/src/new/renamed_a.txt")),
+            ]
+        );
     }
 }

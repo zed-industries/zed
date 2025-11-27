@@ -627,7 +627,7 @@ impl Render for ComponentPreview {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.nav_scroll_handle.clone())
+                        .track_scroll(&self.nav_scroll_handle)
                         .p_2p5()
                         .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()

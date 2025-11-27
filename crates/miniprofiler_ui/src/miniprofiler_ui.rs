@@ -400,10 +400,10 @@ impl Render for ProfilerWindow {
                                 this.autoscroll = false;
                                 cx.notify();
                             }))
-                            .track_scroll(self.scroll_handle.clone())
+                            .track_scroll(&self.scroll_handle)
                             .size_full(),
                         )
-                        .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                 )
             })
     }
