@@ -1293,6 +1293,14 @@
   "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
+    // Global switch to toggle git integration features on and off.
+    "enabled": {
+      // If true, all git integration features below are enabled or disabled independently.
+      // If false, all git integration features are disabled.
+      "global": true,
+      "status": true,
+      "diff": true
+    },
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"
