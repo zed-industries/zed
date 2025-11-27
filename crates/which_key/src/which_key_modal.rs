@@ -340,7 +340,7 @@ impl Render for WhichKeyModal {
                             div()
                                 .h(list_container_height)
                                 .child(rows.h(list_container_height))
-                                .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                         )
                     }),
             )
