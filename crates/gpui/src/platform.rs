@@ -1594,6 +1594,7 @@ impl ClipboardItem {
             entries: vec![ClipboardEntry::String(ClipboardString {
                 text,
                 metadata: Some(metadata),
+                html: None,
             })],
         }
     }
@@ -1603,6 +1604,15 @@ impl ClipboardItem {
         Self {
             entries: vec![ClipboardEntry::String(
                 ClipboardString::new(text).with_json_metadata(metadata),
+            )],
+        }
+    }
+
+    /// Create a new ClipboardItem::String with the given text and HTML representation
+    pub fn new_string_with_html(text: String, html: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::String(
+                ClipboardString::new(text).with_html(html),
             )],
         }
     }
@@ -1620,7 +1630,7 @@ impl ClipboardItem {
         let mut answer = String::new();
 
         for entry in self.entries.iter() {
-            if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
+            if let ClipboardEntry::String(ClipboardString { text, .. }) = entry {
                 answer.push_str(text);
             }
         }
@@ -1886,6 +1896,7 @@ impl Image {
 pub struct ClipboardString {
     pub(crate) text: String,
     pub(crate) metadata: Option<String>,
+    pub(crate) html: Option<String>,
 }
 
 impl ClipboardString {
@@ -1894,6 +1905,7 @@ impl ClipboardString {
         Self {
             text,
             metadata: None,
+            html: None,
         }
     }
 
@@ -1901,6 +1913,13 @@ impl ClipboardString {
     /// after serializing it as JSON.
     pub fn with_json_metadata<T: Serialize>(mut self, metadata: T) -> Self {
         self.metadata = Some(serde_json::to_string(&metadata).unwrap());
+        self
+    }
+
+    /// Return a new clipboard item with HTML content for rich text pasting.
+    /// When present, platforms will write both plain text and HTML to the clipboard.
+    pub fn with_html(mut self, html: String) -> Self {
+        self.html = Some(html);
         self
     }
 
@@ -1912,6 +1931,11 @@ impl ClipboardString {
     /// Get the owned text of the clipboard string
     pub fn into_text(self) -> String {
         self.text
+    }
+
+    /// Get the HTML content of the clipboard string, if present
+    pub fn html(&self) -> Option<&String> {
+        self.html.as_ref()
     }
 
     /// Get the metadata of the clipboard string, formatted as JSON
@@ -1937,6 +1961,7 @@ impl From<String> for ClipboardString {
         Self {
             text: value,
             metadata: None,
+            html: None,
         }
     }
 }

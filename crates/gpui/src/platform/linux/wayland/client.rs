@@ -864,11 +864,23 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+            // Check if any entry has HTML content
+            let has_html = item.entries().iter().any(|entry| {
+                if let crate::ClipboardEntry::String(s) = entry {
+                    s.html.is_some()
+                } else {
+                    false
+                }
+            });
+
             state.clipboard.set(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
+            }
+            if has_html {
+                data_source.offer("text/html".to_string());
             }
             data_source.offer(state.clipboard.self_mime());
             data_device.set_selection(Some(&data_source), serial);

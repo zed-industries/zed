@@ -1581,15 +1581,40 @@ impl LinuxClient for X11Client {
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
         let mut state = self.0.borrow_mut();
-        state
-            .clipboard
-            .set_text(
-                std::borrow::Cow::Owned(item.text().unwrap_or_default()),
-                clipboard::ClipboardKind::Clipboard,
-                clipboard::WaitConfig::None,
-            )
-            .context("X11: Failed to write to clipboard (clipboard)")
-            .log_with_level(log::Level::Debug);
+        let text = item.text().unwrap_or_default();
+
+        // Check if any entry has HTML content
+        let html = item.entries().iter().find_map(|entry| {
+            if let crate::ClipboardEntry::String(s) = entry {
+                s.html.clone()
+            } else {
+                None
+            }
+        });
+
+        if let Some(html) = html {
+            state
+                .clipboard
+                .set_text_with_html(
+                    std::borrow::Cow::Owned(text),
+                    std::borrow::Cow::Owned(html),
+                    clipboard::ClipboardKind::Clipboard,
+                    clipboard::WaitConfig::None,
+                )
+                .context("X11: Failed to write to clipboard (clipboard)")
+                .log_with_level(log::Level::Debug);
+        } else {
+            state
+                .clipboard
+                .set_text(
+                    std::borrow::Cow::Owned(text),
+                    clipboard::ClipboardKind::Clipboard,
+                    clipboard::WaitConfig::None,
+                )
+                .context("X11: Failed to write to clipboard (clipboard)")
+                .log_with_level(log::Level::Debug);
+        }
+
         state.clipboard_item.replace(item);
     }
 

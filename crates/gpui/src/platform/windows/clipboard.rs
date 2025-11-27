@@ -38,6 +38,8 @@ static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("PNG")));
 static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
+static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 
 // Helper maps and sets
 static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::new(|| {
@@ -169,6 +171,13 @@ fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
     let encode_wide = item.text.encode_utf16().chain(Some(0)).collect_vec();
     set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
 
+    if let Some(html) = item.html.as_ref() {
+        if let Some(cf_html) = format_cf_html(html) {
+            let html_bytes: Vec<u8> = cf_html.into_bytes();
+            set_bytes_to_clipboard(&html_bytes, *CLIPBOARD_HTML_FORMAT)?;
+        }
+    }
+
     if let Some(metadata) = item.metadata.as_ref() {
         let hash_result = {
             let hash = ClipboardString::text_hash(&item.text);
@@ -180,6 +189,37 @@ fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
 
         let metadata_wide = metadata.encode_utf16().chain(Some(0)).collect_vec();
         set_data_to_clipboard(&metadata_wide, *CLIPBOARD_METADATA_FORMAT)?;
+    }
+    Ok(())
+}
+
+fn format_cf_html(html: &str) -> Option<String> {
+    // CF_HTML format requires a specific header with byte offsets
+    // https://docs.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
+    let header_template = "Version:0.9\r\nStartHTML:SSSSSSSSSS\r\nEndHTML:EEEEEEEEEE\r\nStartFragment:FFFFFFFFFF\r\nEndFragment:GGGGGGGGGG\r\n";
+    let prefix = "<html><head><meta charset=\"utf-8\"></head><body>\r\n<!--StartFragment-->";
+    let suffix = "<!--EndFragment-->\r\n</body></html>";
+
+    let start_html = header_template.len();
+    let start_fragment = start_html + prefix.len();
+    let end_fragment = start_fragment + html.len();
+    let end_html = end_fragment + suffix.len();
+
+    let header = format!(
+        "Version:0.9\r\nStartHTML:{:010}\r\nEndHTML:{:010}\r\nStartFragment:{:010}\r\nEndFragment:{:010}\r\n",
+        start_html, end_html, start_fragment, end_fragment
+    );
+
+    Some(format!("{}{}{}{}", header, prefix, html, suffix))
+}
+
+fn set_bytes_to_clipboard(data: &[u8], format: u32) -> Result<()> {
+    unsafe {
+        let global = GlobalAlloc(GMEM_MOVEABLE, data.len())?;
+        let handle = GlobalLock(global);
+        std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
+        let _ = GlobalUnlock(global);
+        SetClipboardData(format, Some(HANDLE(global.0)))?;
     }
     Ok(())
 }
@@ -307,6 +347,7 @@ fn read_string_from_clipboard() -> Option<ClipboardEntry> {
         Some(ClipboardEntry::String(ClipboardString {
             text,
             metadata: Some(metadata),
+            html: None,
         }))
     } else {
         Some(ClipboardEntry::String(ClipboardString::new(text)))

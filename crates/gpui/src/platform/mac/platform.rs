@@ -1064,8 +1064,7 @@ impl Platform for MacPlatform {
                         .init_attributed_string(NSString::alloc(nil).init_str(""));
 
                     for entry in item.entries {
-                        if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry
-                        {
+                        if let ClipboardEntry::String(ClipboardString { text, .. }) = entry {
                             let to_append = NSAttributedString::alloc(nil)
                                 .init_attributed_string(NSString::alloc(nil).init_str(&text));
 
@@ -1277,7 +1276,11 @@ impl MacPlatform {
                 });
 
             ClipboardItem {
-                entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
+                entries: vec![ClipboardEntry::String(ClipboardString {
+                    text,
+                    metadata,
+                    html: None,
+                })],
             }
         }
     }
@@ -1295,6 +1298,20 @@ impl MacPlatform {
             state
                 .pasteboard
                 .setData_forType(text_bytes, NSPasteboardTypeString);
+
+            if let Some(html) = string.html.as_ref() {
+                let wrapped_html = format!(
+                    "<html><head><meta charset=\"utf-8\"></head><body>{}</body></html>",
+                    html
+                );
+                let html_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    wrapped_html.as_ptr() as *const c_void,
+                    wrapped_html.len() as u64,
+                );
+                let html_type = ns_string("public.html");
+                state.pasteboard.setData_forType(html_bytes, html_type);
+            }
 
             if let Some(metadata) = string.metadata.as_ref() {
                 let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
