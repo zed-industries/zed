@@ -153,6 +153,22 @@ enum DiffKind {
     Uncommitted,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub enum GitAccess {
+    /// Either:
+    /// - the user owns `.git`
+    /// - the user doesn't own `.git`, but has both of:
+    ///   - OS-level read permisions
+    ///   - the directory is marked as safe (git config safe.directory)
+    #[default]
+    Yes,
+
+    /// The user is not the owner of `.git`, and one of the following is true:
+    /// - the directory is not marked as safe (git config safe.directory)
+    /// - the user does not have OS-level read permissions to `.git`
+    No,
+}
+
 enum GitStoreState {
     Local {
         next_repository_id: Arc<AtomicU64>,
@@ -5866,6 +5882,18 @@ impl Repository {
         }
         self.pending_ops.edit(edits, ());
         ids
+    }
+
+    pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Remote { .. } => todo!(),
+                RepositoryState::Local { backend, .. } => match backend.status(&[]).await {
+                    Ok(_) => GitAccess::Yes,
+                    Err(_) => GitAccess::No,
+                },
+            }
+        })
     }
 }
 

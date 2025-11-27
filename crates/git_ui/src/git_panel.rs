@@ -52,6 +52,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
+use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -640,6 +641,7 @@ pub struct GitPanel {
     stash_entries: GitStash,
     optimistic_staging: HashMap<RepoPath, bool>,
     _settings_subscription: Subscription,
+    git_access: GitAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -810,6 +812,7 @@ impl GitPanel {
                 stash_entries: Default::default(),
                 optimistic_staging: HashMap::default(),
                 _settings_subscription,
+                git_access: GitAccess::Yes,
             };
 
             this.schedule_update(window, cx);
@@ -3250,10 +3253,26 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
         self.max_width_item_index = None;
+        self.git_access = GitAccess::Yes;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_status = is_tree_view || !sort_by_path;
+
+        if let Some(active_repo) = self.active_repository.as_ref() {
+            let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                let Ok(access) = access.await else {
+                    return Ok(());
+                };
+
+                git_panel.update(cx, |this, _cx| {
+                    this.git_access = dbg!(access);
+                })
+            })
+            .detach_and_log_err(cx);
+        }
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
