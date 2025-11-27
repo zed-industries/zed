@@ -3969,10 +3969,10 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-                                            let is_folded = is_folded;
+                                            let is_folded_for_tooltip = is_folded;
                                             move |_window, cx| {
                                                 Tooltip::with_meta_in(
-                                                    if is_folded {
+                                                    if is_folded_for_tooltip {
                                                         "Toggle Excerpt Unfold"
                                                     } else {
                                                         "Toggle Excerpt Fold"
