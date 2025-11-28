@@ -835,36 +835,38 @@ impl CompletionsMenu {
                                     FontWeight::BOLD.into(),
                                 )
                             }),
-                            styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                                |(range, mut highlight)| {
-                                    // Ignore font weight for syntax highlighting, as we'll use it
-                                    // for fuzzy matches.
-                                    highlight.font_weight = None;
-                                    if completion
-                                        .source
-                                        .lsp_completion(false)
-                                        .and_then(|lsp_completion| {
-                                            match (lsp_completion.deprecated, &lsp_completion.tags)
-                                            {
-                                                (Some(true), _) => Some(true),
-                                                (_, Some(tags)) => Some(
-                                                    tags.contains(&CompletionItemTag::DEPRECATED),
-                                                ),
-                                                _ => None,
+                            styled_runs_for_code_label(
+                                &completion.label,
+                                &style.syntax,
+                                &style.local_player,
+                            )
+                            .map(|(range, mut highlight)| {
+                                // Ignore font weight for syntax highlighting, as we'll use it
+                                // for fuzzy matches.
+                                highlight.font_weight = None;
+                                if completion
+                                    .source
+                                    .lsp_completion(false)
+                                    .and_then(|lsp_completion| {
+                                        match (lsp_completion.deprecated, &lsp_completion.tags) {
+                                            (Some(true), _) => Some(true),
+                                            (_, Some(tags)) => {
+                                                Some(tags.contains(&CompletionItemTag::DEPRECATED))
                                             }
-                                        })
-                                        .unwrap_or(false)
-                                    {
-                                        highlight.strikethrough = Some(StrikethroughStyle {
-                                            thickness: 1.0.into(),
-                                            ..Default::default()
-                                        });
-                                        highlight.color = Some(cx.theme().colors().text_muted);
-                                    }
+                                            _ => None,
+                                        }
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    highlight.strikethrough = Some(StrikethroughStyle {
+                                        thickness: 1.0.into(),
+                                        ..Default::default()
+                                    });
+                                    highlight.color = Some(cx.theme().colors().text_muted);
+                                }
 
-                                    (range, highlight)
-                                },
-                            ),
+                                (range, highlight)
+                            }),
                         );
 
                         let completion_label = StyledText::new(completion.label.text.clone())
