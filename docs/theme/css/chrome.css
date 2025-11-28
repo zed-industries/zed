@@ -409,7 +409,7 @@ ul#searchresults span.teaser em {
   font-size: 0.875em;
   box-sizing: border-box;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
+  overscroll-behavior-y: none;
   overflow: hidden;
   background-color: var(--sidebar-bg);
   color: var(--sidebar-fg);

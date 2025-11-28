@@ -25,6 +25,7 @@ body {
   font-size: 1.6rem;
   overflow: hidden;
   height: 100vh;
+  overscroll-behavior-y: none;
 }
 
 #body-container {
@@ -190,6 +191,7 @@ hr {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior-y: none;
   min-width: 0;
   position: relative;
 }
