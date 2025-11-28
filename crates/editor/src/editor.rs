@@ -18322,19 +18322,67 @@ impl Editor {
         if !pull_diagnostics_settings.enabled {
             return None;
         }
-        let project = self.project()?;
-        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
-        let buffers = project.read(cx).opened_buffers(cx);
-        if buffers.is_empty() {
+        let project = self.project()?.downgrade();
+
+        let mut edited_buffer_ids = HashSet::default();
+        let mut edited_worktree_ids = HashSet::default();
+        let edited_buffers = match buffer_id {
+            Some(buffer_id) => {
+                let buffer = self.buffer().read(cx).buffer(buffer_id)?;
+                let worktree_id = buffer.read(cx).file().map(|f| f.worktree_id(cx))?;
+                edited_buffer_ids.insert(buffer.read(cx).remote_id());
+                edited_worktree_ids.insert(worktree_id);
+                vec![buffer]
+            }
+            None => self
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .filter(|buffer| {
+                    let buffer = buffer.read(cx);
+                    match buffer.file().map(|f| f.worktree_id(cx)) {
+                        Some(worktree_id) => {
+                            edited_buffer_ids.insert(buffer.remote_id());
+                            edited_worktree_ids.insert(worktree_id);
+                            true
+                        }
+                        None => false,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        };
+
+        if edited_buffers.is_empty() {
             self.pull_diagnostics_task = Task::ready(());
             self.pull_diagnostics_background_task = Task::ready(());
             return None;
         }
-        let (edited_buffer, background_buffers) = buffers.into_iter().partition::<Vec<_>, _>(|b| {
-            buffer_id.is_none_or(|buffer_id| b.read(cx).remote_id() == buffer_id)
-        });
 
-        let project = project.downgrade();
+        let mut already_used_buffers = HashSet::default();
+        let related_open_buffers = self
+            .workspace
+            .as_ref()
+            .and_then(|(workspace, _)| workspace.upgrade())
+            .into_iter()
+            .flat_map(|workspace| workspace.read(cx).panes())
+            .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
+            .filter(|editor| editor != &cx.entity())
+            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
+            .filter(|buffer| {
+                let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
+                if already_used_buffers.insert(buffer_id) {
+                    if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx)) {
+                        return !edited_buffer_ids.contains(&buffer_id)
+                            && !edited_worktree_ids.contains(&worktree_id);
+                    }
+                }
+                false
+            })
+            .collect::<Vec<_>>();
+
+        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
         let make_spawn = |buffers: Vec<Entity<Buffer>>, delay: Duration| {
             if buffers.is_empty() {
                 return Task::ready(());
@@ -18368,8 +18416,8 @@ impl Editor {
             })
         };
 
-        self.pull_diagnostics_task = make_spawn(edited_buffer, debounce);
-        self.pull_diagnostics_background_task = make_spawn(background_buffers, debounce * 2);
+        self.pull_diagnostics_task = make_spawn(edited_buffers, debounce);
+        self.pull_diagnostics_background_task = make_spawn(related_open_buffers, debounce * 2);
 
         Some(())
     }
