@@ -2449,6 +2449,7 @@ pub mod tests {
     use editor::{DisplayPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, rust_lang};
+    use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
     use settings::{InlayHintSettingsContent, SettingsStore};
@@ -2506,10 +2507,6 @@ pub mod tests {
                     (
                         DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
                         match_background_color
-                    ),
-                    (
-                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
-                        selection_background_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),

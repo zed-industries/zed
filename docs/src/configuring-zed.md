@@ -4071,7 +4071,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Will Fallback to the first project directory strategy if unsuccessful
+1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4081,7 +4081,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Will fallback to using this platform's home directory.
+2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4091,7 +4091,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory (if we can find it)
+3. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4114,6 +4114,53 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
   }
 }
 ```
+
+### Terminal: Path Hyperlink Regexes
+
+- Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string).
+- Setting: `path_hyperlink_regexes`
+- Default:
+
+```json [settings]
+{
+  "terminal": {
+    "path_hyperlink_regexes": [
+      // Python-style diagnostics
+      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+      // Common path syntax with optional line, column, description, trailing punctuation, or
+      // surrounding symbols or quotes
+      [
+        "(?x)",
+        "# optionally starts with 0-2 opening prefix symbols",
+        "[({\\[<]{0,2}",
+        "# which may be followed by an opening quote",
+        "(?<quote>[\"'`])?",
+        "# `path` is the shortest sequence of any non-space character",
+        "(?<link>(?<path>[^ ]+?",
+        "    # which may end with a line and optionally a column,",
+        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+        "))",
+        "# which must be followed by a matching quote",
+        "(?(<quote>)\\k<quote>)",
+        "# and optionally a single closing symbol",
+        "[)}\\]>]?",
+        "# if line/column matched, may be followed by a description",
+        "(?(<line_column>):[^ 0-9][^ ]*)?",
+        "# which may be followed by trailing punctuation",
+        "[.,:)}\\]>]*",
+        "# and always includes trailing whitespace or end of line",
+        "([ ]+|$)"
+      ]
+    ]
+  }
+}
+```
+
+### Terminal: Path Hyperlink Timeout (ms)
+
+- Description: Maximum time to search for a path hyperlink. When set to 0, path hyperlinks are disabled.
+- Setting: `path_hyperlink_timeout_ms`
+- Default: `1`
 
 ## REPL
 
@@ -4646,6 +4693,34 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 
+## Git Hosting Providers
+
+- Description: Register self-hosted GitHub, GitLab, or Bitbucket instances so commit hashes, issue references, and permalinks resolve to the right host.
+- Setting: `git_hosting_providers`
+- Default: `[]`
+
+**Options**
+
+Each entry accepts:
+
+- `provider`: One of `github`, `gitlab`, or `bitbucket`
+- `name`: Display name for the instance
+- `base_url`: Base URL, e.g. `https://git.example.corp`
+
+You can define these in user or project settings; project settings are merged on top of user settings.
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "github",
+      "name": "BigCorp GitHub",
+      "base_url": "https://git.example.corp"
+    }
+  ]
+}
+```
+
 ## Outline Panel
 
 - Description: Customize outline Panel
@@ -4686,6 +4761,18 @@ See the [debugger page](./debugger.md) for more information about debugging supp
   "share_on_join": false
 },
 ```
+
+## Colorize Brackets
+
+- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
+- Setting: `colorize_brackets`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ## Unnecessary Code Fade
 

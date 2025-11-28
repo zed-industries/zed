@@ -513,6 +513,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
+        .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -606,7 +607,10 @@ pub fn open_settings_editor(
                 window_background: cx.theme().window_background_appearance(),
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
-                window_min_size: Some(scaled_bounds),
+                window_min_size: Some(gpui::Size {
+                    width: px(360.0),
+                    height: px(240.0),
+                }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },

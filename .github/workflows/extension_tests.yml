@@ -77,7 +77,7 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
       if: inputs.run_tests
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     timeout-minutes: 3
   check_extension:

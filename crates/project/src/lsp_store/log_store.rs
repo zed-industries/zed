@@ -344,22 +344,7 @@ impl LogStore {
                                 enabled,
                                 toggled_log_kind,
                             } => {
-                                if let Some(server_state) =
-                                    log_store.get_language_server_state(*server_id)
-                                {
-                                    if *enabled {
-                                        server_state.toggled_log_kind = Some(*toggled_log_kind);
-                                    } else {
-                                        server_state.toggled_log_kind = None;
-                                    }
-                                }
-                                if LogKind::Rpc == *toggled_log_kind {
-                                    if *enabled {
-                                        log_store.enable_rpc_trace_for_language_server(*server_id);
-                                    } else {
-                                        log_store.disable_rpc_trace_for_language_server(*server_id);
-                                    }
-                                }
+                                log_store.toggle_lsp_logs(*server_id, *enabled, *toggled_log_kind);
                             }
                             _ => {}
                         }
@@ -676,7 +661,6 @@ impl LogStore {
     }
 
     fn emit_event(&mut self, e: Event, cx: &mut Context<Self>) {
-        let on_headless_host = self.on_headless_host;
         match &e {
             Event::NewServerLogEntry { id, kind, text } => {
                 if let Some(state) = self.get_language_server_state(*id) {
@@ -690,9 +674,7 @@ impl LogStore {
                     }
                     .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
                     if let Some((client, project_id)) = downstream_client {
-                        if on_headless_host
-                            || Some(LogKind::from_server_log_type(kind)) == state.toggled_log_kind
-                        {
+                        if Some(LogKind::from_server_log_type(kind)) == state.toggled_log_kind {
                             client
                                 .send(proto::LanguageServerLog {
                                     project_id,
@@ -708,5 +690,27 @@ impl LogStore {
         }
 
         cx.emit(e);
+    }
+
+    pub fn toggle_lsp_logs(
+        &mut self,
+        server_id: LanguageServerId,
+        enabled: bool,
+        toggled_log_kind: LogKind,
+    ) {
+        if let Some(server_state) = self.get_language_server_state(server_id) {
+            if enabled {
+                server_state.toggled_log_kind = Some(toggled_log_kind);
+            } else {
+                server_state.toggled_log_kind = None;
+            }
+        }
+        if LogKind::Rpc == toggled_log_kind {
+            if enabled {
+                self.enable_rpc_trace_for_language_server(server_id);
+            } else {
+                self.disable_rpc_trace_for_language_server(server_id);
+            }
+        }
     }
 }

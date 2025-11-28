@@ -25,7 +25,7 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, Oid,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, RunHook,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -301,6 +301,7 @@ impl std::ops::Deref for Repository {
 #[derive(Clone)]
 pub enum RepositoryState {
     Local {
+        fs: Arc<dyn Fs>,
         backend: Arc<dyn GitRepository>,
         environment: Arc<HashMap<String, String>>,
     },
@@ -433,6 +434,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_stash_apply);
         client.add_entity_request_handler(Self::handle_stash_drop);
         client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
@@ -2002,6 +2004,22 @@ impl GitStore {
                     None,
                     cx,
                 )
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_run_hook(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RunGitHook>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let hook = RunHook::from_proto(envelope.payload.hook).context("invalid hook")?;
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.run_hook(hook, cx)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -4372,19 +4390,50 @@ impl Repository {
         })
     }
 
+    pub fn run_hook(&mut self, hook: RunHook, _cx: &mut App) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git hook {}", hook.as_str()).into()),
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local {
+                        backend,
+                        environment,
+                        ..
+                    } => backend.run_hook(hook, environment.clone()).await,
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::RunGitHook {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                hook: hook.to_proto(),
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn commit(
         &mut self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
+        let rx = self.run_hook(RunHook::PreCommit, cx);
+
         self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
+            rx.await??;
+
             match git_repo {
                 RepositoryState::Local {
                     backend,
@@ -4643,6 +4692,7 @@ impl Repository {
         let id = self.id;
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
+        let abs_path = self.snapshot.repo_path_to_abs_path(&path);
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(vec![path.clone()])),
             None,
@@ -4651,14 +4701,21 @@ impl Repository {
                     "start updating index text for buffer {}",
                     path.as_unix_str()
                 );
+
                 match git_repo {
                     RepositoryState::Local {
+                        fs,
                         backend,
                         environment,
                         ..
                     } => {
+                        let executable = match fs.metadata(&abs_path).await {
+                            Ok(Some(meta)) => meta.is_executable,
+                            Ok(None) => false,
+                            Err(_err) => false,
+                        };
                         backend
-                            .set_index_text(path.clone(), content, environment.clone())
+                            .set_index_text(path.clone(), content, environment.clone(), executable)
                             .await?;
                     }
                     RepositoryState::Remote { project_id, client } => {
@@ -5227,6 +5284,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+        let fs_cloned = fs.clone();
 
         cx.spawn(async move |_, cx| {
             let environment = project_environment
@@ -5258,8 +5316,8 @@ impl Repository {
                     backend.clone(),
                 );
             }
-
             let state = RepositoryState::Local {
+                fs: fs_cloned,
                 backend,
                 environment: Arc::new(environment),
             };

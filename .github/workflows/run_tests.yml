@@ -47,7 +47,7 @@ jobs:
         }
 
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
-        check_pattern "run_docs" '^docs/' -qP
+        check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
@@ -117,7 +117,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -166,7 +166,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -200,7 +200,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()

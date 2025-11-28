@@ -17,8 +17,8 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
-    VisualTestContext, WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, Rgba, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -17565,7 +17565,9 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
-    let mut assert = |before, after| {
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
         let _state_context = cx.set_state(before);
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
@@ -17573,30 +17575,33 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
         });
         cx.run_until_parked();
         cx.assert_editor_state(after);
-    };
+    }
 
     // Outside bracket jumps to outside of matching bracket
-    assert("console.logˇ(var);", "console.log(var)ˇ;");
-    assert("console.log(var)ˇ;", "console.logˇ(var);");
+    assert("console.logˇ(var);", "console.log(var)ˇ;", &mut cx);
+    assert("console.log(var)ˇ;", "console.logˇ(var);", &mut cx);
 
     // Inside bracket jumps to inside of matching bracket
-    assert("console.log(ˇvar);", "console.log(varˇ);");
-    assert("console.log(varˇ);", "console.log(ˇvar);");
+    assert("console.log(ˇvar);", "console.log(varˇ);", &mut cx);
+    assert("console.log(varˇ);", "console.log(ˇvar);", &mut cx);
 
     // When outside a bracket and inside, favor jumping to the inside bracket
     assert(
         "console.log('foo', [1, 2, 3]ˇ);",
-        "console.log(ˇ'foo', [1, 2, 3]);",
+        "console.log('foo', ˇ[1, 2, 3]);",
+        &mut cx,
     );
     assert(
         "console.log(ˇ'foo', [1, 2, 3]);",
-        "console.log('foo', [1, 2, 3]ˇ);",
+        "console.log('foo'ˇ, [1, 2, 3]);",
+        &mut cx,
     );
 
     // Bias forward if two options are equally likely
     assert(
         "let result = curried_fun()ˇ();",
         "let result = curried_fun()()ˇ;",
+        &mut cx,
     );
 
     // If directly adjacent to a smaller pair but inside a larger (not adjacent), pick the smaller
@@ -17609,6 +17614,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
             function test() {
                 console.logˇ('test')
             }"},
+        &mut cx,
     );
 }
 
@@ -21544,10 +21550,9 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        let buffer_id = hunks[0].buffer_id;
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range))
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 2);
@@ -21635,10 +21640,9 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        let buffer_id = hunks[0].buffer_id;
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range))
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 2);
@@ -21701,10 +21705,9 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        let buffer_id = hunks[0].buffer_id;
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range))
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 1);
@@ -26297,7 +26300,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         crate::init(cx);
     });
     zlog::init_test();

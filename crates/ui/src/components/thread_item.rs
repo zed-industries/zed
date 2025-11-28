@@ -1,4 +1,6 @@
-use crate::{Chip, Indicator, SpinnerLabel, prelude::*};
+use crate::{
+    Chip, DecoratedIcon, DiffStat, IconDecoration, IconDecorationKind, SpinnerLabel, prelude::*,
+};
 use gpui::{ClickEvent, SharedString};
 
 #[derive(IntoElement, RegisterComponent)]
@@ -10,7 +12,8 @@ pub struct ThreadItem {
     running: bool,
     generation_done: bool,
     selected: bool,
-    has_changes: bool,
+    added: Option<usize>,
+    removed: Option<usize>,
     worktree: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -25,7 +28,8 @@ impl ThreadItem {
             running: false,
             generation_done: false,
             selected: false,
-            has_changes: false,
+            added: None,
+            removed: None,
             worktree: None,
             on_click: None,
         }
@@ -56,8 +60,13 @@ impl ThreadItem {
         self
     }
 
-    pub fn has_changes(mut self, has_changes: bool) -> Self {
-        self.has_changes = has_changes;
+    pub fn added(mut self, added: usize) -> Self {
+        self.added = Some(added);
+        self
+    }
+
+    pub fn removed(mut self, removed: usize) -> Self {
+        self.removed = Some(removed);
         self
     }
 
@@ -78,20 +87,35 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let icon_container = || h_flex().size_4().justify_center();
+        let agent_icon = Icon::new(self.icon)
+            .color(Color::Muted)
+            .size(IconSize::Small);
+
         let icon = if self.generation_done {
-            icon_container().child(Indicator::dot().color(Color::Accent))
-        } else if self.running {
-            icon_container().child(SpinnerLabel::new().color(Color::Accent))
-        } else {
-            icon_container().child(
-                Icon::new(self.icon)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
+            DecoratedIcon::new(
+                agent_icon,
+                Some(
+                    IconDecoration::new(
+                        IconDecorationKind::Dot,
+                        cx.theme().colors().surface_background,
+                        cx,
+                    )
+                    .color(cx.theme().colors().text_accent)
+                    .position(gpui::Point {
+                        x: px(-2.),
+                        y: px(-2.),
+                    }),
+                ),
             )
+            .into_any_element()
+        } else {
+            agent_icon.into_any_element()
         };
 
+        let has_no_changes = self.added.is_none() && self.removed.is_none();
+
         v_flex()
-            .id(self.id)
+            .id(self.id.clone())
             .cursor_pointer()
             .p_2()
             .when(self.selected, |this| {
@@ -103,7 +127,10 @@ impl RenderOnce for ThreadItem {
                     .w_full()
                     .gap_1p5()
                     .child(icon)
-                    .child(Label::new(self.title).truncate()),
+                    .child(Label::new(self.title).truncate())
+                    .when(self.running, |this| {
+                        this.child(icon_container().child(SpinnerLabel::new().color(Color::Accent)))
+                    }),
             )
             .child(
                 h_flex()
@@ -123,12 +150,19 @@ impl RenderOnce for ThreadItem {
                             .color(Color::Muted)
                             .alpha(0.5),
                     )
-                    .when(!self.has_changes, |this| {
+                    .when(has_no_changes, |this| {
                         this.child(
                             Label::new("No Changes")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
+                    })
+                    .when(self.added.is_some() || self.removed.is_some(), |this| {
+                        this.child(DiffStat::new(
+                            self.id,
+                            self.added.unwrap_or(0),
+                            self.removed.unwrap_or(0),
+                        ))
                     }),
             )
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
@@ -193,10 +227,22 @@ impl Component for ThreadItem {
                     .into_any_element(),
             ),
             single_example(
+                "With Changes",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5", "Managing user and project settings interactions")
+                            .icon(IconName::AiClaude)
+                            .timestamp("7:37 PM")
+                            .added(10)
+                            .removed(3),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
                 "Selected Item",
                 container()
                     .child(
-                        ThreadItem::new("ti-5", "Refine textarea interaction behavior")
+                        ThreadItem::new("ti-6", "Refine textarea interaction behavior")
                             .icon(IconName::AiGemini)
                             .timestamp("3:00 PM")
                             .selected(true),
