@@ -1472,15 +1472,13 @@ impl GitRepository for RealGitRepository {
                 let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
 
                 // Add pagination arguments if needed
-                let skip_str;
-                let limit_str;
                 if skip > 0 {
-                    skip_str = skip.to_string();
+                    let skip_str = skip.to_string();
                     args.push("--skip");
                     args.push(&skip_str);
                 }
                 if let Some(n) = limit {
-                    limit_str = n.to_string();
+                    let limit_str = n.to_string();
                     args.push("-n");
                     args.push(&limit_str);
                 }
