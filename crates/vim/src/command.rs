@@ -6,7 +6,7 @@ use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
-use futures::{AsyncWriteExt as _, channel::oneshot};
+use futures::AsyncWriteExt as _;
 use gpui::{
     Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
 };
@@ -2196,46 +2196,33 @@ impl OnMatchingLines {
                 if new_selections.is_empty() {
                     return;
                 }
-                let _ = editor.update_in(cx, |editor, window, cx| {
-                    editor.start_transaction_at(Instant::now(), window, cx);
-                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.replace_cursors_with(|_| new_selections);
-                    });
-                    window.dispatch_action(action, cx);
-
-                    let (tx, rx) = oneshot::channel();
-                    cx.defer_in(window, move |editor, _, cx| {
-                        if let Some(workspace) = editor.workspace() {
-                            let _ = tx.send(
-                                workspace
-                                    .update(cx, |workspace, _| workspace.wait_for_keystrokes()),
-                            );
-                        };
-                    });
-                    cx.spawn_in(window, async move |this, cx| {
-                        if let Some(task) = rx.await.ok().flatten() {
-                            // If we are dispatching keystrokes,
-                            // wait to finish before adjusting selection.
-                            // This is a workaround for a race condition with `:norm`.
-                            task.await;
-                        }
-                        let _ = this.update_in(cx, |editor, window, cx| {
-                            let newest = editor
-                                .selections
-                                .newest::<Point>(&editor.display_snapshot(cx));
-                            editor.change_selections(
-                                SelectionEffects::no_scroll(),
-                                window,
-                                cx,
-                                |s| {
-                                    s.select(vec![newest]);
-                                },
-                            );
-                            editor.end_transaction_at(Instant::now(), cx);
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.start_transaction_at(Instant::now(), window, cx);
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.replace_cursors_with(|_| new_selections);
                         });
+                        window.dispatch_action(action, cx);
+                        // Waiting two frames is a workaround
+                        // for a race condition with `:norm`.
+                        cx.on_next_frame(window, |_, window, cx| {
+                            cx.on_next_frame(window, |editor, window, cx| {
+                                let newest = editor
+                                    .selections
+                                    .newest::<Point>(&editor.display_snapshot(cx));
+                                editor.change_selections(
+                                    SelectionEffects::no_scroll(),
+                                    window,
+                                    cx,
+                                    |s| {
+                                        s.select(vec![newest]);
+                                    },
+                                );
+                                editor.end_transaction_at(Instant::now(), cx);
+                            });
+                        })
                     })
-                    .detach();
-                });
+                    .ok();
             })
             .detach();
         });
@@ -3183,8 +3170,9 @@ mod test {
         "})
             .await;
 
-        cx.simulate_shared_keystrokes(": % g / f o o / n o r m space A b a r enter")
+        cx.simulate_shared_keystrokes(": % g / f o o / n o r m space A b a r")
             .await;
+        cx.simulate_shared_keystrokes("enter").await;
         cx.run_until_parked();
 
         cx.shared_state().await.assert_eq(indoc! {"

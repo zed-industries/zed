@@ -2601,10 +2601,6 @@ impl Workspace {
         let _ = self.send_keystrokes_impl(keystrokes, window, cx);
     }
 
-    pub fn wait_for_keystrokes(&self) -> Option<Shared<Task<()>>> {
-        self.dispatching_keystrokes.borrow().task.clone()
-    }
-
     pub fn send_keystrokes_impl(
         &mut self,
         keystrokes: Vec<Keystroke>,
