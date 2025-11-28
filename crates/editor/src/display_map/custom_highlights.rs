@@ -146,6 +146,7 @@ fn create_highlight_endpoints(
             });
         }
     }
+    // todo lw we need to fix sorting between semantic tokens and textual highlights, right now it can be arbitrary
     highlight_endpoints.sort();
     highlight_endpoints.into_iter().peekable()
 }

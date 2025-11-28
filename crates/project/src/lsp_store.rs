@@ -3674,10 +3674,7 @@ impl BufferLspData {
         self.inlay_hints.remove_server_data(for_server);
 
         if let Some(semantic_tokens) = &mut self.semantic_tokens {
-            semantic_tokens
-                .buffer_tokens
-                .servers
-                .swap_remove(&for_server);
+            semantic_tokens.buffer_tokens.servers.remove(&for_server);
             semantic_tokens
                 .latest_invalidation_requests
                 .remove(&for_server);

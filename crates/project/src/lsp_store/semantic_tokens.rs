@@ -3,7 +3,7 @@ use std::{collections::hash_map, iter::Peekable, slice::ChunksExact, sync::Arc};
 use anyhow::Result;
 
 use clock::Global;
-use collections::{HashMap, IndexMap};
+use collections::HashMap;
 use futures::{
     FutureExt as _,
     future::{Shared, join_all},
@@ -317,8 +317,7 @@ pub struct SemanticTokensData {
 /// Semantic tokens later in the list will override earlier ones in case of overlap.
 #[derive(Default, Debug, Clone)]
 pub struct BufferSemanticTokens {
-    // TODO kb why index map is needed?
-    pub servers: IndexMap<lsp::LanguageServerId, ServerSemanticTokens>,
+    pub servers: HashMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
 struct BufferSemanticTokensIter<'a> {
@@ -505,7 +504,7 @@ mod tests {
         let tokens_2 = ServerSemanticTokens::from_full(vec![0, 5, 0, 0, 0, 2, 10, 0, 0, 0], None);
 
         let buffer_tokens = BufferSemanticTokens {
-            servers: IndexMap::from_iter([
+            servers: HashMap::from_iter([
                 (lsp::LanguageServerId(1), tokens_1),
                 (lsp::LanguageServerId(2), tokens_2),
             ]),
