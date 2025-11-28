@@ -79,6 +79,8 @@ impl ExtensionBuilder {
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
+        let dev_extension = options.dev_extension.clone();
+
         populate_defaults(extension_manifest, extension_dir)?;
 
         if extension_dir.is_relative() {
@@ -122,13 +124,26 @@ impl ExtensionBuilder {
                 "compiling grammar {grammar_name} for extension {}",
                 extension_dir.display()
             );
-            self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
-                .await
-                .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
-            log::info!(
-                "compiled grammar {grammar_name} for extension {}",
-                extension_dir.display()
-            );
+
+            let skip_compile_grammar = dev_extension && {
+                let grammar_repo_dir = self.get_grammar_repo_dir(extension_dir, grammar_name);
+                let grammar_wasm_path = self.get_grammar_wasm_path(&grammar_repo_dir);
+                grammar_wasm_path.is_file()
+            };
+
+            if skip_compile_grammar {
+                log::info!(
+                    "skipping compiling grammar {grammar_name}, grammars/{grammar_name}.wasm already exists"
+                );
+            } else {
+                self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
+                    .await
+                    .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
+                log::info!(
+                    "compiled grammar {grammar_name} for extension {}",
+                    extension_dir.display()
+                );
+            }
         }
 
         log::info!("finished compiling extension {}", extension_dir.display());
@@ -216,6 +231,18 @@ impl ExtensionBuilder {
         Ok(())
     }
 
+    fn get_grammar_repo_dir(&self, extension_dir: &Path, grammar_name: &str) -> PathBuf {
+        let mut grammar_repo_dir = extension_dir.to_path_buf();
+        grammar_repo_dir.extend(["grammars", grammar_name]);
+        grammar_repo_dir
+    }
+
+    fn get_grammar_wasm_path(&self, grammar_repo_dir: &PathBuf) -> PathBuf {
+        let mut grammar_wasm_path = grammar_repo_dir.clone();
+        grammar_wasm_path.set_extension("wasm");
+        grammar_wasm_path
+    }
+
     async fn compile_grammar(
         &self,
         extension_dir: &Path,
@@ -224,11 +251,8 @@ impl ExtensionBuilder {
     ) -> Result<()> {
         let clang_path = self.install_wasi_sdk_if_needed().await?;
 
-        let mut grammar_repo_dir = extension_dir.to_path_buf();
-        grammar_repo_dir.extend(["grammars", grammar_name]);
-
-        let mut grammar_wasm_path = grammar_repo_dir.clone();
-        grammar_wasm_path.set_extension("wasm");
+        let mut grammar_repo_dir = self.get_grammar_repo_dir(extension_dir, grammar_name);
+        let mut grammar_wasm_path = self.get_grammar_wasm_path(&grammar_repo_dir);
 
         log::info!("checking out {grammar_name} parser");
         self.checkout_repo(
