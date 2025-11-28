@@ -89,7 +89,7 @@ use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
+    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, prelude::*,
     right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -4028,7 +4028,7 @@ impl EditorElement {
                     )
                     .child(
                         h_flex()
-                            .size(rems_from_px(12.0))
+                            .size_3()
                             .justify_center()
                             .flex_shrink_0()
                             .children(indicator),
@@ -4036,11 +4036,12 @@ impl EditorElement {
                     .child(
                         h_flex()
                             .cursor_pointer()
-                            .id("path header block")
+                            .id("path_header_block")
+                            .min_w_0()
                             .size_full()
                             .justify_between()
                             .overflow_hidden()
-                            .child(h_flex().gap_0p5().map(|path_header| {
+                            .child(h_flex().min_w_0().flex_1().gap_0p5().map(|path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
                                     .unwrap_or_else(|| "untitled".into());
@@ -4050,28 +4051,19 @@ impl EditorElement {
                                         let path = path::Path::new(filename.as_str());
                                         let icon =
                                             FileIcons::get_icon(path, cx).unwrap_or_default();
-                                        let icon = Icon::from_path(icon).color(Color::Muted);
-                                        el.child(icon)
+
+                                        el.child(Icon::from_path(icon).color(Color::Muted))
                                     })
                                     .child(
                                         ButtonLike::new("filename-button")
-                                            .style(ButtonStyle::Subtle)
                                             .child(
-                                                div()
-                                                    .child(
-                                                        Label::new(filename)
-                                                            .single_line()
-                                                            .color(file_status_label_color(
-                                                                file_status,
-                                                            ))
-                                                            .when(
-                                                                file_status.is_some_and(|s| {
-                                                                    s.is_deleted()
-                                                                }),
-                                                                |label| label.strikethrough(),
-                                                            ),
-                                                    )
-                                                    .group_hover("", |div| div.underline()),
+                                                Label::new(filename)
+                                                    .single_line()
+                                                    .color(file_status_label_color(file_status))
+                                                    .when(
+                                                        file_status.is_some_and(|s| s.is_deleted()),
+                                                        |label| label.strikethrough(),
+                                                    ),
                                             )
                                             .on_click(window.listener_for(&self.editor, {
                                                 let jump_data = jump_data.clone();
@@ -4086,11 +4078,11 @@ impl EditorElement {
                                             })),
                                     )
                                     .when_some(parent_path, |then, path| {
-                                        then.child(div().child(path).text_color(
+                                        then.child(Label::new(path).truncate().color(
                                             if file_status.is_some_and(FileStatus::is_deleted) {
-                                                colors.text_disabled
+                                                Color::Custom(colors.text_disabled)
                                             } else {
-                                                colors.text_muted
+                                                Color::Custom(colors.text_muted)
                                             },
                                         ))
                                     })
@@ -4099,18 +4091,13 @@ impl EditorElement {
                                 can_open_excerpts && is_selected && relative_path.is_some(),
                                 |el| {
                                     el.child(
-                                        ButtonLike::new("open-file-button")
+                                        Button::new("open-file-button", "Open File")
                                             .style(ButtonStyle::OutlinedGhost)
-                                            .child(
-                                                h_flex()
-                                                    .gap_2p5()
-                                                    .child(Label::new("Open file"))
-                                                    .child(KeyBinding::for_action_in(
-                                                        &OpenExcerpts,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )),
-                                            )
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            ))
                                             .on_click(window.listener_for(&self.editor, {
                                                 let jump_data = jump_data.clone();
                                                 move |editor, e: &ClickEvent, window, cx| {
