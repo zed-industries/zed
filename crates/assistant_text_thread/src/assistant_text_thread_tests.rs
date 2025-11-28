@@ -1518,28 +1518,24 @@ fn test_icon_backward_compatibility_in_saved_threads() {
     assert_eq!(ICONS.len(), IconName::iter().count());
 
     for icon in ICONS {
-        let json_str = serde_json::to_string(&json!({
-            "id": "test-thread",
-            "zed": "zed",
+        let saved_text_thread = serde_json::to_string(&json!({
+            "id": "saved-text-thread-id",
+            "zed": "context",
             "version": SavedTextThread::VERSION,
-            "text": "Test thread",
+            "text": "Saved text thread",
             "messages": [],
-            "summary": "test",
-            "slash_command_output_sections": [
-                {
-                    "range": {"start": 0, "end": 1},
-                    "icon": icon,
-                    "label": "test",
-                    "metadata": null
-                }
-            ]
+            "summary": "Saved text thread from history",
+            "slash_command_output_sections": [{
+                "range": {"start": 0, "end": 1},
+                "icon": icon,
+                "label": "test",
+                "metadata": null
+            }]
         }))
         .unwrap();
-        serde_json::from_str::<SavedTextThread>(&json_str).unwrap_or_else(|_| {
-            panic!(
-                "IconName '{}' failed to deserialize in SavedTextThread",
-                icon
-            )
+
+        SavedTextThread::from_json(&saved_text_thread).unwrap_or_else(|e| {
+            panic!("IconName '{icon}' failed to deserialize from SavedTextThread: {e:#}")
         });
     }
 }
