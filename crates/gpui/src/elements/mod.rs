@@ -10,6 +10,7 @@ mod surface;
 mod svg;
 mod text;
 mod text_area;
+mod text_input;
 mod uniform_list;
 
 pub use anchored::*;
@@ -24,4 +25,5 @@ pub use surface::*;
 pub use svg::*;
 pub use text::*;
 pub use text_area::*;
+pub use text_input::*;
 pub use uniform_list::*;

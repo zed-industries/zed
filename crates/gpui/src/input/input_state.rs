@@ -84,8 +84,10 @@ pub struct InputState {
     is_selecting: bool,
     last_click_position: Option<Point<Pixels>>,
     click_count: usize,
+    /// Scroll offset - vertical for multiline, horizontal for single-line
     pub(crate) scroll_offset: Pixels,
     pub(crate) available_height: Pixels,
+    pub(crate) available_width: Pixels,
     multiline: bool,
 }
 
@@ -134,14 +136,20 @@ impl InputState {
             click_count: 0,
             scroll_offset: px(0.),
             available_height: px(0.),
+            available_width: px(0.),
             multiline: false,
         }
     }
 
-    /// Returns whether this input allows multiple lines.
+    /// Sets whether this input allows multiple lines.
     pub fn multiline(mut self, multiline: bool) -> Self {
         self.multiline = multiline;
         self
+    }
+
+    /// Returns whether this input allows multiple lines.
+    pub fn is_multiline(&self) -> bool {
+        self.multiline
     }
 
     /// Returns the current text content.
@@ -734,11 +742,28 @@ impl InputState {
     }
 
     pub(crate) fn scroll_to_cursor(&mut self) {
-        if self.line_layouts.is_empty() || self.available_height <= px(0.) {
+        if self.line_layouts.is_empty() {
             return;
         }
 
-        let cursor_offset = self.selected_range.start;
+        let cursor_offset = if self.selection_reversed {
+            self.selected_range.start
+        } else {
+            self.selected_range.end
+        };
+
+        if self.multiline {
+            self.scroll_to_cursor_vertical(cursor_offset);
+        } else {
+            self.scroll_to_cursor_horizontal(cursor_offset);
+        }
+    }
+
+    fn scroll_to_cursor_vertical(&mut self, cursor_offset: usize) {
+        if self.available_height <= px(0.) {
+            return;
+        }
+
         let line_height = self.line_height;
 
         for line in &self.line_layouts {
@@ -776,6 +801,41 @@ impl InputState {
                 break;
             }
         }
+    }
+
+    fn scroll_to_cursor_horizontal(&mut self, cursor_offset: usize) {
+        if self.available_width <= px(0.) {
+            return;
+        }
+
+        // For single-line input, get cursor x position from the first (only) line
+        let Some(line) = self.line_layouts.first() else {
+            return;
+        };
+
+        let cursor_x = if let Some(wrapped) = &line.wrapped_line {
+            let local_offset = cursor_offset.saturating_sub(line.text_range.start);
+            wrapped
+                .position_for_index(local_offset, self.line_height)
+                .map(|p| p.x)
+                .unwrap_or(px(0.))
+        } else {
+            px(0.)
+        };
+
+        let visible_left = self.scroll_offset;
+        let visible_right = self.scroll_offset + self.available_width;
+
+        // Add some padding so cursor isn't right at the edge
+        let padding = px(2.0);
+
+        if cursor_x < visible_left + padding {
+            self.scroll_offset = (cursor_x - padding).max(px(0.));
+        } else if cursor_x > visible_right - padding {
+            self.scroll_offset = cursor_x - self.available_width + padding;
+        }
+
+        self.scroll_offset = self.scroll_offset.max(px(0.));
     }
 
     pub(crate) fn update_line_layouts(
@@ -2274,7 +2334,7 @@ mod tests {
         let view = create_single_line_input(cx, "hello", 0..0);
         view.update(cx, |view, _window, cx| {
             view.input.update(cx, |input, _cx| {
-                assert!(!input.multiline);
+                assert!(!input.is_multiline());
             });
         })
         .unwrap();
@@ -2283,7 +2343,7 @@ mod tests {
         multiline_view
             .update(cx, |view, _window, cx| {
                 view.input.update(cx, |input, _cx| {
-                    assert!(input.multiline);
+                    assert!(input.is_multiline());
                 });
             })
             .unwrap();
