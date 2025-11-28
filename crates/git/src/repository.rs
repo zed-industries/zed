@@ -1785,7 +1785,7 @@ impl GitRepository for RealGitRepository {
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(["rev-parse", "--abbrev-ref"])
-                    .arg(format!("{}@{{push}}", branch))
+                    .arg(format!("{branch}@{{push}}"))
                     .output()
                     .await?;
                 if !output.status.success() {
