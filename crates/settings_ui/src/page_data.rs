@@ -3065,6 +3065,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar Buttons",
+                    description: "Show the tab bar buttons (New, Split Pane, Zoom).",
+                    field: Box::new(SettingField {
+                        json_path: Some("tab_bar.show_tab_bar_buttons"),
+                        pick: |settings_content| {
+                            settings_content
+                                .tab_bar
+                                .as_ref()?
+                                .show_tab_bar_buttons
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_tab_bar_buttons = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
