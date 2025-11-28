@@ -657,9 +657,75 @@ impl MessageEditor {
             text.len(),
             shell_name
         );
-        let editor = self.editor.clone();
-        self.mention_set.update(cx, |mention_set, cx| {
-            mention_set.confirm_mention_for_terminal(text, shell_name, editor, window, cx);
+
+        // Calculate placeholder text
+        let line_count = text.lines().count() as u32;
+        let placeholder_text = acp_thread::terminal_selection_name(&shell_name, line_count);
+        let placeholder_len = placeholder_text.len();
+
+        // Get cursor position and offset before the edit
+        let cursor_anchor = self.editor.read(cx).selections.newest_anchor().head();
+        let start_offset = {
+            let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+            cursor_anchor.to_offset(&snapshot)
+        };
+
+        self.editor.update(cx, |editor, cx| {
+            editor.edit([(cursor_anchor..cursor_anchor, placeholder_text)], cx);
+            editor.request_autoscroll(Autoscroll::fit(), cx);
+        });
+
+        // Defer crease creation, like insert_selections does via its confirm callback
+        let editor_weak = self.editor.downgrade();
+        let mention_set_weak = self.mention_set.downgrade();
+
+        window.defer(cx, move |window, cx| {
+            let Some(editor_entity) = editor_weak.upgrade() else {
+                return;
+            };
+            let Some(mention_set) = mention_set_weak.upgrade() else {
+                return;
+            };
+
+            // Get snapshot after edit is committed and create range using the captured offset
+            let snapshot = editor_entity.read(cx).buffer().read(cx).snapshot(cx);
+            let range = snapshot.anchor_after(start_offset)
+                ..snapshot.anchor_after(start_offset + placeholder_len);
+
+            let uri = acp_thread::MentionUri::Terminal {
+                shell_kind: shell_name.clone(),
+                line_count,
+            };
+
+            let crease = crate::mention_set::crease_for_mention(
+                acp_thread::terminal_selection_name(&shell_name, line_count).into(),
+                uri.icon_path(cx),
+                range,
+                editor_entity.downgrade(),
+            );
+
+            let crease_id = editor_entity.update(cx, |editor, cx| {
+                let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                editor.fold_creases(vec![crease], false, window, cx);
+                crease_ids.first().copied().unwrap()
+            });
+
+            mention_set.update(cx, |mention_set, _cx| {
+                mention_set.insert_mention(
+                    crease_id,
+                    uri,
+                    gpui::Task::ready(Ok(crate::mention_set::Mention::Text {
+                        content: text,
+                        tracked_buffers: vec![],
+                    }))
+                    .shared(),
+                );
+            });
+
+            // Autoscroll after crease creation
+            editor_entity.update(cx, |editor, cx| {
+                editor.request_autoscroll(Autoscroll::fit(), cx)
+            });
         });
     }
 

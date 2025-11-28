@@ -172,6 +172,17 @@ impl MentionUri {
                         abs_path: Some(path.into()),
                         line_range,
                     })
+                } else if path.starts_with("/agent/terminal") {
+                    let shell_kind =
+                        single_query_param(&url, "shell")?.context("Missing shell for terminal")?;
+                    let line_count = single_query_param(&url, "lines")?
+                        .context("Missing lines for terminal")?
+                        .parse::<u32>()
+                        .context("Invalid line count for terminal")?;
+                    Ok(Self::Terminal {
+                        shell_kind,
+                        line_count,
+                    })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
