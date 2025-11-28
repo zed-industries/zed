@@ -9,7 +9,7 @@
         (attribute attribute: (identifier) @function_name)
         (identifier) @function_name
     ]
-    (#match? @function_name "(?i:sql|read_sql|read_sql_query)")
+    (#match? @function_name "(?i:sql|read_sql|read_sql_query|execute)")
     arguments: (argument_list
         (string
             (string_content) @injection.content (#set! injection.language "sql")
