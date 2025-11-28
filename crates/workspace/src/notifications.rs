@@ -1,9 +1,9 @@
 use crate::{SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
-    AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, svg,
+    AnyEntity, AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem,
+    Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render,
+    ScrollHandle, Task, svg,
 };
 use parking_lot::Mutex;
 
@@ -12,6 +12,8 @@ use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
 use ui::{Tooltip, prelude::*};
 use util::ResultExt;
+
+const NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS: u64 = 5000;
 
 #[derive(Default)]
 pub struct Notifications {
@@ -96,6 +98,34 @@ impl Workspace {
                 }
             })
             .detach();
+
+            if let Ok(prompt) =
+                AnyEntity::from(notification.clone()).downcast::<LanguageServerPrompt>()
+            {
+                if prompt
+                    .read(cx)
+                    .request
+                    .as_ref()
+                    .is_some_and(|request| request.actions.is_empty())
+                {
+                    let task = cx.spawn({
+                        let id = id.clone();
+                        async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(
+                                    NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS,
+                                ))
+                                .await;
+                            let _ = this.update(cx, |workspace, cx| {
+                                workspace.dismiss_notification(&id, cx);
+                            });
+                        }
+                    });
+                    prompt.update(cx, |prompt, _| {
+                        prompt.dismiss_task = Some(task);
+                    });
+                }
+            }
             notification.into()
         });
     }
@@ -171,7 +201,9 @@ impl Workspace {
         if toast.autohide {
             cx.spawn(async move |workspace, cx| {
                 cx.background_executor()
-                    .timer(Duration::from_millis(5000))
+                    .timer(Duration::from_millis(
+                        NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS,
+                    ))
                     .await;
                 workspace
                     .update(cx, |workspace, cx| workspace.dismiss_toast(&toast.id, cx))
@@ -216,6 +248,7 @@ pub struct LanguageServerPrompt {
     focus_handle: FocusHandle,
     request: Option<project::LanguageServerPromptRequest>,
     scroll_handle: ScrollHandle,
+    dismiss_task: Option<Task<()>>,
 }
 
 impl Focusable for LanguageServerPrompt {
@@ -232,6 +265,7 @@ impl LanguageServerPrompt {
             focus_handle: cx.focus_handle(),
             request: Some(request),
             scroll_handle: ScrollHandle::new(),
+            dismiss_task: None,
         }
     }
 
@@ -246,12 +280,19 @@ impl LanguageServerPrompt {
                 .await
                 .context("Stream already closed")?;
 
-            this.update(cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(cx, |this, cx| {
+                this.dismiss_notification(cx);
+            })?;
 
             anyhow::Ok(())
         })
         .await
         .log_err();
+    }
+
+    fn dismiss_notification(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_task = None;
+        cx.emit(DismissEvent);
     }
 }
 
@@ -331,11 +372,11 @@ impl Render for LanguageServerPrompt {
                                                 }
                                             })
                                             .on_click(cx.listener(
-                                                move |_, _: &ClickEvent, _, cx| {
+                                                move |this, _: &ClickEvent, _, cx| {
                                                     if suppress {
                                                         cx.emit(SuppressEvent);
                                                     } else {
-                                                        cx.emit(DismissEvent);
+                                                        this.dismiss_notification(cx);
                                                     }
                                                 },
                                             )),
@@ -1111,5 +1152,123 @@ where
         f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) {
         self.prompt_err(msg, window, cx, f).detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::{LanguageServerPromptRequest, Project};
+
+    use crate::tests::init_test;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_notification_auto_dismiss_with_notifications_from_multiple_language_servers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let count_notifications = |workspace: &Entity<Workspace>, cx: &mut TestAppContext| {
+            workspace.read_with(cx, |workspace, _| workspace.notification_ids().len())
+        };
+
+        let show_notification = |workspace: &Entity<Workspace>,
+                                 cx: &mut TestAppContext,
+                                 lsp_name: &str| {
+            workspace.update(cx, |workspace, cx| {
+                let request = LanguageServerPromptRequest::test(
+                    gpui::PromptLevel::Warning,
+                    "Test notification".to_string(),
+                    vec![], // Empty actions triggers auto-dismiss
+                    lsp_name.to_string(),
+                );
+                let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| LanguageServerPrompt::new(request, cx))
+                });
+            })
+        };
+
+        show_notification(&workspace, cx, "Lsp1");
+        assert_eq!(count_notifications(&workspace, cx), 1);
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+
+        show_notification(&workspace, cx, "Lsp2");
+        assert_eq!(count_notifications(&workspace, cx), 2);
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+
+        show_notification(&workspace, cx, "Lsp3");
+        assert_eq!(count_notifications(&workspace, cx), 3);
+
+        cx.executor().advance_clock(Duration::from_millis(3000));
+        assert_eq!(count_notifications(&workspace, cx), 2);
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        assert_eq!(count_notifications(&workspace, cx), 1);
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        assert_eq!(count_notifications(&workspace, cx), 0);
+    }
+
+    #[gpui::test]
+    async fn test_notification_auto_dismiss_with_multiple_notifications_from_single_language_server(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let lsp_name = "server1";
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let count_notifications = |workspace: &Entity<Workspace>, cx: &mut TestAppContext| {
+            workspace.read_with(cx, |workspace, _| workspace.notification_ids().len())
+        };
+
+        let show_notification = |lsp_name: &str,
+                                 workspace: &Entity<Workspace>,
+                                 cx: &mut TestAppContext| {
+            workspace.update(cx, |workspace, cx| {
+                let lsp_name = lsp_name.to_string();
+                let request = LanguageServerPromptRequest::test(
+                    gpui::PromptLevel::Warning,
+                    "Test notification".to_string(),
+                    vec![], // Empty actions triggers auto-dismiss
+                    lsp_name,
+                );
+                let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
+
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| LanguageServerPrompt::new(request, cx))
+                });
+            })
+        };
+
+        show_notification(lsp_name, &workspace, cx);
+        assert_eq!(count_notifications(&workspace, cx), 1);
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+
+        show_notification(lsp_name, &workspace, cx);
+        assert_eq!(count_notifications(&workspace, cx), 2);
+
+        cx.executor().advance_clock(Duration::from_millis(4000));
+        assert_eq!(count_notifications(&workspace, cx), 1);
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        assert_eq!(count_notifications(&workspace, cx), 0);
     }
 }
