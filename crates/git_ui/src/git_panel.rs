@@ -74,6 +74,19 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+
+const RULES_FILE_NAMES: [&str; 9] = [
+    ".rules",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+    ".github/copilot-instructions.md",
+    "CLAUDE.md",
+    "AGENT.md",
+    "AGENTS.md",
+    "GEMINI.md",
+];
+
 actions!(
     git_panel,
     [
@@ -1993,6 +2006,8 @@ impl GitPanel {
             }
         });
 
+        let work_directory = repo.read(cx).work_directory_abs_path.clone();
+        let fs = self.fs.clone();
         let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
@@ -2028,19 +2043,35 @@ impl GitPanel {
                 const MAX_DIFF_BYTES: usize = 20_000;
                 diff_text = Self::compress_commit_diff(&diff_text, MAX_DIFF_BYTES);
 
+                let mut rules_content = None;
+                for rules_file_name in RULES_FILE_NAMES {
+                    let rules_path = work_directory.join(rules_file_name);
+                    if let Ok(content) = fs.load(&rules_path).await {
+                        let trimmed = content.trim();
+                        if !trimmed.is_empty() {
+                            rules_content = Some(trimmed.to_string());
+                            break;
+                        }
+                    }
+                }
+
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
                 })?;
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
-                };
-
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+                let rules_section = rules_content
+                    .map(|rules| format!("\nThe project has the following rules for commit messages and code style. Follow any commit message conventions specified:\n{rules}\n"))
+                    .unwrap_or_default();
+
+                let content = if text_empty {
+                    format!("{PROMPT}{rules_section}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{PROMPT}{rules_section}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 let request = LanguageModelRequest {
                     thread_id: None,
