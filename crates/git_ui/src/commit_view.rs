@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Addon, Editor, EditorEvent, MultiBuffer, MultiBufferOffset, SelectionEffects};
+use editor::{Addon, Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
@@ -10,7 +10,7 @@ use gpui::{
     actions, px,
 };
 use language::{
-    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, Point, ReplicaId, Rope,
+    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
     TextBuffer, ToPoint,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -72,12 +72,14 @@ struct GitBlob {
     is_deleted: bool,
 }
 
-struct CommitMetadataFile {
-    title: Arc<RelPath>,
-    worktree_id: WorktreeId,
-}
+// Commented out: No longer needed since metadata buffer is not created
+// struct CommitMetadataFile {
+//     title: Arc<RelPath>,
+//     worktree_id: WorktreeId,
+// }
 
-const COMMIT_METADATA_SORT_PREFIX: u64 = 0;
+// Commented out: No longer needed since metadata buffer is not created
+// const COMMIT_METADATA_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
@@ -172,43 +174,45 @@ impl CommitView {
             .next()
             .map(|worktree| worktree.read(cx).id());
 
-        let mut metadata_buffer_id = None;
-        if let Some(worktree_id) = first_worktree_id {
-            let title = if let Some(stash) = stash {
-                format!("stash@{{{}}}", stash)
-            } else {
-                format!("commit {}", commit.sha)
-            };
-            let file = Arc::new(CommitMetadataFile {
-                title: RelPath::unix(&title).unwrap().into(),
-                worktree_id,
-            });
-            let buffer = cx.new(|cx| {
-                let buffer = TextBuffer::new_normalized(
-                    ReplicaId::LOCAL,
-                    cx.entity_id().as_non_zero_u64().into(),
-                    LineEnding::default(),
-                    format_commit(&commit, stash.is_some()).into(),
-                );
-                metadata_buffer_id = Some(buffer.remote_id());
-                Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
-            });
-            multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.set_excerpts_for_path(
-                    PathKey::with_sort_prefix(COMMIT_METADATA_SORT_PREFIX, file.title.clone()),
-                    buffer.clone(),
-                    vec![Point::zero()..buffer.read(cx).max_point()],
-                    0,
-                    cx,
-                );
-            });
-            editor.update(cx, |editor, cx| {
-                editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
-                });
-            });
-        }
+        // Commented out: This metadata buffer displays duplicate commit information
+        // that is already shown in the commit view header (SHA, Author, Date)
+        // let mut metadata_buffer_id = None;
+        // if let Some(worktree_id) = first_worktree_id {
+        //     let title = if let Some(stash) = stash {
+        //         format!("stash@{{{}}}", stash)
+        //     } else {
+        //         format!("commit {}", commit.sha)
+        //     };
+        //     let file = Arc::new(CommitMetadataFile {
+        //         title: RelPath::unix(&title).unwrap().into(),
+        //         worktree_id,
+        //     });
+        //     let buffer = cx.new(|cx| {
+        //         let buffer = TextBuffer::new_normalized(
+        //             ReplicaId::LOCAL,
+        //             cx.entity_id().as_non_zero_u64().into(),
+        //             LineEnding::default(),
+        //             format_commit(&commit, stash.is_some()).into(),
+        //         );
+        //         metadata_buffer_id = Some(buffer.remote_id());
+        //         Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
+        //     });
+        //     multibuffer.update(cx, |multibuffer, cx| {
+        //         multibuffer.set_excerpts_for_path(
+        //             PathKey::with_sort_prefix(COMMIT_METADATA_SORT_PREFIX, file.title.clone()),
+        //             buffer.clone(),
+        //             vec![Point::zero()..buffer.read(cx).max_point()],
+        //             0,
+        //             cx,
+        //         );
+        //     });
+        //     editor.update(cx, |editor, cx| {
+        //         editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
+        //         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+        //             selections.select_ranges(vec![MultiBufferOffset(0)..MultiBufferOffset(0)]);
+        //         });
+        //     });
+        // }
 
         let repository_clone = repository.clone();
         cx.spawn(async move |this, cx| {
@@ -709,43 +713,44 @@ impl language::File for GitBlob {
     }
 }
 
-impl language::File for CommitMetadataFile {
-    fn as_local(&self) -> Option<&dyn language::LocalFile> {
-        None
-    }
-
-    fn disk_state(&self) -> DiskState {
-        DiskState::New
-    }
-
-    fn path_style(&self, _: &App) -> PathStyle {
-        PathStyle::Posix
-    }
-
-    fn path(&self) -> &Arc<RelPath> {
-        &self.title
-    }
-
-    fn full_path(&self, _: &App) -> PathBuf {
-        self.title.as_std_path().to_path_buf()
-    }
-
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
-        self.title.file_name().unwrap_or("commit")
-    }
-
-    fn worktree_id(&self, _: &App) -> WorktreeId {
-        self.worktree_id
-    }
-
-    fn to_proto(&self, _cx: &App) -> language::proto::File {
-        unimplemented!()
-    }
-
-    fn is_private(&self) -> bool {
-        false
-    }
-}
+// Commented out: No longer needed since metadata buffer is not created
+// impl language::File for CommitMetadataFile {
+//     fn as_local(&self) -> Option<&dyn language::LocalFile> {
+//         None
+//     }
+//
+//     fn disk_state(&self) -> DiskState {
+//         DiskState::New
+//     }
+//
+//     fn path_style(&self, _: &App) -> PathStyle {
+//         PathStyle::Posix
+//     }
+//
+//     fn path(&self) -> &Arc<RelPath> {
+//         &self.title
+//     }
+//
+//     fn full_path(&self, _: &App) -> PathBuf {
+//         self.title.as_std_path().to_path_buf()
+//     }
+//
+//     fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+//         self.title.file_name().unwrap_or("commit")
+//     }
+//
+//     fn worktree_id(&self, _: &App) -> WorktreeId {
+//         self.worktree_id
+//     }
+//
+//     fn to_proto(&self, _cx: &App) -> language::proto::File {
+//         unimplemented!()
+//     }
+//
+//     fn is_private(&self) -> bool {
+//         false
+//     }
+// }
 
 struct CommitViewAddon {
     multibuffer: WeakEntity<MultiBuffer>,
@@ -1090,24 +1095,25 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .unwrap_or(false)
 }
 
-fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
-        .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-    let formatted_time = time_format::format_localized_timestamp(
-        timestamp,
-        time::OffsetDateTime::now_utc(),
-        local_offset,
-        time_format::TimestampFormat::EnhancedAbsolute,
-    );
-
-    let kind = if is_stash { "Stash" } else { "Commit" };
-
-    format!(
-        "{}: {}\nAuthor: {}\nDate: {}\n",
-        kind, commit.sha, commit.author_name, formatted_time
-    )
-}
+// Commented out: No longer needed since metadata buffer is not created
+// fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
+//     let timestamp = time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
+//         .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+//     let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+//     let formatted_time = time_format::format_localized_timestamp(
+//         timestamp,
+//         time::OffsetDateTime::now_utc(),
+//         local_offset,
+//         time_format::TimestampFormat::EnhancedAbsolute,
+//     );
+//
+//     let kind = if is_stash { "Stash" } else { "Commit" };
+//
+//     format!(
+//         "{}: {}\\nAuthor: {}\\nDate: {}\\n",
+//         kind, commit.sha, commit.author_name, formatted_time
+//     )
+// }
 
 fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let colors = cx.theme().colors();
