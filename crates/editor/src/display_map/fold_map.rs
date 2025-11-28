@@ -734,6 +734,13 @@ impl FoldSnapshot {
         }
     }
 
+    pub fn fold_point_cursor(&self) -> FoldPointCursor<'_> {
+        let cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayPoint, FoldPoint>>(());
+        FoldPointCursor { cursor }
+    }
+
     pub fn len(&self) -> FoldOffset {
         FoldOffset(self.transforms.summary().output.len)
     }
@@ -923,6 +930,31 @@ impl FoldSnapshot {
             }
         } else {
             FoldPoint(self.transforms.summary().output.lines)
+        }
+    }
+}
+
+pub struct FoldPointCursor<'transforms> {
+    cursor: Cursor<'transforms, 'static, Transform, Dimensions<InlayPoint, FoldPoint>>,
+}
+
+impl FoldPointCursor<'_> {
+    pub fn map(&mut self, point: InlayPoint, bias: Bias) -> FoldPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&point, Bias::Right);
+        } else {
+            cursor.seek(&point, Bias::Right);
+        }
+        if cursor.item().is_some_and(|t| t.is_fold()) {
+            if bias == Bias::Left || point == cursor.start().0 {
+                cursor.start().1
+            } else {
+                cursor.end().1
+            }
+        } else {
+            let overshoot = point.0 - cursor.start().0.0;
+            FoldPoint(cmp::min(cursor.start().1.0 + overshoot, cursor.end().1.0))
         }
     }
 }

@@ -147,7 +147,6 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
-    "crates/semantic_version",
     "crates/session",
     "crates/settings",
     "crates/settings_json",
@@ -202,7 +201,6 @@ members = [
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/zeta",
-    "crates/zeta2",
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
@@ -381,7 +379,6 @@ rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_json = { path = "crates/settings_json" }
@@ -435,7 +432,6 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
-zeta2 = { path = "crates/zeta2" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
 
@@ -587,14 +583,14 @@ partial-json-fixer = "0.5.3"
 parse_int = "0.9"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "e97b9508befa0062929da65a01054d25c4be861c" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -629,7 +625,7 @@ rustls-platform-verifier = "0.5.0"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
-semver = "1.0"
+semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
@@ -659,7 +655,7 @@ sysinfo = "0.37.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "30c32a4522751699adeda0d5840c71c3b75ae73d" }
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "7249f999c5fdf9bf3cc5c288c964454e4dac0c00" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -846,7 +842,6 @@ refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
 rich_text = { codegen-units = 1 }
-semantic_version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }

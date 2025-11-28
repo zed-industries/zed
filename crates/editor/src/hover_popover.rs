@@ -914,7 +914,7 @@ impl InfoPopover {
                 )
                 .custom_scrollbars(
                     Scrollbars::for_settings::<EditorSettings>()
-                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                        .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
                 )
@@ -1012,7 +1012,7 @@ impl DiagnosticPopover {
                     )
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
-                            .tracked_scroll_handle(self.scroll_handle.clone()),
+                            .tracked_scroll_handle(&self.scroll_handle),
                         window,
                         cx,
                     ),

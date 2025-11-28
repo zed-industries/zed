@@ -49,6 +49,8 @@ pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
 pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
+pub const COMPLETION_MENU_MIN_WIDTH: Pixels = px(280.);
+pub const COMPLETION_MENU_MAX_WIDTH: Pixels = px(540.);
 
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
@@ -907,33 +909,36 @@ impl CompletionsMenu {
                                 })
                             });
 
-                        div().min_w(px(280.)).max_w(px(540.)).child(
-                            ListItem::new(mat.candidate_id)
-                                .inset(true)
-                                .toggle_state(item_ix == selected_item)
-                                .on_click(cx.listener(move |editor, _event, window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_completion(
-                                        &ConfirmCompletion {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                }))
-                                .start_slot::<AnyElement>(start_slot)
-                                .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Label>(documentation_label),
-                        )
+                        div()
+                            .min_w(COMPLETION_MENU_MIN_WIDTH)
+                            .max_w(COMPLETION_MENU_MAX_WIDTH)
+                            .child(
+                                ListItem::new(mat.candidate_id)
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .on_click(cx.listener(move |editor, _event, window, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(task) = editor.confirm_completion(
+                                            &ConfirmCompletion {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            window,
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx)
+                                        }
+                                    }))
+                                    .start_slot::<AnyElement>(start_slot)
+                                    .child(h_flex().overflow_hidden().child(completion_label))
+                                    .end_slot::<Label>(documentation_label),
+                            )
                     })
                     .collect()
             }),
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .with_sizing_behavior(ListSizingBehavior::Infer)
         .map(|this| {
             if self.display_options.dynamic_width {
@@ -948,7 +953,7 @@ impl CompletionsMenu {
                 div().child(list).custom_scrollbars(
                     Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
                         .show_along(ScrollAxes::Vertical)
-                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                        .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
                 ),
@@ -1599,7 +1604,7 @@ impl CodeActionsMenu {
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .with_width_from_item(
             self.actions
                 .iter()
