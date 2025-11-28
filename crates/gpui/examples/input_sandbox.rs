@@ -2,12 +2,11 @@
 //!
 //! Run with: `cargo run -p gpui --example input_sandbox`
 
+use gpui::input::bind_input_keys;
 use gpui::{
     App, Application, Bounds, Context, Entity, FocusHandle, Focusable, InputState, KeyBinding,
     Window, WindowBounds, WindowOptions, div, input, prelude::*, px, rgb, size, text_area,
 };
-
-use gpui::input::bind_input_keys;
 
 struct InputSandbox {
     multiline_input: Entity<InputState>,
@@ -197,18 +196,18 @@ gpui::actions!(input_sandbox, [ToggleMode]);
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        // Example - customize input keybindings:
-        // - unbind the up arrow key
-        // - rebind the cut action to Cmd+S
-
+        // Example: customize input keybindings
+        //
+        // use gpui::input::bindings::{InputBindings, Cut, INPUT_CONTEXT};
+        //
         // let custom_bindings = InputBindings {
-        //     up: None,
-        //     cut: Some(KeyBinding::new("cmd-s", Cut, Some("input"))),
+        //     up: None, // Unbind the up arrow key
+        //     cut: Some(KeyBinding::new("cmd-s", Cut, Some(INPUT_CONTEXT))),
         //     ..Default::default()
         // };
-
         // bind_input_keys(cx, custom_bindings);
 
+        // Use platform defaults
         bind_input_keys(cx, None);
 
         cx.bind_keys([KeyBinding::new("ctrl-t", ToggleMode, None)]);

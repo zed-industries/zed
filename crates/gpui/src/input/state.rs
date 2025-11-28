@@ -3,73 +3,16 @@ use std::time::{Duration, Instant};
 
 use crate::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Pixels, Point,
-    SharedString, TextRun, UTF16Selection, Window, WrappedLine, actions, point, px,
+    SharedString, TextRun, UTF16Selection, Window, WrappedLine, point, px,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::bidi::{TextDirection, detect_base_direction};
-
-actions!(
-    input,
-    [
-        /// Delete the character before the cursor.
-        Backspace,
-        /// Delete the character after the cursor.
-        Delete,
-        /// Insert a tab character at the cursor position.
-        Tab,
-        /// Move the cursor one character to the left.
-        Left,
-        /// Move the cursor one character to the right.
-        Right,
-        /// Move the cursor up one visual line.
-        Up,
-        /// Move the cursor down one visual line.
-        Down,
-        /// Extend selection one character to the left.
-        SelectLeft,
-        /// Extend selection one character to the right.
-        SelectRight,
-        /// Extend selection up one visual line.
-        SelectUp,
-        /// Extend selection down one visual line.
-        SelectDown,
-        /// Select all text content.
-        SelectAll,
-        /// Move cursor to the start of the current line.
-        Home,
-        /// Move cursor to the end of the current line.
-        End,
-        /// Extend selection to the beginning of the content.
-        SelectToBeginning,
-        /// Extend selection to the end of the content.
-        SelectToEnd,
-        /// Move cursor to the beginning of the content.
-        MoveToBeginning,
-        /// Move cursor to the end of the content.
-        MoveToEnd,
-        /// Paste from clipboard at the cursor position.
-        Paste,
-        /// Cut selected text to clipboard.
-        Cut,
-        /// Copy selected text to clipboard.
-        Copy,
-        /// Insert a newline at the cursor position.
-        Enter,
-        /// Move cursor one word to the left.
-        WordLeft,
-        /// Move cursor one word to the right.
-        WordRight,
-        /// Extend selection one word to the left.
-        SelectWordLeft,
-        /// Extend selection one word to the right.
-        SelectWordRight,
-        /// Undo the last edit.
-        Undo,
-        /// Redo the last undone edit.
-        Redo,
-    ]
-);
+use super::bindings::{
+    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste,
+    Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
+    SelectUp, SelectWordLeft, SelectWordRight, Tab, Undo, Up, WordLeft, WordRight,
+};
 
 /// Default interval for grouping consecutive edits into a single undo entry.
 const DEFAULT_GROUP_INTERVAL: Duration = Duration::from_millis(300);
