@@ -197,9 +197,7 @@ impl BlameRenderer for GitBlameRenderer {
         let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
             let mut style = hover_markdown_style(window, cx);
-            if let Some(code_block) = &style.code_block.text {
-                style.base_text_style.refine(code_block);
-            }
+            style.base_text_style.refine(&style.code_block.text);
             style.link.refine(&TextStyleRefinement {
                 color: Some(link_color),
                 underline: Some(UnderlineStyle {

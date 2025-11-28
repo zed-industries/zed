@@ -371,13 +371,13 @@ impl AcpTools {
                                     syntax: cx.theme().syntax().clone(),
                                     code_block_overflow_x_scroll: true,
                                     code_block: StyleRefinement {
-                                        text: Some(TextStyleRefinement {
+                                        text: TextStyleRefinement {
                                             font_family: Some(
                                                 theme_settings.buffer_font.family.clone(),
                                             ),
                                             font_size: Some((base_size * 0.8).into()),
                                             ..Default::default()
-                                        }),
+                                        },
                                         ..Default::default()
                                     },
                                     ..Default::default()
