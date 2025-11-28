@@ -6,6 +6,8 @@ use crate::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::bidi::{TextDirection, detect_base_direction};
+
 actions!(
     input,
     [
@@ -105,6 +107,8 @@ pub struct InputLineLayout {
     pub y_offset: Pixels,
     /// The number of visual lines this logical line spans (due to wrapping).
     pub visual_line_count: usize,
+    /// The base text direction for this line (LTR or RTL).
+    pub direction: TextDirection,
 }
 
 impl InputState {
@@ -555,6 +559,25 @@ impl InputState {
             .unwrap_or(self.content.len())
     }
 
+    /// Returns the text direction for a specific line layout by index.
+    pub fn line_direction(&self, line_idx: usize) -> TextDirection {
+        self.line_layouts
+            .get(line_idx)
+            .map(|layout| layout.direction)
+            .unwrap_or_default()
+    }
+
+    /// Returns the text direction at a given byte offset in the content.
+    pub fn direction_at_offset(&self, offset: usize) -> TextDirection {
+        let offset = offset.min(self.content.len());
+        for layout in &self.line_layouts {
+            if offset >= layout.text_range.start && offset <= layout.text_range.end {
+                return layout.direction;
+            }
+        }
+        TextDirection::default()
+    }
+
     fn move_vertically(&self, offset: usize, direction: i32) -> Option<usize> {
         let (visual_line_idx, x_pixels) = self.find_visual_line_and_x_offset(offset);
         let target_visual_line_idx = (visual_line_idx as i32 + direction).max(0) as usize;
@@ -864,10 +887,13 @@ impl InputState {
                 wrapped_line: None,
                 y_offset: px(0.),
                 visual_line_count: 1,
+                direction: TextDirection::default(),
             });
             self.needs_layout = false;
             return;
         }
+
+        let mut last_direction = TextDirection::default();
 
         let mut y_offset = px(0.);
         let mut current_pos = 0;
@@ -886,9 +912,12 @@ impl InputState {
                     wrapped_line: None,
                     y_offset,
                     visual_line_count: 1,
+                    direction: last_direction,
                 });
                 y_offset += line_height;
             } else {
+                let direction = detect_base_direction(line_text);
+                last_direction = direction;
                 let run = TextRun {
                     len: line_text.len(),
                     font: text_style.font(),
@@ -918,6 +947,7 @@ impl InputState {
                         wrapped_line: Some(wrapped),
                         y_offset,
                         visual_line_count,
+                        direction,
                     });
 
                     y_offset += line_height_total;
@@ -937,6 +967,7 @@ impl InputState {
                 wrapped_line: None,
                 y_offset,
                 visual_line_count: 1,
+                direction: last_direction,
             });
         }
 
@@ -1306,6 +1337,24 @@ mod tests {
             });
             TestView { input }
         })
+    }
+
+    fn create_test_input_with_layout(
+        cx: &mut TestAppContext,
+        content: &str,
+        range: std::ops::Range<usize>,
+    ) -> crate::WindowHandle<TestView> {
+        let view = cx.add_window(|window, cx| {
+            let input = cx.new(|cx| {
+                let mut input = InputState::new_multiline(cx);
+                input.content = content.to_string();
+                input.selected_range = range;
+                input.update_line_layouts(px(500.), px(20.), crate::black(), window);
+                input
+            });
+            TestView { input }
+        });
+        view
     }
 
     // ============================================================
@@ -2347,5 +2396,126 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[crate::test]
+    fn test_line_direction_ltr(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "Hello world", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(0).is_ltr());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_line_direction_rtl_arabic(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "مرحبا بالعالم", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(0).is_rtl());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_line_direction_rtl_hebrew(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "שלום עולם", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(0).is_rtl());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_line_direction_mixed_lines(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "Hello\nمرحبا\nWorld", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(0).is_ltr());
+                assert!(input.line_direction(1).is_rtl());
+                assert!(input.line_direction(2).is_ltr());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_direction_at_offset_ltr(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "Hello world", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.direction_at_offset(0).is_ltr());
+                assert!(input.direction_at_offset(5).is_ltr());
+                assert!(input.direction_at_offset(11).is_ltr());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_direction_at_offset_rtl(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "مرحبا", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.direction_at_offset(0).is_rtl());
+                assert!(input.direction_at_offset(5).is_rtl());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_direction_at_offset_multiline(cx: &mut TestAppContext) {
+        let content = "Hello\nמילים";
+        let view = create_test_input_with_layout(cx, content, 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.direction_at_offset(0).is_ltr());
+                assert!(input.direction_at_offset(5).is_ltr());
+                assert!(input.direction_at_offset(6).is_rtl());
+                assert!(input.direction_at_offset(content.len()).is_rtl());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_empty_line_inherits_direction(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "مرحبا\n\nWorld", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(0).is_rtl());
+                assert!(input.line_direction(1).is_rtl());
+                assert!(input.line_direction(2).is_ltr());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_numbers_before_rtl(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "123 مرحبا", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(0).is_rtl());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_line_direction_out_of_bounds(cx: &mut TestAppContext) {
+        let view = create_test_input_with_layout(cx, "Hello", 0..0);
+        view.update(cx, |view, _window, cx| {
+            view.input.update(cx, |input, _cx| {
+                assert!(input.line_direction(100).is_ltr());
+            });
+        })
+        .unwrap();
     }
 }

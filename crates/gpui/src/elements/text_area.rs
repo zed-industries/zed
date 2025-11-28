@@ -10,8 +10,8 @@ use crate::{
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InputLineLayout, InputState, InspectorElementId, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextRun, TextStyle,
-    Window, colors, fill, point, px, relative, size,
+    Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextAlign,
+    TextDirection, TextRun, TextStyle, Window, colors, fill, point, px, relative, size,
 };
 
 const CURSOR_WIDTH: f32 = 2.0;
@@ -542,8 +542,17 @@ fn paint_selection(
             continue;
         }
 
+        let alignment_offset = compute_alignment_offset(line, bounds.size.width);
+
         if line.text_range.is_empty() {
-            paint_empty_line_selection(bounds, line_y, line_height, selection_color, window);
+            paint_empty_line_selection(
+                bounds,
+                line_y,
+                alignment_offset,
+                line_height,
+                selection_color,
+                window,
+            );
         } else if let Some(wrapped) = &line.wrapped_line {
             paint_wrapped_line_selection(
                 wrapped,
@@ -551,6 +560,7 @@ fn paint_selection(
                 selected_range,
                 bounds,
                 line_y,
+                alignment_offset,
                 line_height,
                 selection_color,
                 window,
@@ -575,6 +585,7 @@ fn line_intersects_range(
 fn paint_empty_line_selection(
     bounds: Bounds<Pixels>,
     line_y: Pixels,
+    alignment_offset: Pixels,
     line_height: Pixels,
     selection_color: Hsla,
     window: &mut Window,
@@ -582,9 +593,9 @@ fn paint_empty_line_selection(
     let empty_line_selection_width = px(6.);
     window.paint_quad(fill(
         Bounds::from_corners(
-            point(bounds.left(), bounds.top() + line_y),
+            point(bounds.left() + alignment_offset, bounds.top() + line_y),
             point(
-                bounds.left() + empty_line_selection_width,
+                bounds.left() + alignment_offset + empty_line_selection_width,
                 bounds.top() + line_y + line_height,
             ),
         ),
@@ -599,6 +610,7 @@ fn paint_wrapped_line_selection(
     selected_range: &std::ops::Range<usize>,
     bounds: Bounds<Pixels>,
     line_y: Pixels,
+    alignment_offset: Pixels,
     line_height: Pixels,
     selection_color: Hsla,
     window: &mut Window,
@@ -626,6 +638,7 @@ fn paint_wrapped_line_selection(
         paint_single_line_selection(
             bounds,
             line_y,
+            alignment_offset,
             start_pos,
             end_pos,
             line_height,
@@ -637,6 +650,7 @@ fn paint_wrapped_line_selection(
             wrapped,
             bounds,
             line_y,
+            alignment_offset,
             start_pos,
             end_pos,
             start_visual_line,
@@ -656,6 +670,7 @@ fn compute_visual_line_index(y: Pixels, line_height: Pixels) -> usize {
 fn paint_single_line_selection(
     bounds: Bounds<Pixels>,
     line_y: Pixels,
+    alignment_offset: Pixels,
     start_pos: Point<Pixels>,
     end_pos: Point<Pixels>,
     line_height: Pixels,
@@ -665,11 +680,11 @@ fn paint_single_line_selection(
     window.paint_quad(fill(
         Bounds::from_corners(
             point(
-                bounds.left() + start_pos.x,
+                bounds.left() + alignment_offset + start_pos.x,
                 bounds.top() + line_y + start_pos.y,
             ),
             point(
-                bounds.left() + end_pos.x,
+                bounds.left() + alignment_offset + end_pos.x,
                 bounds.top() + line_y + start_pos.y + line_height,
             ),
         ),
@@ -681,6 +696,7 @@ fn paint_multiline_selection(
     wrapped: &crate::WrappedLine,
     bounds: Bounds<Pixels>,
     line_y: Pixels,
+    alignment_offset: Pixels,
     start_pos: Point<Pixels>,
     end_pos: Point<Pixels>,
     start_visual_line: usize,
@@ -695,11 +711,11 @@ fn paint_multiline_selection(
     window.paint_quad(fill(
         Bounds::from_corners(
             point(
-                bounds.left() + start_pos.x,
+                bounds.left() + alignment_offset + start_pos.x,
                 bounds.top() + line_y + start_pos.y,
             ),
             point(
-                bounds.left() + line_width,
+                bounds.left() + alignment_offset + line_width,
                 bounds.top() + line_y + start_pos.y + line_height,
             ),
         ),
@@ -711,9 +727,9 @@ fn paint_multiline_selection(
         let y = line_height * visual_line as f32;
         window.paint_quad(fill(
             Bounds::from_corners(
-                point(bounds.left(), bounds.top() + line_y + y),
+                point(bounds.left() + alignment_offset, bounds.top() + line_y + y),
                 point(
-                    bounds.left() + line_width,
+                    bounds.left() + alignment_offset + line_width,
                     bounds.top() + line_y + y + line_height,
                 ),
             ),
@@ -724,9 +740,12 @@ fn paint_multiline_selection(
     // Last visual line: from start of line to end position
     window.paint_quad(fill(
         Bounds::from_corners(
-            point(bounds.left(), bounds.top() + line_y + end_pos.y),
             point(
-                bounds.left() + end_pos.x,
+                bounds.left() + alignment_offset,
+                bounds.top() + line_y + end_pos.y,
+            ),
+            point(
+                bounds.left() + alignment_offset + end_pos.x,
                 bounds.top() + line_y + end_pos.y + line_height,
             ),
         ),
@@ -765,12 +784,14 @@ fn paint_marked_text_underline(
         }
 
         if let Some(wrapped) = &line.wrapped_line {
+            let alignment_offset = compute_alignment_offset(line, bounds.size.width);
             paint_wrapped_line_underline(
                 wrapped,
                 line,
                 marked_range,
                 bounds,
                 line_y,
+                alignment_offset,
                 line_height,
                 underline_color,
                 window,
@@ -786,6 +807,7 @@ fn paint_wrapped_line_underline(
     marked_range: &std::ops::Range<usize>,
     bounds: Bounds<Pixels>,
     line_y: Pixels,
+    alignment_offset: Pixels,
     line_height: Pixels,
     underline_color: Hsla,
     window: &mut Window,
@@ -816,11 +838,11 @@ fn paint_wrapped_line_underline(
         window.paint_quad(fill(
             Bounds::from_corners(
                 point(
-                    bounds.left() + start_pos.x,
+                    bounds.left() + alignment_offset + start_pos.x,
                     bounds.top() + line_y + start_pos.y + underline_offset,
                 ),
                 point(
-                    bounds.left() + end_pos.x,
+                    bounds.left() + alignment_offset + end_pos.x,
                     bounds.top() + line_y + start_pos.y + line_height,
                 ),
             ),
@@ -831,11 +853,11 @@ fn paint_wrapped_line_underline(
         window.paint_quad(fill(
             Bounds::from_corners(
                 point(
-                    bounds.left() + start_pos.x,
+                    bounds.left() + alignment_offset + start_pos.x,
                     bounds.top() + line_y + start_pos.y + underline_offset,
                 ),
                 point(
-                    bounds.left() + wrapped.width(),
+                    bounds.left() + alignment_offset + wrapped.width(),
                     bounds.top() + line_y + start_pos.y + line_height,
                 ),
             ),
@@ -847,9 +869,12 @@ fn paint_wrapped_line_underline(
             let y = line_height * visual_line as f32;
             window.paint_quad(fill(
                 Bounds::from_corners(
-                    point(bounds.left(), bounds.top() + line_y + y + underline_offset),
                     point(
-                        bounds.left() + wrapped.width(),
+                        bounds.left() + alignment_offset,
+                        bounds.top() + line_y + y + underline_offset,
+                    ),
+                    point(
+                        bounds.left() + alignment_offset + wrapped.width(),
                         bounds.top() + line_y + y + line_height,
                     ),
                 ),
@@ -861,11 +886,11 @@ fn paint_wrapped_line_underline(
         window.paint_quad(fill(
             Bounds::from_corners(
                 point(
-                    bounds.left(),
+                    bounds.left() + alignment_offset,
                     bounds.top() + line_y + end_pos.y + underline_offset,
                 ),
                 point(
-                    bounds.left() + end_pos.x,
+                    bounds.left() + alignment_offset + end_pos.x,
                     bounds.top() + line_y + end_pos.y + line_height,
                 ),
             ),
@@ -921,14 +946,11 @@ fn paint_text(
 
         if let Some(wrapped) = &line_layout.wrapped_line {
             let paint_pos = point(bounds.left(), bounds.top() + line_y);
-            let _ = wrapped.paint(
-                paint_pos,
-                line_height,
-                crate::TextAlign::Left,
-                Some(bounds),
-                window,
-                cx,
-            );
+            let text_align = match line_layout.direction {
+                TextDirection::Ltr => TextAlign::Left,
+                TextDirection::Rtl => TextAlign::Right,
+            };
+            let _ = wrapped.paint(paint_pos, line_height, text_align, Some(bounds), window, cx);
         }
     }
 }
@@ -960,11 +982,13 @@ fn paint_cursor(
         }
 
         let cursor_position = compute_cursor_position(line, cursor_offset, line_height);
+        let alignment_offset = compute_alignment_offset(line, bounds.size.width);
 
         paint_cursor_at_position(
             bounds,
             line_y,
             cursor_position,
+            alignment_offset,
             line_height,
             cursor_color,
             window,
@@ -1005,10 +1029,25 @@ fn compute_cursor_position(
     }
 }
 
+fn compute_alignment_offset(line: &InputLineLayout, available_width: Pixels) -> Pixels {
+    match line.direction {
+        TextDirection::Ltr => px(0.),
+        TextDirection::Rtl => {
+            let line_width = line
+                .wrapped_line
+                .as_ref()
+                .map(|w| w.width())
+                .unwrap_or(px(0.));
+            available_width - line_width
+        }
+    }
+}
+
 fn paint_cursor_at_position(
     bounds: Bounds<Pixels>,
     line_y: Pixels,
     cursor_position: Point<Pixels>,
+    alignment_offset: Pixels,
     line_height: Pixels,
     cursor_color: Hsla,
     window: &mut Window,
@@ -1016,7 +1055,7 @@ fn paint_cursor_at_position(
     window.paint_quad(fill(
         Bounds::new(
             point(
-                bounds.left() + cursor_position.x,
+                bounds.left() + alignment_offset + cursor_position.x,
                 bounds.top() + line_y + cursor_position.y,
             ),
             size(px(CURSOR_WIDTH), line_height),

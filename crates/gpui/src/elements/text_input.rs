@@ -10,8 +10,8 @@ use crate::{
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InputState, InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, StyleRefinement, Styled, TextRun, TextStyle, Window, WrappedLine, colors, fill,
-    point, px, size,
+    SharedString, StyleRefinement, Styled, TextAlign, TextDirection, TextRun, TextStyle, Window,
+    WrappedLine, colors, fill, point, px, size,
 };
 
 const CURSOR_WIDTH: f32 = 2.0;
@@ -300,7 +300,13 @@ impl Element for TextInput {
 
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     if !state.selected_range.is_empty() {
-                        paint_selection(&state, bounds, colors.selection, window);
+                        paint_selection(
+                            &state,
+                            &state.selected_range,
+                            bounds,
+                            colors.selection,
+                            window,
+                        );
                     }
 
                     if state.content.is_empty() {
@@ -348,6 +354,8 @@ struct PaintState {
     char_positions: Vec<Pixels>,
     /// The wrapped line layout for painting text
     wrapped_line: Option<WrappedLine>,
+    /// The text direction for this input
+    direction: TextDirection,
 }
 
 impl PaintState {
@@ -387,6 +395,12 @@ impl PaintState {
             .first()
             .and_then(|l| l.wrapped_line.clone());
 
+        let direction = input_state
+            .line_layouts
+            .first()
+            .map(|l| l.direction)
+            .unwrap_or_default();
+
         Self {
             content: input_state.content().to_string(),
             selected_range: input_state.selected_range().clone(),
@@ -398,6 +412,7 @@ impl PaintState {
             is_focused: focus_handle.is_focused(window),
             char_positions,
             wrapped_line,
+            direction,
         }
     }
 
@@ -411,6 +426,14 @@ impl PaintState {
             .get(char_index)
             .copied()
             .unwrap_or(self.text_width)
+    }
+
+    /// Compute the alignment offset for RTL text
+    fn alignment_offset(&self, available_width: Pixels) -> Pixels {
+        match self.direction {
+            TextDirection::Ltr => px(0.),
+            TextDirection::Rtl => available_width - self.text_width,
+        }
     }
 }
 
@@ -531,14 +554,16 @@ fn handle_scroll(input: Entity<InputState>, bounds: Bounds<Pixels>, window: &mut
 
 fn paint_selection(
     state: &PaintState,
+    selected_range: &std::ops::Range<usize>,
     bounds: Bounds<Pixels>,
     selection_color: Hsla,
     window: &mut Window,
 ) {
-    let start_x = state.x_for_index(state.selected_range.start) - state.scroll_offset;
-    let end_x = state.x_for_index(state.selected_range.end) - state.scroll_offset;
+    let alignment_offset = state.alignment_offset(bounds.size.width);
+    let start_x = state.x_for_index(selected_range.start) - state.scroll_offset + alignment_offset;
+    let end_x = state.x_for_index(selected_range.end) - state.scroll_offset + alignment_offset;
 
-    // Vertically center the selection within the bounds
+    // Vertically center the selection
     let y_offset = (bounds.size.height - state.line_height).max(px(0.)) / 2.0;
 
     window.paint_quad(fill(
@@ -595,10 +620,14 @@ fn paint_text(state: &PaintState, bounds: Bounds<Pixels>, window: &mut Window, c
         bounds.origin.y + y_offset,
     );
 
+    let text_align = match state.direction {
+        TextDirection::Ltr => TextAlign::Left,
+        TextDirection::Rtl => TextAlign::Right,
+    };
     let _ = wrapped_line.paint(
         paint_origin,
         state.line_height,
-        crate::TextAlign::Left,
+        text_align,
         Some(bounds),
         window,
         cx,
@@ -612,8 +641,9 @@ fn paint_marked_text_underline(
     underline_color: Hsla,
     window: &mut Window,
 ) {
-    let start_x = state.x_for_index(marked_range.start) - state.scroll_offset;
-    let end_x = state.x_for_index(marked_range.end) - state.scroll_offset;
+    let alignment_offset = state.alignment_offset(bounds.size.width);
+    let start_x = state.x_for_index(marked_range.start) - state.scroll_offset + alignment_offset;
+    let end_x = state.x_for_index(marked_range.end) - state.scroll_offset + alignment_offset;
 
     let underline_thickness = px(MARKED_TEXT_UNDERLINE_THICKNESS);
     let y_offset = (bounds.size.height - state.line_height).max(px(0.)) / 2.0;
@@ -634,7 +664,8 @@ fn paint_cursor(
     cursor_color: Hsla,
     window: &mut Window,
 ) {
-    let cursor_x = state.x_for_index(state.cursor_offset) - state.scroll_offset;
+    let alignment_offset = state.alignment_offset(bounds.size.width);
+    let cursor_x = state.x_for_index(state.cursor_offset) - state.scroll_offset + alignment_offset;
 
     // Vertically center the cursor
     let y_offset = (bounds.size.height - state.line_height).max(px(0.)) / 2.0;
