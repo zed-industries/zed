@@ -45,12 +45,12 @@ use std::{
     borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, hash_map},
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, Not, Range},
+    ops::{Deref, Range},
     path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
@@ -758,8 +758,8 @@ impl EditPreview {
             .to_point(&self.applied_edits_snapshot);
 
         let start = Point::new(start.row.saturating_sub(3), 0);
-        let old_end = Point::new(old_end.row + 3, 0).min(self.old_snapshot.max_point());
-        let new_end = Point::new(new_end.row + 3, 0).min(self.applied_edits_snapshot.max_point());
+        let old_end = Point::new(old_end.row + 4, 0).min(self.old_snapshot.max_point());
+        let new_end = Point::new(new_end.row + 4, 0).min(self.applied_edits_snapshot.max_point());
 
         Some(unified_diff(
             &self
@@ -4236,6 +4236,7 @@ impl BufferSnapshot {
 
         let mut new_bracket_matches = HashMap::default();
         let mut all_bracket_matches = HashMap::default();
+        let mut bracket_matches_to_color = HashMap::default();
 
         for chunk in tree_sitter_data
             .chunks
@@ -4265,7 +4266,7 @@ impl BufferSnapshot {
                         .collect::<Vec<_>>();
 
                     let chunk_range = chunk_range.clone();
-                    let new_matches = iter::from_fn(move || {
+                    let tree_sitter_matches = iter::from_fn(|| {
                         while let Some(mat) = matches.peek() {
                             let mut open = None;
                             let mut close = None;
@@ -4291,32 +4292,70 @@ impl BufferSnapshot {
                                 continue;
                             }
 
+                            if !pattern.rainbow_exclude
+                                // Also, certain languages have "brackets" that are not brackets, e.g. tags. and such
+                                // bracket will match the entire tag with all text inside.
+                                // For now, avoid highlighting any pair that has more than single char in each bracket.
+                                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                                && (open_range.len() == 1 || close_range.len() == 1)
+                            {
+                                // Certain tree-sitter grammars may return more bracket pairs than needed:
+                                // see `test_markdown_bracket_colorization` for a set-up that returns pairs with the same start bracket and different end one.
+                                // Pick the pair with the shortest range in case of ambiguity.
+                                match bracket_matches_to_color.entry(open_range.clone()) {
+                                    hash_map::Entry::Vacant(v) => {
+                                        v.insert(close_range.clone());
+                                    }
+                                    hash_map::Entry::Occupied(mut o) => {
+                                        let previous_close_range = o.get();
+                                        let previous_length =
+                                            previous_close_range.end - open_range.start;
+                                        let new_length = close_range.end - open_range.start;
+                                        if new_length < previous_length {
+                                            o.insert(close_range.clone());
+                                        }
+                                    }
+                                }
+                            }
                             return Some((open_range, close_range, pattern, depth));
                         }
                         None
                     })
                     .sorted_by_key(|(open_range, _, _, _)| open_range.start)
-                    .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
-                        while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
-                            if last_bracket_end <= open_range.start {
-                                bracket_pairs_ends.pop();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        let bracket_depth = bracket_pairs_ends.len();
-                        bracket_pairs_ends.push(close_range.end);
-
-                        BracketMatch {
-                            open_range,
-                            close_range,
-                            syntax_layer_depth,
-                            newline_only: pattern.newline_only,
-                            color_index: pattern.rainbow_exclude.not().then_some(bracket_depth),
-                        }
-                    })
                     .collect::<Vec<_>>();
+
+                    let new_matches = tree_sitter_matches
+                        .into_iter()
+                        .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
+                            let participates_in_colorizing =
+                                bracket_matches_to_color.get(&open_range).is_some_and(
+                                    |close_range_to_color| close_range_to_color == &close_range,
+                                );
+                            let color_index = if participates_in_colorizing {
+                                while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
+                                    if last_bracket_end <= open_range.start {
+                                        bracket_pairs_ends.pop();
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                let bracket_depth = bracket_pairs_ends.len();
+                                bracket_pairs_ends.push(close_range.end);
+                                Some(bracket_depth)
+                            } else {
+                                None
+                            };
+
+                            BracketMatch {
+                                open_range,
+                                close_range,
+                                syntax_layer_depth,
+                                newline_only: pattern.newline_only,
+                                color_index,
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
                     new_bracket_matches.insert(chunk.id, new_matches.clone());
                     new_matches

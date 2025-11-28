@@ -3,12 +3,12 @@ use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Use, Workflow, Wo
 use crate::tasks::workflows::{
     runners::{self, Platform},
     steps::{self, FluentBuilder as _, NamedJob, named, setup_cargo_config},
-    vars::{self, Input},
+    vars::{self, WorkflowInput},
 };
 
 pub(crate) fn run_agent_evals() -> Workflow {
     let agent_evals = agent_evals();
-    let model_name = Input::string("model_name", None);
+    let model_name = WorkflowInput::string("model_name", None);
 
     named::workflow()
         .on(Event::default().workflow_dispatch(
@@ -29,8 +29,8 @@ pub(crate) fn run_agent_evals() -> Workflow {
 }
 
 pub(crate) fn run_unit_evals() -> Workflow {
-    let model_name = Input::string("model_name", None);
-    let commit_sha = Input::string("commit_sha", None);
+    let model_name = WorkflowInput::string("model_name", None);
+    let commit_sha = WorkflowInput::string("commit_sha", None);
 
     let unit_evals = named::job(unit_evals(Some(&commit_sha)));
 
@@ -117,7 +117,7 @@ fn cron_unit_evals() -> NamedJob {
     named::job(unit_evals(None).add_step(send_failure_to_slack()))
 }
 
-fn unit_evals(commit: Option<&Input>) -> Job {
+fn unit_evals(commit: Option<&WorkflowInput>) -> Job {
     let script_step = add_api_keys(steps::script("./script/run-unit-evals"));
 
     Job::default()

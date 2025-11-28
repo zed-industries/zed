@@ -253,7 +253,7 @@ impl ModuleList {
                 range.map(|ix| this.render_entry(ix, cx)).collect()
             }),
         )
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .size_full()
     }
 }
@@ -279,6 +279,6 @@ impl Render for ModuleList {
             .size_full()
             .p_1()
             .child(self.render_list(window, cx))
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
 }

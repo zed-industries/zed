@@ -138,7 +138,7 @@ impl ConfigureContextServerToolsModal {
                         items
                     })),
             )
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
             .into_any_element()
     }
 }

@@ -498,7 +498,17 @@ impl AcpThreadView {
             Some(new_version_available_tx),
         );
 
-        let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
+        let agent_name = agent.name();
+        let timeout = cx.background_executor().timer(Duration::from_secs(30));
+        let connect_task = smol::future::or(
+            agent.connect(root_dir.as_deref(), delegate, cx),
+            async move {
+                timeout.await;
+                Err(anyhow::Error::new(LoadError::Other(
+                    format!("{agent_name} is unable to initialize after 30 seconds.").into(),
+                )))
+            },
+        );
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok((connection, login)) => {
@@ -3989,7 +3999,7 @@ impl AcpThreadView {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();
                 let path_style = file.path_style(cx);
-                let separator = file.path_style(cx).separator();
+                let separator = file.path_style(cx).primary_separator();
 
                 let file_path = path.parent().and_then(|parent| {
                     if parent.is_empty() {
@@ -5896,7 +5906,7 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                        .vertical_scrollbar_for(&self.list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
@@ -7357,5 +7367,55 @@ pub(crate) mod tests {
 
             assert_eq!(text, expected_txt);
         })
+    }
+
+    #[gpui::test]
+    async fn test_initialize_timeout(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        struct InfiniteInitialize;
+
+        impl AgentServer for InfiniteInitialize {
+            fn telemetry_id(&self) -> &'static str {
+                "test"
+            }
+
+            fn logo(&self) -> ui::IconName {
+                ui::IconName::Ai
+            }
+
+            fn name(&self) -> SharedString {
+                "Test".into()
+            }
+
+            fn connect(
+                &self,
+                _root_dir: Option<&Path>,
+                _delegate: AgentServerDelegate,
+                cx: &mut App,
+            ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>
+            {
+                cx.spawn(async |_| futures::future::pending().await)
+            }
+
+            fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+                self
+            }
+        }
+
+        let (thread_view, cx) = setup_thread_view(InfiniteInitialize, cx).await;
+
+        cx.executor().advance_clock(Duration::from_secs(31));
+        cx.run_until_parked();
+
+        let error = thread_view.read_with(cx, |thread_view, _| match &thread_view.thread_state {
+            ThreadState::LoadError(err) => err.clone(),
+            _ => panic!("Incorrect thread state"),
+        });
+
+        match error {
+            LoadError::Other(str) => assert!(str.contains("initialize")),
+            _ => panic!("Unexpected load error"),
+        }
     }
 }

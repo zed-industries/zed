@@ -5084,8 +5084,8 @@ impl MultiBufferSnapshot {
         let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
 
         Some(
-            self.anchor_in_excerpt_(excerpt, text_anchor.start)?
-                ..self.anchor_in_excerpt_(excerpt, text_anchor.end)?,
+            Self::anchor_in_excerpt_(excerpt, text_anchor.start)?
+                ..Self::anchor_in_excerpt_(excerpt, text_anchor.end)?,
         )
     }
 
@@ -5097,10 +5097,24 @@ impl MultiBufferSnapshot {
         text_anchor: text::Anchor,
     ) -> Option<Anchor> {
         let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
-        self.anchor_in_excerpt_(excerpt, text_anchor)
+        Self::anchor_in_excerpt_(excerpt, text_anchor)
     }
 
-    fn anchor_in_excerpt_(&self, excerpt: &Excerpt, text_anchor: text::Anchor) -> Option<Anchor> {
+    /// Same as [`MultiBuffer::anchor_in_excerpt`], but more efficient than calling it multiple times.
+    pub fn anchors_in_excerpt(
+        &self,
+        excerpt_id: ExcerptId,
+        text_anchors: impl IntoIterator<Item = text::Anchor>,
+    ) -> Option<impl Iterator<Item = Option<Anchor>>> {
+        let excerpt = self.excerpt(self.latest_excerpt_id(excerpt_id))?;
+        Some(
+            text_anchors
+                .into_iter()
+                .map(|text_anchor| Self::anchor_in_excerpt_(excerpt, text_anchor)),
+        )
+    }
+
+    fn anchor_in_excerpt_(excerpt: &Excerpt, text_anchor: text::Anchor) -> Option<Anchor> {
         match text_anchor.buffer_id {
             Some(buffer_id) if buffer_id == excerpt.buffer_id => (),
             Some(_) => return None,
