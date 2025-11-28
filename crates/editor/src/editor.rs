@@ -18369,7 +18369,7 @@ impl Editor {
         };
 
         self.pull_diagnostics_task = make_spawn(edited_buffer, debounce);
-        self.pull_diagnostics_background_task = make_spawn(background_buffers, debounce * 4);
+        self.pull_diagnostics_background_task = make_spawn(background_buffers, debounce * 2);
 
         Some(())
     }

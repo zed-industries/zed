@@ -116,6 +116,7 @@ use std::{
         atomic::{self, AtomicUsize},
     },
     time::{Duration, Instant},
+    vec,
 };
 use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
@@ -4232,6 +4233,34 @@ impl LspStore {
                                     },
                                 );
                             }
+
+                            let diagnostic_updates = local
+                                .language_servers
+                                .keys()
+                                .cloned()
+                                .map(|server_id| DocumentDiagnosticsUpdate {
+                                    diagnostics: DocumentDiagnostics {
+                                        document_abs_path: buffer_abs_path.clone(),
+                                        version: None,
+                                        diagnostics: vec![],
+                                    },
+                                    result_id: None,
+                                    registration_id: None,
+                                    server_id: server_id.clone(),
+                                    disk_based_sources: Cow::Borrowed(&[]),
+                                })
+                                .collect::<Vec<_>>();
+
+                            lsp_store
+                                .merge_diagnostic_entries(
+                                    diagnostic_updates,
+                                    |_, diagnostic, _| {
+                                        diagnostic.source_kind != DiagnosticSourceKind::Pulled
+                                    },
+                                    cx,
+                                )
+                                .context("Failed to clear diagnostics when closing buffer")
+                                .log_err();
                         }
                     }
                 })
@@ -12075,9 +12104,11 @@ impl LspStore {
                         path: relative_path,
                     };
                     if let Some(local_lsp_store) = self.as_local_mut() {
-                        local_lsp_store.workspace_pull_diagnostics_result_ids.entry(server_id).or_default().entry(new_registration_id.clone()).or_default().insert(abs_path, result_id.clone());
+                        local_lsp_store.workspace_pull_diagnostics_result_ids.entry(server_id)
+                            .or_default().entry(new_registration_id.clone()).or_default().insert(abs_path, result_id.clone());
                     }
-                    // TODO kb comment that we prefer the buffer pulled diagnostics over any workspace diagnostics
+                    // The LSP spec recommends that "diagnostics from a document pull should win over diagnostics from a workspace pull."
+                    // Since we actively pull diagnostics for documents with open buffers, we ignore contents of workspace pulls for these documents.
                     if self.buffer_store.read(cx).get_by_path(&project_path).is_none() {
                         acc.entry(server_id)
                             .or_insert_with(HashMap::default)

@@ -982,7 +982,7 @@ pub enum LspPullDiagnostics {
         server_id: LanguageServerId,
         /// URI of the resource,
         uri: lsp::Uri,
-        // TODO
+        /// The ID provided by the dynamic registration that produced diagnostics.
         registration_id: Option<SharedString>,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
