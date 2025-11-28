@@ -24,7 +24,7 @@ body:
     attributes:
       label: Current vs. Expected behavior
       description: |
-        Current behavior (screenshots, videos, etc are appreciated), vs. what you expected the behavior to be.
+        Current behavior (e.g., screenshots, videos, are appreciated), vs. what you expected the behavior to be.
 
       placeholder: |
         Current behavior: <screenshot with an arrow> The icon is blue. Expected behavior: The icon should be red because this is what the setting is documented to do.
