@@ -643,8 +643,12 @@ pub enum AzureFoundryError {
         status_code: StatusCode,
         message: String,
     },
-    RateLimit { retry_after: Duration },
-    ServerOverloaded { retry_after: Option<Duration> },
+    RateLimit {
+        retry_after: Duration,
+    },
+    ServerOverloaded {
+        retry_after: Option<Duration>,
+    },
     ApiError(ApiError),
 }
 
