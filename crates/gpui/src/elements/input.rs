@@ -13,8 +13,8 @@ use crate::{
     Hsla, InputLineLayout, InputState, InspectorElementId, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextAlign,
-    TextDirection, TextRun, TextStyle, Window, WrappedLine, colors, fill, point, px, relative,
-    size,
+    TextDirection, TextRun, TextStyle, Window, WrappedLine, colors, fill, input::INPUT_CONTEXT,
+    point, px, relative, size,
 };
 
 const CURSOR_WIDTH: f32 = 2.0;
@@ -57,6 +57,8 @@ impl Input {
             cursor_color: None,
             multiline,
         };
+        input.interactivity.key_context =
+            Some(INPUT_CONTEXT.try_into().expect("Invalid INPUT_CONTEXT"));
         input.register_actions();
         input
     }
@@ -938,7 +940,7 @@ fn paint_multiline_marked_underline(
 fn paint_multiline_cursor(
     line_layouts: &[InputLineLayout],
     cursor_offset: usize,
-    content: &str,
+    _content: &str,
     bounds: Bounds<Pixels>,
     scroll_offset: Pixels,
     line_height: Pixels,

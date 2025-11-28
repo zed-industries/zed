@@ -1,8 +1,10 @@
 mod bidi;
+mod bindings;
 mod input_handler;
 mod input_state;
 
 pub use bidi::{TextDirection, detect_base_direction};
+pub use bindings::{INPUT_CONTEXT, InputBindings, bind_input_keys};
 pub use input_handler::*;
 pub use input_state::{InputLineLayout, InputState};
 // todo: move to keymap

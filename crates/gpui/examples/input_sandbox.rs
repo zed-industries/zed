@@ -7,11 +7,7 @@ use gpui::{
     Window, WindowBounds, WindowOptions, div, input, prelude::*, px, rgb, size, text_area,
 };
 
-use gpui::input::{
-    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste,
-    Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
-    SelectUp, SelectWordLeft, SelectWordRight, Tab, Undo, Up, WordLeft, WordRight,
-};
+use gpui::input::bind_input_keys;
 
 struct InputSandbox {
     multiline_input: Entity<InputState>,
@@ -201,37 +197,21 @@ gpui::actions!(input_sandbox, [ToggleMode]);
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        cx.bind_keys([
-            KeyBinding::new("ctrl-t", ToggleMode, None),
-            KeyBinding::new("delete", Delete, None),
-            KeyBinding::new("left", Left, None),
-            KeyBinding::new("right", Right, None),
-            KeyBinding::new("up", Up, None),
-            KeyBinding::new("down", Down, None),
-            KeyBinding::new("shift-left", SelectLeft, None),
-            KeyBinding::new("shift-right", SelectRight, None),
-            KeyBinding::new("shift-up", SelectUp, None),
-            KeyBinding::new("shift-down", SelectDown, None),
-            KeyBinding::new("cmd-a", SelectAll, None),
-            KeyBinding::new("home", Home, None),
-            KeyBinding::new("end", End, None),
-            KeyBinding::new("cmd-up", MoveToBeginning, None),
-            KeyBinding::new("cmd-down", MoveToEnd, None),
-            KeyBinding::new("cmd-shift-up", SelectToBeginning, None),
-            KeyBinding::new("cmd-shift-down", SelectToEnd, None),
-            KeyBinding::new("alt-left", WordLeft, None),
-            KeyBinding::new("alt-right", WordRight, None),
-            KeyBinding::new("alt-shift-left", SelectWordLeft, None),
-            KeyBinding::new("alt-shift-right", SelectWordRight, None),
-            KeyBinding::new("cmd-c", Copy, None),
-            KeyBinding::new("cmd-x", Cut, None),
-            KeyBinding::new("cmd-v", Paste, None),
-            KeyBinding::new("enter", Enter, None),
-            KeyBinding::new("tab", Tab, None),
-            KeyBinding::new("backspace", Backspace, None),
-            KeyBinding::new("cmd-z", Undo, None),
-            KeyBinding::new("cmd-shift-z", Redo, None),
-        ]);
+        // Example - customize input keybindings:
+        // - unbind the up arrow key
+        // - rebind the cut action to Cmd+S
+
+        // let custom_bindings = InputBindings {
+        //     up: None,
+        //     cut: Some(KeyBinding::new("cmd-s", Cut, Some("input"))),
+        //     ..Default::default()
+        // };
+
+        // bind_input_keys(cx, custom_bindings);
+
+        bind_input_keys(cx, None);
+
+        cx.bind_keys([KeyBinding::new("ctrl-t", ToggleMode, None)]);
 
         let bounds = Bounds::centered(None, size(px(500.), px(400.)), cx);
         cx.open_window(
