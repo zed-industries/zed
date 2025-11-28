@@ -220,7 +220,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                theme::set_theme(settings, theme, appearance);
+                theme::set_theme(settings, theme, appearance, appearance);
             }
         });
     }
