@@ -412,14 +412,14 @@ impl CommitView {
                     j += 1;
                 }
                 let issue_number = &message[i + 1..i + (j - i)];
-                result.push_str(&format!(
-                    "[#{}](https://{}/{}/{}/issues/{})",
-                    issue_number,
-                    remote.host.base_url(),
+                let url = format!(
+                    "{}/{}/{}/issues/{}",
+                    remote.host.base_url().as_str().trim_end_matches('/'),
                     remote.owner,
                     remote.repo,
                     issue_number
-                ));
+                );
+                result.push_str(&format!("[#{}]({})", issue_number, url));
                 i = j;
             } else if i + 3 < chars.len()
                 && chars[i] == 'G'
@@ -432,14 +432,14 @@ impl CommitView {
                     j += 1;
                 }
                 let issue_number = &message[i + 3..i + (j - i)];
-                result.push_str(&format!(
-                    "[GH-{}](https://{}/{}/{}/issues/{})",
-                    issue_number,
-                    remote.host.base_url(),
+                let url = format!(
+                    "{}/{}/{}/issues/{}",
+                    remote.host.base_url().as_str().trim_end_matches('/'),
                     remote.owner,
                     remote.repo,
                     issue_number
-                ));
+                );
+                result.push_str(&format!("[GH-{}]({})", issue_number, url));
                 i = j;
             } else {
                 result.push(chars[i]);
@@ -1125,4 +1125,100 @@ fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         ..Default::default()
     };
     style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git_hosting_providers::Github;
+
+    fn create_test_remote() -> GitRemote {
+        GitRemote {
+            host: Arc::new(Github::public_instance()),
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        }
+    }
+
+    #[test]
+    fn test_process_github_issues_simple_issue_number() {
+        let remote = create_test_remote();
+        let message = "Fix bug #123";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(
+            result,
+            "Fix bug [#123](https://github.com/zed-industries/zed/issues/123)"
+        );
+    }
+
+    #[test]
+    fn test_process_github_issues_multiple_issue_numbers() {
+        let remote = create_test_remote();
+        let message = "Fix #123 and #456";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(
+            result,
+            "Fix [#123](https://github.com/zed-industries/zed/issues/123) and [#456](https://github.com/zed-industries/zed/issues/456)"
+        );
+    }
+
+    #[test]
+    fn test_process_github_issues_gh_format() {
+        let remote = create_test_remote();
+        let message = "Fix GH-789";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(
+            result,
+            "Fix [GH-789](https://github.com/zed-industries/zed/issues/789)"
+        );
+    }
+
+    #[test]
+    fn test_process_github_issues_mixed_formats() {
+        let remote = create_test_remote();
+        let message = "Fix #123 and GH-456";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(
+            result,
+            "Fix [#123](https://github.com/zed-industries/zed/issues/123) and [GH-456](https://github.com/zed-industries/zed/issues/456)"
+        );
+    }
+
+    #[test]
+    fn test_process_github_issues_no_issues() {
+        let remote = create_test_remote();
+        let message = "This is a commit message without any issues";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(result, message);
+    }
+
+    #[test]
+    fn test_process_github_issues_hash_without_number() {
+        let remote = create_test_remote();
+        let message = "Use # for comments";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(result, message);
+    }
+
+    #[test]
+    fn test_process_github_issues_consecutive_issues() {
+        let remote = create_test_remote();
+        let message = "#123#456";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(
+            result,
+            "[#123](https://github.com/zed-industries/zed/issues/123)[#456](https://github.com/zed-industries/zed/issues/456)"
+        );
+    }
+
+    #[test]
+    fn test_process_github_issues_multiline() {
+        let remote = create_test_remote();
+        let message = "Fix #123\n\nThis also fixes #456";
+        let result = CommitView::process_github_issues(message, &remote);
+        assert_eq!(
+            result,
+            "Fix [#123](https://github.com/zed-industries/zed/issues/123)\n\nThis also fixes [#456](https://github.com/zed-industries/zed/issues/456)"
+        );
+    }
 }
