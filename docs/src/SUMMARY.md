@@ -1,6 +1,6 @@
 # Summary
 
-# Getting Started
+# Welcome
 
 - [Getting Started](./getting-started.md)
 - [Installation](./installation.md)
