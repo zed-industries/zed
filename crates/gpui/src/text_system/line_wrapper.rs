@@ -35,6 +35,7 @@ impl LineWrapper {
         fragments: &'a [LineFragment],
         wrap_width: Pixels,
     ) -> impl Iterator<Item = Boundary> + 'a {
+        let space_width = self.width_for_char(' ');
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
         let mut indent = None;
@@ -43,10 +44,10 @@ impl LineWrapper {
         let mut last_wrap_ix = 0;
         let mut prev_c = '\0';
         let mut index = 0;
+
         let mut candidates = fragments
             .iter()
-            .flat_map(move |fragment| fragment.wrap_boundary_candidates())
-            .peekable();
+            .flat_map(move |fragment| fragment.wrap_boundary_candidates());
         iter::from_fn(move || {
             for candidate in candidates.by_ref() {
                 let ix = index;
@@ -58,14 +59,21 @@ impl LineWrapper {
                             continue;
                         }
 
-                        if Self::is_word_char(c) {
-                            if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                                last_candidate_ix = ix;
-                                last_candidate_width = width;
+                        if first_non_whitespace_ix.is_some() {
+                            let mut candidate = false;
+                            if Self::is_word_char(c) {
+                                // For english or latin-based words,
+                                // only if prev char is space, then we can break here.
+                                if prev_c == ' ' {
+                                    candidate = true;
+                                }
+                            } else {
+                                // Other chars (e.g: CJK), break if possible.
+                                candidate = true;
                             }
-                        } else {
-                            // CJK may not be space separated, e.g.: `Hello world你好世界`
-                            if c != ' ' && first_non_whitespace_ix.is_some() {
+
+                            // Avoid line starts with space.
+                            if c != ' ' && candidate {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
@@ -115,7 +123,7 @@ impl LineWrapper {
                     }
 
                     if let Some(indent) = indent {
-                        width += self.width_for_char(' ') * indent as f32;
+                        width += space_width * indent as f32;
                     }
 
                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
@@ -346,6 +354,10 @@ mod tests {
 
     #[test]
     fn test_wrap_line() {
+        // NOTE:
+        // In this case (Used .ZedMono and 16px text size),
+        // 1 char is `9.6px` width, so 72px can fit 7 chars.
+        const WRAP_WIDTH: Pixels = px(72.);
         let mut wrapper = build_wrapper();
 
         assert_eq!(
@@ -353,28 +365,37 @@ mod tests {
                 .wrap_line(&[LineFragment::text("aa bbb cccc ddddd eeee")], px(72.))
                 .collect::<Vec<_>>(),
             &[
+                // "aa bbb "
                 Boundary::new(7, 0),
+                // "cccc "
                 Boundary::new(12, 0),
+                // "ddddd "
                 Boundary::new(18, 0)
             ],
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
+                .wrap_line(&[LineFragment::text("aaa bbbbbbbcccccccaaaa")], px(72.0))
                 .collect::<Vec<_>>(),
             &[
+                // "aaa "
                 Boundary::new(4, 0),
+                // "bbbbbbb"
                 Boundary::new(11, 0),
+                // "ccccccc"
                 Boundary::new(18, 0)
             ],
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("     aaaaaaa")], px(72.))
+                .wrap_line(&[LineFragment::text("     aabbccd")], px(72.))
                 .collect::<Vec<_>>(),
             &[
+                // "     aa"
                 Boundary::new(7, 5),
+                // "     bb"
                 Boundary::new(9, 5),
+                // "     cc"
                 Boundary::new(11, 5),
             ]
         );
@@ -382,7 +403,7 @@ mod tests {
             wrapper
                 .wrap_line(
                     &[LineFragment::text("                            ")],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -393,13 +414,33 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("          aaaaaaaaaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("          aaaabbbbccccdd")],
+                    WRAP_WIDTH
+                )
                 .collect::<Vec<_>>(),
             &[
+                // "       "
                 Boundary::new(7, 0),
+                // "   aaaa"
                 Boundary::new(14, 3),
+                // "   bbbb"
                 Boundary::new(18, 3),
+                // "   cccc"
                 Boundary::new(22, 3),
+            ]
+        );
+
+        // Test ending with many space
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aa bbb ccc f         ")], WRAP_WIDTH)
+                .collect::<Vec<_>>(),
+            &[
+                // "aa bbb "
+                Boundary::new(7, 0),
+                // "ccc f  "
+                Boundary::new(14, 0),
             ]
         );
 
@@ -411,14 +452,35 @@ mod tests {
                         LineFragment::text("aa bbb "),
                         LineFragment::text("cccc ddddd eeee")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "aa bbb "
                 Boundary::new(7, 0),
+                // "cccc "
                 Boundary::new(12, 0),
+                // "ddddd "
                 Boundary::new(18, 0)
             ],
+        );
+
+        // Test with CJK characters
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("aaaaa bbb 你好世界 cccccdd")],
+                    WRAP_WIDTH
+                )
+                .collect::<Vec<_>>(),
+            &[
+                // "aaaaa "
+                Boundary::new(6, 0),
+                // "bbb 你好"
+                Boundary::new(18, 0),
+                // "世界 ccc"
+                Boundary::new(27, 0),
+            ]
         );
 
         // Test wrapping with a mix of text and element fragments
@@ -432,13 +494,16 @@ mod tests {
                         LineFragment::element(px(30.), 1),
                         LineFragment::text(" cccc")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "aa [el] "
                 Boundary::new(5, 0),
+                // "bbb "
                 Boundary::new(9, 0),
-                Boundary::new(11, 0)
+                // "[el] "
+                Boundary::new(11, 0),
             ],
         );
 
@@ -450,13 +515,17 @@ mod tests {
                         LineFragment::element(px(50.), 1),
                         LineFragment::text(" aaaa bbbb cccc dddd")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "[element] "
                 Boundary::new(2, 0),
+                // "aaaa "
                 Boundary::new(7, 0),
+                // "bbbb "
                 Boundary::new(12, 0),
+                // "cccc "
                 Boundary::new(17, 0)
             ],
         );
@@ -470,13 +539,17 @@ mod tests {
                         LineFragment::element(px(100.), 1),
                         LineFragment::text(" more text")
                     ],
-                    px(72.)
+                    WRAP_WIDTH
                 )
                 .collect::<Vec<_>>(),
             &[
+                // "short "
                 Boundary::new(6, 0),
+                // "text "
                 Boundary::new(11, 0),
+                // "[el]"
                 Boundary::new(12, 0),
+                // " more "
                 Boundary::new(18, 0)
             ],
         );
