@@ -243,6 +243,7 @@ struct VimRead {
 struct VimNorm {
     pub range: Option<CommandRange>,
     pub command: String,
+    pub collapse_multicursor: bool,
 }
 
 #[derive(Debug)]
@@ -790,6 +791,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             workspace.send_keystrokes_impl(keystrokes, window, cx)
         });
         let had_range = action.range.is_some();
+        let collapse_multicursor = action.collapse_multicursor;
 
         cx.spawn_in(window, async move |vim, cx| {
             task.await;
@@ -819,6 +821,16 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                                 old.1 = Some(last_sel);
                             });
                         }
+                    });
+                } else if collapse_multicursor {
+                    vim.update_editor(cx, |_, editor, cx| {
+                        let newest = editor
+                            .selections
+                            .newest::<Point>(&editor.display_snapshot(cx));
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select(vec![newest]);
+                        });
+                        editor.end_transaction_at(Instant::now(), cx);
                     });
                 }
             })
@@ -1608,6 +1620,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             VimNorm {
                 command: "".into(),
                 range: None,
+                collapse_multicursor: false,
             },
         )
         .args(|_, args| {
@@ -1615,6 +1628,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 VimNorm {
                     command: args,
                     range: None,
+                    collapse_multicursor: false,
                 }
                 .boxed_clone(),
             )
@@ -2155,6 +2169,14 @@ impl OnMatchingLines {
             });
         };
 
+        let (action, skip_fix_selections) = match action.as_any().downcast_ref::<VimNorm>() {
+            Some(vim_norm) => {
+                let mut vim_norm = vim_norm.clone();
+                vim_norm.collapse_multicursor = true;
+                (vim_norm.boxed_clone(), true)
+            }
+            None => (action, false),
+        };
         vim.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let mut row = range.start.0;
@@ -2203,23 +2225,23 @@ impl OnMatchingLines {
                             s.replace_cursors_with(|_| new_selections);
                         });
                         window.dispatch_action(action, cx);
-                        // Waiting two frames is a workaround
-                        // for a race condition with `:norm`.
-                        cx.on_next_frame(window, |_, window, cx| {
-                            cx.on_next_frame(window, |editor, window, cx| {
-                                let newest = editor
-                                    .selections
-                                    .newest::<Point>(&editor.display_snapshot(cx));
-                                editor.change_selections(
-                                    SelectionEffects::no_scroll(),
-                                    window,
-                                    cx,
-                                    |s| {
-                                        s.select(vec![newest]);
-                                    },
-                                );
-                                editor.end_transaction_at(Instant::now(), cx);
-                            });
+                        if skip_fix_selections {
+                            return;
+                        }
+
+                        cx.defer_in(window, move |editor, window, cx| {
+                            let newest = editor
+                                .selections
+                                .newest::<Point>(&editor.display_snapshot(cx));
+                            editor.change_selections(
+                                SelectionEffects::no_scroll(),
+                                window,
+                                cx,
+                                |s| {
+                                    s.select(vec![newest]);
+                                },
+                            );
+                            editor.end_transaction_at(Instant::now(), cx);
                         })
                     })
                     .ok();
