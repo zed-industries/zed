@@ -200,6 +200,14 @@ impl FileHistoryView {
         rems(2.0)
     }
 
+    fn fallback_commit_avatar() -> AnyElement {
+        Icon::new(IconName::Person)
+            .color(Color::Muted)
+            .size(IconSize::Small)
+            .into_element()
+            .into_any()
+    }
+
     fn render_commit_avatar(
         &self,
         sha: &SharedString,
@@ -210,28 +218,16 @@ impl FileHistoryView {
 
         if let Some(remote) = remote {
             let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
-            match window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                None => Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-                    .into_element()
-                    .into_any(),
-                Some(None) => Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-                    .into_element()
-                    .into_any(),
-                Some(Some(url)) => Avatar::new(url.to_string())
+            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
+                Avatar::new(url.to_string())
                     .size(rems(1.25))
                     .into_element()
-                    .into_any(),
+                    .into_any()
+            } else {
+                Self::fallback_commit_avatar()
             }
         } else {
-            Icon::new(IconName::Person)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .into_element()
-                .into_any()
+            Self::fallback_commit_avatar()
         }
     }
 
