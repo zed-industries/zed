@@ -484,30 +484,19 @@ impl<'de> Deserialize<'de> for ModelName {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
-    #[serde(rename = "gemini-1.5-pro")]
-    Gemini15Pro,
-    #[serde(rename = "gemini-1.5-flash-8b")]
-    Gemini15Flash8b,
-    #[serde(rename = "gemini-1.5-flash")]
-    Gemini15Flash,
     #[serde(
-        rename = "gemini-2.0-flash-lite",
+        rename = "gemini-2.5-flash-lite",
+        alias = "gemini-2.5-flash-lite-preview-06-17",
         alias = "gemini-2.0-flash-lite-preview"
     )]
-    Gemini20FlashLite,
-    #[serde(rename = "gemini-2.0-flash")]
-    Gemini20Flash,
-    #[serde(
-        rename = "gemini-2.5-flash-lite-preview",
-        alias = "gemini-2.5-flash-lite-preview-06-17"
-    )]
-    Gemini25FlashLitePreview,
+    Gemini25FlashLite,
     #[serde(
         rename = "gemini-2.5-flash",
         alias = "gemini-2.0-flash-thinking-exp",
         alias = "gemini-2.5-flash-preview-04-17",
         alias = "gemini-2.5-flash-preview-05-20",
-        alias = "gemini-2.5-flash-preview-latest"
+        alias = "gemini-2.5-flash-preview-latest",
+        alias = "gemini-2.0-flash"
     )]
     #[default]
     Gemini25Flash,
@@ -522,7 +511,7 @@ pub enum Model {
     )]
     Gemini25Pro,
     #[serde(rename = "gemini-3-pro-preview")]
-    Gemini3ProPreview,
+    Gemini3Pro,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -536,49 +525,34 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Self::Gemini20FlashLite
+        Self::Gemini25FlashLite
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Gemini15Pro => "gemini-1.5-pro",
-            Self::Gemini15Flash8b => "gemini-1.5-flash-8b",
-            Self::Gemini15Flash => "gemini-1.5-flash",
-            Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
-            Self::Gemini20Flash => "gemini-2.0-flash",
-            Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview",
+            Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini3ProPreview => "gemini-3-pro-preview",
+            Self::Gemini3Pro => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
     pub fn request_id(&self) -> &str {
         match self {
-            Self::Gemini15Pro => "gemini-1.5-pro",
-            Self::Gemini15Flash8b => "gemini-1.5-flash-8b",
-            Self::Gemini15Flash => "gemini-1.5-flash",
-            Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
-            Self::Gemini20Flash => "gemini-2.0-flash",
-            Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview-06-17",
+            Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini3ProPreview => "gemini-3-pro-preview",
+            Self::Gemini3Pro => "gemini-3-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Gemini15Pro => "Gemini 1.5 Pro",
-            Self::Gemini15Flash8b => "Gemini 1.5 Flash-8b",
-            Self::Gemini15Flash => "Gemini 1.5 Flash",
-            Self::Gemini20FlashLite => "Gemini 2.0 Flash-Lite",
-            Self::Gemini20Flash => "Gemini 2.0 Flash",
-            Self::Gemini25FlashLitePreview => "Gemini 2.5 Flash-Lite Preview",
+            Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini3ProPreview => "Gemini 3 Pro",
+            Self::Gemini3Pro => "Gemini 3 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -587,30 +561,20 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gemini15Pro => 2_097_152,
-            Self::Gemini15Flash8b => 1_048_576,
-            Self::Gemini15Flash => 1_048_576,
-            Self::Gemini20FlashLite => 1_048_576,
-            Self::Gemini20Flash => 1_048_576,
-            Self::Gemini25FlashLitePreview => 1_000_000,
+            Self::Gemini25FlashLite => 1_048_576,
             Self::Gemini25Flash => 1_048_576,
             Self::Gemini25Pro => 1_048_576,
-            Self::Gemini3ProPreview => 1_048_576,
+            Self::Gemini3Pro => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Model::Gemini15Pro => Some(8_192),
-            Model::Gemini15Flash8b => Some(8_192),
-            Model::Gemini15Flash => Some(8_192),
-            Model::Gemini20FlashLite => Some(8_192),
-            Model::Gemini20Flash => Some(8_192),
-            Model::Gemini25FlashLitePreview => Some(64_000),
+            Model::Gemini25FlashLite => Some(65_536),
             Model::Gemini25Flash => Some(65_536),
             Model::Gemini25Pro => Some(65_536),
-            Model::Gemini3ProPreview => Some(65_536),
+            Model::Gemini3Pro => Some(65_536),
             Model::Custom { .. } => None,
         }
     }
@@ -625,15 +589,10 @@ impl Model {
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Self::Gemini15Pro
-            | Self::Gemini15Flash8b
-            | Self::Gemini15Flash
-            | Self::Gemini20FlashLite
-            | Self::Gemini20Flash => GoogleModelMode::Default,
-            Self::Gemini25FlashLitePreview
+            Self::Gemini25FlashLite
             | Self::Gemini25Flash
             | Self::Gemini25Pro
-            | Self::Gemini3ProPreview => {
+            | Self::Gemini3Pro => {
                 GoogleModelMode::Thinking {
                     // By default these models are set to "auto", so we preserve that behavior
                     // but indicate they are capable of thinking mode
