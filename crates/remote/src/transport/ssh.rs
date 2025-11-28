@@ -1052,17 +1052,23 @@ impl SshSocket {
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
         let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
+        // we use rsplit_once to split from the right, as there may be junk info in the left part due to output from
+        // initialization scripts.
+        let Some((os, arch)) = uname.rsplit_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
 
-        let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
+        // The outputs of initialization scripts may not end with new line, so os may become like
+        // "Welcome to Ubuntu 20.04.4 LTSLinux". We just check the ending here.
+        let os = os.trim_end();
+        let os = match os {
+            o if o.ends_with("Darwin") => "macos",
+            o if o.ends_with("Linux") => "linux",
             _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ),
+                    "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+                )
         };
+
         // exclude armv5,6,7 as they are 32-bit.
         let arch = if arch.starts_with("armv8")
             || arch.starts_with("armv9")
