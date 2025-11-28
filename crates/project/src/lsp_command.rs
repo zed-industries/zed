@@ -267,7 +267,7 @@ pub(crate) struct GetDocumentDiagnostics {
     /// a server can register multiple diagnostic providers post-mortem.
     pub registration_id: Option<SharedString>,
     pub identifier: Option<String>,
-    pub previous_result_id: Option<String>,
+    pub previous_result_id: Option<SharedString>,
 }
 
 #[async_trait(?Send)]
@@ -3756,16 +3756,16 @@ impl GetDocumentDiagnostics {
             .into_iter()
             .filter_map(|diagnostics| {
                 Some(LspPullDiagnostics::Response {
-                    registration_id: diagnostics.registration_id.clone().map(SharedString::from),
+                    registration_id: diagnostics.registration_id.map(SharedString::from),
                     server_id: LanguageServerId::from_proto(diagnostics.server_id),
                     uri: lsp::Uri::from_str(diagnostics.uri.as_str()).log_err()?,
                     diagnostics: if diagnostics.changed {
                         PulledDiagnostics::Unchanged {
-                            result_id: diagnostics.result_id?,
+                            result_id: SharedString::new(diagnostics.result_id?),
                         }
                     } else {
                         PulledDiagnostics::Changed {
-                            result_id: diagnostics.result_id,
+                            result_id: diagnostics.result_id.map(SharedString::new),
                             diagnostics: diagnostics
                                 .diagnostics
                                 .into_iter()
@@ -4066,7 +4066,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 uri: file_path_to_lsp_url(path)?,
             },
             identifier: self.identifier.clone(),
-            previous_result_id: self.previous_result_id.clone(),
+            previous_result_id: self.previous_result_id.clone().map(|id| id.to_string()),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
@@ -4194,7 +4194,7 @@ impl LspCommand for GetDocumentDiagnostics {
                     };
                     Some(proto::PulledDiagnostics {
                         changed,
-                        result_id,
+                        result_id: result_id.map(|id| id.to_string()),
                         uri: uri.to_string(),
                         server_id: server_id.to_proto(),
                         diagnostics: diagnostics
@@ -4407,7 +4407,7 @@ fn process_unchanged_diagnostics_report(
     report: lsp::UnchangedDocumentDiagnosticReport,
     registration_id: Option<SharedString>,
 ) {
-    let result_id = report.result_id;
+    let result_id = SharedString::new(report.result_id);
     match diagnostics.entry(uri.clone()) {
         hash_map::Entry::Occupied(mut o) => match o.get_mut() {
             LspPullDiagnostics::Default => {
@@ -4455,7 +4455,7 @@ fn process_full_diagnostics_report(
     report: lsp::FullDocumentDiagnosticReport,
     registration_id: Option<SharedString>,
 ) {
-    let result_id = report.result_id;
+    let result_id = report.result_id.map(SharedString::new);
     match diagnostics.entry(uri.clone()) {
         hash_map::Entry::Occupied(mut o) => match o.get_mut() {
             LspPullDiagnostics::Default => {

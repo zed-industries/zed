@@ -230,7 +230,7 @@ struct LanguageServerSeed {
 #[derive(Debug)]
 pub struct DocumentDiagnosticsUpdate<'a, D> {
     pub diagnostics: D,
-    pub result_id: Option<String>,
+    pub result_id: Option<SharedString>,
     pub registration_id: Option<SharedString>,
     pub server_id: LanguageServerId,
     pub disk_based_sources: Cow<'a, [String]>,
@@ -285,10 +285,14 @@ pub struct LocalLspStore {
     lsp_tree: LanguageServerTree,
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
-    buffer_pull_diagnostics_result_ids:
-        HashMap<LanguageServerId, HashMap<Option<SharedString>, HashMap<PathBuf, Option<String>>>>,
-    workspace_pull_diagnostics_result_ids:
-        HashMap<LanguageServerId, HashMap<Option<SharedString>, HashMap<PathBuf, Option<String>>>>,
+    buffer_pull_diagnostics_result_ids: HashMap<
+        LanguageServerId,
+        HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
+    >,
+    workspace_pull_diagnostics_result_ids: HashMap<
+        LanguageServerId,
+        HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
+    >,
 }
 
 impl LocalLspStore {
@@ -2325,7 +2329,7 @@ impl LocalLspStore {
         buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
         registration_id: Option<Option<SharedString>>,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         version: Option<i32>,
         new_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         reused_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -4242,7 +4246,7 @@ impl LspStore {
                                     diagnostics: DocumentDiagnostics {
                                         document_abs_path: buffer_abs_path.clone(),
                                         version: None,
-                                        diagnostics: vec![],
+                                        diagnostics: Vec::new(),
                                     },
                                     result_id: None,
                                     registration_id: None,
@@ -4259,7 +4263,7 @@ impl LspStore {
                                     },
                                     cx,
                                 )
-                                .context("Failed to clear diagnostics when closing buffer")
+                                .context("Clearing diagnostics for the closed buffer")
                                 .log_err();
                         }
                     }
@@ -8241,7 +8245,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
@@ -11014,7 +11018,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         diagnostics: lsp::PublishDiagnosticsParams,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
@@ -11948,7 +11952,7 @@ impl LspStore {
         buffer_id: BufferId,
         registration_id: &Option<SharedString>,
         cx: &App,
-    ) -> Option<String> {
+    ) -> Option<SharedString> {
         let abs_path = self
             .buffer_store
             .read(cx)
@@ -11970,7 +11974,7 @@ impl LspStore {
         &self,
         server_id: LanguageServerId,
         registration_id: &Option<SharedString>,
-    ) -> HashMap<PathBuf, String> {
+    ) -> HashMap<PathBuf, SharedString> {
         let Some(local) = self.as_local() else {
             return HashMap::default();
         };
@@ -12995,7 +12999,7 @@ fn lsp_workspace_diagnostics_refresh(
                             let uri = file_path_to_lsp_url(&abs_path).ok()?;
                             Some(lsp::PreviousResultId {
                                 uri,
-                                value: result_id,
+                                value: result_id.to_string(),
                             })
                         })
                         .collect()

@@ -18324,15 +18324,15 @@ impl Editor {
         }
         let project = self.project()?;
         let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
-        let buffers: Vec<_> = project.read(cx).opened_buffers(cx).into_iter().collect();
+        let buffers = project.read(cx).opened_buffers(cx);
         if buffers.is_empty() {
             self.pull_diagnostics_task = Task::ready(());
             self.pull_diagnostics_background_task = Task::ready(());
             return None;
         }
-        let (edited_buffer, background_buffers): (Vec<_>, Vec<_>) = buffers
-            .into_iter()
-            .partition(|b| buffer_id.is_none_or(|buffer_id| b.read(cx).remote_id() == buffer_id));
+        let (edited_buffer, background_buffers) = buffers.into_iter().partition::<Vec<_>, _>(|b| {
+            buffer_id.is_none_or(|buffer_id| b.read(cx).remote_id() == buffer_id)
+        });
 
         let project = project.downgrade();
         let make_spawn = |buffers: Vec<Entity<Buffer>>, delay: Duration| {

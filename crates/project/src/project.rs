@@ -994,10 +994,10 @@ pub enum PulledDiagnostics {
     Unchanged {
         /// An ID the current pulled batch for this file.
         /// If given, can be used to query workspace diagnostics partially.
-        result_id: String,
+        result_id: SharedString,
     },
     Changed {
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         diagnostics: Vec<lsp::Diagnostic>,
     },
 }
