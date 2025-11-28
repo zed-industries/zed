@@ -1,8 +1,22 @@
 <!DOCTYPE HTML>
-<html lang="{{ language }}" data-theme="{{ default_theme }}" data-color-scheme="{{ default_theme }}" dir="{{ text_direction }}">
+<html lang="{{ language }}" dir="{{ text_direction }}">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
+        <!-- Theme initialization - must run before any CSS loads to prevent flicker -->
+        <script>
+            (function() {
+                var theme;
+                try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+                if (theme === null || theme === undefined) {
+                    theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+                }
+                var html = document.documentElement;
+                html.setAttribute('data-theme', theme);
+                html.setAttribute('data-color-scheme', theme);
+                html.className = theme;
+            })();
+        </script>
         <title>{{ title }}</title>
         {{#if is_print }}
         <meta name="robots" content="noindex">
@@ -56,21 +70,9 @@
         <script>
             var path_to_root = "{{ path_to_root }}";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "{{ preferred_dark_theme }}" : "{{ default_theme }}";
-        </script>
-
-        <!-- Support dark mode -->
-        <script>
-            var theme;
-            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
-            if (theme === null || theme === undefined) {
-                theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-            }
-            var html = document.querySelector('html');
-            html.classList.remove('light', 'dark')
-            html.classList.add(theme);
-            var body = document.querySelector('body');
-            body.classList.remove('no-js')
-            body.classList.add('js');
+            // Mark as JS-enabled
+            document.body.classList.remove('no-js');
+            document.body.classList.add('js');
         </script>
 
         <header class="header-bar">
@@ -298,10 +300,28 @@
                         </div>
                     </main>
                     <div class="toc-container">
-                        <nav class="pagetoc">
-                            <p class="toc-title">On this page</p>
-                        </nav>
+                        <nav class="pagetoc"></nav>
                     </div>
+                    <!-- Immediately detect if page has headins that are not h1 to prevent flicker -->
+                    <script>
+                        (function() {
+                            var tocContainer = document.querySelector('.toc-container');
+                            var headers = document.querySelectorAll('.header');
+                            var hasNonH1Headers = false;
+                            for (var i = 0; i < headers.length; i++) {
+                                var parent = headers[i].parentElement;
+                                if (parent && !parent.tagName.toLowerCase().startsWith('h1')) {
+                                    hasNonH1Headers = true;
+                                    break;
+                                }
+                            }
+                            if (hasNonH1Headers) {
+                                tocContainer.classList.add('has-toc');
+                            } else {
+                                tocContainer.classList.add('no-toc');
+                            }
+                        })();
+                    </script>
                 </div>
             </div>
         </div>
@@ -377,23 +397,6 @@
         </script>
         {{/if}}
         {{/if}}
-
-        <script>
-          (function() {
-            var theme = localStorage.getItem('mdbook-theme');
-            var html = document.querySelector('html');
-            if (theme) {
-              html.setAttribute('data-theme', theme);
-              html.setAttribute('data-color-scheme', theme);
-              html.className = theme;
-            } else {
-              var systemPreference = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-              html.setAttribute('data-theme', systemPreference);
-              html.setAttribute('data-color-scheme', systemPreference);
-              html.className = systemPreference;
-            }
-          })();
-        </script>
 
         <!-- Amplitude Analytics -->
         <script>

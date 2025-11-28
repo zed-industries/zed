@@ -71,10 +71,20 @@ window.addEventListener("load", () => {
       sidetoc.style.display = "none";
     }
     if (tocContainer) {
-      tocContainer.style.display = "none";
+      tocContainer.classList.add("no-toc");
     }
     return;
   }
+
+  if (tocContainer) {
+    tocContainer.classList.add("has-toc");
+  }
+
+  const tocTitle = Object.assign(document.createElement("p"), {
+    className: "toc-title",
+    textContent: "On This Page",
+  });
+  pagetoc.appendChild(tocTitle);
 
   headers.forEach((header) => {
     const link = Object.assign(document.createElement("a"), {
