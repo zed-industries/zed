@@ -3812,48 +3812,62 @@ impl AcpThreadView {
             }))
     }
 
-    fn render_plan_entries(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
-        v_flex().children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
-            let element = h_flex()
-                .py_1()
-                .px_2()
-                .gap_2()
-                .justify_between()
-                .bg(cx.theme().colors().editor_background)
-                .when(index < plan.entries.len() - 1, |parent| {
-                    parent.border_color(cx.theme().colors().border).border_b_1()
-                })
-                .child(
-                    h_flex()
-                        .id(("plan_entry", index))
-                        .gap_1p5()
-                        .max_w_full()
-                        .overflow_x_scroll()
-                        .text_xs()
-                        .text_color(cx.theme().colors().text_muted)
-                        .child(match entry.status {
-                            acp::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element(),
-                            acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
-                                .size(IconSize::Small)
-                                .color(Color::Accent)
-                                .with_rotate_animation(2)
-                                .into_any_element(),
-                            acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
-                                .size(IconSize::Small)
-                                .color(Color::Success)
-                                .into_any_element(),
-                        })
-                        .child(MarkdownElement::new(
-                            entry.content.clone(),
-                            plan_label_markdown_style(&entry.status, window, cx),
-                        )),
-                );
+    fn render_plan_entries(
+        &self,
+        plan: &Plan,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .id("plan_items_list")
+            .max_h_40()
+            .overflow_y_scroll()
+            .children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
+                let element = h_flex()
+                    .py_1()
+                    .px_2()
+                    .gap_2()
+                    .justify_between()
+                    .bg(cx.theme().colors().editor_background)
+                    .when(index < plan.entries.len() - 1, |parent| {
+                        parent.border_color(cx.theme().colors().border).border_b_1()
+                    })
+                    .child(
+                        h_flex()
+                            .id(("plan_entry", index))
+                            .gap_1p5()
+                            .max_w_full()
+                            .overflow_x_scroll()
+                            .text_xs()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child(match entry.status {
+                                acp::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                                acp::PlanEntryStatus::InProgress => {
+                                    Icon::new(IconName::TodoProgress)
+                                        .size(IconSize::Small)
+                                        .color(Color::Accent)
+                                        .with_rotate_animation(2)
+                                        .into_any_element()
+                                }
+                                acp::PlanEntryStatus::Completed => {
+                                    Icon::new(IconName::TodoComplete)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success)
+                                        .into_any_element()
+                                }
+                            })
+                            .child(MarkdownElement::new(
+                                entry.content.clone(),
+                                plan_label_markdown_style(&entry.status, window, cx),
+                            )),
+                    );
 
-            Some(element)
-        }))
+                Some(element)
+            }))
+            .into_any_element()
     }
 
     fn render_edits_summary(
@@ -3991,126 +4005,136 @@ impl AcpThreadView {
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
 
-        v_flex().children(changed_buffers.iter().enumerate().flat_map(
-            |(index, (buffer, _diff))| {
-                let file = buffer.read(cx).file()?;
-                let path = file.path();
-                let path_style = file.path_style(cx);
-                let separator = file.path_style(cx).primary_separator();
+        v_flex()
+            .id("edited_files_list")
+            .max_h_40()
+            .overflow_y_scroll()
+            .children(
+                changed_buffers
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(index, (buffer, _diff))| {
+                        let file = buffer.read(cx).file()?;
+                        let path = file.path();
+                        let path_style = file.path_style(cx);
+                        let separator = file.path_style(cx).primary_separator();
 
-                let file_path = path.parent().and_then(|parent| {
-                    if parent.is_empty() {
-                        None
-                    } else {
-                        Some(
-                            Label::new(format!("{}{separator}", parent.display(path_style)))
-                                .color(Color::Muted)
+                        let file_path = path.parent().and_then(|parent| {
+                            if parent.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    Label::new(format!(
+                                        "{}{separator}",
+                                        parent.display(path_style)
+                                    ))
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx),
+                                )
+                            }
+                        });
+
+                        let file_name = path.file_name().map(|name| {
+                            Label::new(name.to_string())
                                 .size(LabelSize::XSmall)
-                                .buffer_font(cx),
-                        )
-                    }
-                });
+                                .buffer_font(cx)
+                                .ml_1p5()
+                        });
 
-                let file_name = path.file_name().map(|name| {
-                    Label::new(name.to_string())
-                        .size(LabelSize::XSmall)
-                        .buffer_font(cx)
-                        .ml_1p5()
-                });
+                        let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
+                            .map(Icon::from_path)
+                            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                            .unwrap_or_else(|| {
+                                Icon::new(IconName::File)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small)
+                            });
 
-                let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
-                    .map(Icon::from_path)
-                    .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-                    .unwrap_or_else(|| {
-                        Icon::new(IconName::File)
-                            .color(Color::Muted)
-                            .size(IconSize::Small)
-                    });
+                        let overlay_gradient = linear_gradient(
+                            90.,
+                            linear_color_stop(editor_bg_color, 1.),
+                            linear_color_stop(editor_bg_color.opacity(0.2), 0.),
+                        );
 
-                let overlay_gradient = linear_gradient(
-                    90.,
-                    linear_color_stop(editor_bg_color, 1.),
-                    linear_color_stop(editor_bg_color.opacity(0.2), 0.),
-                );
-
-                let element = h_flex()
-                    .group("edited-code")
-                    .id(("file-container", index))
-                    .py_1()
-                    .pl_2()
-                    .pr_1()
-                    .gap_2()
-                    .justify_between()
-                    .bg(editor_bg_color)
-                    .when(index < changed_buffers.len() - 1, |parent| {
-                        parent.border_color(cx.theme().colors().border).border_b_1()
-                    })
-                    .child(
-                        h_flex()
-                            .id(("file-name-row", index))
-                            .relative()
-                            .pr_8()
-                            .w_full()
-                            .overflow_x_scroll()
+                        let element = h_flex()
+                            .group("edited-code")
+                            .id(("file-container", index))
+                            .py_1()
+                            .pl_2()
+                            .pr_1()
+                            .gap_2()
+                            .justify_between()
+                            .bg(editor_bg_color)
+                            .when(index < changed_buffers.len() - 1, |parent| {
+                                parent.border_color(cx.theme().colors().border).border_b_1()
+                            })
                             .child(
                                 h_flex()
-                                    .id(("file-name-path", index))
-                                    .cursor_pointer()
-                                    .pr_0p5()
-                                    .gap_0p5()
-                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                    .rounded_xs()
-                                    .child(file_icon)
-                                    .children(file_name)
-                                    .children(file_path)
-                                    .tooltip(Tooltip::text("Go to File"))
-                                    .on_click({
-                                        let buffer = buffer.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.open_edited_buffer(&buffer, window, cx);
-                                        })
-                                    }),
+                                    .id(("file-name-row", index))
+                                    .relative()
+                                    .pr_8()
+                                    .w_full()
+                                    .overflow_x_scroll()
+                                    .child(
+                                        h_flex()
+                                            .id(("file-name-path", index))
+                                            .cursor_pointer()
+                                            .pr_0p5()
+                                            .gap_0p5()
+                                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                            .rounded_xs()
+                                            .child(file_icon)
+                                            .children(file_name)
+                                            .children(file_path)
+                                            .tooltip(Tooltip::text("Go to File"))
+                                            .on_click({
+                                                let buffer = buffer.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.open_edited_buffer(&buffer, window, cx);
+                                                })
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .h_full()
+                                            .w_12()
+                                            .top_0()
+                                            .bottom_0()
+                                            .right_0()
+                                            .bg(overlay_gradient),
+                                    ),
                             )
                             .child(
-                                div()
-                                    .absolute()
-                                    .h_full()
-                                    .w_12()
-                                    .top_0()
-                                    .bottom_0()
-                                    .right_0()
-                                    .bg(overlay_gradient),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .visible_on_hover("edited-code")
-                            .child(
-                                Button::new("review", "Review")
-                                    .label_size(LabelSize::Small)
-                                    .on_click({
-                                        let buffer = buffer.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.open_edited_buffer(&buffer, window, cx);
-                                        })
-                                    }),
-                            )
-                            .child(Divider::vertical().color(DividerColor::BorderVariant))
-                            .child(
-                                Button::new("reject-file", "Reject")
-                                    .label_size(LabelSize::Small)
-                                    .disabled(pending_edits)
-                                    .on_click({
-                                        let buffer = buffer.clone();
-                                        let action_log = action_log.clone();
-                                        let telemetry = telemetry.clone();
-                                        move |_, _, cx| {
-                                            action_log.update(cx, |action_log, cx| {
-                                                action_log
+                                h_flex()
+                                    .gap_1()
+                                    .visible_on_hover("edited-code")
+                                    .child(
+                                        Button::new("review", "Review")
+                                            .label_size(LabelSize::Small)
+                                            .on_click({
+                                                let buffer = buffer.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.open_edited_buffer(&buffer, window, cx);
+                                                })
+                                            }),
+                                    )
+                                    .child(Divider::vertical().color(DividerColor::BorderVariant))
+                                    .child(
+                                        Button::new("reject-file", "Reject")
+                                            .label_size(LabelSize::Small)
+                                            .disabled(pending_edits)
+                                            .on_click({
+                                                let buffer = buffer.clone();
+                                                let action_log = action_log.clone();
+                                                let telemetry = telemetry.clone();
+                                                move |_, _, cx| {
+                                                    action_log.update(cx, |action_log, cx| {
+                                                        action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
                                                         vec![Anchor::min_max_range_for_buffer(
@@ -4120,37 +4144,38 @@ impl AcpThreadView {
                                                         cx,
                                                     )
                                                     .detach_and_log_err(cx);
-                                            })
-                                        }
-                                    }),
-                            )
-                            .child(
-                                Button::new("keep-file", "Keep")
-                                    .label_size(LabelSize::Small)
-                                    .disabled(pending_edits)
-                                    .on_click({
-                                        let buffer = buffer.clone();
-                                        let action_log = action_log.clone();
-                                        let telemetry = telemetry.clone();
-                                        move |_, _, cx| {
-                                            action_log.update(cx, |action_log, cx| {
-                                                action_log.keep_edits_in_range(
-                                                    buffer.clone(),
-                                                    Anchor::min_max_range_for_buffer(
-                                                        buffer.read(cx).remote_id(),
-                                                    ),
-                                                    Some(telemetry.clone()),
-                                                    cx,
-                                                );
-                                            })
-                                        }
-                                    }),
-                            ),
-                    );
+                                                    })
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("keep-file", "Keep")
+                                            .label_size(LabelSize::Small)
+                                            .disabled(pending_edits)
+                                            .on_click({
+                                                let buffer = buffer.clone();
+                                                let action_log = action_log.clone();
+                                                let telemetry = telemetry.clone();
+                                                move |_, _, cx| {
+                                                    action_log.update(cx, |action_log, cx| {
+                                                        action_log.keep_edits_in_range(
+                                                            buffer.clone(),
+                                                            Anchor::min_max_range_for_buffer(
+                                                                buffer.read(cx).remote_id(),
+                                                            ),
+                                                            Some(telemetry.clone()),
+                                                            cx,
+                                                        );
+                                                    })
+                                                }
+                                            }),
+                                    ),
+                            );
 
-                Some(element)
-            },
-        ))
+                        Some(element)
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
