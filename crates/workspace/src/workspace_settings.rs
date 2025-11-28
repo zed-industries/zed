@@ -105,6 +105,7 @@ impl Settings for WorkspaceSettings {
                 .collect(),
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
+
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
         }

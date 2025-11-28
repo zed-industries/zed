@@ -187,6 +187,10 @@ pub struct SessionSettingsContent {
     ///
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
+    /// TODO kb docs
+    ///
+    /// Default: false
+    pub trust_all_worktrees: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]

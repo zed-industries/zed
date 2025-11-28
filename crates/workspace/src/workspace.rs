@@ -1204,6 +1204,24 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(trusted_worktrees_storage) =
+            cx.try_global::<session::TrustedWorktreesStorage>().cloned()
+        {
+            let weak_self = cx.weak_entity();
+            trusted_worktrees_storage
+                .subscribe(cx, move |e, cx| {
+                    weak_self
+                        .update(cx, |workspace, cx| {
+                            // TODO kb raise the modals for now
+                            match e {
+                                session::Event::NewPathsTrusted(path_bufs) => todo!(),
+                                session::Event::UntrustedWorktree(path_buf) => todo!(),
+                            }
+                        })
+                        .ok();
+                })
+                .detach();
+        }
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {
