@@ -389,6 +389,7 @@ message GetRemotes {
     reserved 2;
     uint64 repository_id = 3;
     optional string branch_name = 4;
+    bool is_push = 5;
 }
 
 message GetRemotesResponse {
