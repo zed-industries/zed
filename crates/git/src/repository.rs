@@ -1461,7 +1461,8 @@ impl GitRepository for RealGitRepository {
                 let working_directory = working_directory?;
                 // Use a unique delimiter with a hardcoded UUID to separate commits
                 // This essentially eliminates any chance of encountering the delimiter in actual commit data
-                let commit_delimiter = "<<COMMIT_END-3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>";
+                let commit_delimiter =
+                    concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>",);
 
                 let format_string = format!(
                     "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
