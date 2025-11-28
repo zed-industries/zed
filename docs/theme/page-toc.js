@@ -64,10 +64,14 @@ window.addEventListener("load", () => {
     (header) => !header.parentElement.tagName.toLowerCase().startsWith("h1"),
   );
   const sidetoc = document.querySelector(".sidetoc");
+  const tocContainer = document.querySelector(".toc-container");
 
   if (nonH1Headers.length === 0) {
     if (sidetoc) {
       sidetoc.style.display = "none";
+    }
+    if (tocContainer) {
+      tocContainer.style.display = "none";
     }
     return;
   }
