@@ -166,7 +166,7 @@ impl TrustedWorktrees {
     // How other editors do that?
     fn trust_path(&mut self, new_path: PathBuf, cx: &mut Context<'_, Self>) {
         debug_assert!(
-            !new_path.is_absolute(),
+            new_path.is_absolute(),
             "Cannot trust non-absolute path {new_path:?}"
         );
         let updated = self.worktree_roots.insert(new_path.clone());
@@ -211,7 +211,7 @@ impl TrustedWorktreesStorage {
 
     pub fn can_trust_path(&self, path: &Path, cx: &mut App) -> bool {
         debug_assert!(
-            !path.is_absolute(),
+            path.is_absolute(),
             "Cannot check if trusting non-absolute path {path:?}"
         );
 
