@@ -1812,7 +1812,7 @@ impl GitRepository for RealGitRepository {
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(["config", "--get"])
-                    .arg(format!("branch.{}.remote", branch))
+                    .arg(format!("branch.{branch}.remote"))
                     .output()
                     .await?;
                 if !output.status.success() {
