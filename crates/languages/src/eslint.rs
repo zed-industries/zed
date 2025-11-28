@@ -271,8 +271,8 @@ impl LspAdapter for EsLintLspAdapter {
     }
 }
 
-/// Normalizes path separators to the platform's native format.
-/// Converts both Unix (/) and Windows (\) separators to the platform's MAIN_SEPARATOR.
+/// On Windows, converts Unix-style separators (/) to Windows-style (\).
+/// On Unix, returns the path unchanged
 fn normalize_path_separators(path: &str) -> String {
     #[cfg(windows)]
     {
@@ -280,7 +280,7 @@ fn normalize_path_separators(path: &str) -> String {
     }
     #[cfg(not(windows))]
     {
-        path.replace('\\', "/")
+        path.to_string()
     }
 }
 
