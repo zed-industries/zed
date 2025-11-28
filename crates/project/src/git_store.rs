@@ -4783,10 +4783,10 @@ impl Repository {
             Some(format!("git remote add {remote_name} {remote_url}").into()),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local { backend, .. } => {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                         backend.create_remote(remote_name, remote_url).await
                     }
-                    RepositoryState::Remote { project_id, client } => {
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitCreateRemote {
                                 project_id: project_id.0,
@@ -4809,10 +4809,10 @@ impl Repository {
             Some(format!("git remove remote {remote_name}").into()),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local { backend, .. } => {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                         backend.remove_remote(remote_name).await
                     }
-                    RepositoryState::Remote { project_id, client } => {
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitRemoveRemote {
                                 project_id: project_id.0,

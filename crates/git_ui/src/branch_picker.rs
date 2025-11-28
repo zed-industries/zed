@@ -488,11 +488,7 @@ impl PickerDelegate for BranchListDelegate {
                         let ref_name = if is_url {
                             query.into()
                         } else {
-                            if display_remotes {
-                                format!("refs/heads/{query}").into()
-                            } else {
-                                format!("refs/remotes/{query}").into()
-                            }
+                            format!("refs/heads/{query}").into()
                         };
                         picker.delegate.state = if is_url {
                             PickerState::NewRemote
@@ -883,6 +879,8 @@ impl PickerDelegate for BranchListDelegate {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use git::repository::{CommitSummary, Remote};
     use gpui::{TestAppContext, VisualTestContext};
@@ -902,13 +900,12 @@ mod tests {
     fn create_test_branch(
         name: &str,
         is_head: bool,
-        is_remote: bool,
+        remote_name: Option<&str>,
         timestamp: Option<i64>,
     ) -> Branch {
-        let ref_name = if is_remote {
-            format!("refs/remotes/origin/{}", name)
-        } else {
-            format!("refs/heads/{}", name)
+        let ref_name = match remote_name {
+            Some(remote_name) => format!("refs/remotes/{remote_name}/{name}"),
+            None => format!("refs/heads/{name}"),
         };
 
         Branch {
@@ -926,14 +923,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_update_matches_with_query(cx: &mut TestAppContext) {
+    async fn test_update_branch_matches_with_query(cx: &mut TestAppContext) {
         init_test(cx);
 
         let branches = vec![
-            create_test_branch("main", true, false, Some(1000)),
-            create_test_branch("feature-auth", false, false, Some(900)),
-            create_test_branch("feature-ui", false, false, Some(800)),
-            create_test_branch("develop", false, false, Some(700)),
+            create_test_branch("main", true, None, Some(1000)),
+            create_test_branch("feature-auth", false, None, Some(900)),
+            create_test_branch("feature-ui", false, None, Some(800)),
+            create_test_branch("develop", false, None, Some(700)),
         ];
 
         let window = cx.add_window(|window, cx| {
@@ -977,6 +974,103 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_update_remote_matches_with_query(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let branches = vec![
+            create_test_branch("main", true, Some("origin"), Some(1000)),
+            create_test_branch("feature-auth", false, Some("fork"), Some(900)),
+            create_test_branch("feature-ui", false, None, Some(800)),
+            create_test_branch("develop", false, None, Some(700)),
+        ];
+
+        let window = cx.add_window(|window, cx| {
+            let mut delegate = BranchListDelegate::new(None, BranchListStyle::Modal);
+            delegate.all_branches = Some(branches);
+            Picker::uniform_list(delegate, window, cx)
+        });
+
+        let picker = window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker.delegate.update_matches(String::new(), window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                // Should have 2 existing branches
+                assert_eq!(picker.delegate.matches.len(), 2);
+                let sorted_branches = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.branch.name())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    sorted_branches,
+                    ["feature-ui", "develop"]
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                );
+
+                // Verify the last entry is NOT the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(!last_match.is_new);
+                picker.delegate.display_remotes = true;
+                picker.delegate.update_matches(String::new(), window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                // Should have 2 existing branches
+                assert_eq!(picker.delegate.matches.len(), 2);
+                let sorted_branches = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.branch.name())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    sorted_branches,
+                    ["origin/main", "fork/feature-auth"]
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                );
+
+                // Verify the last entry is NOT the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(!last_match.is_new);
+                picker.delegate.display_remotes = true;
+                picker
+                    .delegate
+                    .update_matches(String::from("fork"), window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        picker.update(cx, |picker, _cx| {
+            // Should have 1 existing branch + 1 "create new branch" entry = 3 total
+            assert_eq!(picker.delegate.matches.len(), 2);
+            assert!(
+                picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .any(|m| m.branch.name() == "fork/feature-auth")
+            );
+            // Verify the last entry is the "create new branch" option
+            let last_match = picker.delegate.matches.last().unwrap();
+            assert!(last_match.is_new);
+        });
+    }
+
+    #[gpui::test]
     async fn test_new_branch_creation_with_query(test_cx: &mut TestAppContext) {
         init_test(test_cx);
         let fs = FakeFs::new(test_cx.executor());
@@ -1003,8 +1097,8 @@ mod tests {
         let repository = test_cx.read(|cx| project.read(cx).active_repository(cx));
 
         let branches = vec![
-            create_test_branch("main", true, false, Some(1000)),
-            create_test_branch("feature", false, false, Some(900)),
+            create_test_branch("main", true, None, Some(1000)),
+            create_test_branch("feature", false, None, Some(900)),
         ];
 
         let window = test_cx.add_window(|window, cx| {
@@ -1081,7 +1175,7 @@ mod tests {
 
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
-        let branches = vec![create_test_branch("main", true, false, Some(1000))];
+        let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
         let window = cx.add_window(|window, cx| {
             let mut delegate = BranchListDelegate::new(repository, BranchListStyle::Modal);
@@ -1151,10 +1245,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_confirm_remote_url_transitions_to_create_state(cx: &mut TestAppContext) {
+    async fn test_confirm_remote_url_transitions(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let branches = vec![create_test_branch("main", true, false, Some(1000))];
+        let branches = vec![create_test_branch("main_branch", true, None, Some(1000))];
 
         let window = cx.add_window(|window, cx| {
             let mut delegate = BranchListDelegate::new(None, BranchListStyle::Modal);
@@ -1165,26 +1259,50 @@ mod tests {
         let picker = window.root(cx).unwrap();
         let cx = &mut VisualTestContext::from_window(*window, cx);
 
-        let task = picker.update_in(cx, |picker, window, cx| {
-            let query = "https://github.com/user/repo.git".to_string();
-            picker.delegate.update_matches(query, window, cx)
-        });
-
-        task.await;
+        picker
+            .update_in(cx, |picker, window, cx| {
+                let query = "https://github.com/user/repo.git".to_string();
+                picker.delegate.update_matches(query, window, cx)
+            })
+            .await;
         cx.run_until_parked();
 
-        picker.update_in(cx, |picker, window, cx| {
-            picker.delegate.selected_index = picker.delegate.matches.len() - 1;
-            picker.delegate.confirm(false, window, cx);
+        // Try to create a new remote but cancel in the middle of the process
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker.delegate.selected_index = picker.delegate.matches.len() - 1;
+                picker.delegate.confirm(false, window, cx);
 
-            assert!(matches!(
-                picker.delegate.state,
-                PickerState::CreateRemote(_)
-            ));
-            if let PickerState::CreateRemote(ref url) = picker.delegate.state {
-                assert_eq!(url.as_ref(), "https://github.com/user/repo.git");
-            }
-            assert_eq!(picker.delegate.matches.len(), 0);
+                assert!(matches!(
+                    picker.delegate.state,
+                    PickerState::CreateRemote(_)
+                ));
+                if let PickerState::CreateRemote(ref url) = picker.delegate.state {
+                    assert_eq!(url.as_ref(), "https://github.com/user/repo.git");
+                }
+                assert_eq!(picker.delegate.matches.len(), 0);
+                picker.delegate.dismissed(window, cx);
+                assert!(matches!(picker.delegate.state, PickerState::List));
+                let query = "main".to_string();
+                picker.delegate.update_matches(query, window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        // Try to search a branch again to see if the state is restored properly
+        picker.update(cx, |picker, _cx| {
+            // Should have 1 existing branch + 1 "create new branch" entry = 2 total
+            assert_eq!(picker.delegate.matches.len(), 2);
+            assert!(
+                picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .any(|m| m.branch.name() == "main_branch")
+            );
+            // Verify the last entry is the "create new branch" option
+            let last_match = picker.delegate.matches.last().unwrap();
+            assert!(last_match.is_new);
         });
     }
 }
