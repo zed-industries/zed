@@ -26,6 +26,7 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
     SelectionEffects, ToPoint,
     actions::Paste,
+    display_map::ToDisplayPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -1780,6 +1781,19 @@ impl Vim {
             HelixJumpBehaviour::Move => {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_anchor_ranges([candidate.range.clone()])
+                });
+            }
+            HelixJumpBehaviour::Extend => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let target = candidate.range.start.to_display_point(map);
+                        selection.set_head(target, SelectionGoal::None);
+
+                        // Ensure the current character is included in the selection
+                        if !selection.reversed {
+                            selection.end = movement::right(map, selection.end);
+                        }
+                    });
                 });
             }
         });
