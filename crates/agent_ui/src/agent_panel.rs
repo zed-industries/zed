@@ -2738,7 +2738,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
         Task::ready(Err(anyhow!("opening remote context not implemented")))
     }
 
-    fn quote_selection(
+    fn quote_editor_selection(
         &self,
         workspace: &mut Workspace,
         selection_ranges: Vec<Range<Anchor>>,
@@ -2772,6 +2772,56 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
                     text_thread_editor.update(cx, |text_thread_editor, cx| {
                         text_thread_editor.quote_ranges(selection_ranges, snapshot, window, cx)
                     });
+                }
+            });
+        });
+    }
+
+    fn quote_terminal_selection(
+        &self,
+        workspace: &mut Workspace,
+        text: String,
+        shell_name: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        log::info!(
+            "[agent_panel] quote_terminal_selection called with {} chars, shell: {}",
+            text.len(),
+            shell_name
+        );
+
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+            log::warn!("[agent_panel] quote_terminal_selection: no AgentPanel found");
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(window, cx) {
+            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
+        }
+
+        panel.update(cx, |_, cx| {
+            cx.defer_in(window, move |panel, window, cx| {
+                if let Some(thread_view) = panel.active_thread_view() {
+                    log::info!(
+                        "[agent_panel] quote_terminal_selection: using thread_view path, inserting {} chars, shell: {}",
+                        text.len(),
+                        shell_name
+                    );
+                    thread_view.update(cx, |thread_view, cx| {
+                        thread_view.insert_terminal_selection(text.clone(), shell_name.clone(), window, cx);
+                    });
+                } else if let Some(text_thread_editor) = panel.active_text_thread_editor() {
+                    log::info!(
+                        "[agent_panel] quote_terminal_selection: using text_thread_editor path"
+                    );
+                    text_thread_editor.update(cx, |text_thread_editor, cx| {
+                        text_thread_editor.quote_terminal_selection(text.clone(), shell_name.clone(), window, cx)
+                    });
+                } else {
+                    log::warn!(
+                        "[agent_panel] quote_terminal_selection: no thread_view or text_thread_editor found"
+                    );
                 }
             });
         });

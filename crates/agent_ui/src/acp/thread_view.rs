@@ -4713,6 +4713,7 @@ impl AcpThreadView {
                 MentionUri::Fetch { url } => {
                     cx.open_url(url.as_str());
                 }
+                MentionUri::Terminal { .. } => {}
             })
         } else {
             cx.open_url(&url);
@@ -5316,6 +5317,24 @@ impl AcpThreadView {
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_editor(cx).update(cx, |editor, cx| {
             editor.insert_selections(window, cx);
+        });
+    }
+
+    /// Inserts terminal selection into the message editor.
+    pub(crate) fn insert_terminal_selection(
+        &self,
+        text: String,
+        shell_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!(
+            "[thread_view] insert_terminal_selection called with {} chars, shell: {}",
+            text.len(),
+            shell_name
+        );
+        self.active_editor(cx).update(cx, |editor, cx| {
+            editor.insert_terminal_selection(text, shell_name, window, cx);
         });
     }
 

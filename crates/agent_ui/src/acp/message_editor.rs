@@ -645,6 +645,24 @@ impl MessageEditor {
         .detach();
     }
 
+    pub fn insert_terminal_selection(
+        &mut self,
+        text: String,
+        shell_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!(
+            "[message_editor] insert_terminal_selection called with {} chars, shell: {}",
+            text.len(),
+            shell_name
+        );
+        let editor = self.editor.clone();
+        self.mention_set.update(cx, |mention_set, cx| {
+            mention_set.confirm_mention_for_terminal(text, shell_name, editor, window, cx);
+        });
+    }
+
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.read(cx);
         let editor_buffer = editor.buffer().read(cx);

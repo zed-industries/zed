@@ -43,6 +43,10 @@ pub enum MentionUri {
         abs_path: Option<PathBuf>,
         line_range: RangeInclusive<u32>,
     },
+    Terminal {
+        shell_kind: String,
+        line_count: u32,
+    },
     Fetch {
         url: Url,
     },
@@ -194,6 +198,10 @@ impl MentionUri {
                 line_range,
                 ..
             } => selection_name(path.as_deref(), line_range),
+            MentionUri::Terminal {
+                shell_kind,
+                line_count,
+            } => terminal_selection_name(shell_kind, *line_count),
             MentionUri::Fetch { url } => url.to_string(),
         }
     }
@@ -211,6 +219,7 @@ impl MentionUri {
             MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
+            MentionUri::Terminal { .. } => IconName::Terminal.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
         }
     }
@@ -289,6 +298,17 @@ impl MentionUri {
                 url
             }
             MentionUri::Fetch { url } => url.clone(),
+            MentionUri::Terminal {
+                shell_kind,
+                line_count,
+            } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/terminal");
+                url.query_pairs_mut()
+                    .append_pair("shell", shell_kind)
+                    .append_pair("lines", &line_count.to_string());
+                url
+            }
         }
     }
 }
@@ -325,6 +345,10 @@ pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> 
         *line_range.start() + 1,
         *line_range.end() + 1
     )
+}
+
+pub fn terminal_selection_name(shell_kind: &str, line_count: u32) -> String {
+    format!("{} ({} lines)", shell_kind, line_count)
 }
 
 #[cfg(test)]

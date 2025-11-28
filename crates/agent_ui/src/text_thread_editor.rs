@@ -71,7 +71,9 @@ use workspace::{
     pane,
     searchable::{SearchEvent, SearchableItem},
 };
-use zed_actions::agent::{AddSelectionToThread, ToggleModelSelector};
+use zed_actions::agent::ToggleModelSelector;
+
+use crate::selection_context;
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use assistant_text_thread::{
@@ -149,11 +151,20 @@ pub trait AgentPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Entity<TextThreadEditor>>>;
 
-    fn quote_selection(
+    fn quote_editor_selection(
         &self,
         workspace: &mut Workspace,
         selection_ranges: Vec<Range<Anchor>>,
         buffer: Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    );
+
+    fn quote_terminal_selection(
+        &self,
+        workspace: &mut Workspace,
+        text: String,
+        shell_name: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -214,7 +225,7 @@ impl TextThreadEditor {
         cx.observe_new(
             |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
                 workspace
-                    .register_action(TextThreadEditor::quote_selection)
+                    .register_action(selection_context::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
                     .register_action(TextThreadEditor::copy_code)
                     .register_action(TextThreadEditor::handle_insert_dragged_files);
@@ -1460,46 +1471,6 @@ impl TextThreadEditor {
         self.dragged_file_worktrees.extend(added_worktrees);
     }
 
-    pub fn quote_selection(
-        workspace: &mut Workspace,
-        _: &AddSelectionToThread,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
-            return;
-        };
-
-        let Some((selections, buffer)) = maybe!({
-            let editor = workspace
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))?;
-
-            let buffer = editor.read(cx).buffer().clone();
-            let snapshot = buffer.read(cx).snapshot(cx);
-            let selections = editor.update(cx, |editor, cx| {
-                editor
-                    .selections
-                    .all_adjusted(&editor.display_snapshot(cx))
-                    .into_iter()
-                    .filter_map(|s| {
-                        (!s.is_empty())
-                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
-                    })
-                    .collect::<Vec<_>>()
-            });
-            Some((selections, buffer))
-        }) else {
-            return;
-        };
-
-        if selections.is_empty() {
-            return;
-        }
-
-        agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
-    }
-
     pub fn quote_ranges(
         &mut self,
         ranges: Vec<Range<Point>>,
@@ -1542,6 +1513,23 @@ impl TextThreadEditor {
                 editor.fold_at(start_row, window, cx);
             }
         })
+    }
+
+    pub fn quote_terminal_selection(
+        &mut self,
+        text: String,
+        shell_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+            let formatted_text = format!("```{}\n{}\n```\n", shell_name, text.trim());
+            editor.insert(&formatted_text, window, cx);
+        });
+        self.editor.update(cx, |editor, cx| {
+            editor.request_autoscroll(editor::scroll::Autoscroll::newest(), cx);
+        });
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, _window: &mut Window, cx: &mut Context<Self>) {

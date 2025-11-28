@@ -1,4 +1,4 @@
-use acp_thread::{MentionUri, selection_name};
+use acp_thread::{MentionUri, selection_name, terminal_selection_name};
 use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -239,6 +239,10 @@ impl MentionSet {
                 debug_panic!("unexpected selection URI");
                 Task::ready(Err(anyhow!("unexpected selection URI")))
             }
+            MentionUri::Terminal { .. } => {
+                debug_panic!("unexpected terminal URI");
+                Task::ready(Err(anyhow!("unexpected terminal URI")))
+            }
         };
         let task = cx
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
@@ -458,6 +462,74 @@ impl MentionSet {
         // expected. We're leveraging `cx.on_next_frame` to wait 2 frames and
         // ensure that the layout has been recalculated so that the autoscroll
         // request actually shows the cursor's new position.
+        cx.on_next_frame(window, move |_, window, cx| {
+            cx.on_next_frame(window, move |_, _, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx)
+                });
+            });
+        });
+    }
+
+    pub fn confirm_mention_for_terminal(
+        &mut self,
+        text: String,
+        shell_name: String,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let line_count = text.lines().count() as u32;
+        let uri = MentionUri::Terminal {
+            shell_kind: shell_name.clone(),
+            line_count,
+        };
+
+        let placeholder_text = terminal_selection_name(&shell_name, line_count);
+        let content_len = placeholder_text.len();
+
+        // Get cursor offset before insertion
+        let cursor_offset = {
+            let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+            let cursor_anchor = editor.read(cx).selections.newest_anchor().head();
+            cursor_anchor.to_offset(&snapshot)
+        };
+
+        // Insert the placeholder text
+        editor.update(cx, |editor, cx| {
+            editor.insert(&placeholder_text, window, cx);
+        });
+
+        // Get NEW snapshot after insertion to create valid anchors
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let range = snapshot.anchor_after(cursor_offset)
+            ..snapshot.anchor_after(cursor_offset + content_len);
+
+        let crease = crease_for_mention(
+            placeholder_text.into(),
+            uri.icon_path(cx),
+            range,
+            editor.downgrade(),
+        );
+
+        let crease_id = editor.update(cx, |editor, cx| {
+            let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+            editor.fold_creases(vec![crease], false, window, cx);
+            crease_ids.first().copied().unwrap()
+        });
+
+        self.mentions.insert(
+            crease_id,
+            (
+                uri,
+                Task::ready(Ok(Mention::Text {
+                    content: text,
+                    tracked_buffers: vec![],
+                }))
+                .shared(),
+            ),
+        );
+
         cx.on_next_frame(window, move |_, window, cx| {
             cx.on_next_frame(window, move |_, _, cx| {
                 editor.update(cx, |editor, cx| {
