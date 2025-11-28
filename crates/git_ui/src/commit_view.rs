@@ -10,8 +10,8 @@ use gpui::{
     actions, px,
 };
 use language::{
-    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
-    TextBuffer, ToPoint,
+    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope, TextBuffer,
+    ToPoint,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::ExcerptInfo;
