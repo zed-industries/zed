@@ -56,7 +56,7 @@ const updateFunction = () => {
   }
 };
 
-window.addEventListener("load", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const pagetoc = getPagetoc();
   const headers = [...document.getElementsByClassName("header")];
 
