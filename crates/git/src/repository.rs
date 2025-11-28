@@ -435,6 +435,8 @@ pub trait GitRepository: Send + Sync {
     -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
     fn create_worktree(
@@ -1408,6 +1410,21 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["branch", "-m", &branch, &new_name])
+                    .await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["branch", "-d", &name])
                     .await?;
                 anyhow::Ok(())
             })
