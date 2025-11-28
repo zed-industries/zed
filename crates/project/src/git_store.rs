@@ -2096,10 +2096,11 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let branch_name = envelope.payload.branch_name;
+        let is_push = envelope.payload.is_push;
 
         let remotes = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.get_remotes(branch_name, false)
+                repository_handle.get_remotes(branch_name, is_push)
             })?
             .await??;
 
@@ -4764,6 +4765,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             branch_name,
+                            is_push,
                         })
                         .await?;
 
