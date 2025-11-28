@@ -4743,15 +4743,14 @@ impl Repository {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let remote = match branch_name {
-                        Some(name) => {
-                            if is_push {
-                                backend.get_push_remote(name.clone()).await?
-                            } else {
-                                backend.get_branch_remote(name).await?
-                            }
+                    let remote = if let Some(branch_name) = branch_name {
+                        if is_push {
+                            backend.get_push_remote(branch_name).await?
+                        } else {
+                            backend.get_branch_remote(branch_name).await?
                         }
-                        None => None,
+                    } else {
+                        None
                     };
 
                     match remote {
