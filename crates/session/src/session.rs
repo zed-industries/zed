@@ -1,8 +1,26 @@
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
+use collections::HashSet;
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, Task, WindowId,
+};
 use util::ResultExt;
+
+pub fn init(cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let trusted_worktrees = TrustedWorktrees::new().await;
+        cx.update(|cx| {
+            let trusted_worktees_storage = TrustedWorktreesStorage(cx.new(|_| trusted_worktrees));
+            cx.set_global(trusted_worktees_storage);
+        })
+        .log_err();
+    })
+    .detach();
+}
 
 pub struct Session {
     session_id: String,
@@ -12,6 +30,8 @@ pub struct Session {
 
 const SESSION_ID_KEY: &str = "session_id";
 const SESSION_WINDOW_STACK_KEY: &str = "session_window_stack";
+const TRUSTED_WORKSPACES_KEY: &str = "trusted_workspaces";
+const TRUSTED_WORKSPACES_SEPARATOR: &str = "<|>";
 
 impl Session {
     pub async fn new(session_id: String) -> Self {
@@ -105,6 +125,121 @@ impl AppSession {
 
     pub fn last_session_window_stack(&self) -> Option<Vec<WindowId>> {
         self.session.old_window_ids.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct TrustedWorktreesStorage(Entity<TrustedWorktrees>);
+
+pub enum Event {
+    NewPathsTrusted(Vec<PathBuf>),
+    UntrustedWorktree(PathBuf),
+}
+
+/// TODO kb docs
+struct TrustedWorktrees {
+    worktree_roots: HashSet<PathBuf>,
+    serialization_task: Task<()>,
+}
+
+impl EventEmitter<Event> for TrustedWorktrees {}
+
+impl TrustedWorktrees {
+    async fn new() -> Self {
+        Self {
+            worktree_roots: KEY_VALUE_STORE
+                .read_kvp(TRUSTED_WORKSPACES_KEY)
+                .ok()
+                .flatten()
+                .map(|workspaces| {
+                    workspaces
+                        .split(TRUSTED_WORKSPACES_SEPARATOR)
+                        .map(|workspace_path| PathBuf::from(workspace_path))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            serialization_task: Task::ready(()),
+        }
+    }
+
+    // TODO kb implement "do not trust" too?
+    // How other editors do that?
+    fn trust_paths(&mut self, new_paths: Vec<PathBuf>, cx: &mut Context<'_, Self>) {
+        let mut updated = false;
+        for new_path in new_paths.clone() {
+            debug_assert!(
+                !new_path.is_absolute(),
+                "Cannot trust non-absolute path {new_path:?}"
+            );
+            updated |= self.worktree_roots.insert(new_path);
+        }
+        if updated {
+            let new_worktree_roots =
+                self.worktree_roots
+                    .iter()
+                    .fold(String::new(), |mut acc, path| {
+                        if !acc.is_empty() {
+                            acc.push_str(TRUSTED_WORKSPACES_SEPARATOR);
+                        }
+                        acc.push_str(&path.to_string_lossy());
+                        acc
+                    });
+            self.serialization_task = cx.background_spawn(async move {
+                KEY_VALUE_STORE
+                    .write_kvp(TRUSTED_WORKSPACES_KEY.to_string(), new_worktree_roots)
+                    .await
+                    .log_err();
+            });
+            cx.emit(Event::NewPathsTrusted(new_paths));
+        }
+    }
+}
+
+impl Global for TrustedWorktreesStorage {}
+
+impl TrustedWorktreesStorage {
+    pub fn subscribe(
+        &self,
+        cx: &mut App,
+        mut on_event: impl FnMut(&Event, &mut App) + 'static,
+    ) -> Subscription {
+        cx.subscribe(&self.0, move |_, e, cx| on_event(e, cx))
+    }
+
+    pub fn trust_paths(&mut self, new_paths: Vec<PathBuf>, cx: &mut App) {
+        self.0.update(cx, |trusted_worktrees, cx| {
+            trusted_worktrees.trust_paths(new_paths, cx)
+        });
+    }
+
+    pub fn can_trust_path(&self, path: &Path, cx: &mut App) -> bool {
+        debug_assert!(
+            !path.is_absolute(),
+            "Cannot check if trusting non-absolute path {path:?}"
+        );
+
+        self.0.update(cx, |trusted_worktrees, cx| {
+            let trusted_worktree_roots = &trusted_worktrees.worktree_roots;
+            let can_trust = if trusted_worktree_roots.len() > 100 {
+                let mut path = Some(path);
+                while let Some(path_to_check) = path {
+                    if trusted_worktree_roots.contains(path_to_check) {
+                        return true;
+                    }
+                    path = path_to_check.parent();
+                }
+                false
+            } else {
+                trusted_worktree_roots
+                    .iter()
+                    .any(|trusted_root| path.starts_with(&trusted_root))
+            };
+            if !can_trust {
+                cx.emit(Event::UntrustedWorktree(path.to_owned()));
+            }
+
+            can_trust
+        })
     }
 }
 
