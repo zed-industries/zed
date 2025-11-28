@@ -4442,7 +4442,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Stepping Granularity",
                     description: "Determines the stepping granularity for debug operations.",
                     field: Box::new(SettingField {
-                        json_path: Some("agent.default_height"),
+                        json_path: Some("debugger.stepping_granularity"),
                         pick: |settings_content| {
                             settings_content
                                 .debugger

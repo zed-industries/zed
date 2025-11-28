@@ -32,6 +32,7 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
+use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::ops::Range;
 use std::sync::Arc;
@@ -383,12 +384,8 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
         if !ranges.iter().any(|range| range.start != range.end) {
             selection = false;
-            if let Some((excerpt_id, buffer, range)) = self.editor.read(cx).active_excerpt(cx) {
-                ranges = vec![multi_buffer::Anchor::range_in_buffer(
-                    excerpt_id,
-                    buffer.read(cx).remote_id(),
-                    range,
-                )];
+            if let Some((excerpt_id, _, range)) = self.editor.read(cx).active_excerpt(cx) {
+                ranges = vec![multi_buffer::Anchor::range_in_buffer(excerpt_id, range)];
             } else {
                 ranges = Vec::default();
             }
@@ -488,7 +485,11 @@ impl ProjectDiff {
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
         let diff_hunk_ranges = diff_read
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+            .hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(diff_read.buffer_id),
+                &snapshot,
+                cx,
+            )
             .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
@@ -584,6 +585,9 @@ impl ProjectDiff {
 
         for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
+                // We might be lagging behind enough that all future entry.load futures are no longer pending.
+                // If that is the case, this task will never yield, starving the foreground thread of execution time.
+                yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)

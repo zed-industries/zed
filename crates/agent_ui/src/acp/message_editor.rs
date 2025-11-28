@@ -1423,7 +1423,7 @@ mod tests {
             rel_path("b/eight.txt"),
         ];
 
-        let slash = PathStyle::local().separator();
+        let slash = PathStyle::local().primary_separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {

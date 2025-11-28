@@ -391,7 +391,7 @@ impl SignatureHelpPopover {
                             )
                     }),
             )
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx);
 
         let controls = if self.signatures.len() > 1 {
             let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)

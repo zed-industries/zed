@@ -2643,42 +2643,15 @@ pub fn rust_lang() -> Arc<Language> {
         outline: Some(Cow::from(include_str!(
             "../../languages/src/rust/outline.scm"
         ))),
-        indents: Some(Cow::from(
-            r#"
-[
-    ((where_clause) _ @end)
-    (field_expression)
-    (call_expression)
-    (assignment_expression)
-    (let_declaration)
-    (let_chain)
-    (await_expression)
-] @indent
-
-(_ "[" "]" @end) @indent
-(_ "<" ">" @end) @indent
-(_ "{" "}" @end) @indent
-(_ "(" ")" @end) @indent"#,
-        )),
-        brackets: Some(Cow::from(
-            r#"
-("(" @open ")" @close)
-("[" @open "]" @close)
-("{" @open "}" @close)
-("<" @open ">" @close)
-(closure_parameters "|" @open "|" @close)
-(("\"" @open "\"" @close) (#set! rainbow.exclude))
-(("'" @open "'" @close) (#set! rainbow.exclude))"#,
-        )),
-        text_objects: Some(Cow::from(
-            r#"
-(function_item
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}" )) @function.around
-        "#,
-        )),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/rust/indents.scm"
+        ))),
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/rust/brackets.scm"
+        ))),
+        text_objects: Some(Cow::from(include_str!(
+            "../../languages/src/rust/textobjects.scm"
+        ))),
         ..LanguageQueries::default()
     })
     .expect("Could not parse queries");
@@ -2697,7 +2670,7 @@ pub fn markdown_lang() -> Arc<Language> {
                 path_suffixes: vec!["md".into()],
                 ..Default::default()
             },
-            ..Default::default()
+            ..LanguageConfig::default()
         },
         Some(tree_sitter_md::LANGUAGE.into()),
     )
@@ -2708,7 +2681,7 @@ pub fn markdown_lang() -> Arc<Language> {
         injections: Some(Cow::from(include_str!(
             "../../languages/src/markdown/injections.scm"
         ))),
-        ..Default::default()
+        ..LanguageQueries::default()
     })
     .expect("Could not parse markdown queries");
     Arc::new(language)

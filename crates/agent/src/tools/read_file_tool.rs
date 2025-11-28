@@ -275,7 +275,9 @@ impl AgentTool for ReadFileTool {
                 project.set_agent_location(
                     Some(AgentLocation {
                         buffer: buffer.downgrade(),
-                        position: anchor.unwrap_or(text::Anchor::MIN),
+                        position: anchor.unwrap_or_else(|| {
+                            text::Anchor::min_for_buffer(buffer.read(cx).remote_id())
+                        }),
                     }),
                     cx,
                 );

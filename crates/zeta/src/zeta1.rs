@@ -4,11 +4,12 @@ use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
     EditPredictionId, ZedUpdateRequiredError, Zeta,
-    prediction::{EditPrediction, EditPredictionInputs},
+    prediction::{EditPredictionInputs, EditPredictionResult},
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::{
-    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, predict_edits_v3::Event,
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger, PredictEditsResponse,
+    predict_edits_v3::Event,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use input_excerpt::excerpt_for_cursor_position;
@@ -32,18 +33,17 @@ pub(crate) fn request_prediction_with_zeta1(
     zeta: &mut Zeta,
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
+    snapshot: BufferSnapshot,
     position: language::Anchor,
+    events: Vec<Arc<Event>>,
+    trigger: PredictEditsRequestTrigger,
     cx: &mut Context<Zeta>,
-) -> Task<Result<Option<EditPrediction>>> {
+) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
-    let snapshot = buffer.read(cx).snapshot();
     let client = zeta.client.clone();
     let llm_token = zeta.llm_token.clone();
     let app_version = AppVersion::global(cx);
-
-    let zeta_project = zeta.get_or_init_zeta_project(project, cx);
-    let events = Arc::new(zeta_project.events(cx));
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
         let can_collect_file = zeta.can_collect_file(project, file, cx);
@@ -72,6 +72,7 @@ pub(crate) fn request_prediction_with_zeta1(
         &snapshot,
         cursor_point,
         prompt_for_events,
+        trigger,
         cx,
     );
 
@@ -218,7 +219,7 @@ pub(crate) fn request_prediction_with_zeta1(
             );
         }
 
-        edit_prediction
+        edit_prediction.map(Some)
     })
 }
 
@@ -231,7 +232,7 @@ fn process_completion_response(
     buffer_snapshotted_at: Instant,
     received_response_at: Instant,
     cx: &AsyncApp,
-) -> Task<Result<Option<EditPrediction>>> {
+) -> Task<Result<EditPredictionResult>> {
     let snapshot = snapshot.clone();
     let request_id = prediction_response.request_id;
     let output_excerpt = prediction_response.output_excerpt;
@@ -248,8 +249,9 @@ fn process_completion_response(
             .await?
             .into();
 
-        Ok(EditPrediction::new(
-            EditPredictionId(request_id.into()),
+        let id = EditPredictionId(request_id.into());
+        Ok(EditPredictionResult::new(
+            id,
             &buffer,
             &snapshot,
             edits,
@@ -403,6 +405,7 @@ pub fn gather_context(
     snapshot: &BufferSnapshot,
     cursor_point: language::Point,
     prompt_for_events: impl FnOnce() -> (String, usize) + Send + 'static,
+    trigger: PredictEditsRequestTrigger,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     cx.background_spawn({
@@ -426,6 +429,7 @@ pub fn gather_context(
                 git_info: None,
                 outline: None,
                 speculated_output: None,
+                trigger,
             };
 
             Ok(GatherContextOutput {

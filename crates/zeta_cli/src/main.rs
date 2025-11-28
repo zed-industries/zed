@@ -1,6 +1,7 @@
 mod evaluate;
 mod example;
 mod headless;
+mod metrics;
 mod paths;
 mod predict;
 mod source_location;
@@ -128,8 +129,6 @@ pub struct PredictArguments {
 
 #[derive(Clone, Debug, Args)]
 pub struct PredictionOptions {
-    #[arg(long)]
-    use_expected_context: bool,
     #[clap(flatten)]
     zeta2: Zeta2Args,
     #[clap(long)]
@@ -456,6 +455,7 @@ async fn zeta1_context(
             &snapshot,
             clipped_cursor,
             prompt_for_events,
+            cloud_llm_client::PredictEditsRequestTrigger::Cli,
             cx,
         )
     })?
