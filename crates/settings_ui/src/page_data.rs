@@ -138,6 +138,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Security"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Trust all worktrees by default",
+                    description: r#"When opening a directory in Zed, whether to require confirmation to read and apply project settings"#,
+                    field: Box::new(SettingField {
+                        json_path: Some("session.trust_all_worktrees"),
+                        pick: |settings_content| {
+                            settings_content
+                                .session
+                                .as_ref()
+                                .and_then(|session| session.trust_all_worktrees.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .session
+                                .get_or_insert_default()
+                                .trust_all_worktrees = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Workspace Restoration"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore Unsaved Buffers",

@@ -13076,6 +13076,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "session",
  "settings",
  "sha2",
  "shellexpand 2.1.2",
@@ -15383,6 +15384,7 @@ dependencies = [
 name = "session"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "db",
  "gpui",
  "serde_json",
