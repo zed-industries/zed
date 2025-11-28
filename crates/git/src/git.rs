@@ -96,6 +96,7 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
     ]
