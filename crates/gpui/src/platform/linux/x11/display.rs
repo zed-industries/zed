@@ -48,8 +48,4 @@ impl PlatformDisplay for X11Display {
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
-
-    fn adaptive_refresh_rate(&self) -> bool {
-        false
-    }
 }

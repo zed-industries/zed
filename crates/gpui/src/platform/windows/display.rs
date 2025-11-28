@@ -193,10 +193,6 @@ impl PlatformDisplay for WindowsDisplay {
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
-
-    fn adaptive_refresh_rate(&self) -> bool {
-        false
-    }
 }
 
 fn available_monitors() -> SmallVec<[HMONITOR; 4]> {

@@ -30,8 +30,4 @@ impl PlatformDisplay for TestDisplay {
     fn bounds(&self) -> crate::Bounds<crate::Pixels> {
         self.bounds
     }
-
-    fn adaptive_refresh_rate(&self) -> bool {
-        false
-    }
 }
