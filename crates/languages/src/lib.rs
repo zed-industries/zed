@@ -404,6 +404,7 @@ fn load_config(name: &str) -> LanguageConfig {
         config = LanguageConfig {
             name: config.name,
             matcher: config.matcher,
+            brackets: config.brackets,
             jsx_tag_auto_close: config.jsx_tag_auto_close,
             ..Default::default()
         }
