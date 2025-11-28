@@ -74,6 +74,7 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
 };
 use remote::{
@@ -83,7 +84,9 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
+use settings::{
+    CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
+};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -265,6 +268,8 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Trust current worktree.
+        TrustCurrentWorktree,
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.
@@ -1174,6 +1179,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    untrusted_paths: HashSet<PathBuf>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1208,20 +1214,86 @@ impl Workspace {
             cx.try_global::<session::TrustedWorktreesStorage>().cloned()
         {
             let weak_self = cx.weak_entity();
+            // TODO kb proper UI
             trusted_worktrees_storage
                 .subscribe(cx, move |e, cx| {
                     weak_self
-                        .update(cx, |workspace, cx| {
-                            // TODO kb raise the modals for now
-                            match e {
-                                session::Event::NewPathsTrusted(path_bufs) => todo!(),
-                                session::Event::UntrustedWorktree(path_buf) => todo!(),
+                        .update(cx, |workspace, cx| match e {
+                            session::Event::TrustedWorktree(trusted_path) => {
+                                workspace
+                                    .untrusted_paths
+                                    .remove(trusted_path);
+                                workspace
+                                    .dismiss_notification(
+                                        &NotificationId::named(SharedString::new(
+                                            trusted_path.to_string_lossy(),
+                                        )),
+                                        cx,
+                                    );
+                            },
+                            session::Event::UntrustedWorktree(untrusted_path) => {
+                                if workspace.untrusted_paths.insert(untrusted_path.clone()) {
+                                    workspace
+                                    .show_notification(
+                                        NotificationId::named(SharedString::new(
+                                            untrusted_path.to_string_lossy(),
+                                        )),
+                                        cx,
+                                        |cx| {
+                                            let weak_workspace = cx.weak_entity();
+                                            let untrusted_path = untrusted_path.clone();
+                                            cx.new(move |cx| {
+                                                MessageNotification::new(
+                                                    format!(
+                                                        "Workspace {untrusted_path:?} is not trusted.\nProject local settings will not be loaded."
+                                                    ),
+                                                    cx,
+                                                )
+                                                .primary_message("Trust")
+                                                .primary_icon(IconName::Check)
+                                                .primary_icon_color(Color::Success)
+                                                .primary_on_click({
+                                                    move |_, cx| {
+                                                        if let Some(trusted_worktrees_storage) = cx
+                                                            .try_global::<session::TrustedWorktreesStorage>(
+                                                            )
+                                                            .cloned()
+                                                        {
+                                                            weak_workspace.update(cx, |workspace, _| {
+                                                                workspace
+                                                                    .untrusted_paths
+                                                                    .remove(&untrusted_path);
+                                                            }).ok();
+
+                                                            trusted_worktrees_storage
+                                                                .trust_path(untrusted_path.clone(), cx)
+                                                        }
+                                                    }
+                                                })
+                                                .secondary_message("Do not trust")
+                                                .secondary_icon(IconName::Close)
+                                            })
+                                        },
+                                    )
+                                }
                             }
                         })
                         .ok();
                 })
                 .detach();
         }
+        cx.observe_global::<SettingsStore>(|workspace, cx| {
+            if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                for untrusted_path in std::mem::take(&mut workspace.untrusted_paths) {
+                    workspace.dismiss_notification(
+                        &NotificationId::named(SharedString::new(untrusted_path.to_string_lossy())),
+                        cx,
+                    );
+                }
+            }
+        })
+        .detach();
+
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {
@@ -1535,6 +1607,7 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
+            untrusted_paths: HashSet::default(),
             removing: false,
         }
     }
@@ -5927,6 +6000,28 @@ impl Workspace {
                 |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
                     if let Some((notification_id, _)) = workspace.notifications.pop() {
                         workspace.suppress_notification(&notification_id, cx);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &TrustCurrentWorktree, _, cx| {
+                    if let Some(active_item) = workspace.active_item(cx) {
+                        if let Some(trusted_worktrees_storage) =
+                            cx.try_global::<session::TrustedWorktreesStorage>().cloned()
+                        {
+                            for trusted_path in active_item
+                                .project_paths(cx)
+                                .into_iter()
+                                .map(|project_path| project_path.worktree_id)
+                                .unique()
+                                .filter_map(|worktree_id| {
+                                    workspace.absolute_path_of_worktree(worktree_id, cx)
+                                })
+                                .collect::<Vec<_>>()
+                            {
+                                trusted_worktrees_storage.trust_path(trusted_path, cx);
+                            }
+                        }
                     }
                 },
             ))
