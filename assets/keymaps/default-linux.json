@@ -1336,7 +1336,7 @@
     }
   },
   {
-    "context": "NotebookEditor",
+    "context": "NotebookEditor > Editor",
     "bindings": {
       "shift-enter": "notebook::Run",
       "ctrl-enter": "notebook::Run",
