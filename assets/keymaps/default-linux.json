@@ -1338,6 +1338,7 @@
   {
     "context": "NotebookEditor > Editor",
     "bindings": {
+      "enter": "editor::Newline",
       "shift-enter": "notebook::Run",
       "ctrl-enter": "notebook::Run",
       "ctrl-shift-enter": "notebook::RunAll",

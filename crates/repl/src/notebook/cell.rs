@@ -965,6 +965,16 @@ impl RunnableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // get the language from the editor's buffer
+        let language_name = self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).language())
+            .map(|lang| lang.name().to_string());
+
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this
@@ -982,6 +992,7 @@ impl Render for CodeCell {
                     .child(
                         div().py_1p5().w_full().child(
                             div()
+                                .relative()
                                 .flex()
                                 .size_full()
                                 .flex_1()
@@ -991,7 +1002,23 @@ impl Render for CodeCell {
                                 .border_1()
                                 .border_color(cx.theme().colors().border)
                                 .bg(cx.theme().colors().editor_background)
-                                .child(div().w_full().child(self.editor.clone())),
+                                .child(div().w_full().child(self.editor.clone()))
+                                // lang badge in top-right corner
+                                .when_some(language_name, |this, name| {
+                                    this.child(
+                                        div()
+                                            .absolute()
+                                            .top_1()
+                                            .right_2()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .bg(cx.theme().colors().element_background.opacity(0.7))
+                                            .text_xs()
+                                            .text_color(cx.theme().colors().text_muted)
+                                            .child(name),
+                                    )
+                                }),
                         ),
                     ),
             )
