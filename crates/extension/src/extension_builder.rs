@@ -79,7 +79,7 @@ impl ExtensionBuilder {
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
-        let dev_extension = options.dev_extension.clone();
+        let dev_extension = options.dev_extension;
 
         populate_defaults(extension_manifest, extension_dir)?;
 
@@ -251,8 +251,8 @@ impl ExtensionBuilder {
     ) -> Result<()> {
         let clang_path = self.install_wasi_sdk_if_needed().await?;
 
-        let mut grammar_repo_dir = self.get_grammar_repo_dir(extension_dir, grammar_name);
-        let mut grammar_wasm_path = self.get_grammar_wasm_path(&grammar_repo_dir);
+        let grammar_repo_dir = self.get_grammar_repo_dir(extension_dir, grammar_name);
+        let grammar_wasm_path = self.get_grammar_wasm_path(&grammar_repo_dir);
 
         log::info!("checking out {grammar_name} parser");
         self.checkout_repo(
