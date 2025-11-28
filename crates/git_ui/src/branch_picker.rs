@@ -18,9 +18,8 @@ use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelu
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
-use workspace::{Toast, notifications::NotificationId};
 
-use crate::branch_picker;
+use crate::{branch_picker, git_panel::show_error_toast};
 
 actions!(
     branch_picker,
@@ -328,25 +327,18 @@ impl BranchListDelegate {
 
         cx.spawn_in(window, async move |picker, cx| {
             let result = repo
-                .update(cx, |repo, _| repo.delete_branch(branch_name))?
+                .update(cx, |repo, _| repo.delete_branch(branch_name.clone()))?
                 .await?;
 
             if let Err(e) = result {
                 log::error!("Failed to delete branch: {}", e);
 
-                if let Some(workspace) = workspace {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<Self>(),
-                                    "Failed to delete branch",
-                                ),
-                                cx,
-                            );
-                        })
-                        .ok();
+                if let Some(workspace) = workspace.and_then(|w| w.upgrade()) {
+                    cx.update(|_window, cx| {
+                        show_error_toast(workspace, format!("branch -d {branch_name}"), e, cx)
+                    })?;
                 }
+
                 return Ok(());
             }
 
