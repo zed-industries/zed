@@ -338,7 +338,9 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (UpdateAgentActivity, Foreground),
+    (AgentDocChanged, Foreground)
 );
 
 request_messages!(

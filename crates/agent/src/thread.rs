@@ -552,6 +552,13 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
+
+    /// Emitted when agent activity status changes (active/idle).
+    /// `agent_type` is the upstream provider name (e.g., "Anthropic", "OpenAI").
+    ActivityChanged {
+        active: bool,
+        agent_type: Option<SharedString>,
+    },
 }
 
 #[derive(Debug)]
@@ -1194,8 +1201,15 @@ impl Thread {
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
+                // Signal that the agent is now active, including the model provider name
+                let agent_type = Some(model.upstream_provider_name().0);
+                event_stream.send_activity_changed(true, agent_type);
+
                 let turn_result = Self::run_turn_internal(&this, model, &event_stream, cx).await;
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
+
+                // Signal that the agent is now idle before sending stop/error
+                event_stream.send_activity_changed(false, None);
 
                 match turn_result {
                     Ok(()) => {
@@ -2352,6 +2366,12 @@ impl ThreadEventStream {
     fn send_thinking(&self, text: &str) {
         self.0
             .unbounded_send(Ok(ThreadEvent::AgentThinking(text.to_string())))
+            .ok();
+    }
+
+    fn send_activity_changed(&self, active: bool, agent_type: Option<SharedString>) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ActivityChanged { active, agent_type }))
             .ok();
     }
 
