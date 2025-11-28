@@ -441,9 +441,9 @@ message Envelope {
         GitFileHistory git_file_history = 397;
         GitFileHistoryResponse git_file_history_response = 398;
 
-        RunGitHook run_git_hook = 395;
+        RunGitHook run_git_hook = 399;
 
-        GitDeleteBranch git_delete_branch = 396; // current max
+        GitDeleteBranch git_delete_branch = 400; // current max
     }
 
     reserved 87 to 88;

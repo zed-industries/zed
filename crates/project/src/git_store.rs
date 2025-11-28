@@ -4091,12 +4091,12 @@ impl Repository {
         let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
-                RepositoryState::Local { backend, .. } => {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.file_history_paginated(path, skip, limit).await
                 }
-                RepositoryState::Remote {
-                    client, project_id, ..
-                } => {
+                RepositoryState::Remote(RemoteRepositoryState {
+                    client, project_id,
+                }) => {
                     let response = client
                         .request(proto::GitFileHistory {
                             project_id: project_id.0,

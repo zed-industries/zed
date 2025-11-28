@@ -476,7 +476,7 @@ impl Render for FileHistoryView {
                         .flex_1()
                         .size_full()
                         .with_sizing_behavior(ListSizingBehavior::Auto)
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                     })
                     .when(self.has_more, |this| {
                         this.child(
