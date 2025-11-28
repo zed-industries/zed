@@ -4109,7 +4109,7 @@ impl LspCommand for GetDocumentDiagnostics {
                         server_id,
                         url,
                         report.full_document_diagnostic_report,
-                        self.registration_id.clone(),
+                        self.registration_id,
                     );
                 }
                 lsp::DocumentDiagnosticReport::Unchanged(report) => {
@@ -4126,7 +4126,7 @@ impl LspCommand for GetDocumentDiagnostics {
                         server_id,
                         url,
                         report.unchanged_document_diagnostic_report,
-                        self.registration_id.clone(),
+                        self.registration_id,
                     );
                 }
             },
@@ -4136,7 +4136,7 @@ impl LspCommand for GetDocumentDiagnostics {
                         &mut pulled_diagnostics,
                         server_id,
                         related_documents,
-                        self.registration_id.clone(),
+                        self.registration_id,
                     );
                 }
             }

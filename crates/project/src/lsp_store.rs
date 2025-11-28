@@ -12430,7 +12430,7 @@ impl LspStore {
                             .entry(server_id)
                             .or_default()
                             .diagnostics
-                            .insert(Some(reg.id.clone().into()), caps.clone());
+                            .insert(Some(reg.id.clone()), caps.clone());
 
                         let supports_workspace_diagnostics =
                             |capabilities: &DiagnosticServerCapabilities| match capabilities {
