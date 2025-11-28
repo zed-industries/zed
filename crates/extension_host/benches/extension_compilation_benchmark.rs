@@ -72,7 +72,10 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> 
         .block(extension_builder.compile_extension(
             &path,
             manifest,
-            CompileExtensionOptions { release: true },
+            CompileExtensionOptions {
+                release: true,
+                dev_extension: false,
+            },
         ))
         .unwrap();
     std::fs::read(path.join("extension.wasm")).unwrap()

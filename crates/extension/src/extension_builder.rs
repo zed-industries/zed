@@ -52,6 +52,7 @@ pub struct ExtensionBuilder {
 
 pub struct CompileExtensionOptions {
     pub release: bool,
+    pub dev_extension: bool,
 }
 
 #[derive(Deserialize)]

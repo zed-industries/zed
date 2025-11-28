@@ -985,7 +985,10 @@ impl ExtensionStore {
                         .compile_extension(
                             &extension_source_path,
                             &mut extension_manifest,
-                            CompileExtensionOptions { release: false },
+                            CompileExtensionOptions {
+                                release: false,
+                                dev_extension: true,
+                            },
                         )
                         .await
                 }
@@ -1047,7 +1050,10 @@ impl ExtensionStore {
                 .compile_extension(
                     &path,
                     &mut manifest,
-                    CompileExtensionOptions { release: true },
+                    CompileExtensionOptions {
+                        release: true,
+                        dev_extension: true,
+                    },
                 )
                 .await
         });
