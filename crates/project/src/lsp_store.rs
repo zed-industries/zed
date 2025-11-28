@@ -7149,8 +7149,9 @@ impl LspStore {
                         .merge_lsp_diagnostics(
                             DiagnosticSourceKind::Pulled,
                             diagnostic_updates,
-                            |buffer, old_diagnostic, cx| {
-                                File::from_dyn(buffer.file())
+                            |diagnostic_buffer, old_diagnostic, cx| {
+                                diagnostic_buffer
+                                    .and_then(|buffer| File::from_dyn(buffer.file()))
                                     .and_then(|file| {
                                         let abs_path = file.as_local()?.abs_path(cx);
                                         lsp::Uri::from_file_path(abs_path).ok()
@@ -8199,7 +8200,7 @@ impl LspStore {
     pub fn merge_diagnostic_entries<'a>(
         &mut self,
         diagnostic_updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
-        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(Option<&Buffer>, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let mut diagnostics_summary = None::<proto::UpdateDiagnosticSummary>;
@@ -8226,7 +8227,7 @@ impl LspStore {
                 let reused_diagnostics = buffer
                     .buffer_diagnostics(Some(server_id))
                     .iter()
-                    .filter(|v| merge(buffer, &v.diagnostic, cx))
+                    .filter(|v| merge(Some(buffer), &v.diagnostic, cx))
                     .map(|v| {
                         let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                         let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
@@ -8250,6 +8251,20 @@ impl LspStore {
                     )?;
 
                 update.diagnostics.diagnostics.extend(reused_diagnostics);
+            } else if let Some(local) = self.as_local_mut() {
+                let diagnostics_for_tree = local.diagnostics.entry(worktree_id).or_default();
+                let diagnostics_by_server_id = diagnostics_for_tree
+                    .entry(project_path.path.clone())
+                    .or_default();
+                if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                    let reused_diagnostics = diagnostics_by_server_id[ix]
+                        .1
+                        .iter()
+                        .filter(|v| merge(None, &v.diagnostic, cx))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    update.diagnostics.diagnostics.extend(reused_diagnostics);
+                }
             }
 
             let updated = worktree.update(cx, |worktree, cx| {
@@ -8334,7 +8349,7 @@ impl LspStore {
             .unwrap_or_default();
 
         let new_summary = DiagnosticSummary::new(&diagnostics);
-        if new_summary.is_empty() {
+        if diagnostics.is_empty() {
             if let Some(diagnostics_by_server_id) = diagnostics_for_tree.get_mut(&path_in_worktree)
             {
                 if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
@@ -10942,7 +10957,7 @@ impl LspStore {
         &mut self,
         source_kind: DiagnosticSourceKind,
         lsp_diagnostics: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
-        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(Option<&Buffer>, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
@@ -11964,8 +11979,9 @@ impl LspStore {
             self.merge_lsp_diagnostics(
                 DiagnosticSourceKind::Pulled,
                 diagnostic_updates,
-                |buffer, old_diagnostic, cx| {
-                    File::from_dyn(buffer.file())
+                |diagnostic_buffer, old_diagnostic, cx| {
+                    diagnostic_buffer
+                        .and_then(|buffer| File::from_dyn(buffer.file()))
                         .and_then(|file| {
                             let abs_path = file.as_local()?.abs_path(cx);
                             lsp::Uri::from_file_path(abs_path).ok()

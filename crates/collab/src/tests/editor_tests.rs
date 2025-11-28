@@ -3192,13 +3192,12 @@ async fn test_lsp_pull_diagnostics(
             .collect::<Vec<_>>();
         let expected_messages = [
             expected_pull_diagnostic_lib_message,
-            // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
-            // expected_push_diagnostic_lib_message,
+            expected_push_diagnostic_lib_message,
         ];
         assert_eq!(
             all_diagnostics.len(),
-            1,
-            "Expected pull diagnostics, but got: {all_diagnostics:?}"
+            2,
+            "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
         );
         for diagnostic in all_diagnostics {
             assert!(
@@ -3259,13 +3258,12 @@ async fn test_lsp_pull_diagnostics(
                 .collect::<Vec<_>>();
             let expected_messages = [
                 expected_workspace_pull_diagnostics_lib_message,
-                // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
-                // expected_push_diagnostic_lib_message,
+                expected_push_diagnostic_lib_message,
             ];
             assert_eq!(
                 all_diagnostics.len(),
-                1,
-                "Expected pull diagnostics, but got: {all_diagnostics:?}"
+                2,
+                "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
             );
             for diagnostic in all_diagnostics {
                 assert!(
@@ -3397,7 +3395,7 @@ async fn test_lsp_pull_diagnostics(
             expected_pull_diagnostic_lib_message,
             expected_push_diagnostic_lib_message,
         ];
-        assert_eq!(all_diagnostics.len(), 1);
+        assert_eq!(all_diagnostics.len(), 2);
         for diagnostic in &all_diagnostics {
             assert!(
                 expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
