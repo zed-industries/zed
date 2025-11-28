@@ -2113,7 +2113,7 @@ impl GitPanel {
         cx.spawn_in(window, async move |_, cx| {
             let repo = repo?;
             let remotes = repo
-                .update(cx, |repo, _| repo.get_remotes(None))
+                .update(cx, |repo, _| repo.get_remotes(None, false))
                 .ok()?
                 .await
                 .ok()?
@@ -2377,7 +2377,7 @@ impl GitPanel {
         };
         telemetry::event!("Git Pulled");
         let branch = branch.clone();
-        let remote = self.get_remote(false, window, cx);
+        let remote = self.get_remote(false, false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
@@ -2453,7 +2453,7 @@ impl GitPanel {
                 _ => None,
             }
         };
-        let remote = self.get_remote(select_remote, window, cx);
+        let remote = self.get_remote(select_remote, true, window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
@@ -2530,6 +2530,7 @@ impl GitPanel {
     fn get_remote(
         &mut self,
         always_select: bool,
+        is_push: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = anyhow::Result<Option<Remote>>> + use<> {
@@ -2547,7 +2548,7 @@ impl GitPanel {
                         let current_branch = repo.branch.as_ref().context("No active branch")?;
                         Some(current_branch.name().to_string())
                     };
-                    anyhow::Ok(repo.get_remotes(current_branch))
+                    anyhow::Ok(repo.get_remotes(current_branch, is_push))
                 })??
                 .await??;
 
@@ -3025,35 +3026,10 @@ impl GitPanel {
     }
 
     fn show_error_toast(&self, action: impl Into<SharedString>, e: anyhow::Error, cx: &mut App) {
-        let action = action.into();
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-
-        let message = e.to_string().trim().to_string();
-        if message
-            .matches(git::repository::REMOTE_CANCELLED_BY_USER)
-            .next()
-            .is_some()
-        { // Hide the cancelled by user message
-        } else {
-            workspace.update(cx, |workspace, cx| {
-                let workspace_weak = cx.weak_entity();
-                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
-                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                        .action("View Log", move |window, cx| {
-                            let message = message.clone();
-                            let action = action.clone();
-                            workspace_weak
-                                .update(cx, move |workspace, cx| {
-                                    Self::open_output(action, workspace, &message, window, cx)
-                                })
-                                .ok();
-                        })
-                });
-                workspace.toggle_status_toast(toast, cx)
-            });
-        }
+        show_error_toast(workspace, action, e, cx)
     }
 
     fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)
@@ -3098,7 +3074,7 @@ impl GitPanel {
                                 format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
                             workspace_weak
                                 .update(cx, move |workspace, cx| {
-                                    Self::open_output(operation, workspace, &output, window, cx)
+                                    open_output(operation, workspace, &output, window, cx)
                                 })
                                 .ok();
                         }),
@@ -3109,30 +3085,6 @@ impl GitPanel {
             });
             workspace.toggle_status_toast(status_toast, cx)
         });
-    }
-
-    fn open_output(
-        operation: impl Into<SharedString>,
-        workspace: &mut Workspace,
-        output: &str,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let operation = operation.into();
-        let buffer = cx.new(|cx| Buffer::local(output, cx));
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_capability(language::Capability::ReadOnly, cx);
-        });
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::for_buffer(buffer, None, window, cx);
-            editor.buffer().update(cx, |buffer, cx| {
-                buffer.set_title(format!("Output from git {operation}"), cx);
-            });
-            editor.set_read_only(true);
-            editor
-        });
-
-        workspace.add_item_to_center(Box::new(editor), window, cx);
     }
 
     pub fn can_commit(&self) -> bool {
@@ -5174,6 +5126,63 @@ impl Component for PanelRepoFooter {
                 ])
                 .into_any_element(),
         )
+    }
+}
+
+fn open_output(
+    operation: impl Into<SharedString>,
+    workspace: &mut Workspace,
+    output: &str,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let operation = operation.into();
+    let buffer = cx.new(|cx| Buffer::local(output, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_capability(language::Capability::ReadOnly, cx);
+    });
+    let editor = cx.new(|cx| {
+        let mut editor = Editor::for_buffer(buffer, None, window, cx);
+        editor.buffer().update(cx, |buffer, cx| {
+            buffer.set_title(format!("Output from git {operation}"), cx);
+        });
+        editor.set_read_only(true);
+        editor
+    });
+
+    workspace.add_item_to_center(Box::new(editor), window, cx);
+}
+
+pub(crate) fn show_error_toast(
+    workspace: Entity<Workspace>,
+    action: impl Into<SharedString>,
+    e: anyhow::Error,
+    cx: &mut App,
+) {
+    let action = action.into();
+    let message = e.to_string().trim().to_string();
+    if message
+        .matches(git::repository::REMOTE_CANCELLED_BY_USER)
+        .next()
+        .is_some()
+    { // Hide the cancelled by user message
+    } else {
+        workspace.update(cx, |workspace, cx| {
+            let workspace_weak = cx.weak_entity();
+            let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
+                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                    .action("View Log", move |window, cx| {
+                        let message = message.clone();
+                        let action = action.clone();
+                        workspace_weak
+                            .update(cx, move |workspace, cx| {
+                                open_output(action, workspace, &message, window, cx)
+                            })
+                            .ok();
+                    })
+            });
+            workspace.toggle_status_toast(toast, cx)
+        });
     }
 }
 

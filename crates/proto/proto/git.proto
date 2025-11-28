@@ -203,6 +203,12 @@ message GitRemoveRemote {
     string remote_name = 3;
 }
 
+message GitDeleteBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string branch_name = 3;
+}
+
 message GitDiff {
     uint64 project_id = 1;
     reserved 2;
@@ -402,6 +408,7 @@ message GetRemotes {
     reserved 2;
     uint64 repository_id = 3;
     optional string branch_name = 4;
+    bool is_push = 5;
 }
 
 message GetRemotesResponse {

@@ -441,8 +441,10 @@ message Envelope {
 
         RunGitHook run_git_hook = 395;
 
-        GitCreateRemote git_create_remote = 396;
-        GitRemoveRemote git_remove_remote = 397;// current max
+        GitDeleteBranch git_delete_branch = 396;
+
+        GitCreateRemote git_create_remote = 397;
+        GitRemoveRemote git_remove_remote = 398;// current max
     }
 
     reserved 87 to 88;
