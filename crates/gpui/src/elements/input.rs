@@ -153,6 +153,8 @@ impl Input {
         register_action(&mut self.interactivity, &self.input, InputState::paste);
         register_action(&mut self.interactivity, &self.input, InputState::copy);
         register_action(&mut self.interactivity, &self.input, InputState::cut);
+        register_action(&mut self.interactivity, &self.input, InputState::undo);
+        register_action(&mut self.interactivity, &self.input, InputState::redo);
     }
 }
 

@@ -8,6 +8,6 @@ pub use input_state::{InputLineLayout, InputState};
 // todo: move to keymap
 pub use input_state::{
     Backspace, Copy, Cut, Delete, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste,
-    Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
-    SelectUp, SelectWordLeft, SelectWordRight, Tab, Up, WordLeft, WordRight,
+    Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
+    SelectUp, SelectWordLeft, SelectWordRight, Tab, Undo, Up, WordLeft, WordRight,
 };

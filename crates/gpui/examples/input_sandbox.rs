@@ -9,8 +9,8 @@ use gpui::{
 
 use gpui::input::{
     Backspace, Copy, Cut, Delete, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste,
-    Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
-    SelectUp, SelectWordLeft, SelectWordRight, Tab, Up, WordLeft, WordRight,
+    Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
+    SelectUp, SelectWordLeft, SelectWordRight, Tab, Undo, Up, WordLeft, WordRight,
 };
 
 struct InputSandbox {
@@ -179,6 +179,8 @@ impl Render for InputSandbox {
                     .text_xs()
                     .text_color(rgb(0x666666))
                     .child(key_hint("Ctrl+T", "Toggle mode"))
+                    .child(key_hint("Cmd+Z", "Undo"))
+                    .child(key_hint("Cmd+Shift+Z", "Redo"))
                     .child(key_hint("Cmd+A", "Select all"))
                     .child(key_hint("Cmd+C/X/V", "Copy/Cut/Paste"))
                     .child(key_hint("Alt+←/→", "Word nav"))
@@ -227,6 +229,8 @@ fn main() {
             KeyBinding::new("enter", Enter, None),
             KeyBinding::new("tab", Tab, None),
             KeyBinding::new("backspace", Backspace, None),
+            KeyBinding::new("cmd-z", Undo, None),
+            KeyBinding::new("cmd-shift-z", Redo, None),
         ]);
 
         let bounds = Bounds::centered(None, size(px(500.), px(400.)), cx);

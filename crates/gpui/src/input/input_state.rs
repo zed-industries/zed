@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use crate::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Pixels, Point,
@@ -63,8 +64,27 @@ actions!(
         SelectWordLeft,
         /// Extend selection one word to the right.
         SelectWordRight,
+        /// Undo the last edit.
+        Undo,
+        /// Redo the last undone edit.
+        Redo,
     ]
 );
+
+/// Default interval for grouping consecutive edits into a single undo entry.
+const DEFAULT_GROUP_INTERVAL: Duration = Duration::from_millis(300);
+
+/// Maximum number of history entries to keep.
+const MAX_HISTORY_LEN: usize = 1000;
+
+/// A snapshot of input state for undo/redo operations.
+#[derive(Clone, Debug)]
+struct HistoryEntry {
+    content: String,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
+    timestamp: Instant,
+}
 
 /// `Input` is the state model for text input components. It handles:
 /// - Text content storage and manipulation
@@ -91,6 +111,12 @@ pub struct InputState {
     pub(crate) available_height: Pixels,
     pub(crate) available_width: Pixels,
     multiline: bool,
+    /// Stack of previous states for undo.
+    undo_stack: Vec<HistoryEntry>,
+    /// Stack of undone states for redo.
+    redo_stack: Vec<HistoryEntry>,
+    /// Interval for grouping consecutive edits.
+    group_interval: Duration,
 }
 
 /// Layout information for a single logical line of text in an input.
@@ -142,6 +168,9 @@ impl InputState {
             available_height: px(0.),
             available_width: px(0.),
             multiline: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            group_interval: DEFAULT_GROUP_INTERVAL,
         }
     }
 
@@ -162,6 +191,7 @@ impl InputState {
     }
 
     /// Sets the text content, resetting selection to the beginning.
+    /// This clears the undo/redo history.
     pub fn set_content(&mut self, content: impl Into<String>, cx: &mut Context<Self>) {
         let content = content.into();
         self.content = if self.multiline {
@@ -174,7 +204,101 @@ impl InputState {
         self.selection_reversed = false;
         self.marked_range = None;
         self.needs_layout = true;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
         cx.notify();
+    }
+
+    /// Returns whether undo is available.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Returns whether redo is available.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Sets the interval for grouping consecutive edits into a single undo entry.
+    pub fn set_group_interval(&mut self, interval: Duration) {
+        self.group_interval = interval;
+    }
+
+    /// Pushes the current state onto the undo stack.
+    /// Called before making changes to content.
+    fn push_undo(&mut self) {
+        // Don't record during IME composition
+        if self.marked_range.is_some() {
+            return;
+        }
+
+        let now = Instant::now();
+
+        // Check if we should group with the last entry
+        if let Some(last) = self.undo_stack.last() {
+            if now.duration_since(last.timestamp) < self.group_interval {
+                // Within group interval - don't create a new entry
+                // The previous entry already captures the state before this group of edits
+                return;
+            }
+        }
+
+        self.undo_stack.push(HistoryEntry {
+            content: self.content.clone(),
+            selected_range: self.selected_range.clone(),
+            selection_reversed: self.selection_reversed,
+            timestamp: now,
+        });
+
+        // Limit history size
+        if self.undo_stack.len() > MAX_HISTORY_LEN {
+            self.undo_stack.remove(0);
+        }
+
+        // New edit invalidates redo stack
+        self.redo_stack.clear();
+    }
+
+    /// Undoes the last edit.
+    pub(crate) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(entry) = self.undo_stack.pop() {
+            // Save current state to redo stack
+            self.redo_stack.push(HistoryEntry {
+                content: self.content.clone(),
+                selected_range: self.selected_range.clone(),
+                selection_reversed: self.selection_reversed,
+                timestamp: Instant::now(),
+            });
+
+            // Restore previous state
+            self.content = entry.content;
+            self.selected_range = entry.selected_range;
+            self.selection_reversed = entry.selection_reversed;
+            self.needs_layout = true;
+            self.scroll_to_cursor();
+            cx.notify();
+        }
+    }
+
+    /// Redoes the last undone edit.
+    pub(crate) fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(entry) = self.redo_stack.pop() {
+            // Save current state to undo stack
+            self.undo_stack.push(HistoryEntry {
+                content: self.content.clone(),
+                selected_range: self.selected_range.clone(),
+                selection_reversed: self.selection_reversed,
+                timestamp: Instant::now(),
+            });
+
+            // Restore redone state
+            self.content = entry.content;
+            self.selected_range = entry.selected_range;
+            self.selection_reversed = entry.selection_reversed;
+            self.needs_layout = true;
+            self.scroll_to_cursor();
+            cx.notify();
+        }
     }
 
     /// Returns the placeholder text shown when content is empty.
@@ -448,9 +572,38 @@ impl InputState {
 
     pub(crate) fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
+            // Cut selected text
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
+            self.replace_text_in_range(None, "", window, cx);
+        } else {
+            // No selection: cut the entire current line (including newline)
+            let cursor = self.cursor_offset();
+            let line_start = self.find_line_start(cursor);
+            let line_end = self.find_line_end(cursor);
+
+            // Include the newline character if there is one after the line
+            let cut_end = if line_end < self.content.len() {
+                line_end + 1 // Include the newline
+            } else if line_start > 0 {
+                // Last line with no trailing newline - include preceding newline instead
+                line_end
+            } else {
+                line_end
+            };
+
+            // For last line, also remove the preceding newline if it exists
+            let cut_start = if line_end >= self.content.len() && line_start > 0 {
+                line_start - 1 // Include preceding newline for last line
+            } else {
+                line_start
+            };
+
+            let line_text = self.content[cut_start..cut_end].to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(line_text));
+
+            self.selected_range = cut_start..cut_end;
             self.replace_text_in_range(None, "", window, cx);
         }
     }
@@ -1151,6 +1304,8 @@ impl EntityInputHandler for InputState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.push_undo();
+
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -2514,6 +2669,381 @@ mod tests {
         view.update(cx, |view, _window, cx| {
             view.input.update(cx, |input, _cx| {
                 assert!(input.line_direction(100).is_ltr());
+            });
+        })
+        .unwrap();
+    }
+
+    // ============================================================
+    // UNDO / REDO
+    // ============================================================
+
+    #[crate::test]
+    fn test_undo_restores_content(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                // Disable grouping for predictable test behavior
+                input.set_group_interval(Duration::from_secs(0));
+
+                // Make an edit
+                input.replace_text_in_range(None, " world", window, cx);
+                assert_eq!(input.content(), "hello world");
+
+                // Undo should restore original content
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_redo_restores_undone_content(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.replace_text_in_range(None, " world", window, cx);
+                assert_eq!(input.content(), "hello world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_undo_with_no_history_does_nothing(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                assert!(!input.can_undo());
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_redo_with_no_history_does_nothing(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                assert!(!input.can_redo());
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.content(), "hello");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_undo_restores_selection(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 0..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                // Delete selection
+                input.replace_text_in_range(None, "", window, cx);
+                assert_eq!(input.content(), " world");
+                assert_eq!(input.selected_range, 0..0);
+
+                // Undo should restore content and selection
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
+                assert_eq!(input.selected_range, 0..5);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_multiple_undo_redo(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.replace_text_in_range(None, "a", window, cx);
+                input.replace_text_in_range(None, "b", window, cx);
+                input.replace_text_in_range(None, "c", window, cx);
+                assert_eq!(input.content(), "abc");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "ab");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "a");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "");
+
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.content(), "a");
+
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.content(), "ab");
+
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.content(), "abc");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_new_edit_clears_redo_stack(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.replace_text_in_range(None, " world", window, cx);
+                assert_eq!(input.content(), "hello world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+                assert!(input.can_redo());
+
+                // New edit should clear redo stack
+                input.replace_text_in_range(None, "!", window, cx);
+                assert_eq!(input.content(), "hello!");
+                assert!(!input.can_redo());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_set_content_clears_history(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.replace_text_in_range(None, " world", window, cx);
+                assert!(input.can_undo());
+
+                input.set_content("new content", cx);
+                assert!(!input.can_undo());
+                assert!(!input.can_redo());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_can_undo_can_redo(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                assert!(!input.can_undo());
+                assert!(!input.can_redo());
+
+                input.replace_text_in_range(None, "!", window, cx);
+                assert!(input.can_undo());
+                assert!(!input.can_redo());
+
+                input.undo(&Undo, window, cx);
+                assert!(!input.can_undo());
+                assert!(input.can_redo());
+
+                input.redo(&Redo, window, cx);
+                assert!(input.can_undo());
+                assert!(!input.can_redo());
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_backspace_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.backspace(&Backspace, window, cx);
+                assert_eq!(input.content(), "hell");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.delete(&Delete, window, cx);
+                assert_eq!(input.content(), "ello");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_cut_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 0..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), " world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_cut_line_with_no_selection(cx: &mut TestAppContext) {
+        // Cursor in middle line, no selection - should cut entire line including newline
+        let view = create_test_input(cx, "line1\nline2\nline3", 8..8); // cursor in "line2"
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), "line1\nline3");
+            });
+        })
+        .unwrap();
+
+        let clipboard = cx.read_from_clipboard();
+        assert_eq!(clipboard.unwrap().text().as_deref(), Some("line2\n"));
+    }
+
+    #[crate::test]
+    fn test_cut_first_line_with_no_selection(cx: &mut TestAppContext) {
+        // Cursor on first line, no selection
+        let view = create_test_input(cx, "line1\nline2\nline3", 2..2); // cursor in "line1"
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), "line2\nline3");
+            });
+        })
+        .unwrap();
+
+        let clipboard = cx.read_from_clipboard();
+        assert_eq!(clipboard.unwrap().text().as_deref(), Some("line1\n"));
+    }
+
+    #[crate::test]
+    fn test_cut_last_line_with_no_selection(cx: &mut TestAppContext) {
+        // Cursor on last line, no selection - should include preceding newline
+        let view = create_test_input(cx, "line1\nline2\nline3", 14..14); // cursor in "line3"
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), "line1\nline2");
+            });
+        })
+        .unwrap();
+
+        let clipboard = cx.read_from_clipboard();
+        assert_eq!(clipboard.unwrap().text().as_deref(), Some("\nline3"));
+    }
+
+    #[crate::test]
+    fn test_cut_empty_line(cx: &mut TestAppContext) {
+        // Cursor on empty line - should remove that line
+        let view = create_test_input(cx, "line1\n\nline3", 6..6); // cursor on empty line
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), "line1\nline3");
+            });
+        })
+        .unwrap();
+
+        let clipboard = cx.read_from_clipboard();
+        assert_eq!(clipboard.unwrap().text().as_deref(), Some("\n"));
+    }
+
+    #[crate::test]
+    fn test_cut_only_line_with_no_selection(cx: &mut TestAppContext) {
+        // Single line content, no selection - should cut entire content
+        let view = create_test_input(cx, "hello", 2..2);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), "");
+            });
+        })
+        .unwrap();
+
+        let clipboard = cx.read_from_clipboard();
+        assert_eq!(clipboard.unwrap().text().as_deref(), Some("hello"));
+    }
+
+    #[crate::test]
+    fn test_cut_line_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "line1\nline2\nline3", 8..8);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.cut(&Cut, window, cx);
+                assert_eq!(input.content(), "line1\nline3");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "line1\nline2\nline3");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_paste_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello", 5..5);
+        cx.write_to_clipboard(ClipboardItem::new_string(" world".to_string()));
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.paste(&Paste, window, cx);
+                assert_eq!(input.content(), "hello world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_enter_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.enter(&Enter, window, cx);
+                assert_eq!(input.content(), "hello\n world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
             });
         })
         .unwrap();
