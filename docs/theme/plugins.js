@@ -21,7 +21,6 @@ function detectOS() {
   return "Unknown";
 }
 
-// Usage
 var os = detectOS();
 console.log("Operating System:", os);
 
@@ -228,4 +227,125 @@ const copyMarkdown = () => {
 // Initialize functionality when DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
   copyMarkdown();
+});
+
+// Collapsible sidebar navigation for entire sections
+// Note: Initial collapsed state is applied in index.hbs to prevent flicker
+function initCollapsibleSidebar() {
+  var sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+
+  var chapterList = sidebar.querySelector("ol.chapter");
+  if (!chapterList) return;
+
+  var partTitles = Array.from(chapterList.querySelectorAll("li.part-title"));
+
+  partTitles.forEach(function (partTitle) {
+    // Get all sibling elements that belong to this section
+    var sectionItems = getSectionItems(partTitle);
+
+    if (sectionItems.length > 0) {
+      setupCollapsibleSection(partTitle, sectionItems);
+    }
+  });
+}
+
+// Saves the list of collapsed section names to sessionStorage
+// This gets reset when the tab is closed and opened again
+function saveCollapsedSections() {
+  var collapsedSections = [];
+  var partTitles = document.querySelectorAll(
+    "#sidebar li.part-title.collapsible",
+  );
+
+  partTitles.forEach(function (partTitle) {
+    if (!partTitle.classList.contains("expanded")) {
+      collapsedSections.push(partTitle._sectionName);
+    }
+  });
+
+  try {
+    sessionStorage.setItem(
+      "sidebar-collapsed-sections",
+      JSON.stringify(collapsedSections),
+    );
+  } catch (e) {
+    // sessionStorage might not be available
+  }
+}
+
+function getSectionItems(partTitle) {
+  var items = [];
+  var sibling = partTitle.nextElementSibling;
+
+  while (sibling) {
+    // Stop when we hit another part-title
+    if (sibling.classList.contains("part-title")) {
+      break;
+    }
+    items.push(sibling);
+    sibling = sibling.nextElementSibling;
+  }
+
+  return items;
+}
+
+function setupCollapsibleSection(partTitle, sectionItems) {
+  partTitle.classList.add("collapsible");
+  partTitle.setAttribute("role", "button");
+  partTitle.setAttribute("tabindex", "0");
+  partTitle._sectionItems = sectionItems;
+
+  var isCurrentlyCollapsed = partTitle._isCollapsed;
+  if (isCurrentlyCollapsed) {
+    partTitle.setAttribute("aria-expanded", "false");
+  } else {
+    partTitle.classList.add("expanded");
+    partTitle.setAttribute("aria-expanded", "true");
+  }
+
+  partTitle.addEventListener("click", function (e) {
+    e.preventDefault();
+    toggleSection(partTitle);
+  });
+
+  // a11y: Add keyboard support (Enter and Space)
+  partTitle.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleSection(partTitle);
+    }
+  });
+}
+
+function toggleSection(partTitle) {
+  var isExpanded = partTitle.classList.contains("expanded");
+  var sectionItems = partTitle._sectionItems;
+  var spacerAfter = partTitle._spacerAfter;
+
+  if (isExpanded) {
+    partTitle.classList.remove("expanded");
+    partTitle.setAttribute("aria-expanded", "false");
+    sectionItems.forEach(function (item) {
+      item.classList.add("section-hidden");
+    });
+    if (spacerAfter) {
+      spacerAfter.classList.add("section-hidden");
+    }
+  } else {
+    partTitle.classList.add("expanded");
+    partTitle.setAttribute("aria-expanded", "true");
+    sectionItems.forEach(function (item) {
+      item.classList.remove("section-hidden");
+    });
+    if (spacerAfter) {
+      spacerAfter.classList.remove("section-hidden");
+    }
+  }
+
+  saveCollapsedSections();
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  initCollapsibleSidebar();
 });
