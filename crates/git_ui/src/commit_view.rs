@@ -713,7 +713,7 @@ impl language::File for GitBlob {
     }
 }
 
-// Commented out: No longer needed since metadata buffer is not created
+// No longer needed since metadata buffer is not created
 // impl language::File for CommitMetadataFile {
 //     fn as_local(&self) -> Option<&dyn language::LocalFile> {
 //         None
