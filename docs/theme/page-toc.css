@@ -60,6 +60,18 @@
   color: var(--full-contrast);
 }
 
+.toc-container {
+  visibility: hidden;
+}
+
+.toc-container.has-toc {
+  visibility: visible;
+}
+
+.toc-container.no-toc {
+  display: none;
+}
+
 @media only screen and (max-width: 1020px) {
   .toc-container {
     display: none;
