@@ -62,6 +62,13 @@ pub enum Event {
     RoomLeft {
         channel_id: Option<ChannelId>,
     },
+    ParticipantAgentActivityChanged {
+        peer_id: proto::PeerId,
+    },
+    AgentDocChanged {
+        user_id: u64,
+        path: String,
+    },
 }
 
 pub struct Room {
@@ -826,6 +833,7 @@ impl Room {
                                     speaking: false,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
+                                    agent_activity: None,
                                 },
                             );
 
