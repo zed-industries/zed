@@ -21,7 +21,7 @@ use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 
-use super::{Cell, CellEvent, CellPosition, RenderableCell};
+use super::{Cell, CellEvent, CellPosition, MarkdownCellEvent, RenderableCell};
 
 use nbformat::v4::CellId;
 use nbformat::v4::Metadata as NotebookMetadata;
@@ -132,11 +132,86 @@ impl NotebookEditor {
             cell_order.push(cell_id.clone());
             let cell_entity = Cell::load(cell, &languages, notebook_language.clone(), window, cx);
 
-            if let Cell::Code(code_cell) = &cell_entity {
-                cx.subscribe(code_cell, |this, _cell, event, cx| match event {
-                    CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
-                })
-                .detach();
+            // subscribe to cell events based on cell type
+            match &cell_entity {
+                Cell::Code(code_cell) => {
+                    let cell_id_for_focus = cell_id.clone();
+                    cx.subscribe(code_cell, move |this, cell, event, cx| match event {
+                        CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
+                        CellEvent::FocusedIn(_) => {
+                            // find the index of this cell and update selected_cell_index
+                            if let Some(index) = this
+                                .cell_order
+                                .iter()
+                                .position(|id| id == &cell_id_for_focus)
+                            {
+                                this.selected_cell_index = index;
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .detach();
+
+                    // subscribe to editor focus events
+                    let cell_id_for_editor = cell_id.clone();
+                    let editor = code_cell.read(cx).editor().clone();
+                    cx.subscribe(&editor, move |this, _editor, event, cx| {
+                        if let editor::EditorEvent::Focused = event {
+                            if let Some(index) = this
+                                .cell_order
+                                .iter()
+                                .position(|id| id == &cell_id_for_editor)
+                            {
+                                this.selected_cell_index = index;
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .detach();
+                }
+                Cell::Markdown(markdown_cell) => {
+                    let cell_id_for_focus = cell_id.clone();
+                    // subscribe to markdown cell events
+                    cx.subscribe(
+                        markdown_cell,
+                        move |_this, cell, event: &MarkdownCellEvent, cx| {
+                            match event {
+                                MarkdownCellEvent::FinishedEditing => {
+                                    // reparse markdown when editing is done
+                                    cell.update(cx, |cell, cx| {
+                                        cell.reparse_markdown(cx);
+                                    });
+                                }
+                                MarkdownCellEvent::Run(_cell_id) => {
+                                    // run is handled separately by move_to_next_cell
+                                    // Just reparse here
+                                    cell.update(cx, |cell, cx| {
+                                        cell.reparse_markdown(cx);
+                                    });
+                                }
+                            }
+                        },
+                    )
+                    .detach();
+
+                    // subscribe to editor focus events
+                    let cell_id_for_editor = cell_id.clone();
+                    let editor = markdown_cell.read(cx).editor().clone();
+                    cx.subscribe(&editor, move |this, _editor, event, cx| {
+                        if let editor::EditorEvent::Focused = event {
+                            if let Some(index) = this
+                                .cell_order
+                                .iter()
+                                .position(|id| id == &cell_id_for_editor)
+                            {
+                                this.selected_cell_index = index;
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .detach();
+                }
+                Cell::Raw(_) => {}
             }
 
             cell_map.insert(cell_id.clone(), cell_entity);
@@ -294,8 +369,55 @@ impl NotebookEditor {
     }
 
     fn run_current_cell(&mut self, _: &Run, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(cell_id) = self.cell_order.get(self.selected_cell_index) {
-            self.execute_cell(cell_id.clone(), cx);
+        if let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() {
+            if let Some(cell) = self.cell_map.get(&cell_id) {
+                match cell {
+                    Cell::Code(_) => {
+                        self.execute_cell(cell_id, cx);
+                    }
+                    Cell::Markdown(markdown_cell) => {
+                        // for markdown, finish editing and move to next cell
+                        let is_editing = markdown_cell.read(cx).is_editing();
+                        if is_editing {
+                            markdown_cell.update(cx, |cell, cx| {
+                                cell.run(cx);
+                            });
+                            // move to the next cell
+                            // Discussion can be done on this default implementation
+                            self.move_to_next_cell(window, cx);
+                        }
+                    }
+                    Cell::Raw(_) => {}
+                }
+            }
+        }
+    }
+
+    // Discussion can be done on this default implementation
+    /// Moves focus to the next cell, or creates a new code cell if at the end
+    fn move_to_next_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_cell_index < self.cell_order.len() - 1 {
+            self.selected_cell_index += 1;
+            // focus the new cell's editor
+            if let Some(cell_id) = self.cell_order.get(self.selected_cell_index) {
+                if let Some(cell) = self.cell_map.get(cell_id) {
+                    match cell {
+                        Cell::Code(code_cell) => {
+                            let editor = code_cell.read(cx).editor();
+                            window.focus(&editor.focus_handle(cx));
+                        }
+                        Cell::Markdown(markdown_cell) => {
+                            // Don't auto-enter edit mode for next markdown cell
+                            // Just select it
+                        }
+                        Cell::Raw(_) => {}
+                    }
+                }
+            }
+            cx.notify();
+        } else {
+            // in the end, could optionally create a new cell
+            // For now, just stay on the current cell
         }
     }
 
@@ -343,8 +465,39 @@ impl NotebookEditor {
         let insert_index = self.selected_cell_index + 1;
         self.cell_order.insert(insert_index, new_cell_id.clone());
         self.cell_map
-            .insert(new_cell_id, Cell::Markdown(markdown_cell));
+            .insert(new_cell_id.clone(), Cell::Markdown(markdown_cell.clone()));
         self.selected_cell_index = insert_index;
+
+        // subscribe to markdown cell events
+        cx.subscribe(
+            &markdown_cell,
+            move |_this, cell, event: &MarkdownCellEvent, cx| match event {
+                MarkdownCellEvent::FinishedEditing | MarkdownCellEvent::Run(_) => {
+                    cell.update(cx, |cell, cx| {
+                        cell.reparse_markdown(cx);
+                    });
+                }
+            },
+        )
+        .detach();
+
+        // subscribe to editor focus events
+        let cell_id_for_editor = new_cell_id.clone();
+        let editor = markdown_cell.read(cx).editor().clone();
+        cx.subscribe(&editor, move |this, _editor, event, cx| {
+            if let editor::EditorEvent::Focused = event {
+                if let Some(index) = this
+                    .cell_order
+                    .iter()
+                    .position(|id| id == &cell_id_for_editor)
+                {
+                    this.selected_cell_index = index;
+                    cx.notify();
+                }
+            }
+        })
+        .detach();
+
         self.cell_list.reset(self.cell_order.len());
         cx.notify();
     }
@@ -372,9 +525,33 @@ impl NotebookEditor {
             .insert(new_cell_id.clone(), Cell::Code(code_cell.clone()));
         self.selected_cell_index = insert_index;
 
-        // Subscribe to run events
-        cx.subscribe(&code_cell, |this, _cell, event, cx| match event {
+        // subscribe to run events
+        let cell_id_for_run = new_cell_id.clone();
+        cx.subscribe(&code_cell, move |this, _cell, event, cx| match event {
             CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
+            CellEvent::FocusedIn(_) => {
+                if let Some(index) = this.cell_order.iter().position(|id| id == &cell_id_for_run) {
+                    this.selected_cell_index = index;
+                    cx.notify();
+                }
+            }
+        })
+        .detach();
+
+        // subscribe to editor focus events
+        let cell_id_for_editor = new_cell_id.clone();
+        let editor = code_cell.read(cx).editor().clone();
+        cx.subscribe(&editor, move |this, _editor, event, cx| {
+            if let editor::EditorEvent::Focused = event {
+                if let Some(index) = this
+                    .cell_order
+                    .iter()
+                    .position(|id| id == &cell_id_for_editor)
+                {
+                    this.selected_cell_index = index;
+                    cx.notify();
+                }
+            }
         })
         .detach();
 

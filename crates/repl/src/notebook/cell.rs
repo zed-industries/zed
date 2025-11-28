@@ -4,8 +4,8 @@ use std::sync::Arc;
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
 use gpui::{
-    App, Entity, EventEmitter, Hsla, RetainAllImageCache, Task, TextStyleRefinement, image_cache,
-    prelude::*,
+    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
+    StatefulInteractiveElement, Task, TextStyleRefinement, image_cache, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
@@ -38,6 +38,12 @@ pub enum CellControlType {
 }
 
 pub enum CellEvent {
+    Run(CellId),
+    FocusedIn(CellId),
+}
+
+pub enum MarkdownCellEvent {
+    FinishedEditing,
     Run(CellId),
 }
 
@@ -282,12 +288,17 @@ pub struct MarkdownCell {
     metadata: CellMetadata,
     image_cache: Entity<RetainAllImageCache>,
     source: String,
+    editor: Entity<Editor>,
     parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
     markdown_parsing_task: Task<()>,
+    editing: bool,
     selected: bool,
     cell_position: Option<CellPosition>,
     languages: Arc<LanguageRegistry>,
+    _editor_subscription: gpui::Subscription,
 }
+
+impl EventEmitter<MarkdownCellEvent> for MarkdownCell {}
 
 impl MarkdownCell {
     pub fn new(
@@ -298,6 +309,47 @@ impl MarkdownCell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+        let markdown_language = languages.language_for_name("Markdown");
+        cx.spawn_in(window, async move |_this, cx| {
+            if let Some(markdown) = markdown_language.await.log_err() {
+                buffer
+                    .update(cx, |buffer, cx| {
+                        buffer.set_language(Some(markdown), cx);
+                    })
+                    .log_err();
+            }
+        })
+        .detach();
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(1024),
+                },
+                multi_buffer,
+                None,
+                window,
+                cx,
+            );
+
+            let theme = ThemeSettings::get_global(cx);
+            let refinement = TextStyleRefinement {
+                font_family: Some(theme.buffer_font.family.clone()),
+                font_size: Some(theme.buffer_font_size(cx).into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(gpui::transparent_black()),
+                ..Default::default()
+            };
+
+            editor.set_show_gutter(false, cx);
+            editor.set_text_style_refinement(refinement);
+            editor
+        });
+
         let markdown_parsing_task = {
             let languages = languages.clone();
             let source = source.clone();
@@ -316,16 +368,83 @@ impl MarkdownCell {
             })
         };
 
+        // Subscribe to editor events
+        let cell_id = id.clone();
+        let editor_subscription =
+            cx.subscribe(&editor, move |this, _editor, event, cx| match event {
+                editor::EditorEvent::Blurred => {
+                    if this.editing {
+                        this.editing = false;
+                        cx.emit(MarkdownCellEvent::FinishedEditing);
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            });
+
+        let start_editing = source.is_empty();
         Self {
             id,
             metadata,
             image_cache: RetainAllImageCache::new(cx),
             source,
+            editor,
             parsed_markdown: None,
             markdown_parsing_task,
+            editing: start_editing, // Start in edit mode if empty
             selected: false,
             cell_position: None,
             languages,
+            _editor_subscription: editor_subscription,
+        }
+    }
+
+    pub fn editor(&self) -> &Entity<Editor> {
+        &self.editor
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
+
+    pub fn set_editing(&mut self, editing: bool) {
+        self.editing = editing;
+    }
+
+    pub fn reparse_markdown(&mut self, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        let buffer = editor.buffer().read(cx);
+        let source = buffer
+            .as_singleton()
+            .map(|b| b.read(cx).text())
+            .unwrap_or_default();
+
+        self.source = source.clone();
+        let languages = self.languages.clone();
+
+        self.markdown_parsing_task = cx.spawn(async move |this, cx| {
+            let parsed_markdown = cx
+                .background_spawn(
+                    async move { parse_markdown(&source, None, Some(languages)).await },
+                )
+                .await;
+
+            this.update(cx, |cell: &mut MarkdownCell, cx| {
+                cell.parsed_markdown = Some(parsed_markdown);
+                cx.notify();
+            })
+            .log_err();
+        });
+    }
+
+    /// Called when user presses Shift+Enter or Ctrl+Enter while editing.
+    /// Finishes editing and signals to move to the next cell.
+    pub fn run(&mut self, cx: &mut Context<Self>) {
+        if self.editing {
+            self.editing = false;
+            cx.emit(MarkdownCellEvent::FinishedEditing);
+            cx.emit(MarkdownCellEvent::Run(self.id.clone()));
+            cx.notify();
         }
     }
 }
@@ -374,8 +493,71 @@ impl RenderableCell for MarkdownCell {
 
 impl Render for MarkdownCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // If editing, show the editor
+        if self.editing {
+            return v_flex()
+                .size_full()
+                .children(self.cell_position_spacer(true, window, cx))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .pr_6()
+                        .rounded_xs()
+                        .items_start()
+                        .gap(DynamicSpacing::Base08.rems(cx))
+                        .bg(self.selected_bg_color(window, cx))
+                        .child(self.gutter(window, cx))
+                        .child(
+                            div()
+                                .flex_1()
+                                .p_3()
+                                .bg(cx.theme().colors().editor_background)
+                                .rounded_sm()
+                                .child(self.editor.clone())
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|_this, _event, _window, _cx| {
+                                        // Prevent the click from propagating
+                                    }),
+                                ),
+                        ),
+                )
+                .children(self.cell_position_spacer(false, window, cx));
+        }
+
+        // Preview mode - show rendered markdown
         let Some(parsed) = self.parsed_markdown.as_ref() else {
-            return div();
+            // No parsed content yet, show placeholder that can be clicked to edit
+            let focus_handle = self.editor.focus_handle(cx);
+            return v_flex()
+                .size_full()
+                .children(self.cell_position_spacer(true, window, cx))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .pr_6()
+                        .rounded_xs()
+                        .items_start()
+                        .gap(DynamicSpacing::Base08.rems(cx))
+                        .bg(self.selected_bg_color(window, cx))
+                        .child(self.gutter(window, cx))
+                        .child(
+                            div()
+                                .id("markdown-placeholder")
+                                .flex_1()
+                                .p_3()
+                                .italic()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child("Click to edit markdown...")
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.editing = true;
+                                    window.focus(&this.editor.focus_handle(cx));
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .children(self.cell_position_spacer(false, window, cx));
         };
 
         let mut markdown_render_context =
@@ -383,7 +565,6 @@ impl Render for MarkdownCell {
 
         v_flex()
             .size_full()
-            // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(true, window, cx))
             .child(
                 h_flex()
@@ -397,11 +578,18 @@ impl Render for MarkdownCell {
                     .child(
                         v_flex()
                             .image_cache(self.image_cache.clone())
+                            .id("markdown-content")
                             .size_full()
                             .flex_1()
                             .p_3()
                             .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.editing = true;
+                                window.focus(&this.editor.focus_handle(cx));
+                                cx.notify();
+                            }))
                             .children(parsed.children.iter().map(|child| {
                                 div().relative().child(div().relative().child(
                                     render_markdown_block(child, &mut markdown_render_context),
@@ -409,7 +597,6 @@ impl Render for MarkdownCell {
                             })),
                     ),
             )
-            // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(false, window, cx))
     }
 }
