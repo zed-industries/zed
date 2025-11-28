@@ -92,6 +92,12 @@ Zed offers two commit textareas:
 As soon as you commit in Zed, in the Git Panel, you'll see a bar right under the commit textarea, which will show the recently submitted commit.
 In there, you can use the "Uncommit" button, which performs the `git reset HEADˆ--soft` command.
 
+### Configuring Commit Line Length
+
+By default, Zed sets the commit line length to `72` but it can be configured in your local `settings.json` file.
+
+Find more information about setting the `preferred-line-length` in the [Configuration](#configuration) section.
+
 ## Stashing
 
 Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
