@@ -132,7 +132,7 @@ impl AppSession {
 pub struct TrustedWorktreesStorage(Entity<TrustedWorktrees>);
 
 pub enum Event {
-    NewPathsTrusted(Vec<PathBuf>),
+    TrustedWorktree(PathBuf),
     UntrustedWorktree(PathBuf),
 }
 
@@ -164,15 +164,12 @@ impl TrustedWorktrees {
 
     // TODO kb implement "do not trust" too?
     // How other editors do that?
-    fn trust_paths(&mut self, new_paths: Vec<PathBuf>, cx: &mut Context<'_, Self>) {
-        let mut updated = false;
-        for new_path in new_paths.clone() {
-            debug_assert!(
-                !new_path.is_absolute(),
-                "Cannot trust non-absolute path {new_path:?}"
-            );
-            updated |= self.worktree_roots.insert(new_path);
-        }
+    fn trust_path(&mut self, new_path: PathBuf, cx: &mut Context<'_, Self>) {
+        debug_assert!(
+            !new_path.is_absolute(),
+            "Cannot trust non-absolute path {new_path:?}"
+        );
+        let updated = self.worktree_roots.insert(new_path.clone());
         if updated {
             let new_worktree_roots =
                 self.worktree_roots
@@ -190,7 +187,7 @@ impl TrustedWorktrees {
                     .await
                     .log_err();
             });
-            cx.emit(Event::NewPathsTrusted(new_paths));
+            cx.emit(Event::TrustedWorktree(new_path));
         }
     }
 }
@@ -206,9 +203,9 @@ impl TrustedWorktreesStorage {
         cx.subscribe(&self.0, move |_, e, cx| on_event(e, cx))
     }
 
-    pub fn trust_paths(&mut self, new_paths: Vec<PathBuf>, cx: &mut App) {
+    pub fn trust_path(&self, trusted_path: PathBuf, cx: &mut App) {
         self.0.update(cx, |trusted_worktrees, cx| {
-            trusted_worktrees.trust_paths(new_paths, cx)
+            trusted_worktrees.trust_path(trusted_path, cx)
         });
     }
 
