@@ -481,249 +481,256 @@ enum ResultWorkingDirectory {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_match_glob_pattern() {
-        let pattern = unix_path_to_platform("/test/*/");
-        let file_path = PathBuf::from(unix_path_to_platform("/test/foo/bar/file.txt"));
-        let matched = match_glob_pattern(&pattern, &file_path);
-        assert_eq!(matched, Some(unix_path_to_platform("/test/foo/")));
+    mod glob_patterns {
+        use super::*;
+
+        #[test]
+        fn test_match_glob_pattern() {
+            let pattern = unix_path_to_platform("/test/*/");
+            let file_path = PathBuf::from(unix_path_to_platform("/test/foo/bar/file.txt"));
+            let matched = match_glob_pattern(&pattern, &file_path);
+            assert_eq!(matched, Some(unix_path_to_platform("/test/foo/")));
+        }
+
+        #[test]
+        fn test_match_glob_pattern_globstar() {
+            let pattern = unix_path_to_platform("/workspace/**/src/");
+            let file_path = PathBuf::from(unix_path_to_platform(
+                "/workspace/packages/core/src/index.ts",
+            ));
+            let matched = match_glob_pattern(&pattern, &file_path);
+            assert_eq!(
+                matched,
+                Some(unix_path_to_platform("/workspace/packages/core/src/"))
+            );
+        }
+
+        #[test]
+        fn test_match_glob_pattern_no_match() {
+            let pattern = unix_path_to_platform("/other/*/");
+            let file_path = PathBuf::from(unix_path_to_platform("/test/foo/bar/file.txt"));
+            let matched = match_glob_pattern(&pattern, &file_path);
+            assert_eq!(matched, None);
+        }
     }
 
-    #[test]
-    fn test_match_glob_pattern_globstar() {
-        let pattern = unix_path_to_platform("/workspace/**/src/");
-        let file_path = PathBuf::from(unix_path_to_platform(
-            "/workspace/packages/core/src/index.ts",
-        ));
-        let matched = match_glob_pattern(&pattern, &file_path);
-        assert_eq!(
-            matched,
-            Some(unix_path_to_platform("/workspace/packages/core/src/"))
-        );
-    }
+    mod unix_style_paths {
+        use super::*;
 
-    #[test]
-    fn test_match_glob_pattern_no_match() {
-        let pattern = unix_path_to_platform("/other/*/");
-        let file_path = PathBuf::from(unix_path_to_platform("/test/foo/bar/file.txt"));
-        let matched = match_glob_pattern(&pattern, &file_path);
-        assert_eq!(matched, None);
-    }
+        #[test]
+        fn test_working_directory_string() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::String("packages/foo".to_string())];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
 
-    #[test]
-    fn test_working_directory_string() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::String("packages/foo".to_string())];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                false,
+            );
+        }
 
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            false,
-        );
-    }
+        #[test]
+        fn test_working_directory_absolute_path() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::String(unix_path_to_platform(
+                "/workspace/packages/foo",
+            ))];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
 
-    #[test]
-    #[cfg(windows)]
-    fn test_working_directory_string_windows_style() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::String("packages\\foo".to_string())];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                false,
+            );
+        }
 
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            false,
-        );
-    }
-
-    #[test]
-    fn test_working_directory_absolute_path() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::String(unix_path_to_platform(
-            "/workspace/packages/foo",
-        ))];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
-
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            false,
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_working_directory_absolute_path_windows_style() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::String(
-            unix_path_to_platform("/workspace/packages/foo").replace('/', "\\"),
-        )];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
-
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            false,
-        );
-    }
-
-    #[test]
-    fn test_working_directory_directory_item() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::DirectoryItem(DirectoryItem {
-            directory: "packages/foo".to_string(),
-            not_cwd: Some(true),
-        })];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
-
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            true,
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_working_directory_directory_item_windows_style() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::DirectoryItem(DirectoryItem {
-            directory: "packages\\foo".to_string(),
-            not_cwd: Some(true),
-        })];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
-
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            true,
-        );
-    }
-
-    #[test]
-    fn test_working_directory_legacy_item() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories =
-            vec![WorkingDirectory::LegacyDirectoryItem(LegacyDirectoryItem {
+        #[test]
+        fn test_working_directory_directory_item() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::DirectoryItem(DirectoryItem {
                 directory: "packages/foo".to_string(),
-                change_process_cwd: false,
+                not_cwd: Some(true),
             })];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
 
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            true,
-        );
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                true,
+            );
+        }
+
+        #[test]
+        fn test_working_directory_legacy_item() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories =
+                vec![WorkingDirectory::LegacyDirectoryItem(LegacyDirectoryItem {
+                    directory: "packages/foo".to_string(),
+                    change_process_cwd: false,
+                })];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                true,
+            );
+        }
+
+        #[test]
+        fn test_working_directory_pattern_item() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::PatternItem(PatternItem {
+                pattern: "packages/*/".to_string(),
+                not_cwd: Some(false),
+            })];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                false,
+            );
+        }
+
+        #[test]
+        fn test_working_directory_multiple_patterns() {
+            let uri = make_uri("/workspace/apps/web/src/file.ts");
+            let working_directories = vec![
+                WorkingDirectory::PatternItem(PatternItem {
+                    pattern: "packages/*/".to_string(),
+                    not_cwd: None,
+                }),
+                WorkingDirectory::PatternItem(PatternItem {
+                    pattern: "apps/*/".to_string(),
+                    not_cwd: None,
+                }),
+            ];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/apps/web/"),
+                false,
+            );
+        }
     }
 
-    #[test]
     #[cfg(windows)]
-    fn test_working_directory_legacy_item_windows_style() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories =
-            vec![WorkingDirectory::LegacyDirectoryItem(LegacyDirectoryItem {
+    mod windows_style_paths {
+        use super::*;
+
+        #[test]
+        fn test_working_directory_string() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::String("packages\\foo".to_string())];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                false,
+            );
+        }
+
+        #[test]
+        fn test_working_directory_absolute_path() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::String(
+                unix_path_to_platform("/workspace/packages/foo").replace('/', "\\"),
+            )];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                false,
+            );
+        }
+
+        #[test]
+        fn test_working_directory_directory_item() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::DirectoryItem(DirectoryItem {
                 directory: "packages\\foo".to_string(),
-                change_process_cwd: false,
+                not_cwd: Some(true),
             })];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
 
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            true,
-        );
-    }
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                true,
+            );
+        }
 
-    #[test]
-    fn test_working_directory_pattern_item() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::PatternItem(PatternItem {
-            pattern: unix_path_to_platform("packages/*/"),
-            not_cwd: Some(false),
-        })];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+        #[test]
+        fn test_working_directory_legacy_item() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories =
+                vec![WorkingDirectory::LegacyDirectoryItem(LegacyDirectoryItem {
+                    directory: "packages\\foo".to_string(),
+                    change_process_cwd: false,
+                })];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
 
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            false,
-        );
-    }
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                true,
+            );
+        }
 
-    #[test]
-    #[cfg(windows)]
-    fn test_working_directory_pattern_item_windows_style() {
-        let uri = make_uri("/workspace/packages/foo/src/file.ts");
-        let working_directories = vec![WorkingDirectory::PatternItem(PatternItem {
-            pattern: "packages\\*\\".to_string(),
-            not_cwd: Some(false),
-        })];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
-
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/packages/foo/"),
-            false,
-        );
-    }
-
-    #[test]
-    fn test_working_directory_multiple_patterns() {
-        let uri = make_uri("/workspace/apps/web/src/file.ts");
-        let working_directories = vec![
-            WorkingDirectory::PatternItem(PatternItem {
-                pattern: unix_path_to_platform("packages/*/"),
-                not_cwd: None,
-            }),
-            WorkingDirectory::PatternItem(PatternItem {
-                pattern: unix_path_to_platform("apps/*/"),
-                not_cwd: None,
-            }),
-        ];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
-
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/apps/web/"),
-            false,
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_working_directory_multiple_patterns_windows_style() {
-        let uri = make_uri("/workspace/apps/web/src/file.ts");
-        let working_directories = vec![
-            WorkingDirectory::PatternItem(PatternItem {
+        #[test]
+        fn test_working_directory_pattern_item() {
+            let uri = make_uri("/workspace/packages/foo/src/file.ts");
+            let working_directories = vec![WorkingDirectory::PatternItem(PatternItem {
                 pattern: "packages\\*\\".to_string(),
-                not_cwd: None,
-            }),
-            WorkingDirectory::PatternItem(PatternItem {
-                pattern: "apps\\*\\".to_string(),
-                not_cwd: None,
-            }),
-        ];
-        let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+                not_cwd: Some(false),
+            })];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
 
-        let result = determine_working_directory(uri, working_directories, workspace_folder);
-        assert_directory_result(
-            result,
-            &unix_path_to_platform("/workspace/apps/web/"),
-            false,
-        );
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/packages/foo/"),
+                false,
+            );
+        }
+
+        #[test]
+        fn test_working_directory_multiple_patterns() {
+            let uri = make_uri("/workspace/apps/web/src/file.ts");
+            let working_directories = vec![
+                WorkingDirectory::PatternItem(PatternItem {
+                    pattern: "packages\\*\\".to_string(),
+                    not_cwd: None,
+                }),
+                WorkingDirectory::PatternItem(PatternItem {
+                    pattern: "apps\\*\\".to_string(),
+                    not_cwd: None,
+                }),
+            ];
+            let workspace_folder = PathBuf::from(unix_path_to_platform("/workspace"));
+
+            let result = determine_working_directory(uri, working_directories, workspace_folder);
+            assert_directory_result(
+                result,
+                &unix_path_to_platform("/workspace/apps/web/"),
+                false,
+            );
+        }
     }
 
     /// Converts a Unix-style path to a platform-specific path.
