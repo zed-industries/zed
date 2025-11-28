@@ -9,6 +9,7 @@ use std::sync::Arc;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub azure_foundry: Option<AzureFoundrySettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
@@ -49,6 +50,33 @@ pub struct AnthropicAvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AzureFoundrySettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<AzureFoundryAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AzureFoundryAvailableModel {
+    /// The model's name in the Azure AI Foundry API.
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
+    pub tool_override: Option<String>,
+    /// Configuration of caching API.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
+    pub max_output_tokens: Option<u64>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_temperature: Option<f32>,
     /// The model's mode (e.g. thinking)
     pub mode: Option<ModelMode>,
 }
