@@ -10,8 +10,8 @@ use language::{ContextLocation, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
+use lsp::{LanguageServerBinary, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
@@ -206,6 +206,7 @@ impl LspAdapter for TyLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut ret = cx
@@ -517,6 +518,7 @@ impl LspAdapter for PyrightLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -1593,6 +1595,7 @@ impl LspAdapter for PyLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -1884,6 +1887,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
