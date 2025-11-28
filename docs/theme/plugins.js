@@ -24,7 +24,8 @@ function detectOS() {
 var os = detectOS();
 console.log("Operating System:", os);
 
-(function updateKeybindings() {
+// Defer keybinding processing to avoid blocking initial render
+function updateKeybindings() {
   const os = detectOS();
   const isMac = os === "Mac" || os === "iOS";
 
@@ -34,19 +35,17 @@ console.log("Operating System:", os);
     element.classList.add("keybinding");
   }
 
-  function walkDOM(node) {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.tagName.toLowerCase() === "kbd") {
-        processKeybinding(node);
-      } else {
-        Array.from(node.children).forEach(walkDOM);
-      }
-    }
-  }
+  // Process all kbd elements at once (more efficient than walking entire DOM)
+  const kbdElements = document.querySelectorAll("kbd");
+  kbdElements.forEach(processKeybinding);
+}
 
-  // Start the process from the body
-  walkDOM(document.body);
-})();
+// Use requestIdleCallback if available, otherwise requestAnimationFrame
+if (typeof requestIdleCallback === "function") {
+  requestIdleCallback(updateKeybindings);
+} else {
+  requestAnimationFrame(updateKeybindings);
+}
 
 function darkModeToggle() {
   var html = document.documentElement;
@@ -59,11 +58,6 @@ function darkModeToggle() {
     html.setAttribute("data-color-scheme", theme);
     html.className = theme;
     localStorage.setItem("mdbook-theme", theme);
-
-    // Force a repaint to ensure the changes take effect in the client immediately
-    document.body.style.display = "none";
-    document.body.offsetHeight;
-    document.body.style.display = "";
   }
 
   themeToggleButton.addEventListener("click", function (event) {
@@ -226,6 +220,7 @@ const copyMarkdown = () => {
 
 // Initialize functionality when DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
+  darkModeToggle();
   copyMarkdown();
 });
 
