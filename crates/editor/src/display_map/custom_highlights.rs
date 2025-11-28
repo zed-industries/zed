@@ -111,17 +111,37 @@ fn create_highlight_endpoints(
         }
     }
     if let Some(semantic_token_highlights) = semantic_token_highlights {
-        for token in semantic_token_highlights {
-            struct SemanticTokenHighllights;
+        let start = buffer.anchor_after(range.start);
+        let end = buffer.anchor_after(range.end);
+        let start_ix = semantic_token_highlights
+            .binary_search_by(|probe| {
+                probe
+                    .range
+                    .end
+                    .cmp(&start, buffer)
+                    .then(cmp::Ordering::Less)
+            })
+            .unwrap_or_else(|i| i);
+        for token in &semantic_token_highlights[start_ix..] {
+            if token.range.start.cmp(&end, buffer).is_ge() {
+                break;
+            }
+
+            let start = token.range.start.to_offset(buffer);
+            let end = token.range.end.to_offset(buffer);
+            if start == end {
+                continue;
+            }
+            struct SemanticTokenHighLights;
 
             highlight_endpoints.push(HighlightEndpoint {
-                offset: token.range.start.to_offset(buffer),
-                tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighllights>()),
+                offset: start,
+                tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
                 style: Some(token.style),
             });
             highlight_endpoints.push(HighlightEndpoint {
-                offset: token.range.end.to_offset(buffer),
-                tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighllights>()),
+                offset: end,
+                tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
                 style: None,
             });
         }
