@@ -737,6 +737,7 @@ ul#searchresults span.teaser em {
   inset: 0;
   z-index: 1000;
   padding: 24px;
+  padding-top: 72px;
   background-color: rgba(0, 0, 0, 0.5);
   display: none;
   justify-content: center;
@@ -751,12 +752,12 @@ ul#searchresults span.teaser em {
 
   max-width: 600px;
   min-width: 600px;
+  height: fit-content;
   max-height: 600px;
   display: flex;
   flex-direction: column;
   padding: 16px;
   overflow-y: auto;
-  transform: translateY(8%);
 
   border-radius: 8px;
   background: var(--popover-bg);
