@@ -7219,22 +7219,18 @@ impl LspStore {
                             .merge_lsp_diagnostics(
                                 DiagnosticSourceKind::Pulled,
                                 diagnostic_updates,
-                                |document_uri, old_diagnostic, _| {
-                                    document_uri.as_ref().is_none_or(|document_uri| {
-                                        match old_diagnostic.source_kind {
-                                            DiagnosticSourceKind::Pulled => {
-                                                old_diagnostic.registration_id != registration_id
-                                                    || unchanged_buffers
-                                                        .get(&old_diagnostic.registration_id)
-                                                        .is_some_and(|unchanged_buffers| {
-                                                            unchanged_buffers
-                                                                .contains(&document_uri)
-                                                        })
-                                            }
-                                            DiagnosticSourceKind::Other
-                                            | DiagnosticSourceKind::Pushed => true,
-                                        }
-                                    })
+                                |document_uri, old_diagnostic, _| match old_diagnostic.source_kind {
+                                    DiagnosticSourceKind::Pulled => {
+                                        old_diagnostic.registration_id != registration_id
+                                            || unchanged_buffers
+                                                .get(&old_diagnostic.registration_id)
+                                                .is_some_and(|unchanged_buffers| {
+                                                    unchanged_buffers.contains(&document_uri)
+                                                })
+                                    }
+                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
+                                        true
+                                    }
                                 },
                                 cx,
                             )
@@ -8271,7 +8267,7 @@ impl LspStore {
     pub fn merge_diagnostic_entries<'a>(
         &mut self,
         diagnostic_updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
-        merge: impl Fn(&Option<lsp::Uri>, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(&lsp::Uri, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let mut diagnostics_summary = None::<proto::UpdateDiagnosticSummary>;
@@ -8292,7 +8288,8 @@ impl LspStore {
                 path: relative_path,
             };
 
-            let document_uri = lsp::Uri::from_file_path(abs_path).ok();
+            let document_uri = lsp::Uri::from_file_path(abs_path)
+                .map_err(|()| anyhow!("Failed to convert buffer path {abs_path:?} to lsp Uri"))?;
             if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
@@ -11041,7 +11038,7 @@ impl LspStore {
         &mut self,
         source_kind: DiagnosticSourceKind,
         lsp_diagnostics: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
-        merge: impl Fn(&Option<lsp::Uri>, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(&lsp::Uri, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
@@ -12139,20 +12136,16 @@ impl LspStore {
                 self.merge_lsp_diagnostics(
                     DiagnosticSourceKind::Pulled,
                     diagnostic_updates,
-                    |document_uri, old_diagnostic, _| {
-                        document_uri.as_ref().is_none_or(|document_uri| {
-                            match old_diagnostic.source_kind {
-                                DiagnosticSourceKind::Pulled => {
-                                    old_diagnostic.registration_id != registration_id
-                                        || unchanged_buffers
-                                            .get(&old_diagnostic.registration_id)
-                                            .is_some_and(|unchanged_buffers| {
-                                                unchanged_buffers.contains(&document_uri)
-                                            })
-                                }
-                                DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
-                            }
-                        })
+                    |document_uri, old_diagnostic, _| match old_diagnostic.source_kind {
+                        DiagnosticSourceKind::Pulled => {
+                            old_diagnostic.registration_id != registration_id
+                                || unchanged_buffers
+                                    .get(&old_diagnostic.registration_id)
+                                    .is_some_and(|unchanged_buffers| {
+                                        unchanged_buffers.contains(&document_uri)
+                                    })
+                        }
+                        DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
                     },
                     cx,
                 )
