@@ -18,6 +18,7 @@ test-support = [
 ]
 
 [dependencies]
+collections.workspace = true
 db.workspace = true
 gpui.workspace = true
 uuid.workspace = true
