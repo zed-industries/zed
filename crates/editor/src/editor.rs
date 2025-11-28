@@ -12,7 +12,6 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
@@ -78,7 +77,6 @@ use ::git::{
 };
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow};
-use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
@@ -100,6 +98,7 @@ use futures::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::{GitBlame, GlobalBlameRenderer};
+use gpui::input::BlinkManager;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
@@ -1887,11 +1886,7 @@ impl Editor {
         let selections = SelectionsCollection::new();
 
         let blink_manager = cx.new(|cx| {
-            let mut blink_manager = BlinkManager::new(
-                CURSOR_BLINK_INTERVAL,
-                |cx| EditorSettings::get_global(cx).cursor_blink,
-                cx,
-            );
+            let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
             if is_minimap {
                 blink_manager.disable(cx);
             }
@@ -2293,8 +2288,9 @@ impl Editor {
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                         cx.observe_window_activation(window, |editor, window, cx| {
                             let active = window.is_window_active();
+                            let cursor_blink = EditorSettings::get_global(cx).cursor_blink;
                             editor.blink_manager.update(cx, |blink_manager, cx| {
-                                if active {
+                                if active && cursor_blink {
                                     blink_manager.enable(cx);
                                 } else {
                                     blink_manager.disable(cx);
@@ -21614,6 +21610,17 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cursor_blink = EditorSettings::get_global(cx).cursor_blink;
+        let is_focused = self.focus_handle.is_focused(window);
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            if cursor_blink && is_focused {
+                blink_manager.enable(cx);
+            } else if !cursor_blink {
+                blink_manager.disable(cx);
+                blink_manager.show_cursor(cx);
+            }
+        });
+
         let new_language_settings = self.fetch_applicable_language_settings(cx);
         let language_settings_changed = new_language_settings != self.applicable_language_settings;
         self.applicable_language_settings = new_language_settings;
@@ -22177,7 +22184,9 @@ impl Editor {
                 blame.update(cx, GitBlame::focus)
             }
 
-            self.blink_manager.update(cx, BlinkManager::enable);
+            if EditorSettings::get_global(cx).cursor_blink {
+                self.blink_manager.update(cx, BlinkManager::enable);
+            }
             self.show_cursor_names(window, cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
