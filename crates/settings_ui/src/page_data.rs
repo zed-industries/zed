@@ -2312,6 +2312,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SectionHeader("LSP Highlights"),
                     SettingsPageItem::SettingItem(SettingItem {
+                        title: "Semantic Tokens",
+                        description: "If semantic tokens from language servers should be rendered.",
+                        field: Box::new(SettingField {
+                            json_path: Some("semantic_tokens"),
+                            pick: |settings_content| settings_content.project.all_languages.defaults.semantic_tokens.as_ref(),
+                            write: |settings_content, value| {
+                                settings_content.project.all_languages.defaults.semantic_tokens = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
                         title: "Debounce",
                         description: "The debounce delay before querying highlights from the language.",
                         field: Box::new(SettingField {
