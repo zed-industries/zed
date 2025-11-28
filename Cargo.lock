@@ -7129,6 +7129,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "strum 0.27.2",
  "telemetry",
  "theme",

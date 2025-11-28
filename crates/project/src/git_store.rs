@@ -56,6 +56,7 @@ use rpc::{
 };
 use serde::Deserialize;
 use settings::WorktreeId;
+use smol::future::yield_now;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque},
@@ -2984,6 +2985,10 @@ impl BufferGitState {
                 );
             }
 
+            // Dropping BufferDiff can be expensive, so yield back to the event loop
+            // for a bit
+            yield_now().await;
+
             let mut new_uncommitted_diff = None;
             if let Some(uncommitted_diff) = &uncommitted_diff {
                 new_uncommitted_diff = if index_matches_head {
@@ -3004,6 +3009,10 @@ impl BufferGitState {
                     )
                 }
             }
+
+            // Dropping BufferDiff can be expensive, so yield back to the event loop
+            // for a bit
+            yield_now().await;
 
             let cancel = this.update(cx, |this, _| {
                 // This checks whether all pending stage/unstage operations
@@ -3042,6 +3051,8 @@ impl BufferGitState {
             } else {
                 None
             };
+
+            yield_now().await;
 
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
