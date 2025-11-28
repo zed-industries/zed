@@ -195,10 +195,10 @@ fn contains_uppercase(str: &str) -> bool {
 
 pub struct ProjectSearch {
     project: Entity<Project>,
-    excerpts: Entity<MultiBuffer>,
+    pub excerpts: Entity<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
-    match_ranges: Vec<Range<Anchor>>,
-    active_query: Option<SearchQuery>,
+    pub match_ranges: Vec<Range<Anchor>>,
+    pub active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     search_id: usize,
     no_results: Option<bool>,
@@ -301,7 +301,7 @@ impl ProjectSearch {
         }
     }
 
-    fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
@@ -1030,6 +1030,14 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let use_modal = EditorSettings::get_global(cx).search.use_modal;
+        let replace_enabled = action.replace_enabled;
+
+        if use_modal && !replace_enabled {
+            window.dispatch_action(Box::new(crate::ToggleProjectSearchModal), cx);
+            return;
+        }
+
         let existing = workspace
             .active_pane()
             .read(cx)

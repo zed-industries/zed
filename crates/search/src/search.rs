@@ -15,6 +15,7 @@ use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
 pub mod project_search;
+pub mod project_search_modal;
 pub(crate) mod search_bar;
 pub mod search_status_button;
 
@@ -22,6 +23,7 @@ pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
+    project_search_modal::init(cx);
 }
 
 actions!(
@@ -57,6 +59,8 @@ actions!(
         ReplaceAll,
         /// Replaces the next match.
         ReplaceNext,
+        /// Toggles the project search modal.
+        ToggleProjectSearchModal,
     ]
 );
 

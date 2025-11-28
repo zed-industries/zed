@@ -2866,6 +2866,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                use_modal: false,
             },
             cx,
         );
@@ -2929,6 +2930,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                use_modal: false,
             },
             cx,
         );
@@ -2967,6 +2969,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                use_modal: false,
             },
             cx,
         );
@@ -3049,6 +3052,7 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
+                        use_modal: Some(search_settings.use_modal),
                     });
                 });
             });
