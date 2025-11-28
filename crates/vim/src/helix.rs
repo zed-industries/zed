@@ -1043,7 +1043,12 @@ impl Vim {
                 range: start_anchor..end_anchor,
             });
 
-            blocks.push(Self::jump_label_block(start_anchor, label, accent, label_index));
+            blocks.push(Self::jump_label_block(
+                start_anchor,
+                label,
+                accent,
+                label_index,
+            ));
         }
 
         // Sort highlights by position - the editor's binary search expects them sorted
@@ -2078,6 +2083,9 @@ mod test {
 
         cx.simulate_keystrokes("g w");
 
-        assert!(matches!(cx.active_operator(), Some(Operator::HelixJump { .. })), "expected HelixJump operator to be active")
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
+        )
     }
 }

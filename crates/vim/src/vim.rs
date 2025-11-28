@@ -19,9 +19,9 @@ mod state;
 mod surrounds;
 mod visual;
 
+use crate::normal::paste::Paste as VimPaste;
 use collections::{HashMap, HashSet};
 use editor::display_map::{BlockProperties, CustomBlockId};
-use crate::normal::paste::Paste as VimPaste;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
     SelectionEffects, ToPoint,
