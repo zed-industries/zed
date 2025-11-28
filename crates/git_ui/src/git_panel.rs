@@ -54,6 +54,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
+use prompt_store::{PromptId, PromptStore};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -1983,7 +1984,7 @@ impl GitPanel {
             return;
         };
 
-        telemetry::event!("Git Commit Message Generated");
+        telemetry::event!("Git Commit Prompt Generated");
 
         let diff = repo.update(cx, |repo, cx| {
             if self.has_staged_changes() {
@@ -2034,17 +2035,46 @@ impl GitPanel {
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+                // Load custom prompt from PromptStore, fallback to default
+                let prompt_text = match cx.update(|cx| PromptStore::global(cx)) {
+                    Ok(prompt_store_future) => {
+                        match prompt_store_future.await {
+                            Ok(prompt_store) => {
+                                // Check if custom prompt is marked as default
+                                let is_default = cx.update(|cx| {
+                                    prompt_store.read(cx).metadata(PromptId::CommitMessage)
+                                        .map(|m| m.default)
+                                        .unwrap_or(false)
+                                }).unwrap_or(false);
+
+                                if is_default {
+                                    match prompt_store.update(cx, |store, cx| store.load(PromptId::CommitMessage, cx)) {
+                                        Ok(load_future) => {
+                                            load_future.await.unwrap_or_else(|_| DEFAULT_PROMPT.to_string())
+                                        }
+                                        Err(_) => DEFAULT_PROMPT.to_string(),
+                                    }
+                                } else {
+                                    DEFAULT_PROMPT.to_string()
+                                }
+                            }
+                            Err(_) => DEFAULT_PROMPT.to_string(),
+                        }
+                    }
+                    Err(_) => DEFAULT_PROMPT.to_string(),
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let content = if text_empty {
+                    format!("{prompt_text}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{prompt_text}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 let request = LanguageModelRequest {
                     thread_id: None,
-                    prompt_id: None,
+                    prompt_id: Some(PromptId::CommitMessage.to_string()),
                     intent: Some(CompletionIntent::GenerateGitCommitMessage),
                     mode: None,
                     messages: vec![LanguageModelRequestMessage {
