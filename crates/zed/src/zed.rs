@@ -4757,6 +4757,7 @@ mod tests {
                 "git_panel",
                 "go_to_line",
                 "icon_theme_selector",
+                "input",
                 "journal",
                 "keymap_editor",
                 "keystroke_input",
