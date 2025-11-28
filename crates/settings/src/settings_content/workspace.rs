@@ -367,6 +367,8 @@ impl CloseWindowWhenNoItems {
 pub enum RestoreOnStartupBehavior {
     /// Always start with an empty editor
     None,
+    /// Always start on the welcome page
+    WelcomePage,
     /// Restore the workspace that was closed last.
     LastWorkspace,
     /// Restore all workspaces that were open when quitting Zed.
