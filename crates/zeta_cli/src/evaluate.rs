@@ -1,3 +1,4 @@
+use crate::metrics::{self, Scores};
 use std::{
     collections::HashMap,
     io::{IsTerminal, Write},
@@ -5,7 +6,6 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::HashSet;
 use gpui::{AsyncApp, Entity};
 use project::Project;
 use util::ResultExt as _;
@@ -119,13 +119,14 @@ fn write_aggregated_scores(
     }
 
     if successful.len() > 1 {
-        let mut edit_predictions = successful
+        let edit_scores = successful
             .iter()
-            .filter_map(|r| r.edit_prediction.as_ref())
-            .peekable();
-        let has_edit_predictions = edit_predictions.peek().is_some();
+            .filter_map(|r| r.edit_scores.clone())
+            .collect::<Vec<_>>();
+        let has_edit_predictions = edit_scores.len() > 0;
         let aggregated_result = EvaluationResult {
-            edit_prediction: has_edit_predictions.then(|| Scores::aggregate(edit_predictions)),
+            context_scores: Scores::aggregate(successful.iter().map(|r| &r.context_scores)),
+            edit_scores: has_edit_predictions.then(|| EditScores::aggregate(&edit_scores)),
             prompt_len: successful.iter().map(|r| r.prompt_len).sum::<usize>() / successful.len(),
             generated_len: successful.iter().map(|r| r.generated_len).sum::<usize>()
                 / successful.len(),
@@ -247,94 +248,27 @@ fn write_eval_result(
     anyhow::Ok(())
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct EditScores {
+    pub line_match: Scores,
+    pub chr_f: f64,
+}
+
+impl EditScores {
+    pub fn aggregate(scores: &[EditScores]) -> EditScores {
+        let line_match = Scores::aggregate(scores.iter().map(|s| &s.line_match));
+        let chr_f = scores.iter().map(|s| s.chr_f).sum::<f64>() / scores.len() as f64;
+
+        EditScores { line_match, chr_f }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct EvaluationResult {
-    pub edit_prediction: Option<Scores>,
+    pub edit_scores: Option<EditScores>,
+    pub context_scores: Scores,
     pub prompt_len: usize,
     pub generated_len: usize,
-}
-
-#[derive(Default, Debug)]
-pub struct Scores {
-    pub true_positives: usize,
-    pub false_positives: usize,
-    pub false_negatives: usize,
-}
-
-impl Scores {
-    pub fn new(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
-        let true_positives = expected.intersection(actual).count();
-        let false_positives = actual.difference(expected).count();
-        let false_negatives = expected.difference(actual).count();
-
-        Scores {
-            true_positives,
-            false_positives,
-            false_negatives,
-        }
-    }
-
-    pub fn to_markdown(&self) -> String {
-        format!(
-            "
-Precision       : {:.4}
-Recall          : {:.4}
-F1 Score        : {:.4}
-True Positives  : {}
-False Positives : {}
-False Negatives : {}",
-            self.precision(),
-            self.recall(),
-            self.f1_score(),
-            self.true_positives,
-            self.false_positives,
-            self.false_negatives
-        )
-    }
-
-    pub fn aggregate<'a>(scores: impl Iterator<Item = &'a Scores>) -> Scores {
-        let mut true_positives = 0;
-        let mut false_positives = 0;
-        let mut false_negatives = 0;
-
-        for score in scores {
-            true_positives += score.true_positives;
-            false_positives += score.false_positives;
-            false_negatives += score.false_negatives;
-        }
-
-        Scores {
-            true_positives,
-            false_positives,
-            false_negatives,
-        }
-    }
-
-    pub fn precision(&self) -> f64 {
-        if self.true_positives + self.false_positives == 0 {
-            0.0
-        } else {
-            self.true_positives as f64 / (self.true_positives + self.false_positives) as f64
-        }
-    }
-
-    pub fn recall(&self) -> f64 {
-        if self.true_positives + self.false_negatives == 0 {
-            0.0
-        } else {
-            self.true_positives as f64 / (self.true_positives + self.false_negatives) as f64
-        }
-    }
-
-    pub fn f1_score(&self) -> f64 {
-        let recall = self.recall();
-        let precision = self.precision();
-        if precision + recall == 0.0 {
-            0.0
-        } else {
-            2.0 * precision * recall / (precision + recall)
-        }
-    }
 }
 
 impl std::fmt::Display for EvaluationResult {
@@ -349,40 +283,74 @@ impl std::fmt::Display for EvaluationResult {
 
 impl EvaluationResult {
     fn fmt_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(prediction) = &self.edit_prediction {
+        write!(
+            f,
+            r#"
+### Context Scores
+{}
+"#,
+            self.context_scores.to_markdown(),
+        )?;
+        if let Some(scores) = &self.edit_scores {
             write!(
                 f,
                 r#"
                 ### Edit Prediction Scores
                 {}"#,
-                prediction.to_markdown()
+                scores.line_match.to_markdown()
             )?;
         }
         Ok(())
     }
 
     fn fmt_table(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "### Scores\n")?;
+        writeln!(f, "#### Prompt Statistics")?;
+        writeln!(f, "─────────────────────────")?;
+        writeln!(f, "Prompt_len  Generated_len")?;
+        writeln!(f, "─────────────────────────")?;
+        writeln!(f, "{:<11} {:<14}", self.prompt_len, self.generated_len,)?;
+        writeln!(f)?;
+        writeln!(f)?;
+        writeln!(f, "#### Performance Scores")?;
         writeln!(
             f,
-            "                   Prompt  Generated  TP     FP     FN     Precision   Recall      F1"
+            "──────────────────────────────────────────────────────────────────"
         )?;
         writeln!(
             f,
-            "───────────────────────────────────────────────────────────────────────────────────────────────"
+            "                   TP     FP     FN     Precision   Recall     F1"
         )?;
-        if let Some(edit_prediction) = &self.edit_prediction {
+        writeln!(
+            f,
+            "──────────────────────────────────────────────────────────────────"
+        )?;
+        writeln!(
+            f,
+            "Context Retrieval  {:<6} {:<6} {:<6} {:>8.2}  {:>7.2}  {:>6.2}",
+            self.context_scores.true_positives,
+            self.context_scores.false_positives,
+            self.context_scores.false_negatives,
+            self.context_scores.precision() * 100.0,
+            self.context_scores.recall() * 100.0,
+            self.context_scores.f1_score() * 100.0
+        )?;
+        if let Some(edit_scores) = &self.edit_scores {
+            let line_match = &edit_scores.line_match;
+            writeln!(f, "Edit Prediction")?;
             writeln!(
                 f,
-                "Edit Prediction    {:<7} {:<9}  {:<6} {:<6} {:<6} {:>9.2} {:>8.2} {:>7.2}",
-                self.prompt_len,
-                self.generated_len,
-                edit_prediction.true_positives,
-                edit_prediction.false_positives,
-                edit_prediction.false_negatives,
-                edit_prediction.precision() * 100.0,
-                edit_prediction.recall() * 100.0,
-                edit_prediction.f1_score() * 100.0
+                "  ├─ exact lines   {:<6} {:<6} {:<6} {:>8.2}  {:>7.2}  {:>6.2}",
+                line_match.true_positives,
+                line_match.false_positives,
+                line_match.false_negatives,
+                line_match.precision() * 100.0,
+                line_match.recall() * 100.0,
+                line_match.f1_score() * 100.0
+            )?;
+            writeln!(
+                f,
+                "  └─ diff chrF     {:<6} {:<6} {:<6} {:>8} {:>8}  {:>6.2}",
+                "-", "-", "-", "-", "-", edit_scores.chr_f
             )?;
         }
         Ok(())
@@ -403,21 +371,12 @@ fn evaluate(example: &Example, preds: &PredictionDetails, predict: bool) -> Eval
             .lines()
             .map(DiffLine::parse)
             .collect::<Vec<_>>();
-        let expected_patch_lines = expected_patch
-            .iter()
-            .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
-            .map(|line| line.to_string())
-            .collect();
+        let actual_patch = preds.diff.lines().map(DiffLine::parse).collect::<Vec<_>>();
 
-        let actual_patch_lines = preds
-            .diff
-            .lines()
-            .map(DiffLine::parse)
-            .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
-            .map(|line| line.to_string())
-            .collect();
+        let line_match = metrics::line_match_score(&expected_patch, &actual_patch);
+        let chr_f = metrics::delta_chr_f(&expected_patch, &actual_patch);
 
-        eval_result.edit_prediction = Some(Scores::new(&expected_patch_lines, &actual_patch_lines));
+        eval_result.edit_scores = Some(EditScores { line_match, chr_f });
     }
 
     eval_result
@@ -500,12 +459,12 @@ fn write_bucketed_analysis(
                 diff: execution_data.diff.clone(),
                 is_correct: {
                     evaluation_result
-                        .edit_prediction
+                        .edit_scores
                         .as_ref()
-                        .map_or(false, |edit_prediction| {
-                            edit_prediction.false_positives == 0
-                                && edit_prediction.false_negatives == 0
-                                && edit_prediction.true_positives > 0
+                        .map_or(false, |edit_scores| {
+                            edit_scores.line_match.false_positives == 0
+                                && edit_scores.line_match.false_negatives == 0
+                                && edit_scores.line_match.true_positives > 0
                         })
                 },
                 execution_indices: vec![execution_data.execution_id.clone()],

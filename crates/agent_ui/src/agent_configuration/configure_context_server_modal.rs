@@ -821,7 +821,6 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let scroll_handle = self.scroll_handle.clone();
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -849,7 +848,7 @@ impl Render for ConfigureContextServerModal {
                                         .id("modal-content")
                                         .max_h(vh(0.7, window))
                                         .overflow_y_scroll()
-                                        .track_scroll(&scroll_handle)
+                                        .track_scroll(&self.scroll_handle)
                                         .child(self.render_modal_description(window, cx))
                                         .child(self.render_modal_content(cx))
                                         .child(match &self.state {
@@ -862,7 +861,7 @@ impl Render for ConfigureContextServerModal {
                                             }
                                         }),
                                 )
-                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                         ),
                     )
                     .footer(self.render_modal_footer(cx)),

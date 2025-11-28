@@ -607,7 +607,10 @@ pub fn open_settings_editor(
                 window_background: cx.theme().window_background_appearance(),
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
-                window_min_size: Some(scaled_bounds),
+                window_min_size: Some(gpui::Size {
+                    width: px(360.0),
+                    height: px(240.0),
+                }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },
@@ -2189,7 +2192,7 @@ impl SettingsWindow {
                         format!(
                             "{}{}{}",
                             directory_name,
-                            path_style.separator(),
+                            path_style.primary_separator(),
                             path.display(path_style)
                         )
                     }
@@ -2452,9 +2455,9 @@ impl SettingsWindow {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.navbar_scroll_handle.clone()),
+                        .track_scroll(&self.navbar_scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.navbar_scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.navbar_scroll_handle, window, cx),
             )
             .child(
                 h_flex()
@@ -3009,10 +3012,10 @@ impl SettingsWindow {
                 window.focus_prev();
             }))
             .when(sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.list_state, window, cx)
             })
             .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.sub_page_scroll_handle, window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()

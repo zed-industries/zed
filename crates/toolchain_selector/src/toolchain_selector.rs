@@ -876,7 +876,7 @@ impl ToolchainSelectorDelegate {
             .strip_prefix(&worktree_root)
             .ok()
             .and_then(|suffix| suffix.to_str())
-            .map(|suffix| format!(".{}{suffix}", path_style.separator()).into())
+            .map(|suffix| format!(".{}{suffix}", path_style.primary_separator()).into())
             .unwrap_or(path)
     }
 }

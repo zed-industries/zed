@@ -1348,15 +1348,10 @@
     }
   },
   {
-    "context": "NotebookEditor > Editor",
+    "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
+    "use_key_equivalents": true,
     "bindings": {
-      "shift-enter": "notebook::Run",
-      "ctrl-enter": "notebook::Run",
-      "enter": "editor::Newline",
-      "alt-up": "notebook::MoveCellUp",
-      "alt-down": "notebook::MoveCellDown",
-      "ctrl-m": "notebook::AddCodeBlock",
-      "ctrl-shift-m": "notebook::AddMarkdownBlock"
+      "ctrl-shift-backspace": "branch_picker::DeleteBranch"
     }
   }
 ]

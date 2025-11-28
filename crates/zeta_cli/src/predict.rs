@@ -226,7 +226,13 @@ pub async fn perform_predict(
 
     let prediction = zeta
         .update(cx, |zeta, cx| {
-            zeta.request_prediction(&project, &cursor_buffer, cursor_anchor, cx)
+            zeta.request_prediction(
+                &project,
+                &cursor_buffer,
+                cursor_anchor,
+                cloud_llm_client::PredictEditsRequestTrigger::Cli,
+                cx,
+            )
         })?
         .await?;
 
@@ -235,7 +241,10 @@ pub async fn perform_predict(
     let mut result = Arc::into_inner(result).unwrap().into_inner().unwrap();
 
     result.diff = prediction
-        .and_then(|prediction| prediction.edit_preview.as_unified_diff(&prediction.edits))
+        .and_then(|prediction| {
+            let prediction = prediction.prediction.ok()?;
+            prediction.edit_preview.as_unified_diff(&prediction.edits)
+        })
         .unwrap_or_default();
 
     anyhow::Ok(result)

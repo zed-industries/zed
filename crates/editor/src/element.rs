@@ -3969,9 +3969,14 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
+                                            let is_folded_for_tooltip = is_folded;
                                             move |_window, cx| {
                                                 Tooltip::with_meta_in(
-                                                    "Toggle Excerpt Fold",
+                                                    if is_folded_for_tooltip {
+                                                        "Unfold Excerpt"
+                                                    } else {
+                                                        "Fold Excerpt"
+                                                    },
                                                     Some(&ToggleFold),
                                                     format!(
                                                         "{} to toggle all",
@@ -10712,9 +10717,9 @@ impl ScrollbarLayout {
         show_thumb: bool,
         axis: ScrollbarAxis,
     ) -> Self {
-        let text_units_per_page = f64::from(viewport_size / glyph_space);
+        let text_units_per_page = viewport_size.to_f64() / glyph_space.to_f64();
         let visible_range = scroll_position..scroll_position + text_units_per_page;
-        let total_text_units = scroll_range / f64::from(glyph_space);
+        let total_text_units = scroll_range / glyph_space.to_f64();
 
         let thumb_percentage = text_units_per_page / total_text_units;
         let thumb_size = Pixels::from(ScrollOffset::from(track_length) * thumb_percentage)

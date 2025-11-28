@@ -1380,6 +1380,7 @@ dependencies = [
  "http_client",
  "markdown_preview",
  "release_channel",
+ "semver",
  "serde",
  "serde_json",
  "smol",
@@ -5307,6 +5308,7 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
+ "util",
  "workspace",
  "zed_actions",
  "zeta",
@@ -7127,6 +7129,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "strum 0.27.2",
  "telemetry",
  "theme",
@@ -9012,6 +9015,7 @@ dependencies = [
  "chrono",
  "collections",
  "futures 0.3.31",
+ "globset",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -21192,7 +21196,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.215.0"
+version = "0.216.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",

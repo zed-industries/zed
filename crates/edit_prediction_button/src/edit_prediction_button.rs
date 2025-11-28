@@ -11,7 +11,7 @@ use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
-    pulsating_between,
+    ease_in_out, pulsating_between,
 };
 use indoc::indoc;
 use language::{
@@ -34,6 +34,7 @@ use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
     IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
+use util::ResultExt as _;
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
@@ -322,7 +323,7 @@ impl Render for EditPredictionButton {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
-                        "Sign In"
+                        "Sign In To Use"
                     };
 
                     return div().child(
@@ -357,6 +358,7 @@ impl Render for EditPredictionButton {
                 }
 
                 let show_editor_predictions = self.editor_show_predictions;
+                let user = self.user_store.read(cx).current_user();
 
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
@@ -372,10 +374,18 @@ impl Render for EditPredictionButton {
                         },
                     )
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
+                        let user = user.clone();
                         element.tooltip(move |_window, cx| {
                             if enabled {
                                 if show_editor_predictions {
                                     Tooltip::for_action("Edit Prediction", &ToggleMenu, cx)
+                                } else if user.is_none() {
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        Some(&ToggleMenu),
+                                        "Sign In To Use",
+                                        cx,
+                                    )
                                 } else {
                                     Tooltip::with_meta(
                                         "Edit Prediction",
@@ -398,11 +408,25 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
-                    .menu(move |window, cx| {
-                        this.update(cx, |this, cx| {
-                            this.build_zeta_context_menu(provider, window, cx)
+                    .when(user.is_some(), |popover_menu| {
+                        let this = this.clone();
+
+                        popover_menu.menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_zeta_context_menu(provider, window, cx)
+                            })
+                            .ok()
                         })
-                        .ok()
+                    })
+                    .when(user.is_none(), |popover_menu| {
+                        let this = this.clone();
+
+                        popover_menu.menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_zeta_upsell_context_menu(window, cx)
+                            })
+                            .ok()
+                        })
                     })
                     .anchor(Corner::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
@@ -1045,6 +1069,55 @@ impl EditPredictionButton {
         })
     }
 
+    fn build_zeta_upsell_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |mut menu, _window, cx| {
+            menu = menu
+                .custom_row(move |_window, cx| {
+                    let description = indoc! {
+                        "Sign in for 2,000 worth of accepted suggestions at every keystroke, \
+                        powered by Zeta, our open-source, open-data model."
+                    };
+
+                    v_flex()
+                        .max_w_64()
+                        .h(rems_from_px(148.))
+                        .child(render_zeta_tab_animation(cx))
+                        .child(Label::new("Edit Prediction"))
+                        .child(
+                            Label::new(description)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .into_any_element()
+                })
+                .separator()
+                .entry("Sign In & Start Using", None, |window, cx| {
+                    let client = Client::global(cx);
+                    window
+                        .spawn(cx, async move |cx| {
+                            client
+                                .sign_in_with_optional_connect(true, &cx)
+                                .await
+                                .log_err();
+                        })
+                        .detach();
+                })
+                .link(
+                    "Learn More",
+                    OpenBrowser {
+                        url: zed_urls::edit_prediction_docs(cx),
+                    }
+                    .boxed_clone(),
+                );
+
+            menu
+        })
+    }
+
     pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -1246,6 +1319,66 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
             }
         });
     }
+}
+
+fn render_zeta_tab_animation(cx: &App) -> impl IntoElement {
+    let tab = |n: u64, inverted: bool| {
+        let text_color = cx.theme().colors().text;
+
+        h_flex().child(
+            h_flex()
+                .text_size(TextSize::XSmall.rems(cx))
+                .text_color(text_color)
+                .child("tab")
+                .with_animation(
+                    ElementId::Integer(n),
+                    Animation::new(Duration::from_secs(4)).repeat(),
+                    move |tab, delta| {
+                        let n_f32 = n as f32;
+
+                        let delta = if inverted {
+                            (delta - 0.15 * (5.0 - n_f32)) / 0.7
+                        } else {
+                            (delta - 0.15 * n_f32) / 0.7
+                        };
+
+                        let delta = 1.0 - (0.5 - delta).abs() * 2.;
+                        let delta = ease_in_out(delta.clamp(0., 1.));
+                        let delta = 0.1 + 0.5 * delta;
+
+                        tab.text_color(text_color.opacity(delta))
+                    },
+                ),
+        )
+    };
+
+    let tab_sequence = |inverted: bool| {
+        h_flex()
+            .gap_1()
+            .child(tab(0, inverted))
+            .child(tab(1, inverted))
+            .child(tab(2, inverted))
+            .child(tab(3, inverted))
+            .child(tab(4, inverted))
+    };
+
+    h_flex()
+        .my_1p5()
+        .p_4()
+        .justify_center()
+        .gap_2()
+        .rounded_xs()
+        .border_1()
+        .border_dashed()
+        .border_color(cx.theme().colors().border)
+        .bg(gpui::pattern_slash(
+            cx.theme().colors().border.opacity(0.5),
+            1.,
+            8.,
+        ))
+        .child(tab_sequence(true))
+        .child(Icon::new(IconName::ZedPredict))
+        .child(tab_sequence(false))
 }
 
 fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {

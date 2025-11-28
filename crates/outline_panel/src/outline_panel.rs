@@ -4639,7 +4639,7 @@ impl OutlinePanel {
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(self.max_width_item_index)
-                .track_scroll(self.scroll_handle.clone())
+                .track_scroll(&self.scroll_handle)
                 .when(show_indent_guides, |list| {
                     list.with_decoration(
                         ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
@@ -4692,7 +4692,7 @@ impl OutlinePanel {
                 .child(list_contents.size_full().flex_shrink())
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettings>()
-                        .tracked_scroll_handle(self.scroll_handle.clone())
+                        .tracked_scroll_handle(&self.scroll_handle.clone())
                         .with_track_along(
                             ScrollAxes::Horizontal,
                             cx.theme().colors().panel_background,

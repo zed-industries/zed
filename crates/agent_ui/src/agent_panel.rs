@@ -20,10 +20,9 @@ use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
-    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
-    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory,
-    ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu,
-    ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, Follow, InlineAssistant, NewTextThread, NewThread,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
+    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     acp::AcpThreadView,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
@@ -614,11 +613,14 @@ impl AgentPanel {
                     if let Some(panel) = panel.upgrade() {
                         menu = Self::populate_recently_opened_menu_section(menu, panel, cx);
                     }
-                    menu.action("View All", Box::new(OpenHistory))
-                        .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
+
+                    menu = menu
+                        .action("View All", Box::new(OpenHistory))
                         .fixed_width(px(320.).into())
                         .keep_open_on_confirm(false)
-                        .key_context("NavigationMenu")
+                        .key_context("NavigationMenu");
+
+                    menu
                 });
             weak_panel
                 .update(cx, |panel, cx| {

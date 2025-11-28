@@ -516,7 +516,7 @@ impl Render for AddLlmProviderModal {
                     .child(
                         div()
                             .size_full()
-                            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+                            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                             .child(
                                 v_flex()
                                     .id("modal_content")

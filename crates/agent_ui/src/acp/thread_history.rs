@@ -1,5 +1,5 @@
 use crate::acp::AcpThreadView;
-use crate::{AgentPanel, RemoveSelectedThread};
+use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use agent::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
@@ -12,7 +12,7 @@ use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, WithScrollbar,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
     prelude::*,
 };
 
@@ -25,6 +25,7 @@ pub struct AcpThreadHistory {
     search_query: SharedString,
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
+    confirming_delete_history: bool,
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -98,6 +99,7 @@ impl AcpThreadHistory {
             )
             .unwrap(),
             search_query: SharedString::default(),
+            confirming_delete_history: false,
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
             _update_task: Task::ready(()),
         };
@@ -331,6 +333,24 @@ impl AcpThreadHistory {
         task.detach_and_log_err(cx);
     }
 
+    fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.history_store.update(cx, |store, cx| {
+            store.delete_threads(cx).detach_and_log_err(cx)
+        });
+        self.confirming_delete_history = false;
+        cx.notify();
+    }
+
+    fn prompt_delete_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.confirming_delete_history = true;
+        cx.notify();
+    }
+
+    fn cancel_delete_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.confirming_delete_history = false;
+        cx.notify();
+    }
+
     fn render_list_items(
         &mut self,
         range: Range<usize>,
@@ -447,6 +467,8 @@ impl Focusable for AcpThreadHistory {
 
 impl Render for AcpThreadHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_no_history = self.history_store.read(cx).is_empty(cx);
+
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
@@ -457,9 +479,12 @@ impl Render for AcpThreadHistory {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
+            .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
+                this.remove_history(window, cx);
+            }))
             .child(
                 h_flex()
-                    .h(px(41.)) // Match the toolbar perfectly
+                    .h(Tab::container_height(cx))
                     .w_full()
                     .py_1()
                     .px_2()
@@ -481,7 +506,7 @@ impl Render for AcpThreadHistory {
                     .overflow_hidden()
                     .flex_grow();
 
-                if self.history_store.read(cx).is_empty(cx) {
+                if has_no_history {
                     view.justify_center().items_center().child(
                         Label::new("You don't have any past threads yet.")
                             .size(LabelSize::Small)
@@ -502,15 +527,73 @@ impl Render for AcpThreadHistory {
                         )
                         .p_1()
                         .pr_4()
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                         .flex_grow(),
                     )
-                    .vertical_scrollbar_for(
-                        self.scroll_handle.clone(),
-                        window,
-                        cx,
-                    )
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                 }
+            })
+            .when(!has_no_history, |this| {
+                this.child(
+                    h_flex()
+                        .p_2()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .when(!self.confirming_delete_history, |this| {
+                            this.child(
+                                Button::new("delete_history", "Delete All History")
+                                    .full_width()
+                                    .style(ButtonStyle::Outlined)
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.prompt_delete_history(window, cx);
+                                    })),
+                            )
+                        })
+                        .when(self.confirming_delete_history, |this| {
+                            this.w_full()
+                                .gap_2()
+                                .flex_wrap()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .flex_wrap()
+                                        .gap_1()
+                                        .child(
+                                            Label::new("Delete all threads?")
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            Label::new("You won't be able to recover them later.")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Button::new("cancel_delete", "Cancel")
+                                                .label_size(LabelSize::Small)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.cancel_delete_history(window, cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("confirm_delete", "Delete")
+                                                .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                                .color(Color::Error)
+                                                .label_size(LabelSize::Small)
+                                                .on_click(cx.listener(|_, _, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(RemoveHistory),
+                                                        cx,
+                                                    );
+                                                })),
+                                        ),
+                                )
+                        }),
+                )
             })
     }
 }

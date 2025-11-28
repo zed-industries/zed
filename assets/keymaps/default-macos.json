@@ -1438,5 +1438,12 @@
       "alt-left": "dev::Zeta2ContextGoBack",
       "alt-right": "dev::Zeta2ContextGoForward"
     }
+  },
+  {
+    "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-backspace": "branch_picker::DeleteBranch"
+    }
   }
 ]
