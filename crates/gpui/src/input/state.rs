@@ -2,9 +2,12 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crate::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Pixels, Point,
-    SharedString, TextRun, UTF16Selection, Window, WrappedLine, point, px,
+    App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle,
+    Focusable, Pixels, Point, SharedString, Subscription, TextRun, UTF16Selection, Window,
+    WrappedLine, point, px,
 };
+
+use super::BlinkManager;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::bidi::{TextDirection, detect_base_direction};
@@ -16,6 +19,9 @@ use super::bindings::{
 
 /// Default interval for grouping consecutive edits into a single undo entry.
 const DEFAULT_GROUP_INTERVAL: Duration = Duration::from_millis(300);
+
+/// Default interval for cursor blinking.
+const DEFAULT_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Maximum number of history entries to keep.
 const MAX_HISTORY_LEN: usize = 1000;
@@ -60,6 +66,12 @@ pub struct InputState {
     redo_stack: Vec<HistoryEntry>,
     /// Interval for grouping consecutive edits.
     group_interval: Duration,
+    /// Optional blink manager for cursor blinking.
+    blink_manager: Option<Entity<BlinkManager>>,
+    /// Subscriptions (e.g., for blink manager observation).
+    _subscriptions: Vec<Subscription>,
+    /// Tracks whether we were focused on the last update.
+    was_focused: bool,
 }
 
 /// Layout information for a single logical line of text in an input.
@@ -114,6 +126,9 @@ impl InputState {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             group_interval: DEFAULT_GROUP_INTERVAL,
+            blink_manager: None,
+            _subscriptions: Vec::new(),
+            was_focused: false,
         }
     }
 
@@ -126,6 +141,58 @@ impl InputState {
     /// Returns whether this input allows multiple lines.
     pub fn is_multiline(&self) -> bool {
         self.multiline
+    }
+
+    /// Enables cursor blinking with the default interval.
+    ///
+    /// When enabled, the cursor will blink while the input is focused.
+    /// Blinking is automatically paused during text editing for immediate feedback.
+    pub fn cursor_blink(self, cx: &mut Context<Self>) -> Self {
+        self.cursor_blink_with_interval(DEFAULT_BLINK_INTERVAL, cx)
+    }
+
+    /// Enables cursor blinking with a custom interval.
+    ///
+    /// When enabled, the cursor will blink while the input is focused.
+    /// Blinking is automatically paused during text editing for immediate feedback.
+    pub fn cursor_blink_with_interval(
+        mut self,
+        blink_interval: Duration,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let blink_manager = cx.new(|cx| BlinkManager::new(blink_interval, cx));
+        self._subscriptions
+            .push(cx.observe(&blink_manager, |_, _, cx| cx.notify()));
+        self.blink_manager = Some(blink_manager);
+        self
+    }
+
+    /// Returns whether the cursor should be visible (for blinking).
+    ///
+    /// If blinking is not enabled, always returns `true`.
+    /// This method also updates the blink manager's enabled state based on focus.
+    pub fn cursor_visible(&mut self, is_focused: bool, cx: &mut Context<Self>) -> bool {
+        // Update blink manager based on focus changes
+        if let Some(blink_manager) = &self.blink_manager {
+            if is_focused && !self.was_focused {
+                blink_manager.update(cx, |bm, cx| bm.enable(cx));
+            } else if !is_focused && self.was_focused {
+                blink_manager.update(cx, |bm, cx| bm.disable(cx));
+            }
+        }
+        self.was_focused = is_focused;
+
+        self.blink_manager
+            .as_ref()
+            .map(|bm| bm.read(cx).visible())
+            .unwrap_or(true)
+    }
+
+    /// Pauses cursor blinking temporarily (e.g., during typing).
+    fn pause_cursor_blink(&self, cx: &mut Context<Self>) {
+        if let Some(blink_manager) = &self.blink_manager {
+            blink_manager.update(cx, |bm, cx| bm.pause_blinking(cx));
+        }
     }
 
     /// Returns the current text content.
@@ -149,6 +216,7 @@ impl InputState {
         self.needs_layout = true;
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.pause_cursor_blink(cx);
         cx.notify();
     }
 
@@ -1228,6 +1296,7 @@ impl EntityInputHandler for InputState {
             range.start + text_to_insert.len()..range.start + text_to_insert.len();
         self.marked_range.take();
         self.needs_layout = true;
+        self.pause_cursor_blink(cx);
         cx.notify();
     }
 

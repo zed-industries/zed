@@ -17,13 +17,13 @@ struct InputSandbox {
 impl InputSandbox {
     fn new(cx: &mut Context<Self>) -> Self {
         let multiline_input = cx.new(|cx| {
-            let mut input = InputState::new_multiline(cx);
+            let mut input = InputState::new_multiline(cx).cursor_blink(cx);
             input.set_content("Multi-line text.\nLine 2.\nLine 3.", cx);
             input
         });
 
         let singleline_input = cx.new(|cx| {
-            let mut input = InputState::new_singleline(cx);
+            let mut input = InputState::new_singleline(cx).cursor_blink(cx);
             input.set_content("Single-line text", cx);
             input
         });
@@ -56,7 +56,7 @@ impl Focusable for InputSandbox {
 }
 
 impl Render for InputSandbox {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_input = self.active_input().clone();
         let input_state = active_input.read(cx);
         let content = input_state.content().to_string();
@@ -71,6 +71,9 @@ impl Render for InputSandbox {
         } else {
             "Single-line"
         };
+
+        let multiline_focus = self.multiline_input.focus_handle(cx);
+        let singleline_focus = self.singleline_input.focus_handle(cx);
 
         div()
             .id("input-sandbox")
@@ -163,7 +166,12 @@ impl Render for InputSandbox {
                         selected_range.start, selected_range.end
                     ))
                     .child(format!("Chars: {} | Lines: {}", char_count, line_count))
-                    .child(format!("Content length (bytes): {}", content.len())),
+                    .child(format!("Content length (bytes): {}", content.len()))
+                    .child(format!(
+                        "Multiline focused: {} | Singleline focused: {}",
+                        multiline_focus.is_focused(window),
+                        singleline_focus.is_focused(window)
+                    )),
             )
             // Keybinding hints
             .child(

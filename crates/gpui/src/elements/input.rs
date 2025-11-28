@@ -319,6 +319,10 @@ impl Element for Input {
         let placeholder = self.placeholder.clone();
         let text_style = layout_state.text_style.clone();
         let multiline = self.multiline;
+        let is_focused = focus_handle.is_focused(window);
+        let cursor_visible = self
+            .input
+            .update(cx, |input, cx| input.cursor_visible(is_focused, cx));
 
         self.interactivity.paint(
             global_id,
@@ -341,6 +345,7 @@ impl Element for Input {
                             &text_style,
                             placeholder.as_ref(),
                             &colors,
+                            cursor_visible,
                             window,
                             cx,
                         );
@@ -352,6 +357,7 @@ impl Element for Input {
                             &text_style,
                             placeholder.as_ref(),
                             &colors,
+                            cursor_visible,
                             window,
                             cx,
                         );
@@ -527,6 +533,7 @@ fn paint_multiline(
     text_style: &TextStyle,
     placeholder: Option<&SharedString>,
     colors: &PaintColors,
+    cursor_visible: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -583,7 +590,7 @@ fn paint_multiline(
         }
     }
 
-    if is_focused && selected_range.is_empty() {
+    if is_focused && selected_range.is_empty() && cursor_visible {
         paint_multiline_cursor(
             &line_layouts,
             cursor_offset,
@@ -1094,6 +1101,7 @@ fn paint_singleline(
     text_style: &TextStyle,
     placeholder: Option<&SharedString>,
     colors: &PaintColors,
+    cursor_visible: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -1119,7 +1127,7 @@ fn paint_singleline(
         }
     }
 
-    if state.is_focused && state.selected_range.is_empty() {
+    if state.is_focused && state.selected_range.is_empty() && cursor_visible {
         paint_singleline_cursor(&state, bounds, colors.cursor, window);
     }
 }
