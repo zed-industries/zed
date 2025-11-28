@@ -1305,6 +1305,7 @@
       "escape": "workspace::CloseWindow",
       "ctrl-m": "settings_editor::Minimize",
       "ctrl-f": "search::FocusSearch",
+      "ctrl-,": "settings_editor::OpenCurrentFile",
       "left": "settings_editor::ToggleFocusNav",
       "ctrl-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
