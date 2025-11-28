@@ -5024,10 +5024,8 @@ impl Repository {
             Some(format!("git branch -d {branch_name}").into()),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local { backend, .. } => {
-                        backend.delete_branch(branch_name).await
-                    }
-                    RepositoryState::Remote { .. } => {
+                    RepositoryState::Local(state) => state.backend.delete_branch(branch_name).await,
+                    RepositoryState::Remote(_) => {
                         anyhow::bail!("not implemented yet")
                     }
                 }

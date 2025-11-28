@@ -221,7 +221,7 @@ pub mod git {
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
-            Worktree,
+            Worktree
         ]
     );
 }

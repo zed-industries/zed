@@ -8,7 +8,6 @@ use gpui::{
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
-use workspace::{notifications::NotificationId, Toast};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
@@ -19,6 +18,7 @@ use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelu
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
+use workspace::{Toast, notifications::NotificationId};
 
 use crate::branch_picker;
 
