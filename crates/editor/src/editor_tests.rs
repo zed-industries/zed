@@ -16918,18 +16918,12 @@ async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
     cx.set_state("ˇfn main() {}");
     assert!(full_request.next().await.is_some());
 
-    let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
-    });
-    task.await;
+    cx.run_until_parked();
 
     cx.set_state("ˇfn main() { a }");
     assert!(full_request.next().await.is_some());
 
-    let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
-    });
-    task.await;
+    cx.run_until_parked();
 
     assert_eq!(
         extract_semantic_highlights(&cx.editor, &cx),

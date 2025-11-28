@@ -1199,8 +1199,7 @@ pub struct Editor {
     accent_overrides: Vec<SharedString>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     semantic_tokens_enabled: bool,
-    // TODO kb why is this pub, can we test it differently?
-    pub(crate) update_semantic_tokens_task: Task<()>,
+    update_semantic_tokens_task: Task<()>,
     semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
 }
 
