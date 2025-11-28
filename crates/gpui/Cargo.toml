@@ -281,8 +281,8 @@ name = "input"
 path = "examples/input.rs"
 
 [[example]]
-name = "text_area"
-path = "examples/text_area.rs"
+name = "input_sandbox"
+path = "examples/input_sandbox.rs"
 
 [[example]]
 name = "on_window_close_quit"
