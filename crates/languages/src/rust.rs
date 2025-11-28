@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
+use http_client::github_download::fetch_github_binary_with_digest_check;
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
@@ -514,64 +514,34 @@ impl LspInstaller for RustLspAdapter {
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
         let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
+
+        let server_path_for_check = server_path.clone();
+        fetch_github_binary_with_digest_check(
+            &server_path,
+            &metadata_path,
+            expected_digest,
+            &url,
+            Self::GITHUB_ASSET_KIND,
+            &destination_path,
+            &*delegate.http_client(),
+            || async move {
                 delegate
                     .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
+                        path: server_path_for_check,
                         arguments: vec!["--version".into()],
                         env: None,
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
+                        log::warn!("Unable to run rust-analyzer asset, redownloading: {err:#}")
                     })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
+            },
         )
         .await?;
+
         make_file_executable(&server_path).await?;
         remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
-                digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
 
         Ok(LanguageServerBinary {
             path: server_path,
