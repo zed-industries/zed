@@ -24,12 +24,8 @@
 		((comment) @comment
             value: (expression_list
             [
-                (interpreted_string_literal
-                    (interpreted_string_literal_content) @injection.content
-                )
-                (raw_string_literal
-                    (raw_string_literal_content) @injection.content
-                )
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
             ]
         ))
 
@@ -37,12 +33,8 @@
     	((comment) @comment
             right: (expression_list
             [
-                (interpreted_string_literal
-                    (interpreted_string_literal_content) @injection.content
-                )
-                (raw_string_literal
-                    (raw_string_literal_content) @injection.content
-                )
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
             ]
         ))
 
@@ -50,24 +42,16 @@
         ((comment) @comment
             value: (literal_element
             [
-                (interpreted_string_literal
-                    (interpreted_string_literal_content) @injection.content
-                )
-                (raw_string_literal
-                    (raw_string_literal_content) @injection.content
-                )
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
             ]
         ))
 
 		; when passing as a function parameter
         ((comment) @comment
         [
-           	(interpreted_string_literal
-               	(interpreted_string_literal_content) @injection.content
-            )
-            (raw_string_literal
-               	(raw_string_literal_content) @injection.content
-            )
+           	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+            (raw_string_literal (raw_string_literal_content) @injection.content)
         ]
         )
     ]
@@ -80,31 +64,38 @@
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+       	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
 
     (#match? @comment "^\\/\\*\\s*json\\s*\\*\\/") ; /* json */ or /*json*/
@@ -116,31 +107,38 @@
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
+       	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
 
     (#match? @comment "^\\/\\*\\s*yaml\\s*\\*\\/") ; /* yaml */ or /*yaml*/
@@ -149,36 +147,42 @@
 
 ; INJECT XML
 (
-	[
+    [
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+       	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
-        ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
-    ]
-
+		; when passing as a function parameter
+           ((comment) @comment
+           [
+              	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+               (raw_string_literal (raw_string_literal_content) @injection.content)
+           ]
+           )
+       ]
     (#match? @comment "^\\/\\*\\s*xml\\s*\\*\\/") ; /* xml */ or /*xml*/
     (#set! injection.language "xml")
 )
@@ -188,33 +192,39 @@
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+    	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
+		; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
-
     (#match? @comment "^\\/\\*\\s*html\\s*\\*\\/") ; /* html */ or /*html*/
     (#set! injection.language "html")
 )
@@ -224,105 +234,125 @@
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+    	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
+		; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
-
     (#match? @comment "^\\/\\*\\s*js\\s*\\*\\/") ; /* js */ or /*js*/
     (#set! injection.language "javascript")
 )
+
 
 ; INJECT CSS
 (
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+    	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
+		; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
-
     (#match? @comment "^\\/\\*\\s*css\\s*\\*\\/") ; /* css */ or /*css*/
     (#set! injection.language "css")
 )
+
 
 ; INJECT LUA
 (
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+    	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
+		; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
-
     (#match? @comment "^\\/\\*\\s*lua\\s*\\*\\/") ; /* lua */ or /*lua*/
     (#set! injection.language "lua")
 )
@@ -332,33 +362,39 @@
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+    	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
+		; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
-
     (#match? @comment "^\\/\\*\\s*bash\\s*\\*\\/") ; /* bash */ or /*bash*/
     (#set! injection.language "bash")
 )
@@ -368,33 +404,39 @@
 	[
 		; var, const or short declaration of raw or interpreted string literal
 		((comment) @comment
-  		.
-    	(expression_list
-     	[
-      		(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+            value: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        ))
+
+		; := assignment
+    	((comment) @comment
+            right: (expression_list
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
         ; when passing as a literal element (to struct field eg.)
-		((comment) @comment
-        .
-        (literal_element
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content
+        ((comment) @comment
+            value: (literal_element
+            [
+                (interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
         ))
 
-        ; when passing as a function parameter
+		; when passing as a function parameter
         ((comment) @comment
-        .
-        [
-        	(interpreted_string_literal)
-        	(raw_string_literal)
-        ] @injection.content)
+            [
+               	(interpreted_string_literal (interpreted_string_literal_content) @injection.content)
+                (raw_string_literal (raw_string_literal_content) @injection.content)
+            ]
+        )
     ]
-
-    (#match? @comment "^\\/\\*\\s*csv\\s*\\*\\/") ; /* csv */ or /*csv*/
+    (#match? @comment "^\\/\\*\\s*csv\\s*\\*\\/") ; /* csv */ or /*csv */
     (#set! injection.language "csv")
 )
