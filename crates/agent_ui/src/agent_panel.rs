@@ -2685,16 +2685,17 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 return;
             };
             let project = workspace.read(cx).project().downgrade();
+            let thread_store = panel.read(cx).thread_store().clone();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
                 project,
-                panel.read(cx).thread_store().clone(),
+                thread_store,
                 None,
                 initial_prompt,
                 window,
                 cx,
-            )
+            );
         })
     }
 

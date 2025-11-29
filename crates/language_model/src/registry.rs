@@ -135,6 +135,11 @@ impl LanguageModelRegistry {
         fake_provider
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_model(&self) -> Arc<dyn LanguageModel> {
+        self.default_model.as_ref().unwrap().model.clone()
+    }
+
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
         provider: Arc<T>,
