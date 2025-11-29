@@ -205,7 +205,6 @@ pub struct TextThreadEditor {
     language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     title_edit_mode: bool,
     temp_title_input: SharedString,
-    title_hovered: bool,
 }
 
 const MAX_TAB_TITLE_LEN: usize = 16;
@@ -307,7 +306,6 @@ impl TextThreadEditor {
             dragged_file_worktrees: Vec::new(),
             title_edit_mode: false,
             temp_title_input: current_title,
-            title_hovered: false,
             language_model_selector: cx.new(|cx| {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
@@ -1948,25 +1946,8 @@ impl TextThreadEditor {
         cx.notify();
     }
 
-    #[allow(dead_code)]
-    fn has_content(&self, cx: &App) -> bool {
-        let text_thread = self.text_thread.read(cx);
-        text_thread.messages(cx).count() > 0
-    }
-
-    #[allow(dead_code)]
     fn regenerate_title(&mut self, cx: &mut Context<Self>) {
         self.regenerate_summary(cx);
-    }
-
-    fn handle_title_hover_enter(&mut self, cx: &mut Context<Self>) {
-        self.title_hovered = true;
-        cx.notify();
-    }
-
-    fn handle_title_hover_exit(&mut self, cx: &mut Context<Self>) {
-        self.title_hovered = false;
-        cx.notify();
     }
 
     fn render_title_editor(
@@ -2025,46 +2006,26 @@ impl TextThreadEditor {
             let title_display = div()
                 .flex()
                 .items_center()
-                .cursor(CursorStyle::PointingHand)
-                .id("title-display")
-                .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                    if *is_hovered {
-                        this.handle_title_hover_enter(cx);
-                    } else {
-                        this.handle_title_hover_exit(cx);
-                    }
-                    cx.notify();
-                }))
                 .on_click(cx.listener(|this, _, _window, cx| {
                     this.start_title_edit(cx);
                 }))
                 .child(
-                    div().flex().items_center().children([
-                        div()
-                            .text_ui(cx)
-                            .text_color(cx.theme().colors().text)
-                            .child(current_title),
-                        div()
-                            .ml_1()
-                            .when(self.title_hovered && self.has_content(cx), |this| {
-                                this.child(
-                                    Button::new("regenerate-title", "🔃")
-                                        .on_click(cx.listener(|this, _, _window, cx| {
-                                            this.regenerate_title(cx);
-                                        }))
-                                        .style(ButtonStyle::Subtle)
-                                        .tooltip(Tooltip::text("Regenerate title")),
-                                )
-                            })
-                            .when(!(self.title_hovered && self.has_content(cx)), |this| {
-                                this.child(
-                                    div()
-                                        .text_ui(cx)
-                                        .text_color(cx.theme().colors().text_muted)
-                                        .child("✏️"),
-                                )
-                            }),
-                    ]),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(DynamicSpacing::Base02.rems(cx))
+                        .children([
+                            IconButton::new("regenerate-title", IconName::RefreshCw)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.regenerate_title(cx);
+                                }))
+                                .tooltip(Tooltip::text("Regenerate title")),
+                            div()
+                                .text_ui(cx)
+                                .text_color(cx.theme().colors().text)
+                                .child(current_title),
+                        ]),
                 );
 
             title_display.into_any_element()
