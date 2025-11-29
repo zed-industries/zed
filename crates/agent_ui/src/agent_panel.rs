@@ -1615,9 +1615,39 @@ impl AgentPanel {
                         .child(title_editor)
                         .into_any_element()
                 } else {
-                    Label::new(thread_view.read(cx).title(cx))
-                        .color(Color::Muted)
-                        .truncate()
+                    let current_title = thread_view.read(cx).title(cx);
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap(DynamicSpacing::Base02.rems(cx))
+                        .children([
+                            div().child(
+                                IconButton::new("regenerate-thread-title", IconName::Rerun)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Regenerate title"))
+                                    .on_click({
+                                        let thread_view = thread_view.clone();
+                                        move |_, _window, cx| {
+                                            thread_view.update(cx, |thread_view, cx| {
+                                                // For now, just re-emit the current title
+                                                // TODO: Implement actual title regeneration
+                                                if let Some(thread) = thread_view.thread() {
+                                                    let title = thread.read(cx).title();
+                                                    let _ = thread.update(cx, |thread, cx| {
+                                                        thread.set_title(title, cx);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }),
+                            ),
+                            div().child(
+                                Label::new(current_title)
+                                    .color(Color::Muted)
+                                    .truncate()
+                                    .flex_grow(),
+                            ),
+                        ])
                         .into_any_element()
                 }
             }
