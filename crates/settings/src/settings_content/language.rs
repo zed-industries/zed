@@ -269,6 +269,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: none
     pub soft_wrap: Option<SoftWrap>,
+    /// Whether to include syntax highlighting in the editor.
+    ///
+    /// Default: true
+    pub highlight_syntax: Option<bool>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     ///

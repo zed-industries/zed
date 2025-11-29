@@ -70,6 +70,8 @@ pub struct LanguageSettings {
     pub hard_tabs: bool,
     /// How to soft-wrap long lines of text.
     pub soft_wrap: settings::SoftWrap,
+    // If syntax highlighting should work.
+    pub syntax_highlight: bool,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
@@ -524,6 +526,7 @@ impl settings::Settings for AllLanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
+                syntax_highlight: settings.highlight_syntax.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),
                 wrap_guides: settings.wrap_guides.unwrap(),
