@@ -46,6 +46,8 @@ pub(crate) struct WindowsPlatform {
     disable_direct_composition: bool,
 }
 
+pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
+
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,

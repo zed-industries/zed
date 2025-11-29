@@ -26,6 +26,7 @@ pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
+pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -140,7 +141,11 @@ impl WindowsWindowInner {
             // monitor is invalid, we do nothing.
             if !monitor.is_invalid() && lock.display.handle != monitor {
                 // we will get the same monitor if we only have one
-                lock.display = WindowsDisplay::new_with_handle(monitor);
+                if let Ok(display) = WindowsDisplay::new_with_handle(monitor) {
+                    lock.display = display;
+                } else {
+                    log::error!("failed to create WindowsDisplay from monitor handle");
+                }
             }
         }
         if let Some(mut callback) = lock.callbacks.moved.take() {
@@ -241,7 +246,10 @@ impl WindowsWindowInner {
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             for runnable in self.main_receiver.drain() {
-                runnable.run();
+                match runnable {
+                    crate::RunnableVariant::Meta(r) => r.run(),
+                    crate::RunnableVariant::Compat(r) => r.run(),
+                }
             }
             self.handle_paint_msg(handle)
         } else {
@@ -341,6 +349,7 @@ impl WindowsWindowInner {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
+                prefer_character_input: false,
             })
         })?;
         let mut func = lock.callbacks.input.take()?;
@@ -383,6 +392,7 @@ impl WindowsWindowInner {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
+                prefer_character_input: false,
             })
         }) else {
             return Some(1);
@@ -551,14 +561,12 @@ impl WindowsWindowInner {
         let scale_factor = lock.scale_factor;
         let wheel_scroll_amount = match modifiers.shift {
             true => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_chars
             }
             false => {
-                self.system_settings
-                    .borrow()
+                self.system_settings()
                     .mouse_wheel_settings
                     .wheel_scroll_lines
             }
@@ -876,7 +884,13 @@ impl WindowsWindowInner {
             log::error!("No monitor detected!");
             return None;
         }
-        let new_display = WindowsDisplay::new_with_handle(new_monitor);
+        let new_display = match WindowsDisplay::new_with_handle(new_monitor) {
+            Ok(d) => d,
+            Err(err) => {
+                log::error!("failed to create WindowsDisplay from new_monitor: {}", err);
+                return Some(0);
+            }
+        };
         self.state.borrow_mut().display = new_display;
         Some(0)
     }
@@ -1148,7 +1162,7 @@ impl WindowsWindowInner {
             lock.border_offset.update(handle).log_err();
             // system settings may emit a window message which wants to take the refcell lock, so drop it
             drop(lock);
-            self.system_settings.borrow_mut().update(display, wparam.0);
+            self.system_settings_mut().update(display, wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };

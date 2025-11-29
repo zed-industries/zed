@@ -108,6 +108,13 @@ impl WindowsKeyboardLayout {
             name: "unknown".to_string(),
         }
     }
+
+    /// Returns whether this keyboard layout uses an AltGr key (Right-Alt) instead of separate
+    /// Right-Alt + Left-Ctrl for composing characters. Default to false if unknown.
+    pub(crate) fn uses_altgr(&self) -> bool {
+        // Default conservative behaviour — many layouts do not use AltGr in the same sense.
+        false
+    }
 }
 
 impl WindowsKeyboardMapper {

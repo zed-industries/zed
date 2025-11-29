@@ -52,6 +52,7 @@ pub struct WindowsWindowState {
     pub click_state: ClickState,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
+    pub system_key_handled: bool,
 
     pub display: WindowsDisplay,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
@@ -117,6 +118,7 @@ impl WindowsWindowState {
         let hovered = false;
         let click_state = ClickState::new();
         let nc_button_pressed = None;
+        let system_key_handled = false;
         let fullscreen = None;
         let initial_placement = None;
 
@@ -139,6 +141,7 @@ impl WindowsWindowState {
             click_state,
             current_cursor,
             nc_button_pressed,
+            system_key_handled,
             display,
             fullscreen,
             initial_placement,
@@ -333,6 +336,18 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<'_, WindowsSystemSettings> {
+        self.system_settings.borrow_mut()
+    }
+}
+
+impl WindowsWindowInner {
+    /// Borrow the system settings for read-only access.
+    pub(crate) fn system_settings(&self) -> std::cell::Ref<WindowsSystemSettings> {
+        self.system_settings.borrow()
+    }
+
+    /// Borrow the system settings for mutable access.
+    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<WindowsSystemSettings> {
         self.system_settings.borrow_mut()
     }
 }
