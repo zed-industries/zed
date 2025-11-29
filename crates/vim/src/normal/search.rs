@@ -506,7 +506,12 @@ impl Vim {
                     search_bar.is_contains_uppercase(&search),
                 );
             } else {
-                options.set(SearchOptions::CASE_SENSITIVE, false)
+                // Fallback: no explicit i/I flags and smartcase disabled;
+                // use global editor.search.case_sensitive.
+                options.set(
+                    SearchOptions::CASE_SENSITIVE,
+                    EditorSettings::get_global(cx).search.case_sensitive,
+                )
             }
 
             if !replacement.flag_g {
