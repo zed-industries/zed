@@ -2161,7 +2161,6 @@ impl AgentPanel {
             .unwrap_or(false);
 
         let has_custom_icon = selected_agent_custom_icon.is_some();
-        let label = selected_agent_label.clone();
 
         let selected_agent = div()
             .id("selected_agent_icon")
@@ -2174,7 +2173,9 @@ impl AgentPanel {
                     this.px_1().child(Icon::new(icon).color(Color::Muted))
                 })
             })
-            .tooltip(move |_, cx| Tooltip::with_meta(label.clone(), None, "Selected Agent", cx));
+            .tooltip(move |_, cx| {
+                Tooltip::with_meta(selected_agent_label.clone(), None, "Selected Agent", cx)
+            });
 
         let selected_agent = if is_thread_loading {
             selected_agent
