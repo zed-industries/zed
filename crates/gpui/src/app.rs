@@ -1742,8 +1742,7 @@ impl App {
             }));
     }
 
-    /// Event handlers propagate events by default. Call this method to stop dispatching to
-    /// event handlers with a lower z-index (mouse) or higher in the tree (keyboard). This is
+    /// Event handlers propagate events by default. . This is
     /// the opposite of [`Self::propagate`]. It's also possible to cancel a call to [`Self::propagate`] by
     /// calling this method before effects are flushed.
     pub fn stop_propagation(&mut self) {
@@ -1756,6 +1755,11 @@ impl App {
     /// this method before effects are flushed.
     pub fn propagate(&mut self) {
         self.propagate_event = true;
+    }
+
+    /// Check if propagation has been stopped.
+    pub fn propagation_stopped(&mut self) -> bool {
+        !self.propagate_event
     }
 
     /// Build an action from some arbitrary data, typically a keymap entry.

@@ -360,7 +360,6 @@ impl Element for IndentGuidesElement {
                             on_hovered_indent_guide_click(active_indent_guide, window, cx);
 
                             cx.stop_propagation();
-                            window.prevent_default();
                         }
                     }
                 });
