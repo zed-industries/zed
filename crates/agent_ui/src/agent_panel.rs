@@ -2165,13 +2165,13 @@ impl AgentPanel {
 
         let selected_agent = div()
             .id("selected_agent_icon")
-            .px_1()
             .when_some(selected_agent_custom_icon, |this, icon_path| {
-                this.child(Icon::from_external_svg(icon_path).color(Color::Muted))
+                this.px_1()
+                    .child(Icon::from_external_svg(icon_path).color(Color::Muted))
             })
             .when(!has_custom_icon, |this| {
                 this.when_some(self.selected_agent.icon(), |this, icon| {
-                    this.child(Icon::new(icon).color(Color::Muted))
+                    this.px_1().child(Icon::new(icon).color(Color::Muted))
                 })
             })
             .tooltip(move |_, cx| Tooltip::with_meta(label.clone(), None, "Selected Agent", cx));
