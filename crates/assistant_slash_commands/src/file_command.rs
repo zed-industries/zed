@@ -313,7 +313,7 @@ fn collect_files(
                         }))?;
                         events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                             SlashCommandContent::Text {
-                                text: label.to_string(),
+                                text: label,
                                 run_commands_in_text: false,
                             },
                         )))?;
@@ -334,6 +334,7 @@ fn collect_files(
                             },
                         )))?;
                         directory_stack.push(entry.path.clone());
+                        folded_directory_names = RelPath::empty().into();
                     }
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
@@ -479,7 +480,11 @@ mod custom_path_matcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
                 .iter()
-                .map(|glob| Glob::new(&SanitizedPath::new(glob).to_string()))
+                .map(|glob| {
+                    let sanitized = SanitizedPath::new(glob).to_string();
+                    let normalized = sanitized.replace('\\', "/");
+                    Glob::new(&normalized)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
             let sources_with_trailing_slash = globs
