@@ -44,7 +44,7 @@ use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
-    borrow::Borrow as _,
+    borrow::{Borrow as _, Cow},
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
@@ -3923,6 +3923,21 @@ impl BackgroundScanner {
                     abs_path.strip_prefix(&root_canonical_path)
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
+                    path
+                } else if let Some(path) = self.executor.block(maybe!(async {
+                    let canonical_abs_path = self
+                        .fs
+                        .canonicalize(abs_path.as_path())
+                        .await
+                        .log_err()?;
+                    let stripped = canonical_abs_path
+                        .strip_prefix(root_canonical_path.as_path())
+                        .ok()?;
+                    let rel_path = RelPath::new(stripped, PathStyle::local())
+                        .ok()?
+                        .into_owned();
+                    Some(Cow::Owned(rel_path))
+                })) {
                     path
                 } else {
                     if is_git_related {
