@@ -1456,6 +1456,7 @@ impl InlineAssistant {
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
+                    editor.set_offset_content(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
