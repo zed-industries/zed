@@ -1127,6 +1127,23 @@ impl InputState {
             .unwrap_or(px(0.))
     }
 
+    /// Returns true if the scroll position is at the top.
+    pub fn at_top(&self) -> bool {
+        self.scroll_offset <= px(0.)
+    }
+
+    /// Returns true if the scroll position is at the bottom.
+    pub fn at_bottom(&self) -> bool {
+        let content_height = self.total_content_height();
+        let visible_height = self.available_height;
+
+        if content_height <= visible_height {
+            return true;
+        }
+
+        self.scroll_offset + visible_height >= content_height
+    }
+
     fn offset_from_utf16(&self, offset: usize) -> usize {
         let mut utf8_offset = 0;
         let mut utf16_count = 0;
