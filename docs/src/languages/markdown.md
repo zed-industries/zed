@@ -33,6 +33,26 @@ Zed supports using Prettier to automatically re-format Markdown documents. You c
   },
 ```
 
+### List Continuation
+
+When you press Enter at the end of a markdown list item, Zed will automatically continue the list on the next line. This works for:
+
+- Unordered lists using `-`, `*`, or `+` markers
+- Ordered lists with auto-incrementing numbers
+- Task lists (`- [ ]` and `- [x]`)
+
+If you press Enter on an empty list item (just the marker with no content), the list marker will be removed and you'll exit the list.
+
+To disable this behavior:
+
+```json [settings]
+  "languages": {
+    "Markdown": {
+      "extend_list_on_newline": false
+    }
+  },
+```
+
 ### Trailing Whitespace
 
 By default Zed will remove trailing whitespace on save. If you rely on invisible trailing whitespace being converted to `<br />` in Markdown files you can disable this behavior with:
