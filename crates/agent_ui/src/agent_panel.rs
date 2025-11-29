@@ -1647,43 +1647,9 @@ impl AgentPanel {
                         )
                         .into_any_element()
                 } else {
-                    let current_title = thread_view.read(cx).title(cx);
-                    let is_loading = thread_view.read(cx).is_loading();
-                    let is_generating = thread_view
-                        .read(cx)
-                        .thread()
-                        .map_or(false, |t| t.read(cx).is_generating_title());
-
-                    h_flex()
-                        .w_full()
-                        .items_center()
-                        .gap(DynamicSpacing::Base02.rems(cx))
-                        .children([
-                            div().children(if is_loading || is_generating {
-                                None
-                            } else {
-                                Some(
-                                    IconButton::new("regenerate-thread-title", IconName::Rerun)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Regenerate title"))
-                                        .on_click({
-                                            let thread_view = thread_view.clone();
-                                            move |_, _window, cx| {
-                                                thread_view.update(cx, |thread_view, cx| {
-                                                    if let Some(thread) = thread_view.thread() {
-                                                        thread.update(cx, |thread, cx| {
-                                                            thread.generate_title(cx);
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }),
-                                )
-                            }),
-                            div()
-                                .flex_grow()
-                                .child(Label::new(current_title).color(Color::Muted).truncate()),
-                        ])
+                    Label::new(thread_view.read(cx).title(cx))
+                        .color(Color::Muted)
+                        .truncate()
                         .into_any_element()
                 }
             }
