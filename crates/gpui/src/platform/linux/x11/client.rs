@@ -226,6 +226,12 @@ impl X11ClientStatePtr {
         self.0.upgrade().map(X11Client)
     }
 
+    pub(crate) fn update_gpu_context(&self, context: BladeContext) {
+        if let Some(client) = self.get_client() {
+            client.0.borrow_mut().gpu_context = context;
+        }
+    }
+
     pub fn drop_window(&self, x_window: u32) {
         let Some(client) = self.get_client() else {
             return;
@@ -788,6 +794,16 @@ impl X11Client {
                 let window = self.get_window(event.window)?;
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
+
+                if event.type_ == state.atoms._GPUI_FORCE_UPDATE_WINDOW {
+                    window.mark_renderer_drawable();
+                    drop(state);
+                    window.refresh(RequestFrameOptions {
+                        force_render: true,
+                        require_presentation: false,
+                    });
+                    return None;
+                }
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user
