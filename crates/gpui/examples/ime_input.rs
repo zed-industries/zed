@@ -10,11 +10,7 @@ fn main() {
     Application::new().run(|cx| {
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| {
-                div()
-                    .flex()
-                    .w_full()
-                    .h_full()
-                    .child(text("IME input example"))
+                div().flex().w_full().h_full()
             })
         })
         .unwrap();
