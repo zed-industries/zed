@@ -51,6 +51,7 @@ pub struct InputState {
     pub(crate) line_height: Pixels,
     pub(crate) line_layouts: Vec<InputLineLayout>,
     pub(crate) wrap_width: Option<Pixels>,
+    pub(crate) text_style: Option<crate::TextStyle>,
     pub(crate) needs_layout: bool,
     is_selecting: bool,
     last_click_position: Option<Point<Pixels>>,
@@ -116,9 +117,10 @@ impl InputState {
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
-            line_height: px(18.),
+            line_height: px(0.),
             line_layouts: Vec::new(),
             wrap_width: None,
+            text_style: None,
             needs_layout: true,
             is_selecting: false,
             last_click_position: None,
@@ -196,6 +198,19 @@ impl InputState {
     fn pause_cursor_blink(&self, cx: &mut Context<Self>) {
         if let Some(blink_manager) = &self.blink_manager {
             blink_manager.update(cx, |bm, cx| bm.pause_blinking(cx));
+        }
+    }
+
+    /// Sets the text style used for layout. Marks layout as dirty if the style changed.
+    pub(crate) fn set_text_style(&mut self, style: &crate::TextStyle) {
+        let changed = self
+            .text_style
+            .as_ref()
+            .map_or(true, |current| current != style);
+
+        if changed {
+            self.text_style = Some(style.clone());
+            self.needs_layout = true;
         }
     }
 
@@ -999,6 +1014,7 @@ impl InputState {
         window: &mut Window,
     ) {
         self.line_height = line_height;
+        self.set_text_style(text_style);
 
         if !self.needs_layout && self.wrap_width == Some(width) {
             return;
