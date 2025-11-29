@@ -1934,7 +1934,7 @@ impl TextThreadEditor {
             self.title_edit_mode = false;
 
             self.text_thread.update(cx, |text_thread, cx| {
-                text_thread.set_custom_summary(new_title, cx)
+                text_thread.set_custom_summary(new_title.to_string(), cx)
             });
             cx.notify();
         }
@@ -1944,25 +1944,6 @@ impl TextThreadEditor {
         self.title_edit_mode = false;
         self.temp_title_input = self.title(cx);
         cx.notify();
-    }
-
-    fn handle_title_edit_keypress(
-        &mut self,
-        event: &editor::search::Event,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.title_edit_mode {
-            match event {
-                editor::search::Event::Confirm => {
-                    self.save_title_edit(cx);
-                }
-                editor::search::Event::Cancel => {
-                    self.cancel_title_edit(cx);
-                }
-                _ => {}
-            }
-        }
     }
 
     fn render_title_editor(
@@ -1976,41 +1957,41 @@ impl TextThreadEditor {
                 .flex()
                 .items_center()
                 .child(
-                    ui::TextInput::new()
-                        .placeholder("Enter thread title...")
-                        .text(temp_input)
-                        .on_change(cx.listener(|this, new_text: SharedString, cx| {
-                            this.temp_title_input = new_text;
-                            cx.notify();
-                        }))
-                        .on_action(cx.listener(|this, _: &ui::Confirm, cx| {
-                            this.save_title_edit(cx);
-                        }))
-                        .on_action(cx.listener(|this, _: &ui::Cancel, cx| {
-                            this.cancel_title_edit(cx);
-                        }))
-                        .width(px(300.0))
-                        .key_context("TitleEditor")
-                        .capture_action(cx.listener(TextThreadEditor::save_title_edit))
-                        .capture_action(cx.listener(TextThreadEditor::cancel_title_edit)),
+                    div()
+                        .border_2()
+                        .border_color(cx.theme().colors().border_focused)
+                        .bg(cx.theme().colors().surface)
+                        .rounded_md()
+                        .p_3()
+                        .min_w(px(300.0))
+                        .cursor(CursorStyle::Text)
+                        .child(div().text_ui().text_color(cx.theme().colors().text).child(
+                            if temp_input.is_empty() {
+                                "Enter thread title...".into()
+                            } else {
+                                temp_input.clone()
+                            },
+                        )),
                 )
                 .child(
                     div()
                         .flex()
                         .gap_1()
                         .child(
-                            ui::Button::new("save", "Save")
+                            ButtonLike::new("save")
+                                .label("Save")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.save_title_edit(cx);
                                 }))
-                                .style(ui::ButtonStyle::Subtle),
+                                .style(ButtonStyle::Subtle),
                         )
                         .child(
-                            ui::Button::new("cancel", "Cancel")
+                            ButtonLike::new("cancel")
+                                .label("Cancel")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.cancel_title_edit(cx);
                                 }))
-                                .style(ui::ButtonStyle::Subtle),
+                                .style(ButtonStyle::Subtle),
                         ),
                 );
 
@@ -2034,7 +2015,7 @@ impl TextThreadEditor {
                     div()
                         .ml_1()
                         .text_ui()
-                        .text_color(cx.theme().colors().text_dim)
+                        .text_color(cx.theme().colors().text_muted)
                         .child("✏️"),
                 );
 
