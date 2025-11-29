@@ -17,8 +17,8 @@ use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{
-    Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, ToggleButtonGroup,
-    ToggleButtonSimple, Tooltip, prelude::*,
+    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
+    ToggleButtonGroup, ToggleButtonSimple, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -384,7 +384,7 @@ impl BranchListDelegate {
     fn loader(&self) -> AnyElement {
         Icon::new(IconName::LoadCircle)
             .size(IconSize::Small)
-            // .transform(Transform::rotate(3.0))
+            .with_rotate_animation(3)
             .into_any_element()
     }
 
