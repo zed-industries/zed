@@ -1063,6 +1063,12 @@ impl App {
         self.platform.write_to_clipboard(item)
     }
 
+    /// Writes file to the platform clipboard.
+    #[cfg(feature = "x11")]
+    pub fn write_file_to_clipboard(&self, item: Vec<ClipboardItem>) {
+        self.platform.write_file_to_clipboard(item);
+    }
+
     /// Reads data from the primary selection buffer.
     /// Only available on Linux.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]

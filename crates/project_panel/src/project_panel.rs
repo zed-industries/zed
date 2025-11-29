@@ -2620,6 +2620,23 @@ impl ProjectPanel {
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
+            let project = self.project.read(cx);
+            let items: Vec<ClipboardItem> = entries
+                .iter()
+                .filter_map(|entry| {
+                    let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
+                    let abs_entry_path = project
+                        .worktree_for_id(entry.worktree_id, cx)?
+                        .read(cx)
+                        .absolutize(&entry_path)
+                        .to_string_lossy()
+                        .to_string();
+                    Some(ClipboardItem::new_string(abs_entry_path))
+                })
+                .collect();
+
+            cx.write_file_to_clipboard(items);
+
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
         }

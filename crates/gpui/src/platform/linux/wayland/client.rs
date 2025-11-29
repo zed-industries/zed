@@ -875,6 +875,8 @@ impl LinuxClient for WaylandClient {
         }
     }
 
+    fn write_file_to_clipboard(&self, _item: Vec<crate::ClipboardItem>) {}
+
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         self.0.borrow_mut().clipboard.read_primary()
     }
