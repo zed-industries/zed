@@ -2010,12 +2010,14 @@ impl TextThreadEditor {
                         .items_center()
                         .gap(DynamicSpacing::Base02.rems(cx))
                         .children([
-                            IconButton::new("regenerate-title", IconName::Rerun)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.regenerate_title(cx);
-                                }))
-                                .tooltip(Tooltip::text("Regenerate title")),
+                            div().child(
+                                IconButton::new("regenerate-title", IconName::Rerun)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.regenerate_title(cx);
+                                    }))
+                                    .tooltip(Tooltip::text("Regenerate title")),
+                            ),
                             div()
                                 .text_ui(cx)
                                 .text_color(cx.theme().colors().text)
