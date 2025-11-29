@@ -4,7 +4,7 @@
 
 use gpui::prelude::*;
 // Make the example self-contained by importing the concrete types we rely on
-use gpui::{Application, WindowOptions, EmptyView};
+use gpui::{Application, EmptyView, WindowOptions};
 
 fn main() {
     Application::new().run(|cx| {

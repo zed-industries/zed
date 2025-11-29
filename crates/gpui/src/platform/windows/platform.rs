@@ -1272,6 +1272,9 @@ mod tests {
 
         assert_write_read(ClipboardItem::new_string("你好，我是张小白".to_string()));
         assert_write_read(ClipboardItem::new_string("12345".to_string()));
-        assert_write_read(ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]));
+        assert_write_read(ClipboardItem::new_string_with_json_metadata(
+            "abcdef".to_string(),
+            vec![3, 4],
+        ));
     }
 }
