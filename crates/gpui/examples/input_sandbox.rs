@@ -21,13 +21,13 @@ impl InputSandbox {
         let initial_sample = SampleText::Typography;
 
         let multiline_input = cx.new(|cx| {
-            let mut input = InputState::new_multiline(cx).cursor_blink(cx);
+            let mut input = InputState::new_multiline(cx);
             input.set_content(initial_sample.content(), cx);
             input
         });
 
         let singleline_input = cx.new(|cx| {
-            let mut input = InputState::new_singleline(cx).cursor_blink(cx);
+            let mut input = InputState::new_singleline(cx);
             input.set_content("Single-line text input example", cx);
             input
         });

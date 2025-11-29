@@ -104,7 +104,11 @@ impl InputState {
     }
 
     /// Creates a new `Input` with the specified multiline setting.
+    /// Cursor blinking is enabled by default.
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let blink_manager = cx.new(|cx| BlinkManager::new(DEFAULT_BLINK_INTERVAL, cx));
+        let blink_subscription = cx.observe(&blink_manager, |_, _, cx| cx.notify());
+
         Self {
             focus_handle: cx.focus_handle(),
             content: String::new(),
@@ -126,8 +130,8 @@ impl InputState {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             group_interval: DEFAULT_GROUP_INTERVAL,
-            blink_manager: None,
-            _subscriptions: Vec::new(),
+            blink_manager: Some(blink_manager),
+            _subscriptions: vec![blink_subscription],
             was_focused: false,
         }
     }
@@ -143,24 +147,24 @@ impl InputState {
         self.multiline
     }
 
-    /// Enables cursor blinking with the default interval.
+    /// Enables or disables cursor blinking.
     ///
+    /// Cursor blinking is enabled by default. Call `cursor_blink(false)` to disable it.
     /// When enabled, the cursor will blink while the input is focused.
     /// Blinking is automatically paused during text editing for immediate feedback.
-    pub fn cursor_blink(self, cx: &mut Context<Self>) -> Self {
-        self.cursor_blink_with_interval(DEFAULT_BLINK_INTERVAL, cx)
+    pub fn cursor_blink(mut self, enabled: bool) -> Self {
+        if !enabled {
+            self.blink_manager = None;
+        }
+        self
     }
 
-    /// Enables cursor blinking with a custom interval.
+    /// Sets a custom cursor blink interval.
     ///
-    /// When enabled, the cursor will blink while the input is focused.
+    /// This also ensures cursor blinking is enabled.
     /// Blinking is automatically paused during text editing for immediate feedback.
-    pub fn cursor_blink_with_interval(
-        mut self,
-        blink_interval: Duration,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let blink_manager = cx.new(|cx| BlinkManager::new(blink_interval, cx));
+    pub fn cursor_blink_interval(mut self, interval: Duration, cx: &mut Context<Self>) -> Self {
+        let blink_manager = cx.new(|cx| BlinkManager::new(interval, cx));
         self._subscriptions
             .push(cx.observe(&blink_manager, |_, _, cx| cx.notify()));
         self.blink_manager = Some(blink_manager);
