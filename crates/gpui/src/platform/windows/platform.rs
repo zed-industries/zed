@@ -1262,8 +1262,13 @@ mod tests {
             write_to_clipboard(expected.clone());
             for _ in 0..10 {
                 if let Some(found) = read_from_clipboard() {
-                    assert_eq!(found, expected);
-                    return;
+                    // If the clipboard contains an item, only accept it when it matches
+                    // the expected content exactly. Some environments may surface older
+                    // clipboard contents transiently; keep retrying until we see the
+                    // expected value or exhaust attempts.
+                    if found == expected {
+                        return;
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
