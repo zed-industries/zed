@@ -421,21 +421,16 @@ impl Focusable for Markdown {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 enum SelectMode {
+    #[default]
     Character,
     Word(Range<usize>),
     Line(Range<usize>),
     All,
 }
 
-impl Default for SelectMode {
-    fn default() -> Self {
-        SelectMode::Character
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Selection {
     start: usize,
     end: usize,
@@ -497,18 +492,6 @@ impl Selection {
 
     fn tail(&self) -> usize {
         if self.reversed { self.end } else { self.start }
-    }
-}
-
-impl Default for Selection {
-    fn default() -> Self {
-        Self {
-            start: 0,
-            end: 0,
-            reversed: false,
-            pending: false,
-            mode: SelectMode::default(),
-        }
     }
 }
 
