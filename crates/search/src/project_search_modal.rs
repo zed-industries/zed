@@ -645,6 +645,10 @@ impl PickerDelegate for ProjectSearchModalDelegate {
         self.matches.clear();
         self.selected_index = 0;
 
+        self.project_search.update(cx, |project_search, cx| {
+            project_search.search(search_query.clone(), cx);
+        });
+
         let search = self.project.update(cx, |project, cx| {
             project.search(search_query, cx)
         });
