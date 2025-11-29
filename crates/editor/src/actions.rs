@@ -418,6 +418,8 @@ actions!(
         CopyFileLocation,
         /// Copies the highlighted text as JSON.
         CopyHighlightJson,
+        /// Copies selected text with syntax highlighting as HTML for rich text pasting.
+        CopyWithSyntaxHighlighting,
         /// Copies the current file name to the clipboard.
         CopyFileName,
         /// Copies the file name without extension to the clipboard.
