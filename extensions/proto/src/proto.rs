@@ -67,9 +67,8 @@ impl zed::Extension for ProtobufExtension {
     ) -> Result<Option<zed::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.settings)
-            .unwrap_or_default();
-        Ok(Some(settings))
+            .and_then(|lsp_settings| lsp_settings.settings);
+        Ok(settings)
     }
 
     fn language_server_initialization_options(
@@ -79,9 +78,8 @@ impl zed::Extension for ProtobufExtension {
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let initialization_options = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.initialization_options)
-            .unwrap_or_default();
-        Ok(Some(initialization_options))
+            .and_then(|lsp_settings| lsp_settings.initialization_options);
+        Ok(initialization_options)
     }
 }
 
