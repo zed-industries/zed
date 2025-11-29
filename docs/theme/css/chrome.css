@@ -365,16 +365,9 @@ mark.fade-out {
   color: var(--searchresults-header-fg);
 }
 
-.searchresults-outer {
-  margin-inline-start: auto;
-  margin-inline-end: auto;
-  max-width: var(--content-max-width);
-  border-block-end: 1px dashed var(--searchresults-border-color);
-}
-
 ul#searchresults {
   list-style: none;
-  padding-inline-start: 20px;
+  padding-inline-start: 0;
 }
 ul#searchresults li {
   margin: 10px 0px;
@@ -386,16 +379,16 @@ ul#searchresults li.focus {
 }
 ul#searchresults span.teaser {
   display: block;
-  clear: both;
-  margin-block-start: 5px;
-  margin-block-end: 0;
-  margin-inline-start: 20px;
-  margin-inline-end: 0;
   font-size: 0.8em;
+  margin-block-start: 5px;
+  margin-inline-start: 4px;
+  padding-inline-start: 2ch;
+  border-left: 1px solid var(--divider);
 }
 ul#searchresults span.teaser em {
   font-weight: bold;
-  font-style: normal;
+  color: var(--full-contrast);
+  background: var(--code-bg);
 }
 
 /* Sidebar */
