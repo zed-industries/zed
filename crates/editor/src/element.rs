@@ -64,6 +64,7 @@ use multi_buffer::{
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
+    project_settings::GitSettings,
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -2166,7 +2167,7 @@ impl EditorElement {
             .display_diff_hunks_for_rows(display_rows, folded_buffers)
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
-        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
+        let git_gutter_setting = GitSettings::get_global(cx).git_gutter;
         if let GitGutterSetting::TrackedFiles = git_gutter_setting {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
@@ -2524,10 +2525,11 @@ impl EditorElement {
 
         let editor = self.editor.read(cx);
         let blame = editor.blame.clone()?;
+        let git_settings = editor.git_settings(cx);
         let padding = {
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
-            let mut padding = ProjectSettings::get_global(cx).git.inline_blame.padding as f32;
+            let mut padding = git_settings.inline_blame.padding as f32;
 
             if let Some(edit_prediction) = editor.active_edit_prediction.as_ref()
                 && let EditPrediction::Edit {
@@ -2564,10 +2566,8 @@ impl EditorElement {
 
             let padded_line_end = line_end + padding;
 
-            let min_column_in_pixels = self.column_pixels(
-                ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
-                window,
-            );
+            let min_column_in_pixels =
+                self.column_pixels(git_settings.inline_blame.min_column as usize, window);
             let min_start = Pixels::from(
                 ScrollPixelOffset::from(content_origin.x + min_column_in_pixels)
                     - scroll_pixel_position.x,
@@ -6350,7 +6350,7 @@ impl EditorElement {
             .show_git_diff_gutter
             .unwrap_or_else(|| {
                 matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
+                    GitSettings::get_global(cx).git_gutter,
                     GitGutterSetting::TrackedFiles
                 )
             });
@@ -7738,7 +7738,7 @@ impl EditorElement {
     fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
         let unstaged = status.has_secondary_hunk();
         let unstaged_hollow = matches!(
-            ProjectSettings::get_global(cx).git.hunk_style,
+            GitSettings::get_global(cx).hunk_style,
             GitHunkStyleSetting::UnstagedHollow
         );
 
@@ -9479,8 +9479,7 @@ impl Element for EditorElement {
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
                             let inline_blame_padding =
-                                ProjectSettings::get_global(cx).git.inline_blame.padding as f32
-                                    * em_advance;
+                                editor.git_settings(cx).inline_blame.padding as f32 * em_advance;
                             Some(
                                 element
                                     .layout_as_root(AvailableSpace::min_size(), window, cx)
