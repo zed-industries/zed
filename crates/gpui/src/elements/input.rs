@@ -275,7 +275,6 @@ impl Element for Input {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let text_color = layout_state.text_style.color;
         let line_height = layout_state
             .text_style
             .line_height_in_pixels(window.rem_size());
@@ -289,7 +288,7 @@ impl Element for Input {
         self.input.update(cx, |input, _cx| {
             input.available_height = bounds.size.height;
             input.available_width = bounds.size.width;
-            input.update_line_layouts(wrap_width, line_height, text_color, window);
+            input.update_line_layouts(wrap_width, line_height, &layout_state.text_style, window);
         });
 
         let hitbox = self.interactivity.prepaint(

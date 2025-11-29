@@ -995,7 +995,7 @@ impl InputState {
         &mut self,
         width: Pixels,
         line_height: Pixels,
-        text_color: impl Into<crate::Hsla>,
+        text_style: &crate::TextStyle,
         window: &mut Window,
     ) {
         self.line_height = line_height;
@@ -1007,8 +1007,7 @@ impl InputState {
         self.line_layouts.clear();
         self.wrap_width = Some(width);
 
-        let text_color = text_color.into();
-        let text_style = window.text_style();
+        let text_color = text_style.color;
         let font_size = text_style.font_size.to_pixels(window.rem_size());
 
         if self.content.is_empty() {
@@ -1444,7 +1443,7 @@ impl Focusable for InputState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppContext, Entity, IntoElement, Render, TestAppContext, div};
+    use crate::{AppContext, Entity, IntoElement, Render, TestAppContext, TextStyle, div};
 
     struct TestView {
         input: Entity<InputState>,
@@ -1482,7 +1481,7 @@ mod tests {
                 let mut input = InputState::new_multiline(cx);
                 input.content = content.to_string();
                 input.selected_range = range;
-                input.update_line_layouts(px(500.), px(20.), crate::black(), window);
+                input.update_line_layouts(px(500.), px(20.), &TextStyle::default(), window);
                 input
             });
             TestView { input }
