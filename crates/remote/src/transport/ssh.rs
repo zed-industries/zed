@@ -1060,8 +1060,7 @@ impl SshSocket {
 
         // The outputs of initialization scripts may not end with new line, so os may become like
         // "Welcome to Ubuntu 20.04.4 LTSLinux". We just check the ending here.
-        let os = os.trim_end();
-        let os = match os {
+        let os = match os.trim_end() {
             o if o.ends_with("Darwin") => "macos",
             o if o.ends_with("Linux") => "linux",
             _ => anyhow::bail!(
