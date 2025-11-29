@@ -675,6 +675,8 @@ impl AcpThreadView {
                             })
                         });
 
+                        this.message_editor.focus_handle(cx).focus(window);
+
                         cx.notify();
                     }
                     Err(err) => {
@@ -1007,6 +1009,10 @@ impl AcpThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
         }
+    }
+
+    pub fn is_loading(&self) -> bool {
+        matches!(self.thread_state, ThreadState::Loading { .. })
     }
 
     fn resume_chat(&mut self, cx: &mut Context<Self>) {
@@ -4196,8 +4202,10 @@ impl AcpThreadView {
             .block_mouse_except_scroll();
 
         let enable_editor = match self.thread_state {
-            ThreadState::Loading { .. } | ThreadState::Ready { .. } => true,
-            ThreadState::Unauthenticated { .. } | ThreadState::LoadError(..) => false,
+            ThreadState::Ready { .. } => true,
+            ThreadState::Loading { .. }
+            | ThreadState::Unauthenticated { .. }
+            | ThreadState::LoadError(..) => false,
         };
 
         v_flex()
@@ -5858,12 +5866,10 @@ fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.thread_state {
-            ThreadState::Loading { .. } | ThreadState::Ready { .. } => {
-                self.active_editor(cx).focus_handle(cx)
-            }
-            ThreadState::LoadError(_) | ThreadState::Unauthenticated { .. } => {
-                self.focus_handle.clone()
-            }
+            ThreadState::Ready { .. } => self.active_editor(cx).focus_handle(cx),
+            ThreadState::Loading { .. }
+            | ThreadState::LoadError(_)
+            | ThreadState::Unauthenticated { .. } => self.focus_handle.clone(),
         }
     }
 }
