@@ -1594,34 +1594,19 @@ impl AgentPanel {
         let content = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
-                    div()
-                        .w_full()
-                        .on_action({
-                            let thread_view = thread_view.downgrade();
-                            move |_: &menu::Confirm, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
-                                }
-                            }
-                        })
-                        .on_action({
-                            let thread_view = thread_view.downgrade();
-                            move |_: &editor::actions::Cancel, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
-                                }
-                            }
-                        })
-                        .child(title_editor)
-                        .into_any_element()
-                } else {
-                    let current_title = thread_view.read(cx).title(cx);
+                    let is_generating = thread_view
+                        .read(cx)
+                        .thread()
+                        .map_or(false, |t| t.read(cx).is_generating_title());
+
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap(DynamicSpacing::Base02.rems(cx))
-                        .children([
-                            div().child(
+                        .children(if is_generating {
+                            None
+                        } else {
+                            Some(
                                 IconButton::new("regenerate-thread-title", IconName::Rerun)
                                     .icon_size(IconSize::Small)
                                     .tooltip(Tooltip::text("Regenerate title"))
@@ -1629,18 +1614,72 @@ impl AgentPanel {
                                         let thread_view = thread_view.clone();
                                         move |_, _window, cx| {
                                             thread_view.update(cx, |thread_view, cx| {
-                                                // For now, just re-emit the current title
-                                                // TODO: Implement actual title regeneration
                                                 if let Some(thread) = thread_view.thread() {
-                                                    let title = thread.read(cx).title();
-                                                    let _ = thread.update(cx, |thread, cx| {
-                                                        thread.set_title(title, cx);
+                                                    thread.update(cx, |thread, cx| {
+                                                        thread.generate_title(cx);
                                                     });
                                                 }
                                             });
                                         }
                                     }),
-                            ),
+                            )
+                        })
+                        .child(
+                            div()
+                                .flex_grow()
+                                .on_action({
+                                    let thread_view = thread_view.downgrade();
+                                    move |_: &menu::Confirm, window, cx| {
+                                        if let Some(thread_view) = thread_view.upgrade() {
+                                            thread_view.focus_handle(cx).focus(window);
+                                        }
+                                    }
+                                })
+                                .on_action({
+                                    let thread_view = thread_view.downgrade();
+                                    move |_: &editor::actions::Cancel, window, cx| {
+                                        if let Some(thread_view) = thread_view.upgrade() {
+                                            thread_view.focus_handle(cx).focus(window);
+                                        }
+                                    }
+                                })
+                                .child(title_editor),
+                        )
+                        .into_any_element()
+                } else {
+                    let current_title = thread_view.read(cx).title(cx);
+                    let is_loading = thread_view.read(cx).is_loading();
+                    let is_generating = thread_view
+                        .read(cx)
+                        .thread()
+                        .map_or(false, |t| t.read(cx).is_generating_title());
+
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap(DynamicSpacing::Base02.rems(cx))
+                        .children([
+                            div().children(if is_loading || is_generating {
+                                None
+                            } else {
+                                Some(
+                                    IconButton::new("regenerate-thread-title", IconName::Rerun)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Regenerate title"))
+                                        .on_click({
+                                            let thread_view = thread_view.clone();
+                                            move |_, _window, cx| {
+                                                thread_view.update(cx, |thread_view, cx| {
+                                                    if let Some(thread) = thread_view.thread() {
+                                                        thread.update(cx, |thread, cx| {
+                                                            thread.generate_title(cx);
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }),
+                                )
+                            }),
                             div()
                                 .flex_grow()
                                 .child(Label::new(current_title).color(Color::Muted).truncate()),
