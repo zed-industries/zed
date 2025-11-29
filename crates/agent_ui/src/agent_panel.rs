@@ -1592,25 +1592,57 @@ impl AgentPanel {
         let content = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
-                    div()
+                    let is_generating = thread_view
+                        .read(cx)
+                        .as_native_thread(cx)
+                        .map_or(false, |t| t.read(cx).is_generating_title());
+
+                    h_flex()
                         .w_full()
-                        .on_action({
-                            let thread_view = thread_view.downgrade();
-                            move |_: &menu::Confirm, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
-                                }
-                            }
+                        .items_center()
+                        .gap(DynamicSpacing::Base02.rems(cx))
+                        .children(if is_generating {
+                            None
+                        } else {
+                            Some(
+                                IconButton::new("regenerate-thread-title", IconName::Rerun)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Regenerate title"))
+                                    .on_click({
+                                        let thread_view = thread_view.clone();
+                                        move |_, _window, cx| {
+                                            thread_view.update(cx, |thread_view, cx| {
+                                                if let Some(thread) = thread_view.as_native_thread(cx) {
+                                                    thread.update(cx, |thread, cx| {
+                                                        thread.generate_title(cx);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }),
+                            )
                         })
-                        .on_action({
-                            let thread_view = thread_view.downgrade();
-                            move |_: &editor::actions::Cancel, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
-                                }
-                            }
-                        })
-                        .child(title_editor)
+                        .child(
+                            div()
+                                .flex_grow()
+                                .on_action({
+                                    let thread_view = thread_view.downgrade();
+                                    move |_: &menu::Confirm, window, cx| {
+                                        if let Some(thread_view) = thread_view.upgrade() {
+                                            thread_view.focus_handle(cx).focus(window);
+                                        }
+                                    }
+                                })
+                                .on_action({
+                                    let thread_view = thread_view.downgrade();
+                                    move |_: &editor::actions::Cancel, window, cx| {
+                                        if let Some(thread_view) = thread_view.upgrade() {
+                                            thread_view.focus_handle(cx).focus(window);
+                                        }
+                                    }
+                                })
+                                .child(title_editor),
+                        )
                         .into_any_element()
                 } else {
                     Label::new(thread_view.read(cx).title(cx))
