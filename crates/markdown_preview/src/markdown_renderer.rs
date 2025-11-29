@@ -520,7 +520,6 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .px_2()
                 .py_1()
                 .border_1()
-                .size_full()
                 .border_color(cx.border_color)
                 .when(cell.is_header, |this| {
                     this.bg(cx.title_bar_background_color)
@@ -551,7 +550,6 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
             let empty_cell = div()
                 .border_1()
-                .size_full()
                 .border_color(cx.border_color)
                 .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
 
@@ -560,7 +558,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         }
     }
 
-    cx.with_common_p(div())
+    cx.with_common_p(v_flex().items_start())
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
