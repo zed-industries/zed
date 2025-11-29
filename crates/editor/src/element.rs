@@ -1724,10 +1724,31 @@ impl EditorElement {
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
+
+                    // Apply smooth cursor animation if enabled (only for newest/local cursor)
+                    let cursor_origin = if selection.is_newest && selection.is_local {
+                        let settings = EditorSettings::get_global(cx);
+                        if settings.cursor_smooth_caret_animation {
+                            let target = point(x, y);
+                            editor.cursor_animation_state.set_duration(settings.cursor_animation_duration_ms);
+                            editor.cursor_animation_state.animate_to(target);
+                            let animated_pos = editor.cursor_animation_state.current_position();
+                            // Request re-render if still animating
+                            if editor.cursor_animation_state.is_animating() {
+                                cx.notify();
+                            }
+                            animated_pos
+                        } else {
+                            point(x, y)
+                        }
+                    } else {
+                        point(x, y)
+                    };
+
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
-                            text_hitbox.origin.x + x + block_width / 2.,
-                            text_hitbox.origin.y + y + line_height / 2.,
+                            text_hitbox.origin.x + cursor_origin.x + block_width / 2.,
+                            text_hitbox.origin.y + cursor_origin.y + line_height / 2.,
                         ));
 
                         if autoscroll_containing_element {
@@ -1762,7 +1783,7 @@ impl EditorElement {
                     let mut cursor = CursorLayout {
                         color: player_color.cursor,
                         block_width,
-                        origin: point(x, y),
+                        origin: cursor_origin,
                         line_height,
                         shape: selection.cursor_shape,
                         block_text,

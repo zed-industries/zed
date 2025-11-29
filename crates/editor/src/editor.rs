@@ -15,6 +15,7 @@ pub mod actions;
 pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
+mod cursor_animation;
 pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
@@ -1126,6 +1127,7 @@ pub struct Editor {
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    cursor_animation_state: cursor_animation::CursorAnimationState,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
@@ -2245,6 +2247,7 @@ impl Editor {
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            cursor_animation_state: cursor_animation::CursorAnimationState::default(),
             last_bounds: None,
             last_position_map: None,
             expect_bounds_change: None,

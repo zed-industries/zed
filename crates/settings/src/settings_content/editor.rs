@@ -17,6 +17,20 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+
+    /// Whether to animate cursor movement smoothly.
+    /// When enabled, the cursor will glide to its new position
+    /// instead of jumping instantly.
+    /// Similar to VS Code's `editor.cursorSmoothCaretAnimation` setting.
+    ///
+    /// Default: false
+    pub cursor_smooth_caret_animation: Option<bool>,
+
+    /// Duration of the cursor animation in milliseconds.
+    /// Only applies when `cursor_smooth_caret_animation` is enabled.
+    ///
+    /// Default: 80
+    pub cursor_animation_duration_ms: Option<u64>,
     /// Cursor shape for the default editor.
     /// Can be "bar", "block", "underline", or "hollow".
     ///
