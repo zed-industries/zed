@@ -446,9 +446,10 @@ impl AcpThreadHistory {
                                 .tooltip(move |_window, cx| {
                                     Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
-                                ),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_thread(ix, cx);
+                                    cx.stop_propagation()
+                                })),
                         )
                     } else {
                         None
