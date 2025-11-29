@@ -1011,6 +1011,10 @@ impl AcpThreadView {
         }
     }
 
+    pub fn is_loading(&self) -> bool {
+        matches!(self.thread_state, ThreadState::Loading { .. })
+    }
+
     fn resume_chat(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
         let Some(thread) = self.thread() else {
