@@ -671,6 +671,7 @@ impl DirectXRenderer {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn mark_drawable(&mut self) {
         self.skip_draws = false;
     }

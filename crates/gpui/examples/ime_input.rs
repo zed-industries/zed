@@ -12,7 +12,7 @@ fn main() {
                     .flex()
                     .w_full()
                     .h_full()
-                    .child(gpui::examples::input::input_example().into_element())
+                    .child(text("IME input example"))
             })
         })
         .unwrap();

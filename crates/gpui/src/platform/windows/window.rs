@@ -57,6 +57,7 @@ pub struct WindowsWindowState {
     pub display: WindowsDisplay,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
+    #[allow(dead_code)]
     pub invalidate_devices: Arc<AtomicBool>,
     fullscreen: Option<StyleAndBounds>,
     initial_placement: Option<WindowOpenStatus>,
