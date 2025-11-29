@@ -8,10 +8,13 @@ fn main() {
     Application::new().run(|cx| {
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| {
-                div().flex().w_full().h_full().child(
-                    gpui::examples::input::input_example().into_element()
-                )
+                div()
+                    .flex()
+                    .w_full()
+                    .h_full()
+                    .child(gpui::examples::input::input_example().into_element())
             })
-        }).unwrap();
+        })
+        .unwrap();
     });
 }

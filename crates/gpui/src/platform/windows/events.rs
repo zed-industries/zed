@@ -3,7 +3,6 @@ use std::rc::Rc;
 use ::util::ResultExt;
 use anyhow::Context as _;
 use windows::{
-    core::PCWSTR,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
@@ -15,6 +14,7 @@ use windows::{
             WindowsAndMessaging::*,
         },
     },
+    core::PCWSTR,
 };
 
 use crate::*;
@@ -247,8 +247,12 @@ impl WindowsWindowInner {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             for runnable in self.main_receiver.drain() {
                 match runnable {
-                    crate::RunnableVariant::Meta(r) => r.run(),
-                    crate::RunnableVariant::Compat(r) => r.run(),
+                    crate::RunnableVariant::Meta(r) => {
+                        r.run();
+                    }
+                    crate::RunnableVariant::Compat(r) => {
+                        r.run();
+                    }
                 }
             }
             self.handle_paint_msg(handle)
@@ -265,11 +269,7 @@ impl WindowsWindowInner {
         let mut callback = self.state.borrow_mut().callbacks.should_close.take()?;
         let should_close = callback();
         self.state.borrow_mut().callbacks.should_close = Some(callback);
-        if should_close {
-            None
-        } else {
-            Some(0)
-        }
+        if should_close { None } else { Some(0) }
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
@@ -324,11 +324,7 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
     fn handle_mouse_leave_msg(&self) -> Option<isize> {
@@ -440,11 +436,7 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
     fn handle_char_msg(&self, wparam: WPARAM) -> Option<isize> {
@@ -492,11 +484,7 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
     fn handle_mouse_up_msg(
@@ -525,11 +513,7 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
     fn handle_xbutton_msg(
@@ -598,11 +582,7 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
     fn handle_mouse_horizontal_wheel_msg(
@@ -617,8 +597,7 @@ impl WindowsWindowInner {
         };
         let scale_factor = lock.scale_factor;
         let wheel_scroll_chars = self
-            .system_settings
-            .borrow()
+            .system_settings()
             .mouse_wheel_settings
             .wheel_scroll_chars;
         drop(lock);
@@ -642,11 +621,7 @@ impl WindowsWindowInner {
         let handled = !func(event).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            Some(1)
-        }
+        if handled { Some(0) } else { Some(1) }
     }
 
     fn retrieve_caret_position(&self) -> Option<POINT> {
@@ -757,8 +732,7 @@ impl WindowsWindowInner {
         // used by Chrome. However, it may result in one row of pixels being obscured
         // in our client area. But as Chrome says, "there seems to be no better solution."
         if is_maximized
-            && let Some(ref taskbar_position) =
-                self.system_settings.borrow().auto_hide_taskbar_position
+            && let Some(ref taskbar_position) = self.system_settings().auto_hide_taskbar_position
         {
             // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
             // so the window isn't treated as a "fullscreen app", which would cause
@@ -985,11 +959,7 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
-            Some(0)
-        } else {
-            None
-        }
+        if handled { Some(0) } else { None }
     }
 
     fn handle_nc_mouse_down_msg(

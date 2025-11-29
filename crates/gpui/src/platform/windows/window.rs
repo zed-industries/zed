@@ -340,18 +340,6 @@ impl WindowsWindowInner {
     }
 }
 
-impl WindowsWindowInner {
-    /// Borrow the system settings for read-only access.
-    pub(crate) fn system_settings(&self) -> std::cell::Ref<WindowsSystemSettings> {
-        self.system_settings.borrow()
-    }
-
-    /// Borrow the system settings for mutable access.
-    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<WindowsSystemSettings> {
-        self.system_settings.borrow_mut()
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Callbacks {
     pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
