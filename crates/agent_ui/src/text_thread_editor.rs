@@ -1964,7 +1964,7 @@ impl TextThreadEditor {
                         .rounded_md()
                         .p_3()
                         .min_w(px(300.0))
-                        .cursor(CursorStyle::Text)
+                        .cursor(CursorStyle::IBeam)
                         .child(div().text_ui(cx).text_color(cx.theme().colors().text).child(
                             if temp_input.is_empty() {
                                 "Enter thread title...".into()
@@ -1999,7 +1999,8 @@ impl TextThreadEditor {
             let title_display = div()
                 .flex()
                 .items_center()
-                .cursor(CursorStyle::Pointer)
+                .cursor(CursorStyle::PointingHand)
+                .id("title-display")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.start_title_edit(cx);
                 }))
