@@ -365,16 +365,9 @@ mark.fade-out {
   color: var(--searchresults-header-fg);
 }
 
-.searchresults-outer {
-  margin-inline-start: auto;
-  margin-inline-end: auto;
-  max-width: var(--content-max-width);
-  border-block-end: 1px dashed var(--searchresults-border-color);
-}
-
 ul#searchresults {
   list-style: none;
-  padding-inline-start: 20px;
+  padding-inline-start: 0;
 }
 ul#searchresults li {
   margin: 10px 0px;
@@ -386,16 +379,16 @@ ul#searchresults li.focus {
 }
 ul#searchresults span.teaser {
   display: block;
-  clear: both;
-  margin-block-start: 5px;
-  margin-block-end: 0;
-  margin-inline-start: 20px;
-  margin-inline-end: 0;
   font-size: 0.8em;
+  margin-block-start: 5px;
+  margin-inline-start: 4px;
+  padding-inline-start: 2ch;
+  border-left: 1px solid var(--divider);
 }
 ul#searchresults span.teaser em {
   font-weight: bold;
-  font-style: normal;
+  color: var(--full-contrast);
+  background: var(--code-bg);
 }
 
 /* Sidebar */
@@ -475,7 +468,7 @@ ul#searchresults span.teaser em {
   background: var(--scrollbar);
 }
 
-@media only screen and (max-width: 619px) {
+@media only screen and (max-width: 780px) {
   .sidebar {
     position: fixed;
     top: 0;
@@ -494,13 +487,8 @@ ul#searchresults span.teaser em {
   }
 
   body.sidebar-open .sidebar {
+    box-shadow: var(--sidebar-mobile-shadow);
     transform: translateX(0);
-  }
-}
-
-@media only screen and (min-width: 620px) {
-  .sidebar {
-    position: relative;
   }
 }
 
@@ -631,7 +619,6 @@ ul#searchresults span.teaser em {
   padding: 0;
   list-style: none;
   display: none;
-  /* Don't let the children's background extend past the rounded corners. */
   overflow: hidden;
 }
 
@@ -769,6 +756,10 @@ ul#searchresults span.teaser em {
   width: 100%;
 }
 
+#searchbar {
+  margin: 0;
+}
+
 @media only screen and (max-width: 780px) {
   .header-bar {
     padding: 16px;
@@ -812,10 +803,6 @@ ul#searchresults span.teaser em {
 
   .search-content-mobile {
     display: flex;
-  }
-
-  .sidebar {
-    box-shadow: var(--sidebar-mobile-shadow);
   }
 
   .theme-popup {
