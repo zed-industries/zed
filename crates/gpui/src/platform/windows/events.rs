@@ -26,7 +26,6 @@ pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
-pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -1204,7 +1203,7 @@ impl WindowsWindowInner {
         let mut lock = self.state.borrow_mut();
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
-        lock.renderer.handle_device_lost(&devices);
+        let _ = lock.renderer.handle_device_lost(&devices);
         Some(0)
     }
 
@@ -1443,6 +1442,7 @@ fn parse_immutable(vkey: VIRTUAL_KEY) -> Option<String> {
 /// Helper used by tests to map raw virtual-key numeric values to key names
 /// without requiring Windows types. This lets us add light-weight unit tests
 /// that don't depend on platform-specific types.
+#[allow(dead_code)]
 pub(crate) fn map_vkey_u16(v: u16) -> Option<&'static str> {
     match v {
         0xF0..=0xF4 => Some("ime_toggle"),
