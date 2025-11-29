@@ -468,7 +468,7 @@ ul#searchresults span.teaser em {
   background: var(--scrollbar);
 }
 
-@media only screen and (max-width: 619px) {
+@media only screen and (max-width: 780px) {
   .sidebar {
     position: fixed;
     top: 0;
@@ -487,13 +487,8 @@ ul#searchresults span.teaser em {
   }
 
   body.sidebar-open .sidebar {
+    box-shadow: var(--sidebar-mobile-shadow);
     transform: translateX(0);
-  }
-}
-
-@media only screen and (min-width: 620px) {
-  .sidebar {
-    position: relative;
   }
 }
 
@@ -624,7 +619,6 @@ ul#searchresults span.teaser em {
   padding: 0;
   list-style: none;
   display: none;
-  /* Don't let the children's background extend past the rounded corners. */
   overflow: hidden;
 }
 
@@ -762,6 +756,10 @@ ul#searchresults span.teaser em {
   width: 100%;
 }
 
+#searchbar {
+  margin: 0;
+}
+
 @media only screen and (max-width: 780px) {
   .header-bar {
     padding: 16px;
@@ -805,10 +803,6 @@ ul#searchresults span.teaser em {
 
   .search-content-mobile {
     display: flex;
-  }
-
-  .sidebar {
-    box-shadow: var(--sidebar-mobile-shadow);
   }
 
   .theme-popup {
