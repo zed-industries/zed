@@ -28,14 +28,13 @@ use util::{
 };
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: Version = Version::new(0, 6, 0);
-#[allow(dead_code)]
-pub const MAX_VERSION: Version = Version::new(0, 7, 0);
+pub const MIN_VERSION: Version = Version::new(0, 7, 0);
+pub const MAX_VERSION: Version = Version::new(0, 8, 0);
 
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.6.0",
+    path: "../extension_api/wit/since_v0.7.0",
     with: {
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
@@ -46,7 +45,7 @@ wasmtime::component::bindgen!({
 
 pub use self::zed::extension::*;
 
-// Import types from wasmtime-generated bindings for v0.6.0
+// Import types from wasmtime-generated bindings for v0.7.0
 use self::dap::{
     AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, LaunchRequest,
     StartDebuggingRequestArguments, TcpArguments, TcpArgumentsTemplate,
@@ -56,7 +55,7 @@ use self::slash_command::SlashCommandOutputSection;
 
 mod settings {
     #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.7.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
@@ -81,6 +80,17 @@ impl From<Command> for extension::Command {
     fn from(value: Command) -> Self {
         Self {
             command: value.command.into(),
+            args: value.args,
+            env: value.env,
+        }
+    }
+}
+
+// Convert from v0.6.0 Command to v0.7.0 Command (process.wit unchanged between versions)
+impl From<super::since_v0_6_0::zed::extension::process::Command> for Command {
+    fn from(value: super::since_v0_6_0::zed::extension::process::Command) -> Self {
+        Self {
+            command: value.command,
             args: value.args,
             env: value.env,
         }
@@ -228,6 +238,34 @@ impl TryFrom<DebugAdapterBinary> for extension::DebugAdapterBinary {
     }
 }
 
+impl TryFrom<super::since_v0_6_0::dap::DebugAdapterBinary> for DebugAdapterBinary {
+    type Error = anyhow::Error;
+    fn try_from(value: super::since_v0_6_0::dap::DebugAdapterBinary) -> Result<Self, Self::Error> {
+        Ok(Self {
+            command: value.command,
+            arguments: value.arguments,
+            envs: value.envs,
+            cwd: value.cwd,
+            connection: value.connection.map(|c| TcpArguments {
+                host: c.host,
+                port: c.port,
+                timeout: c.timeout,
+            }),
+            request_args: StartDebuggingRequestArguments {
+                configuration: value.request_args.configuration,
+                request: match value.request_args.request {
+                    super::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest::Launch => {
+                        StartDebuggingRequestArgumentsRequest::Launch
+                    }
+                    super::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest::Attach => {
+                        StartDebuggingRequestArgumentsRequest::Attach
+                    }
+                },
+            },
+        })
+    }
+}
+
 impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
     fn from(value: BuildTaskDefinition) -> Self {
         match value {
@@ -365,6 +403,128 @@ impl From<extension::Completion> for Completion {
     }
 }
 
+// Convert between v0.6.0 and v0.7.0 types (LSP unchanged between versions)
+impl From<Completion> for super::since_v0_6_0::lsp::Completion {
+    fn from(value: Completion) -> Self {
+        Self {
+            label: value.label,
+            label_details: value.label_details.map(|d| {
+                super::since_v0_6_0::lsp::CompletionLabelDetails {
+                    detail: d.detail,
+                    description: d.description,
+                }
+            }),
+            detail: value.detail,
+            kind: value.kind.map(|k| match k {
+                CompletionKind::Text => super::since_v0_6_0::lsp::CompletionKind::Text,
+                CompletionKind::Method => super::since_v0_6_0::lsp::CompletionKind::Method,
+                CompletionKind::Function => super::since_v0_6_0::lsp::CompletionKind::Function,
+                CompletionKind::Constructor => {
+                    super::since_v0_6_0::lsp::CompletionKind::Constructor
+                }
+                CompletionKind::Field => super::since_v0_6_0::lsp::CompletionKind::Field,
+                CompletionKind::Variable => super::since_v0_6_0::lsp::CompletionKind::Variable,
+                CompletionKind::Class => super::since_v0_6_0::lsp::CompletionKind::Class,
+                CompletionKind::Interface => super::since_v0_6_0::lsp::CompletionKind::Interface,
+                CompletionKind::Module => super::since_v0_6_0::lsp::CompletionKind::Module,
+                CompletionKind::Property => super::since_v0_6_0::lsp::CompletionKind::Property,
+                CompletionKind::Unit => super::since_v0_6_0::lsp::CompletionKind::Unit,
+                CompletionKind::Value => super::since_v0_6_0::lsp::CompletionKind::Value,
+                CompletionKind::Enum => super::since_v0_6_0::lsp::CompletionKind::Enum,
+                CompletionKind::Keyword => super::since_v0_6_0::lsp::CompletionKind::Keyword,
+                CompletionKind::Snippet => super::since_v0_6_0::lsp::CompletionKind::Snippet,
+                CompletionKind::Color => super::since_v0_6_0::lsp::CompletionKind::Color,
+                CompletionKind::File => super::since_v0_6_0::lsp::CompletionKind::File,
+                CompletionKind::Reference => super::since_v0_6_0::lsp::CompletionKind::Reference,
+                CompletionKind::Folder => super::since_v0_6_0::lsp::CompletionKind::Folder,
+                CompletionKind::EnumMember => super::since_v0_6_0::lsp::CompletionKind::EnumMember,
+                CompletionKind::Constant => super::since_v0_6_0::lsp::CompletionKind::Constant,
+                CompletionKind::Struct => super::since_v0_6_0::lsp::CompletionKind::Struct,
+                CompletionKind::Event => super::since_v0_6_0::lsp::CompletionKind::Event,
+                CompletionKind::Operator => super::since_v0_6_0::lsp::CompletionKind::Operator,
+                CompletionKind::TypeParameter => {
+                    super::since_v0_6_0::lsp::CompletionKind::TypeParameter
+                }
+                CompletionKind::Other(n) => super::since_v0_6_0::lsp::CompletionKind::Other(n),
+            }),
+            insert_text_format: value.insert_text_format.map(|f| match f {
+                InsertTextFormat::PlainText => {
+                    super::since_v0_6_0::lsp::InsertTextFormat::PlainText
+                }
+                InsertTextFormat::Snippet => super::since_v0_6_0::lsp::InsertTextFormat::Snippet,
+                InsertTextFormat::Other(n) => super::since_v0_6_0::lsp::InsertTextFormat::Other(n),
+            }),
+        }
+    }
+}
+
+impl From<super::since_v0_6_0::CodeLabel> for CodeLabel {
+    fn from(value: super::since_v0_6_0::CodeLabel) -> Self {
+        Self {
+            code: value.code,
+            spans: value
+                .spans
+                .into_iter()
+                .map(|s| match s {
+                    super::since_v0_6_0::CodeLabelSpan::CodeRange(r) => {
+                        CodeLabelSpan::CodeRange(Range {
+                            start: r.start,
+                            end: r.end,
+                        })
+                    }
+                    super::since_v0_6_0::CodeLabelSpan::Literal(l) => {
+                        CodeLabelSpan::Literal(CodeLabelSpanLiteral {
+                            text: l.text,
+                            highlight_name: l.highlight_name,
+                        })
+                    }
+                })
+                .collect(),
+            filter_range: Range {
+                start: value.filter_range.start,
+                end: value.filter_range.end,
+            },
+        }
+    }
+}
+
+impl From<Symbol> for super::since_v0_6_0::lsp::Symbol {
+    fn from(value: Symbol) -> Self {
+        Self {
+            kind: match value.kind {
+                SymbolKind::File => super::since_v0_6_0::lsp::SymbolKind::File,
+                SymbolKind::Module => super::since_v0_6_0::lsp::SymbolKind::Module,
+                SymbolKind::Namespace => super::since_v0_6_0::lsp::SymbolKind::Namespace,
+                SymbolKind::Package => super::since_v0_6_0::lsp::SymbolKind::Package,
+                SymbolKind::Class => super::since_v0_6_0::lsp::SymbolKind::Class,
+                SymbolKind::Method => super::since_v0_6_0::lsp::SymbolKind::Method,
+                SymbolKind::Property => super::since_v0_6_0::lsp::SymbolKind::Property,
+                SymbolKind::Field => super::since_v0_6_0::lsp::SymbolKind::Field,
+                SymbolKind::Constructor => super::since_v0_6_0::lsp::SymbolKind::Constructor,
+                SymbolKind::Enum => super::since_v0_6_0::lsp::SymbolKind::Enum,
+                SymbolKind::Interface => super::since_v0_6_0::lsp::SymbolKind::Interface,
+                SymbolKind::Function => super::since_v0_6_0::lsp::SymbolKind::Function,
+                SymbolKind::Variable => super::since_v0_6_0::lsp::SymbolKind::Variable,
+                SymbolKind::Constant => super::since_v0_6_0::lsp::SymbolKind::Constant,
+                SymbolKind::String => super::since_v0_6_0::lsp::SymbolKind::String,
+                SymbolKind::Number => super::since_v0_6_0::lsp::SymbolKind::Number,
+                SymbolKind::Boolean => super::since_v0_6_0::lsp::SymbolKind::Boolean,
+                SymbolKind::Array => super::since_v0_6_0::lsp::SymbolKind::Array,
+                SymbolKind::Object => super::since_v0_6_0::lsp::SymbolKind::Object,
+                SymbolKind::Key => super::since_v0_6_0::lsp::SymbolKind::Key,
+                SymbolKind::Null => super::since_v0_6_0::lsp::SymbolKind::Null,
+                SymbolKind::EnumMember => super::since_v0_6_0::lsp::SymbolKind::EnumMember,
+                SymbolKind::Struct => super::since_v0_6_0::lsp::SymbolKind::Struct,
+                SymbolKind::Event => super::since_v0_6_0::lsp::SymbolKind::Event,
+                SymbolKind::Operator => super::since_v0_6_0::lsp::SymbolKind::Operator,
+                SymbolKind::TypeParameter => super::since_v0_6_0::lsp::SymbolKind::TypeParameter,
+                SymbolKind::Other(n) => super::since_v0_6_0::lsp::SymbolKind::Other(n),
+            },
+            name: value.name,
+        }
+    }
+}
+
 impl From<extension::CompletionLabelDetails> for CompletionLabelDetails {
     fn from(value: extension::CompletionLabelDetails) -> Self {
         Self {
@@ -480,6 +640,25 @@ impl From<SlashCommandOutput> for extension::SlashCommandOutput {
     }
 }
 
+impl From<super::since_v0_6_0::slash_command::SlashCommandOutput> for SlashCommandOutput {
+    fn from(value: super::since_v0_6_0::slash_command::SlashCommandOutput) -> Self {
+        Self {
+            text: value.text,
+            sections: value
+                .sections
+                .into_iter()
+                .map(|s| SlashCommandOutputSection {
+                    range: Range {
+                        start: s.range.start,
+                        end: s.range.end,
+                    },
+                    label: s.label,
+                })
+                .collect(),
+        }
+    }
+}
+
 impl From<SlashCommandOutputSection> for extension::SlashCommandOutputSection {
     fn from(value: SlashCommandOutputSection) -> Self {
         Self {
@@ -495,6 +674,30 @@ impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCom
             label: value.label,
             new_text: value.new_text,
             run_command: value.run_command,
+        }
+    }
+}
+
+impl From<super::since_v0_6_0::slash_command::SlashCommandArgumentCompletion>
+    for SlashCommandArgumentCompletion
+{
+    fn from(value: super::since_v0_6_0::slash_command::SlashCommandArgumentCompletion) -> Self {
+        Self {
+            label: value.label,
+            new_text: value.new_text,
+            run_command: value.run_command,
+        }
+    }
+}
+
+impl From<super::since_v0_6_0::context_server::ContextServerConfiguration>
+    for ContextServerConfiguration
+{
+    fn from(value: super::since_v0_6_0::context_server::ContextServerConfiguration) -> Self {
+        Self {
+            installation_instructions: value.installation_instructions,
+            default_settings: value.default_settings,
+            settings_schema: value.settings_schema,
         }
     }
 }
@@ -992,7 +1195,7 @@ impl ExtensionImports for WasmState {
                                 settings: Some(settings),
                             })?),
                             project::project_settings::ContextServerSettings::Http { .. } => {
-                                bail!("remote context server settings not supported in 0.6.0")
+                                bail!("HTTP context servers are not supported in extensions")
                             }
                         }
                     }
