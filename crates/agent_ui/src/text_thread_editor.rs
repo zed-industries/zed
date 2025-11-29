@@ -26,7 +26,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement, IntoElement,
     ParentElement, Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement,
     Styled, Subscription, Task, WeakEntity, actions, div, img, point, prelude::*,
-    pulsating_between, size,
+    pulsating_between, size, CursorStyle,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -1960,12 +1960,12 @@ impl TextThreadEditor {
                     div()
                         .border_2()
                         .border_color(cx.theme().colors().border_focused)
-                        .bg(cx.theme().colors().surface)
+                        .bg(cx.theme().colors().surface_background)
                         .rounded_md()
                         .p_3()
                         .min_w(px(300.0))
                         .cursor(CursorStyle::Text)
-                        .child(div().text_ui().text_color(cx.theme().colors().text).child(
+                        .child(div().text_ui(cx).text_color(cx.theme().colors().text).child(
                             if temp_input.is_empty() {
                                 "Enter thread title...".into()
                             } else {
@@ -1978,16 +1978,14 @@ impl TextThreadEditor {
                         .flex()
                         .gap_1()
                         .child(
-                            ButtonLike::new("save")
-                                .label("Save")
+                            Button::new("save", "Save")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.save_title_edit(cx);
                                 }))
                                 .style(ButtonStyle::Subtle),
                         )
                         .child(
-                            ButtonLike::new("cancel")
-                                .label("Cancel")
+                            Button::new("cancel", "Cancel")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.cancel_title_edit(cx);
                                 }))
@@ -2007,14 +2005,14 @@ impl TextThreadEditor {
                 }))
                 .child(
                     div()
-                        .text_ui()
+                        .text_ui(cx)
                         .text_color(cx.theme().colors().text)
                         .child(current_title),
                 )
                 .child(
                     div()
                         .ml_1()
-                        .text_ui()
+                        .text_ui(cx)
                         .text_color(cx.theme().colors().text_muted)
                         .child("✏️"),
                 );
