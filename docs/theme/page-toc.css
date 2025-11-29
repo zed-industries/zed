@@ -5,8 +5,10 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 220px;
   padding: 28px 0 120px 0;
+  max-width: 230px;
+  min-width: 180px;
+  width: 100%;
   max-height: calc(100svh - 50px);
   overflow-x: hidden;
 }
@@ -72,7 +74,7 @@
   display: none;
 }
 
-@media only screen and (max-width: 1020px) {
+@media only screen and (max-width: 1200px) {
   .toc-container {
     display: none;
   }
