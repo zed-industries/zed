@@ -1144,6 +1144,37 @@ impl InputState {
         self.scroll_offset + visible_height >= content_height
     }
 
+    /// Returns the scroll progress as a value from 0.0 (top) to 1.0 (bottom).
+    pub fn scroll_progress(&self) -> f32 {
+        let content_height = self.total_content_height();
+        let visible_height = self.available_height;
+        let max_scroll = content_height - visible_height;
+
+        if max_scroll <= px(0.) {
+            return 0.0;
+        }
+
+        (self.scroll_offset / max_scroll).clamp(0.0, 1.0)
+    }
+
+    /// Returns how far the content is scrolled from the top in pixels.
+    pub fn distance_from_top(&self) -> Pixels {
+        self.scroll_offset.max(px(0.))
+    }
+
+    /// Returns how far the content is from the bottom in pixels.
+    pub fn distance_from_bottom(&self) -> Pixels {
+        let content_height = self.total_content_height();
+        let visible_height = self.available_height;
+        let max_scroll = content_height - visible_height;
+
+        if max_scroll <= px(0.) {
+            return px(0.);
+        }
+
+        (max_scroll - self.scroll_offset).max(px(0.))
+    }
+
     fn offset_from_utf16(&self, offset: usize) -> usize {
         let mut utf8_offset = 0;
         let mut utf16_count = 0;
