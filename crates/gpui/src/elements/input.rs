@@ -7,14 +7,16 @@
 //!
 //! Use `input()` for single-line text fields and `text_area()` for multi-line text editing.
 
+use refineable::Refineable;
+
 use crate::{
     Action, App, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InputLineLayout, InputState, InspectorElementId, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextAlign,
-    TextDirection, TextRun, TextStyle, Window, WrappedLine, colors, fill, input::INPUT_CONTEXT,
-    point, px, relative, size,
+    TextDirection, TextRun, TextStyle, TextStyleRefinement, Window, WrappedLine, colors, fill,
+    input::INPUT_CONTEXT, point, px, relative, size,
 };
 
 const CURSOR_WIDTH: f32 = 2.0;
@@ -43,6 +45,7 @@ pub struct Input {
     placeholder: Option<SharedString>,
     selection_color: Option<Hsla>,
     cursor_color: Option<Hsla>,
+    text_style: Option<TextStyleRefinement>,
     multiline: bool,
 }
 
@@ -55,6 +58,7 @@ impl Input {
             placeholder: None,
             selection_color: None,
             cursor_color: None,
+            text_style: None,
             multiline,
         };
         input.interactivity.key_context =
@@ -78,6 +82,12 @@ impl Input {
     /// Sets the color of the text cursor.
     pub fn cursor_color(mut self, color: impl Into<Hsla>) -> Self {
         self.cursor_color = Some(color.into());
+        self
+    }
+
+    /// Sets a text style refinement to apply to the input's text.
+    pub fn text_style(mut self, style: TextStyleRefinement) -> Self {
+        self.text_style = Some(style);
         self
     }
 
@@ -217,28 +227,33 @@ impl Element for Input {
         let focus_handle = self.input.focus_handle(cx);
         self.interactivity.tracked_focus_handle = Some(focus_handle);
 
-        let mut text_style = None;
+        let mut resolved_text_style = None;
         let multiline = self.multiline;
+        let text_style_refinement = self.text_style.clone();
 
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
             window,
             cx,
-            |style, window, cx| {
-                window.with_text_style(style.text_style().cloned(), |window| {
-                    text_style = Some(window.text_style());
+            |element_style, window, cx| {
+                window.with_text_style(element_style.text_style().cloned(), |window| {
+                    let mut text_style = window.text_style();
+                    if let Some(refinement) = &text_style_refinement {
+                        text_style.refine(refinement);
+                    }
+                    resolved_text_style = Some(text_style);
 
-                    let mut style = style.clone();
+                    let mut layout_style = element_style.clone();
                     if multiline {
-                        if let Length::Auto = style.size.width {
-                            style.size.width = relative(1.).into();
+                        if let Length::Auto = layout_style.size.width {
+                            layout_style.size.width = relative(1.).into();
                         }
-                        if let Length::Auto = style.size.height {
-                            style.size.height = relative(1.).into();
+                        if let Length::Auto = layout_style.size.height {
+                            layout_style.size.height = relative(1.).into();
                         }
                     }
-                    window.request_layout(style, None, cx)
+                    window.request_layout(layout_style, None, cx)
                 })
             },
         );
@@ -246,7 +261,7 @@ impl Element for Input {
         (
             layout_id,
             InputLayoutState {
-                text_style: text_style.unwrap_or_else(|| window.text_style()),
+                text_style: resolved_text_style.unwrap_or_else(|| window.text_style()),
             },
         )
     }
