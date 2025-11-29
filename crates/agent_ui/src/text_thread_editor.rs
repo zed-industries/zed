@@ -203,6 +203,8 @@ pub struct TextThreadEditor {
     dragged_file_worktrees: Vec<Entity<Worktree>>,
     language_model_selector: Entity<LanguageModelSelector>,
     language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+    title_edit_mode: bool,
+    temp_title_input: SharedString,
 }
 
 const MAX_TAB_TITLE_LEN: usize = 16;
@@ -282,6 +284,7 @@ impl TextThreadEditor {
         let slash_commands = text_thread.read(cx).slash_commands().clone();
         let focus_handle = editor.read(cx).focus_handle(cx);
 
+        let current_title = text_thread.read(cx).summary().or_default();
         let mut this = Self {
             text_thread,
             slash_commands,
@@ -301,6 +304,8 @@ impl TextThreadEditor {
             last_error: None,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
+            title_edit_mode: false,
+            temp_title_input: current_title,
             language_model_selector: cx.new(|cx| {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
@@ -1917,6 +1922,126 @@ impl TextThreadEditor {
             .update(cx, |text_thread, cx| text_thread.summarize(true, cx));
     }
 
+    pub fn start_title_edit(&mut self, cx: &mut Context<Self>) {
+        self.title_edit_mode = true;
+        self.temp_title_input = self.title(cx);
+        cx.notify();
+    }
+
+    pub fn save_title_edit(&mut self, cx: &mut Context<Self>) {
+        if self.title_edit_mode {
+            let new_title = self.temp_title_input.clone();
+            self.title_edit_mode = false;
+
+            self.text_thread.update(cx, |text_thread, cx| {
+                text_thread.set_custom_summary(new_title, cx)
+            });
+            cx.notify();
+        }
+    }
+
+    pub fn cancel_title_edit(&mut self, cx: &mut Context<Self>) {
+        self.title_edit_mode = false;
+        self.temp_title_input = self.title(cx);
+        cx.notify();
+    }
+
+    fn handle_title_edit_keypress(
+        &mut self,
+        event: &editor::search::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.title_edit_mode {
+            match event {
+                editor::search::Event::Confirm => {
+                    self.save_title_edit(cx);
+                }
+                editor::search::Event::Cancel => {
+                    self.cancel_title_edit(cx);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn render_title_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        if self.title_edit_mode {
+            let temp_input = self.temp_title_input.clone();
+            let title_input = div()
+                .flex()
+                .items_center()
+                .child(
+                    ui::TextInput::new()
+                        .placeholder("Enter thread title...")
+                        .text(temp_input)
+                        .on_change(cx.listener(|this, new_text: SharedString, cx| {
+                            this.temp_title_input = new_text;
+                            cx.notify();
+                        }))
+                        .on_action(cx.listener(|this, _: &ui::Confirm, cx| {
+                            this.save_title_edit(cx);
+                        }))
+                        .on_action(cx.listener(|this, _: &ui::Cancel, cx| {
+                            this.cancel_title_edit(cx);
+                        }))
+                        .width(px(300.0))
+                        .key_context("TitleEditor")
+                        .capture_action(cx.listener(TextThreadEditor::save_title_edit))
+                        .capture_action(cx.listener(TextThreadEditor::cancel_title_edit)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(
+                            ui::Button::new("save", "Save")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.save_title_edit(cx);
+                                }))
+                                .style(ui::ButtonStyle::Subtle),
+                        )
+                        .child(
+                            ui::Button::new("cancel", "Cancel")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.cancel_title_edit(cx);
+                                }))
+                                .style(ui::ButtonStyle::Subtle),
+                        ),
+                );
+
+            title_input
+        } else {
+            let current_title = self.title(cx);
+            let title_display = div()
+                .flex()
+                .items_center()
+                .cursor(CursorStyle::Pointer)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.start_title_edit(cx);
+                }))
+                .child(
+                    div()
+                        .text_ui()
+                        .text_color(cx.theme().colors().text)
+                        .child(current_title),
+                )
+                .child(
+                    div()
+                        .ml_1()
+                        .text_ui()
+                        .text_color(cx.theme().colors().text_dim)
+                        .child("✏️"),
+                );
+
+            title_display
+        }
+    }
+
     fn render_remaining_tokens(&self, cx: &App) -> Option<impl IntoElement + use<>> {
         let (token_count_color, token_count, max_token_count, tooltip) =
             match token_state(&self.text_thread, cx)? {
@@ -2488,6 +2613,7 @@ impl Render for TextThreadEditor {
                 language_model_selector.toggle(window, cx);
             })
             .size_full()
+            .child(self.render_title_editor(window, cx))
             .child(
                 div()
                     .flex_grow()
