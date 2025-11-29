@@ -15,11 +15,13 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
+use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
+use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
@@ -872,6 +874,17 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     })
                 })
                 .detach_and_log_err(cx);
+            }
+            OpenRequestKind::GitClone { repo_url } => {
+                let app_state = app_state.clone();
+                clone_and_open(
+                    repo_url,
+                    app_state,
+                    cx,
+                    Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                        workspace.focus_panel::<ProjectPanel>(window, cx);
+                    }),
+                );
             }
         }
 

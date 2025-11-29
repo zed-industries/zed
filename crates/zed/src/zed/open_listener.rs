@@ -57,6 +57,9 @@ pub enum OpenRequestKind {
         // None just opens settings without navigating to a specific path
         setting_path: Option<String>,
     },
+    GitClone {
+        repo_url: String,
+    },
 }
 
 impl OpenRequest {
@@ -108,6 +111,12 @@ impl OpenRequest {
             } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
+                });
+            } else if let Some(repo_url) = url.strip_prefix("zed://git/clone/") {
+                this.kind = Some(OpenRequestKind::GitClone {
+                    repo_url: urlencoding::decode(repo_url)
+                        .unwrap_or_else(|_| repo_url.into())
+                        .to_string(),
                 });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
@@ -928,5 +937,54 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/clone/https://github.com/zed-industries/zed.git".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_with_encoding(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/https%3A%2F%2Fgithub.com%2Fzed-industries%2Fzed.git"
+                            .into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
     }
 }
