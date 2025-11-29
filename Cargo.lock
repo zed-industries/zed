@@ -15122,7 +15122,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "text",
  "theme",
  "ui",
  "unindent",

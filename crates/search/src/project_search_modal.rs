@@ -2,14 +2,14 @@ use crate::{SearchOption, SearchOptions, project_search::ProjectSearch};
 use editor::{Editor, EditorEvent, EditorSettings};
 use futures::StreamExt as _;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, PromptLevel, Render, SharedString, Styled, Task, WeakEntity,
-    Window, prelude::*, rems,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, PromptLevel, Render, SharedString, Styled, Task, WeakEntity, Window, prelude::*,
+    rems,
 };
 use language::{Point, ToPoint as _};
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectPath, search::SearchQuery};
 use project::search::SearchResult;
+use project::{Project, ProjectPath, search::SearchQuery};
 use settings::Settings;
 use std::{mem, pin::pin, sync::Arc};
 use theme::ThemeSettings;
@@ -18,7 +18,9 @@ use ui::{
     Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{DismissDecision, Item, ModalView, Workspace, WorkspaceSettings, searchable::SearchableItem};
+use workspace::{
+    DismissDecision, Item, ModalView, Workspace, WorkspaceSettings, searchable::SearchableItem,
+};
 
 const MAX_MATCHES: usize = 100;
 
@@ -33,14 +35,20 @@ pub struct ProjectSearchModal {
 }
 
 impl ProjectSearchModal {
-    fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &crate::ToggleProjectSearchModal, window, cx| {
-            let weak_workspace = workspace.weak_handle();
-            let project = workspace.project().clone();
-            workspace.toggle_modal(window, cx, |window, cx| {
-                ProjectSearchModal::new(weak_workspace, project, window, cx)
-            });
-        });
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _cx: &mut Context<Workspace>,
+    ) {
+        workspace.register_action(
+            |workspace, _: &crate::ToggleProjectSearchModal, window, cx| {
+                let weak_workspace = workspace.weak_handle();
+                let project = workspace.project().clone();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    ProjectSearchModal::new(weak_workspace, project, window, cx)
+                });
+            },
+        );
     }
 
     pub fn new(
@@ -88,7 +96,11 @@ impl ProjectSearchModal {
 
         Self {
             picker,
-            _subscriptions: vec![picker_subscription, included_subscription, excluded_subscription],
+            _subscriptions: vec![
+                picker_subscription,
+                included_subscription,
+                excluded_subscription,
+            ],
             pending_dismiss: false,
         }
     }
@@ -104,7 +116,12 @@ impl ProjectSearchModal {
     }
 
     fn has_unsaved_changes(&self, cx: &App) -> bool {
-        self.picker.read(cx).delegate.results_editor.read(cx).is_dirty(cx)
+        self.picker
+            .read(cx)
+            .delegate
+            .results_editor
+            .read(cx)
+            .is_dirty(cx)
     }
 
     fn will_autosave(&self, cx: &App) -> bool {
@@ -122,7 +139,9 @@ impl ProjectSearchModal {
             for buffer in buffers {
                 if buffer.read(cx).is_dirty() {
                     project.update(cx, |project, cx| {
-                        project.save_buffer(buffer.clone(), cx).detach_and_log_err(cx);
+                        project
+                            .save_buffer(buffer.clone(), cx)
+                            .detach_and_log_err(cx);
                     });
                 }
             }
@@ -138,26 +157,28 @@ impl ProjectSearchModal {
             cx,
         );
 
-        cx.spawn_in(window, async move |this, cx| {
-            match answer.await {
-                Ok(0) => {
-                    this.update(cx, |this, cx| {
-                        this.save_all(cx);
-                        cx.emit(DismissEvent);
-                    }).log_err();
-                }
-                Ok(1) => {
-                    this.update(cx, |_, cx| {
-                        cx.emit(DismissEvent);
-                    }).log_err();
-                }
-                _ => {
-                    this.update(cx, |this, _cx| {
-                        this.pending_dismiss = false;
-                    }).log_err();
-                }
+        cx.spawn_in(window, async move |this, cx| match answer.await {
+            Ok(0) => {
+                this.update(cx, |this, cx| {
+                    this.save_all(cx);
+                    cx.emit(DismissEvent);
+                })
+                .log_err();
             }
-        }).detach();
+            Ok(1) => {
+                this.update(cx, |_, cx| {
+                    cx.emit(DismissEvent);
+                })
+                .log_err();
+            }
+            _ => {
+                this.update(cx, |this, _cx| {
+                    this.pending_dismiss = false;
+                })
+                .log_err();
+            }
+        })
+        .detach();
     }
 }
 
@@ -211,7 +232,7 @@ impl Render for ProjectSearchModal {
                     .w_full()
                     .h_full()
                     .overflow_hidden()
-                    .child(self.picker.clone())
+                    .child(self.picker.clone()),
             )
     }
 }
@@ -296,12 +317,7 @@ impl ProjectSearchModalDelegate {
         }
     }
 
-
-    fn open_selected_match(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn open_selected_match(&self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(search_match) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -314,23 +330,23 @@ impl ProjectSearchModalDelegate {
 
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                let open_task = workspace.open_path_preview(
-                    project_path,
-                    None,
-                    true,
-                    false,
-                    true,
-                    window,
-                    cx,
-                );
+                let open_task =
+                    workspace.open_path_preview(project_path, None, true, false, true, window, cx);
 
                 cx.spawn_in(window, async move |_, cx| {
-                    if let Some(editor) = open_task.await.log_err().and_then(|item| item.downcast::<Editor>()) {
-                        editor.update_in(cx, |editor, window, cx| {
-                            editor.go_to_singleton_buffer_point(position, window, cx);
-                        }).log_err();
+                    if let Some(editor) = open_task
+                        .await
+                        .log_err()
+                        .and_then(|item| item.downcast::<Editor>())
+                    {
+                        editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.go_to_singleton_buffer_point(position, window, cx);
+                            })
+                            .log_err();
                     }
-                }).detach();
+                })
+                .detach();
             });
         }
     }
@@ -457,7 +473,6 @@ impl ProjectSearchModalDelegate {
             .collect::<Vec<_>>();
         Ok(PathMatcher::new(&queries, path_style)?)
     }
-
 }
 
 impl PickerDelegate for ProjectSearchModalDelegate {
@@ -559,36 +574,31 @@ impl PickerDelegate for ProjectSearchModalDelegate {
             })
             .when(self.filters_enabled, |this| {
                 this.child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .px_2p5()
-                        .py_1()
-                        .child(
-                            h_flex()
-                                .flex_1()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .px_2()
-                                        .py_1()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .rounded_md()
-                                        .child(self.included_files_editor.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .px_2()
-                                        .py_1()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .rounded_md()
-                                        .child(self.excluded_files_editor.clone()),
-                                ),
-                        ),
+                    h_flex().w_full().gap_2().px_2p5().py_1().child(
+                        h_flex()
+                            .flex_1()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .px_2()
+                                    .py_1()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .rounded_md()
+                                    .child(self.included_files_editor.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .px_2()
+                                    .py_1()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .rounded_md()
+                                    .child(self.excluded_files_editor.clone()),
+                            ),
+                    ),
                 )
             })
             .child(Divider::horizontal())
@@ -649,9 +659,9 @@ impl PickerDelegate for ProjectSearchModalDelegate {
             project_search.search(search_query.clone(), cx);
         });
 
-        let search = self.project.update(cx, |project, cx| {
-            project.search(search_query, cx)
-        });
+        let search = self
+            .project
+            .update(cx, |project, cx| project.search(search_query, cx));
 
         cx.spawn_in(window, async move |picker, cx| {
             let mut search_stream = pin!(search.ready_chunks(1024));
@@ -662,106 +672,128 @@ impl PickerDelegate for ProjectSearchModalDelegate {
                     break;
                 }
 
-                let should_stop = picker.update_in(cx, |picker, _, cx| {
-
-                    for result in results {
-                        if picker.delegate.matches.len() >= MAX_MATCHES {
-                            break;
-                        }
-
-                        match result {
-                            SearchResult::Buffer { buffer, ranges } => {
-                                let buffer_ref = buffer.read(cx);
-                                let path = buffer_ref.file().map(|file| ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                });
-
-                                // Track which lines we've already added from this buffer
-                                // to avoid duplicates on the same line
-                                let mut seen_lines = std::collections::HashSet::new();
-
-                                for range in ranges.iter() {
-                                    if picker.delegate.matches.len() >= MAX_MATCHES {
-                                        break;
-                                    }
-
-                                    let start_point = range.start.to_point(&buffer_ref);
-                                    let end_point = range.end.to_point(&buffer_ref);
-                                    let line_row = start_point.row;
-
-                                    // Skip if we've already added this line
-                                    if !seen_lines.insert(line_row) {
-                                        continue;
-                                    }
-
-                                    let match_len = (end_point.column.saturating_sub(start_point.column)) as usize;
-
-                                    // For very long lines (like minified JSON), show context around the match
-                                    let line_len = buffer_ref.line_len(line_row);
-                                    const MAX_LINE_LEN: u32 = 200;
-                                    const CONTEXT_CHARS: u32 = 50;
-
-                                    let (line_text, highlight_ranges) = if line_len > MAX_LINE_LEN {
-                                        // Show context around the match
-                                        let context_start = start_point.column.saturating_sub(CONTEXT_CHARS);
-                                        let context_end = (start_point.column + match_len as u32 + CONTEXT_CHARS).min(line_len);
-
-                                        let range_start = Point::new(line_row, context_start);
-                                        let range_end = Point::new(line_row, context_end);
-                                        let context_text = buffer_ref
-                                            .text_for_range(range_start..range_end)
-                                            .collect::<String>();
-
-                                        // Highlight position relative to context start
-                                        let highlight_start = (start_point.column - context_start) as usize;
-                                        let highlight_end = highlight_start + match_len;
-                                        let highlights: Vec<usize> = (highlight_start..highlight_end).collect();
-
-                                        let prefix = if context_start > 0 { "..." } else { "" };
-                                        let suffix = if context_end < line_len { "..." } else { "" };
-                                        let display_text = format!("{}{}{}", prefix, context_text.trim(), suffix);
-
-                                        let prefix_len = prefix.len();
-                                        let adjusted_highlights: Vec<usize> = highlights
-                                            .iter()
-                                            .map(|&h| h + prefix_len)
-                                            .collect();
-
-                                        (display_text, adjusted_highlights)
-                                    } else {
-                                        let line_start = Point::new(line_row, 0);
-                                        let line_end = Point::new(line_row, line_len);
-                                        let full_line = buffer_ref
-                                            .text_for_range(line_start..line_end)
-                                            .collect::<String>();
-                                        let trimmed_start = full_line.len() - full_line.trim_start().len();
-                                        let line_text = full_line.trim().to_string();
-
-                                        let adjusted_column = (start_point.column as usize).saturating_sub(trimmed_start);
-                                        let highlight_ranges: Vec<usize> = (adjusted_column..adjusted_column + match_len).collect();
-
-                                        (line_text, highlight_ranges)
-                                    };
-
-                                    picker.delegate.matches.push(SearchMatch {
-                                        path: path.clone(),
-                                        line_number: line_row + 1,
-                                        line_text,
-                                        highlight_ranges,
-                                    });
-                                }
-                            }
-                            SearchResult::LimitReached => {
-                                limit_reached = true;
+                let should_stop = picker
+                    .update_in(cx, |picker, _, cx| {
+                        for result in results {
+                            if picker.delegate.matches.len() >= MAX_MATCHES {
                                 break;
                             }
-                        }
-                    }
 
-                    cx.notify();
-                    picker.delegate.matches.len() >= MAX_MATCHES || limit_reached
-                }).ok().unwrap_or(true);
+                            match result {
+                                SearchResult::Buffer { buffer, ranges } => {
+                                    let buffer_ref = buffer.read(cx);
+                                    let path = buffer_ref.file().map(|file| ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    });
+
+                                    // Track which lines we've already added from this buffer
+                                    // to avoid duplicates on the same line
+                                    let mut seen_lines = std::collections::HashSet::new();
+
+                                    for range in ranges.iter() {
+                                        if picker.delegate.matches.len() >= MAX_MATCHES {
+                                            break;
+                                        }
+
+                                        let start_point = range.start.to_point(&buffer_ref);
+                                        let end_point = range.end.to_point(&buffer_ref);
+                                        let line_row = start_point.row;
+
+                                        // Skip if we've already added this line
+                                        if !seen_lines.insert(line_row) {
+                                            continue;
+                                        }
+
+                                        let match_len =
+                                            (end_point.column.saturating_sub(start_point.column))
+                                                as usize;
+
+                                        // For very long lines (like minified JSON), show context around the match
+                                        let line_len = buffer_ref.line_len(line_row);
+                                        const MAX_LINE_LEN: u32 = 200;
+                                        const CONTEXT_CHARS: u32 = 50;
+
+                                        let (line_text, highlight_ranges) = if line_len
+                                            > MAX_LINE_LEN
+                                        {
+                                            // Show context around the match
+                                            let context_start =
+                                                start_point.column.saturating_sub(CONTEXT_CHARS);
+                                            let context_end = (start_point.column
+                                                + match_len as u32
+                                                + CONTEXT_CHARS)
+                                                .min(line_len);
+
+                                            let range_start = Point::new(line_row, context_start);
+                                            let range_end = Point::new(line_row, context_end);
+                                            let context_text = buffer_ref
+                                                .text_for_range(range_start..range_end)
+                                                .collect::<String>();
+
+                                            // Highlight position relative to context start
+                                            let highlight_start =
+                                                (start_point.column - context_start) as usize;
+                                            let highlight_end = highlight_start + match_len;
+                                            let highlights: Vec<usize> =
+                                                (highlight_start..highlight_end).collect();
+
+                                            let prefix = if context_start > 0 { "..." } else { "" };
+                                            let suffix =
+                                                if context_end < line_len { "..." } else { "" };
+                                            let display_text = format!(
+                                                "{}{}{}",
+                                                prefix,
+                                                context_text.trim(),
+                                                suffix
+                                            );
+
+                                            let prefix_len = prefix.len();
+                                            let adjusted_highlights: Vec<usize> = highlights
+                                                .iter()
+                                                .map(|&h| h + prefix_len)
+                                                .collect();
+
+                                            (display_text, adjusted_highlights)
+                                        } else {
+                                            let line_start = Point::new(line_row, 0);
+                                            let line_end = Point::new(line_row, line_len);
+                                            let full_line = buffer_ref
+                                                .text_for_range(line_start..line_end)
+                                                .collect::<String>();
+                                            let trimmed_start =
+                                                full_line.len() - full_line.trim_start().len();
+                                            let line_text = full_line.trim().to_string();
+
+                                            let adjusted_column = (start_point.column as usize)
+                                                .saturating_sub(trimmed_start);
+                                            let highlight_ranges: Vec<usize> = (adjusted_column
+                                                ..adjusted_column + match_len)
+                                                .collect();
+
+                                            (line_text, highlight_ranges)
+                                        };
+
+                                        picker.delegate.matches.push(SearchMatch {
+                                            path: path.clone(),
+                                            line_number: line_row + 1,
+                                            line_text,
+                                            highlight_ranges,
+                                        });
+                                    }
+                                }
+                                SearchResult::LimitReached => {
+                                    limit_reached = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        cx.notify();
+                        picker.delegate.matches.len() >= MAX_MATCHES || limit_reached
+                    })
+                    .ok()
+                    .unwrap_or(true);
 
                 if should_stop {
                     break;
@@ -795,42 +827,36 @@ impl PickerDelegate for ProjectSearchModalDelegate {
             .unwrap_or_else(|| "untitled".to_string());
 
         let item = ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Dense)
-                .selectable(false)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .px_1()
-                        .py_0p5()
-                        .gap_2()
-                        .text_size(buffer_font_size)
-                        .when(selected, |this| {
-                            this.bg(cx.theme().colors().ghost_element_selected)
-                                .rounded_sm()
-                        })
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .child(
-                                    HighlightedLabel::new(
-                                        search_match.line_text.clone(),
-                                        search_match.highlight_ranges.clone()
-                                    )
-                                    .single_line()
-                                )
-                        )
-                        .child(
-                            h_flex()
-                                .flex_shrink_0()
-                                .child(
-                                    Label::new(format!("{}:{}", file_name, search_match.line_number))
-                                        .color(Color::Muted)
-                                )
-                        )
-                );
+            .inset(true)
+            .spacing(ListItemSpacing::Dense)
+            .selectable(false)
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_1()
+                    .py_0p5()
+                    .gap_2()
+                    .text_size(buffer_font_size)
+                    .when(selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                            .rounded_sm()
+                    })
+                    .child(
+                        div().flex_1().min_w_0().overflow_hidden().child(
+                            HighlightedLabel::new(
+                                search_match.line_text.clone(),
+                                search_match.highlight_ranges.clone(),
+                            )
+                            .single_line(),
+                        ),
+                    )
+                    .child(
+                        h_flex().flex_shrink_0().child(
+                            Label::new(format!("{}:{}", file_name, search_match.line_number))
+                                .color(Color::Muted),
+                        ),
+                    ),
+            );
 
         Some(item)
     }
