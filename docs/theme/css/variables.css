@@ -86,7 +86,6 @@
   --searchbar-fg: #000;
   --searchbar-shadow-color: #aaa;
   --searchresults-header-fg: #666;
-  --searchresults-border-color: #888;
   --searchresults-li-bg: #e4f2fe;
   --search-mark-bg: #a2cff5;
 
@@ -183,7 +182,6 @@
   --searchbar-fg: hsl(220, 14%, 71%);
   --searchbar-shadow-color: hsl(220, 13%, 15%);
   --searchresults-header-fg: hsl(220, 14%, 60%);
-  --searchresults-border-color: hsl(220, 13%, 30%);
   --searchresults-li-bg: hsl(220, 13%, 25%);
   --search-mark-bg: hsl(220, 93%, 60%);
 
