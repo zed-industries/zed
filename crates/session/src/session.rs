@@ -15,10 +15,8 @@ const SESSION_ID_KEY: &str = "session_id";
 const SESSION_WINDOW_STACK_KEY: &str = "session_window_stack";
 
 impl Session {
-    pub async fn new() -> Self {
+    pub async fn new(session_id: String) -> Self {
         let old_session_id = KEY_VALUE_STORE.read_kvp(SESSION_ID_KEY).ok().flatten();
-
-        let session_id = Uuid::new_v4().to_string();
 
         KEY_VALUE_STORE
             .write_kvp(SESSION_ID_KEY.to_string(), session_id.clone())
@@ -43,7 +41,7 @@ impl Session {
         }
     }
 
-    // #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
             session_id: Uuid::new_v4().to_string(),
