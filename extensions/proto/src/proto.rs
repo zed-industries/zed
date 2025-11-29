@@ -59,6 +59,28 @@ impl zed::Extension for ProtobufExtension {
             env: Default::default(),
         })
     }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
+        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings);
+        Ok(settings)
+    }
+
+    fn language_server_initialization_options(
+        &mut self,
+        server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed_extension_api::serde_json::Value>> {
+        let initialization_options = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.initialization_options);
+        Ok(initialization_options)
+    }
 }
 
 zed::register_extension!(ProtobufExtension);
