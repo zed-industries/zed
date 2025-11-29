@@ -3,6 +3,8 @@
 // on EntityInputHandler usage so IME composition works correctly.
 
 use gpui::prelude::*;
+// Make the example self-contained by importing the concrete types/functions
+use gpui::{Application, WindowOptions, div, text};
 
 fn main() {
     Application::new().run(|cx| {
