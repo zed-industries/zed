@@ -49,6 +49,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
+use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -374,6 +375,7 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
+    git_access: GitAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -535,6 +537,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                git_access: GitAccess::Yes,
             };
 
             this.schedule_update(window, cx);
@@ -2790,8 +2793,24 @@ impl GitPanel {
         self.new_staged_count = 0;
         self.tracked_staged_count = 0;
         self.entry_count = 0;
+        self.git_access = GitAccess::Yes;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+
+        if let Some(active_repo) = self.active_repository.as_ref() {
+            let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                let Ok(access) = access.await else {
+                    return Ok(());
+                };
+
+                git_panel.update(cx, |this, _cx| {
+                    this.git_access = dbg!(access);
+                })
+            })
+            .detach_and_log_err(cx);
+        }
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
