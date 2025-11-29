@@ -1641,12 +1641,9 @@ impl AgentPanel {
                                         }
                                     }),
                             ),
-                            div().child(
-                                Label::new(current_title)
-                                    .color(Color::Muted)
-                                    .truncate()
-                                    .flex_grow(),
-                            ),
+                            div()
+                                .flex_grow()
+                                .child(Label::new(current_title).color(Color::Muted).truncate()),
                         ])
                         .into_any_element()
                 }
