@@ -3,7 +3,7 @@ use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
-    foundation::{NSDictionary, NSString},
+    foundation::{NSDictionary, NSString, NSTimeInterval},
 };
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
@@ -119,8 +119,8 @@ impl PlatformDisplay for MacDisplay {
                     msg_send![screen_number, unsignedIntegerValue];
 
                 if self.0 == screen_number {
-                    let min: f64 = msg_send![screen, minimumRefreshInterval];
-                    let max: f64 = msg_send![screen, maximumRefreshInterval];
+                    let min: NSTimeInterval = msg_send![screen, minimumRefreshInterval];
+                    let max: NSTimeInterval = msg_send![screen, maximumRefreshInterval];
 
                     return min != max;
                 }
