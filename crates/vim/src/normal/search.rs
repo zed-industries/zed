@@ -10,7 +10,7 @@ use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
-    Vim,
+    Vim, VimSettings,
     command::CommandRange,
     motion::Motion,
     state::{Mode, SearchState},
@@ -343,6 +343,7 @@ impl Vim {
         let prior_selections = self.editor_selections(window, cx);
         let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity();
+        let mut current_search_params: Option<(String, SearchOptions)> = None;
 
         let searched = pane.update(cx, |pane, cx| {
             self.search.direction = direction;
@@ -372,6 +373,7 @@ impl Vim {
                 };
 
                 let query = regex::escape(&query);
+                current_search_params = Some((query.clone(), options));
                 Some(search_bar.search(&query, Some(options), true, window, cx))
             });
 
@@ -402,6 +404,33 @@ impl Vim {
         });
         if !searched {
             self.clear_operator(window, cx)
+        }
+
+        if let Some((query, options)) =
+            current_search_params.filter(|_| VimSettings::get_global(cx).use_occurrences_highlight)
+        {
+            if let Some(workspace) = self.workspace(window) {
+                let panes = {
+                    let ws = workspace.read(cx);
+                    ws.panes().iter().cloned().collect::<Vec<_>>()
+                };
+
+                for other_pane in panes {
+                    if other_pane.entity_id() == pane.entity_id() {
+                        continue;
+                    }
+
+                    if let Some(search_bar) = {
+                        let toolbar = other_pane.read(cx).toolbar();
+                        toolbar.read(cx).item_of_type::<BufferSearchBar>()
+                    } {
+                        search_bar.update(cx, |search_bar, cx| {
+                            search_bar.show(window, cx);
+                            let _ = search_bar.search(&query, Some(options), false, window, cx);
+                        });
+                    }
+                }
+            }
         }
 
         if self.mode.is_visual() {
