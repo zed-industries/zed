@@ -1585,6 +1585,16 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 `boolean` values
 
+## Extend List On Newline
+
+- Description: Whether to continue markdown lists (unordered, ordered, and task lists) when pressing Enter at the end of a list item. Pressing Enter on an empty list item will remove the marker and exit the list.
+- Setting: `extend_list_on_newline`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Status Bar
 
 - Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
