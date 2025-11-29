@@ -22,6 +22,7 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
+    net::IpAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -45,9 +46,50 @@ pub(crate) struct SshRemoteConnection {
     _temp_dir: TempDir,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SshConnectionHost {
+    IpAddr(IpAddr),
+    Hostname(String),
+}
+
+impl SshConnectionHost {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::IpAddr(ip) => ip.to_string(),
+            Self::Hostname(hostname) => hostname.clone(),
+        }
+    }
+}
+
+impl From<&str> for SshConnectionHost {
+    fn from(value: &str) -> Self {
+        if let Ok(address) = value.parse() {
+            Self::IpAddr(address)
+        } else {
+            Self::Hostname(value.to_string())
+        }
+    }
+}
+
+impl From<String> for SshConnectionHost {
+    fn from(value: String) -> Self {
+        if let Ok(address) = value.parse() {
+            Self::IpAddr(address)
+        } else {
+            Self::Hostname(value)
+        }
+    }
+}
+
+impl Default for SshConnectionHost {
+    fn default() -> Self {
+        Self::Hostname(Default::default())
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SshConnectionOptions {
-    pub host: String,
+    pub host: SshConnectionHost,
     pub username: Option<String>,
     pub port: Option<u16>,
     pub password: Option<String>,
@@ -61,7 +103,7 @@ pub struct SshConnectionOptions {
 impl From<settings::SshConnection> for SshConnectionOptions {
     fn from(val: settings::SshConnection) -> Self {
         SshConnectionOptions {
-            host: val.host.into(),
+            host: val.host.to_string().into(),
             username: val.username,
             port: val.port,
             password: None,
@@ -1215,10 +1257,24 @@ impl SshConnectionOptions {
                 input = rest;
                 username = Some(u.to_string());
             }
-            if let Some((rest, p)) = input.split_once(':') {
+
+            // Handle port parsing, accounting for IPv6 addresses
+            // IPv6 addresses can be: 2001:db8::1 or [2001:db8::1]:22
+            if input.starts_with('[') {
+                if let Some((rest, p)) = input.rsplit_once("]:") {
+                    input = rest.strip_prefix('[').unwrap_or(rest);
+                    port = p.parse().ok();
+                } else if input.ends_with(']') {
+                    input = input.strip_prefix('[').unwrap_or(input);
+                    input = input.strip_suffix(']').unwrap_or(input);
+                }
+            } else if let Some((rest, p)) = input.rsplit_once(':')
+                && !rest.contains(":")
+            {
                 input = rest;
-                port = p.parse().ok()
+                port = p.parse().ok();
             }
+
             hostname = Some(input.to_string())
         }
 
@@ -1232,7 +1288,7 @@ impl SshConnectionOptions {
         };
 
         Ok(Self {
-            host: hostname,
+            host: hostname.into(),
             username,
             port,
             port_forwards,
@@ -1251,11 +1307,24 @@ impl SshConnectionOptions {
             result.push_str(&username);
             result.push('@');
         }
-        result.push_str(&self.host);
+
         if let Some(port) = self.port {
+            match &self.host {
+                SshConnectionHost::IpAddr(IpAddr::V6(host)) => {
+                    result.push('[');
+                    result.push_str(&host.to_string());
+                    result.push(']');
+                }
+                SshConnectionHost::IpAddr(IpAddr::V4(host)) => result.push_str(&host.to_string()),
+                SshConnectionHost::Hostname(host) => result.push_str(&host),
+            }
+
             result.push(':');
             result.push_str(&port.to_string());
+        } else {
+            result.push_str(&self.host.to_string());
         }
+
         result
     }
 
@@ -1289,20 +1358,27 @@ impl SshConnectionOptions {
 
     fn scp_url(&self) -> String {
         if let Some(username) = &self.username {
-            format!("{}@{}", username, self.host)
+            format!("{}@{}", username, self.host.to_string())
         } else {
-            self.host.clone()
+            self.host.to_string()
         }
     }
 
     pub fn connection_string(&self) -> String {
-        let host = if let Some(username) = &self.username {
-            format!("{}@{}", username, self.host)
+        let host = if let Some(port) = &self.port {
+            match &self.host {
+                SshConnectionHost::IpAddr(IpAddr::V6(ip)) => {
+                    format!("[{}]:{}", ip, port)
+                }
+                SshConnectionHost::IpAddr(IpAddr::V4(ip)) => format!("{}:{}", ip, port),
+                SshConnectionHost::Hostname(host) => format!("{}:{}", host.clone(), port),
+            }
         } else {
-            self.host.clone()
+            self.host.to_string()
         };
-        if let Some(port) = &self.port {
-            format!("{}:{}", host, port)
+
+        if let Some(username) = &self.username {
+            format!("{}@{}", username, host)
         } else {
             host
         }
@@ -1505,5 +1581,45 @@ mod tests {
             scp_args.iter().all(|arg| !arg.starts_with("-L")),
             "scp args should not contain port forward flags: {scp_args:?}"
         );
+    }
+
+    #[test]
+    fn test_host_parsing() -> Result<()> {
+        let opts = SshConnectionOptions::parse_command_line("user@2001:db8::1")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, None);
+
+        let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]:2222")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, None);
+
+        let opts = SshConnectionOptions::parse_command_line("2001:db8::1")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, None);
+        assert_eq!(opts.port, None);
+
+        let opts = SshConnectionOptions::parse_command_line("[2001:db8::1]:2222")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, None);
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line("user@example.com:2222")?;
+        assert_eq!(opts.host, "example.com".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line("user@192.168.1.1:2222")?;
+        assert_eq!(opts.host, "192.168.1.1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        Ok(())
     }
 }
