@@ -2375,7 +2375,7 @@ async fn run_askpass_command(
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
-                    Err(anyhow!("Connecting to host timed out"))?
+                    Err(anyhow!("Connecting to host timed out, This may be due to git hooks taking too long."))?
                 }
             }
         }
