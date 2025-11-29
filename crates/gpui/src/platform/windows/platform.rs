@@ -1262,7 +1262,6 @@ mod tests {
             write_to_clipboard(expected.clone());
             for _ in 0..10 {
                 if let Some(found) = read_from_clipboard() {
-                    eprintln!("DEBUG: found clipboard item: {:?}", found);
                     assert_eq!(found, expected);
                     return;
                 }
