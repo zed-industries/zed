@@ -29,7 +29,7 @@ use crate::{branch_picker, git_panel::show_error_toast};
 actions!(
     branch_picker,
     [
-        /// Deletes the selected git branch.
+        /// Deletes the selected git branch or remote.
         DeleteBranch
     ]
 );
@@ -211,7 +211,7 @@ impl BranchList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
-    fn handle_delete_branch(
+    fn handle_delete(
         &mut self,
         _: &branch_picker::DeleteBranch,
         window: &mut Window,
@@ -220,7 +220,7 @@ impl BranchList {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .delete_branch_at(picker.delegate.selected_index, window, cx)
+                .delete_at(picker.delegate.selected_index, window, cx)
         })
     }
 }
@@ -239,7 +239,7 @@ impl Render for BranchList {
             .key_context("GitBranchSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
-            .on_action(cx.listener(Self::handle_delete_branch))
+            .on_action(cx.listener(Self::handle_delete))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -388,7 +388,7 @@ impl BranchListDelegate {
             .into_any_element()
     }
 
-    fn delete_branch_at(&self, idx: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn delete_at(&self, idx: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(branch_entry) = self.matches.get(idx) else {
             return;
         };
@@ -399,18 +399,39 @@ impl BranchListDelegate {
         let workspace = self.workspace.clone();
         let branch_name = branch_entry.branch.name().to_string();
         let branch_ref = branch_entry.branch.ref_name.clone();
+        let remote_name = branch_entry.branch.remote_name().map(|r| r.to_string());
 
         cx.spawn_in(window, async move |picker, cx| {
-            let result = repo
-                .update(cx, |repo, _| repo.delete_branch(branch_name.clone()))?
-                .await?;
+            let result = match &remote_name {
+                Some(remote_name) => {
+                    repo.update(cx, |repo, _| repo.remove_remote(remote_name.clone()))?
+                        .await?
+                }
+                None => {
+                    repo.update(cx, |repo, _| repo.delete_branch(branch_name.clone()))?
+                        .await?
+                }
+            };
 
             if let Err(e) = result {
-                log::error!("Failed to delete branch: {}", e);
+                if remote_name.is_some() {
+                    log::error!("Failed to delete remote: {}", e);
+                } else {
+                    log::error!("Failed to delete branch: {}", e);
+                }
 
                 if let Some(workspace) = workspace.and_then(|w| w.upgrade()) {
                     cx.update(|_window, cx| {
-                        show_error_toast(workspace, format!("branch -d {branch_name}"), e, cx)
+                        if remote_name.is_some() {
+                            show_error_toast(
+                                workspace,
+                                format!("remote remove {}", branch_name),
+                                e,
+                                cx,
+                            )
+                        } else {
+                            show_error_toast(workspace, format!("branch -d {}", branch_name), e, cx)
+                        }
                     })?;
                 }
 
@@ -927,26 +948,11 @@ impl PickerDelegate for BranchListDelegate {
                     .w_full()
                     .p_1p5()
                     .gap_0p5()
-                    .justify_end()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
+                    .justify_between()
                     .child(
-                        Button::new("delete-branch", "Delete")
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &branch_picker::DeleteBranch,
-                                    &focus_handle,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
-                            }),
-                    )
-                    .child(
-                        h_flex().gap_0p5().child(
+                        h_flex().child(
                             ToggleButtonGroup::single_row(
                                 "filter-remotes",
                                 [ToggleButtonSimple::new(
@@ -969,8 +975,24 @@ impl PickerDelegate for BranchListDelegate {
                                 )
                                 .selected(self.display_remotes)],
                             )
+                            .selected_index(1)
                             .style(ui::ToggleButtonGroupStyle::Transparent),
                         ),
+                    )
+                    .child(
+                        Button::new("delete-branch", "Delete")
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &branch_picker::DeleteBranch,
+                                    &focus_handle,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window
+                                    .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
+                            }),
                     )
                     .when(self.loading, |this| this.child(self.loader()))
                     .into_any(),

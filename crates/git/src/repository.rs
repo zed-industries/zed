@@ -57,6 +57,12 @@ impl Branch {
         self.ref_name.starts_with("refs/remotes/")
     }
 
+    pub fn remote_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split("/").next())
+    }
+
     pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
         self.upstream
             .as_ref()
