@@ -2003,19 +2003,14 @@ impl TextThreadEditor {
             title_input.into_any_element()
         } else {
             let current_title = self.title(cx);
-            let title_display = div()
-                .flex()
-                .items_center()
-                .on_click(cx.listener(|this, _, _window, cx| {
-                    this.start_title_edit(cx);
-                }))
+            let title_display = ButtonLike::new("title-edit")
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(DynamicSpacing::Base02.rems(cx))
                         .children([
-                            IconButton::new("regenerate-title", IconName::RefreshCw)
+                            IconButton::new("regenerate-title", IconName::Rerun)
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.regenerate_title(cx);
@@ -2026,7 +2021,10 @@ impl TextThreadEditor {
                                 .text_color(cx.theme().colors().text)
                                 .child(current_title),
                         ]),
-                );
+                )
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.start_title_edit(cx);
+                }));
 
             title_display.into_any_element()
         }
