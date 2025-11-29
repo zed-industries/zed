@@ -1,29 +1,18 @@
 use crate::{SearchOption, SearchOptions, project_search::ProjectSearch};
-use editor::{Editor, EditorSettings};
-use futures::StreamExt;
+use editor::{Editor, EditorEvent, EditorSettings};
+use futures::StreamExt as _;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, PromptLevel, Render, SharedString, Styled, Task, WeakEntity,
     Window, prelude::*, rems,
 };
-use language::{Buffer, Point, ToPoint};
+use language::{Point, ToPoint as _};
 use picker::{Picker, PickerDelegate};
-use project::{
-    Project, ProjectPath,
-    search::{SearchQuery, SearchResult},
-};
+use project::{Project, ProjectPath, search::SearchQuery};
+use project::search::SearchResult;
 use settings::Settings;
+use std::{mem, pin::pin, sync::Arc};
 use theme::ThemeSettings;
-use std::{
-    mem,
-    ops::Range,
-    pin::pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-};
-use text::Anchor;
 use ui::{
     ButtonStyle, Divider, HighlightedLabel, IconButton, IconButtonShape, ListItem, ListItemSpacing,
     Tooltip, prelude::*,
@@ -62,6 +51,9 @@ impl ProjectSearchModal {
     ) -> Self {
         let delegate = ProjectSearchModalDelegate::new(workspace, project, window, cx);
 
+        let included_files_editor = delegate.included_files_editor.clone();
+        let excluded_files_editor = delegate.excluded_files_editor.clone();
+
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .modal(false)
@@ -70,9 +62,33 @@ impl ProjectSearchModal {
 
         let picker_subscription = cx.subscribe_in(&picker, window, Self::on_picker_event);
 
+        let included_subscription = cx.subscribe_in(&included_files_editor, window, {
+            let picker = picker.clone();
+            move |_this, _editor, event: &EditorEvent, window, cx| {
+                if matches!(event, EditorEvent::BufferEdited { .. }) {
+                    picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx).detach();
+                    });
+                }
+            }
+        });
+
+        let excluded_subscription = cx.subscribe_in(&excluded_files_editor, window, {
+            let picker = picker.clone();
+            move |_this, _editor, event: &EditorEvent, window, cx| {
+                if matches!(event, EditorEvent::BufferEdited { .. }) {
+                    picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx).detach();
+                    });
+                }
+            }
+        });
+
         Self {
             picker,
-            _subscriptions: vec![picker_subscription],
+            _subscriptions: vec![picker_subscription, included_subscription, excluded_subscription],
             pending_dismiss: false,
         }
     }
@@ -205,8 +221,6 @@ pub struct ProjectSearchModalDelegate {
     project: Entity<Project>,
     matches: Vec<SearchMatch>,
     selected_index: usize,
-    search_id: Arc<AtomicUsize>,
-    cancel_flag: Arc<AtomicBool>,
     search_options: SearchOptions,
     query: String,
     filters_enabled: bool,
@@ -221,11 +235,10 @@ pub struct ProjectSearchModalDelegate {
 
 #[derive(Clone)]
 pub struct SearchMatch {
-    pub buffer: Entity<Buffer>,
     pub path: Option<ProjectPath>,
-    pub range: Range<Anchor>,
     pub line_number: u32,
     pub line_text: String,
+    pub highlight_ranges: Vec<usize>,
 }
 
 impl ProjectSearchModalDelegate {
@@ -270,8 +283,6 @@ impl ProjectSearchModalDelegate {
             project,
             matches: Vec::new(),
             selected_index: 0,
-            search_id: Arc::new(AtomicUsize::new(0)),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
             search_options,
             query: String::new(),
             filters_enabled: false,
@@ -285,26 +296,6 @@ impl ProjectSearchModalDelegate {
         }
     }
 
-    fn find_match_positions(&self, text: &str) -> Vec<usize> {
-        if self.query.is_empty() {
-            return Vec::new();
-        }
-
-        let query_lower = self.query.to_lowercase();
-        let text_lower = text.to_lowercase();
-        let mut positions = Vec::new();
-
-        let mut start = 0;
-        while let Some(pos) = text_lower[start..].find(&query_lower) {
-            let absolute_pos = start + pos;
-            for i in 0..self.query.len() {
-                positions.push(absolute_pos + i);
-            }
-            start = absolute_pos + 1;
-        }
-
-        positions
-    }
 
     fn open_selected_match(
         &self,
@@ -319,7 +310,7 @@ impl ProjectSearchModalDelegate {
             return;
         };
 
-        let position = search_match.range.start.to_point(search_match.buffer.read(cx));
+        let position = Point::new(search_match.line_number - 1, 0);
 
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -393,14 +384,23 @@ impl ProjectSearchModalDelegate {
     }
 
     fn replace_next(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let match_ranges = self.project_search.read(cx).match_ranges.clone();
-        if match_ranges.is_empty() || self.selected_index >= match_ranges.len() {
-            return;
-        }
-
         let Some(query) = self.active_query.clone() else {
             return;
         };
+
+        let match_ranges = self.project_search.read(cx).match_ranges.clone();
+
+        if match_ranges.is_empty() {
+            self.project_search.update(cx, |project_search, cx| {
+                project_search.search(query.clone(), cx);
+            });
+            return;
+        }
+
+        if self.selected_index >= match_ranges.len() {
+            return;
+        }
+
         let query = query.with_replacement(self.replacement(cx));
 
         let match_range = match_ranges[self.selected_index].clone();
@@ -415,17 +415,24 @@ impl ProjectSearchModalDelegate {
     }
 
     fn replace_all(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(query) = self.active_query.as_ref() else {
+        let Some(query) = self.active_query.clone() else {
             return;
         };
-        let query = query.clone().with_replacement(self.replacement(cx));
+
+        let match_ranges = self.project_search.read(cx).match_ranges.clone();
+
+        if match_ranges.is_empty() {
+            self.project_search.update(cx, |project_search, cx| {
+                project_search.search(query.clone(), cx);
+            });
+            return;
+        }
+
+        let query = query.with_replacement(self.replacement(cx));
 
         let match_ranges = self
             .project_search
             .update(cx, |model, _| mem::take(&mut model.match_ranges));
-        if match_ranges.is_empty() {
-            return;
-        }
 
         self.results_editor.update(cx, |editor, cx| {
             editor.replace_all(&mut match_ranges.iter(), &query, window, cx);
@@ -450,6 +457,7 @@ impl ProjectSearchModalDelegate {
             .collect::<Vec<_>>();
         Ok(PathMatcher::new(&queries, path_style)?)
     }
+
 }
 
 impl PickerDelegate for ProjectSearchModalDelegate {
@@ -596,16 +604,12 @@ impl PickerDelegate for ProjectSearchModalDelegate {
             self.matches.clear();
             self.selected_index = 0;
             self.query.clear();
+            self.active_query = None;
             cx.notify();
             return Task::ready(());
         }
 
         self.query = query.clone();
-        self.cancel_flag.store(true, Ordering::SeqCst);
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        self.cancel_flag = cancel_flag.clone();
-
-        let search_id = self.search_id.fetch_add(1, Ordering::SeqCst) + 1;
 
         let included_text = self.included_files_editor.read(cx).text(cx);
         let excluded_text = self.excluded_files_editor.read(cx).text(cx);
@@ -638,82 +642,127 @@ impl PickerDelegate for ProjectSearchModalDelegate {
         };
 
         self.active_query = Some(search_query.clone());
+        self.matches.clear();
+        self.selected_index = 0;
 
-        self.project_search.update(cx, |project_search, cx| {
-            project_search.search(search_query.clone(), cx);
+        let search = self.project.update(cx, |project, cx| {
+            project.search(search_query, cx)
         });
 
-        let project = self.project.clone();
-        let search = project.update(cx, |project, cx| project.search(search_query, cx));
-        let search_id_ref = self.search_id.clone();
-
         cx.spawn_in(window, async move |picker, cx| {
-            let mut matches = pin!(search);
-            let mut collected_matches: Vec<SearchMatch> = Vec::new();
+            let mut search_stream = pin!(search.ready_chunks(1024));
+            let mut limit_reached = false;
 
-            while let Some(result) = matches.next().await {
-                if cancel_flag.load(Ordering::SeqCst) {
-                    return;
+            while let Some(results) = search_stream.next().await {
+                if limit_reached {
+                    break;
                 }
 
-                match result {
-                    SearchResult::Buffer { buffer, ranges } => {
-                        let new_matches: Option<Vec<SearchMatch>> = picker.read_with(cx, |_, cx| {
-                            let buffer_ref = buffer.read(cx);
-                            let path = buffer_ref.file().map(|file| ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path().clone(),
-                            });
+                let should_stop = picker.update_in(cx, |picker, _, cx| {
 
-                            ranges
-                                .into_iter()
-                                .take(MAX_MATCHES.saturating_sub(collected_matches.len()))
-                                .map(|range| {
-                                    let start_point = range.start.to_point(buffer_ref);
-                                    let line_number = start_point.row + 1;
-
-                                    let line_start = Point::new(start_point.row, 0);
-                                    let line_end = Point::new(start_point.row, buffer_ref.line_len(start_point.row));
-                                    let line_text = buffer_ref
-                                        .text_for_range(line_start..line_end)
-                                        .collect::<String>()
-                                        .trim()
-                                        .to_string();
-
-                                    SearchMatch {
-                                        buffer: buffer.clone(),
-                                        path: path.clone(),
-                                        range,
-                                        line_number,
-                                        line_text,
-                                    }
-                                })
-                                .collect()
-                        }).ok();
-
-                        if let Some(new_matches) = new_matches {
-                            collected_matches.extend(new_matches);
-                        }
-
-                        if collected_matches.len() >= MAX_MATCHES {
+                    for result in results {
+                        if picker.delegate.matches.len() >= MAX_MATCHES {
                             break;
                         }
+
+                        match result {
+                            SearchResult::Buffer { buffer, ranges } => {
+                                let buffer_ref = buffer.read(cx);
+                                let path = buffer_ref.file().map(|file| ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path().clone(),
+                                });
+
+                                // Track which lines we've already added from this buffer
+                                // to avoid duplicates on the same line
+                                let mut seen_lines = std::collections::HashSet::new();
+
+                                for range in ranges.iter() {
+                                    if picker.delegate.matches.len() >= MAX_MATCHES {
+                                        break;
+                                    }
+
+                                    let start_point = range.start.to_point(&buffer_ref);
+                                    let end_point = range.end.to_point(&buffer_ref);
+                                    let line_row = start_point.row;
+
+                                    // Skip if we've already added this line
+                                    if !seen_lines.insert(line_row) {
+                                        continue;
+                                    }
+
+                                    let match_len = (end_point.column.saturating_sub(start_point.column)) as usize;
+
+                                    // For very long lines (like minified JSON), show context around the match
+                                    let line_len = buffer_ref.line_len(line_row);
+                                    const MAX_LINE_LEN: u32 = 200;
+                                    const CONTEXT_CHARS: u32 = 50;
+
+                                    let (line_text, highlight_ranges) = if line_len > MAX_LINE_LEN {
+                                        // Show context around the match
+                                        let context_start = start_point.column.saturating_sub(CONTEXT_CHARS);
+                                        let context_end = (start_point.column + match_len as u32 + CONTEXT_CHARS).min(line_len);
+
+                                        let range_start = Point::new(line_row, context_start);
+                                        let range_end = Point::new(line_row, context_end);
+                                        let context_text = buffer_ref
+                                            .text_for_range(range_start..range_end)
+                                            .collect::<String>();
+
+                                        // Highlight position relative to context start
+                                        let highlight_start = (start_point.column - context_start) as usize;
+                                        let highlight_end = highlight_start + match_len;
+                                        let highlights: Vec<usize> = (highlight_start..highlight_end).collect();
+
+                                        let prefix = if context_start > 0 { "..." } else { "" };
+                                        let suffix = if context_end < line_len { "..." } else { "" };
+                                        let display_text = format!("{}{}{}", prefix, context_text.trim(), suffix);
+
+                                        let prefix_len = prefix.len();
+                                        let adjusted_highlights: Vec<usize> = highlights
+                                            .iter()
+                                            .map(|&h| h + prefix_len)
+                                            .collect();
+
+                                        (display_text, adjusted_highlights)
+                                    } else {
+                                        let line_start = Point::new(line_row, 0);
+                                        let line_end = Point::new(line_row, line_len);
+                                        let full_line = buffer_ref
+                                            .text_for_range(line_start..line_end)
+                                            .collect::<String>();
+                                        let trimmed_start = full_line.len() - full_line.trim_start().len();
+                                        let line_text = full_line.trim().to_string();
+
+                                        let adjusted_column = (start_point.column as usize).saturating_sub(trimmed_start);
+                                        let highlight_ranges: Vec<usize> = (adjusted_column..adjusted_column + match_len).collect();
+
+                                        (line_text, highlight_ranges)
+                                    };
+
+                                    picker.delegate.matches.push(SearchMatch {
+                                        path: path.clone(),
+                                        line_number: line_row + 1,
+                                        line_text,
+                                        highlight_ranges,
+                                    });
+                                }
+                            }
+                            SearchResult::LimitReached => {
+                                limit_reached = true;
+                                break;
+                            }
+                        }
                     }
-                    SearchResult::LimitReached => {
-                        break;
-                    }
+
+                    cx.notify();
+                    picker.delegate.matches.len() >= MAX_MATCHES || limit_reached
+                }).ok().unwrap_or(true);
+
+                if should_stop {
+                    break;
                 }
             }
-
-            picker
-                .update_in(cx, |picker, _, cx| {
-                    if search_id_ref.load(Ordering::SeqCst) == search_id {
-                        picker.delegate.matches = collected_matches;
-                        picker.delegate.selected_index = 0;
-                        cx.notify();
-                    }
-                })
-                .ok();
         })
     }
 
@@ -733,7 +782,6 @@ impl PickerDelegate for ProjectSearchModalDelegate {
     ) -> Option<Self::ListItem> {
         let search_match = self.matches.get(ix)?;
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
-        let highlight_positions = self.find_match_positions(&search_match.line_text);
 
         let file_name = search_match
             .path
@@ -742,8 +790,7 @@ impl PickerDelegate for ProjectSearchModalDelegate {
             .map(|name| name.to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
-        Some(
-            ListItem::new(ix)
+        let item = ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Dense)
                 .selectable(false)
@@ -764,8 +811,11 @@ impl PickerDelegate for ProjectSearchModalDelegate {
                                 .min_w_0()
                                 .overflow_hidden()
                                 .child(
-                                    HighlightedLabel::new(search_match.line_text.clone(), highlight_positions)
-                                        .single_line()
+                                    HighlightedLabel::new(
+                                        search_match.line_text.clone(),
+                                        search_match.highlight_ranges.clone()
+                                    )
+                                    .single_line()
                                 )
                         )
                         .child(
@@ -776,7 +826,8 @@ impl PickerDelegate for ProjectSearchModalDelegate {
                                         .color(Color::Muted)
                                 )
                         )
-                )
-        )
+                );
+
+        Some(item)
     }
 }
