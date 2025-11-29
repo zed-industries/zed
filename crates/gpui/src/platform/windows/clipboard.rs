@@ -193,9 +193,15 @@ fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
 
 fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
     unsafe {
-        let global = GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of_val(data))?;
-        let handle = GlobalLock(global);
-        std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
+        // Allocate the exact number of bytes required and copy the raw bytes into the
+        // global memory handle. Using size_of_val on the slice value is incorrect
+        // (it returns the size of the slice descriptor, not the contents), so compute
+        // byte length explicitly.
+        let byte_len = data.len().saturating_mul(std::mem::size_of::<T>());
+        let global = GlobalAlloc(GMEM_MOVEABLE, byte_len)?;
+        let handle = GlobalLock(global) as *mut u8;
+        // Copy bytes from the data slice into the clipboard buffer.
+        std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, handle, byte_len);
         let _ = GlobalUnlock(global);
         SetClipboardData(format, Some(HANDLE(global.0)))?;
     }
