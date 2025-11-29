@@ -107,19 +107,26 @@ fn with_clipboard<F, T>(f: F) -> Option<T>
 where
     F: FnOnce() -> T,
 {
-    match unsafe { OpenClipboard(None) } {
-        Ok(()) => {
-            let result = f();
-            if let Err(e) = unsafe { CloseClipboard() } {
-                log::error!("Failed to close clipboard: {e}",);
+    // Try a few times to open the clipboard, since other processes may momentarily hold it.
+    for _attempt in 0..10u8 {
+        match unsafe { OpenClipboard(None) } {
+            Ok(()) => {
+                let result = f();
+                if let Err(e) = unsafe { CloseClipboard() } {
+                    log::error!("Failed to close clipboard: {e}",);
+                }
+                return Some(result);
             }
-            Some(result)
-        }
-        Err(e) => {
-            log::error!("Failed to open clipboard: {e}",);
-            None
+            Err(_e) => {
+                // briefly wait and retry
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                continue;
+            }
         }
     }
+
+    log::error!("Failed to open clipboard after multiple retries");
+    None
 }
 
 fn register_clipboard_format(format: PCWSTR) -> u32 {
