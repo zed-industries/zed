@@ -1993,7 +1993,7 @@ impl TextThreadEditor {
                         ),
                 );
 
-            title_input
+            title_input.into_any_element()
         } else {
             let current_title = self.title(cx);
             let title_display = div()
@@ -2018,7 +2018,7 @@ impl TextThreadEditor {
                         .child("✏️"),
                 );
 
-            title_display
+            title_display.into_any_element()
         }
     }
 
