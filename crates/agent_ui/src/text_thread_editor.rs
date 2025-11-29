@@ -1948,11 +1948,13 @@ impl TextThreadEditor {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     fn has_content(&self, cx: &App) -> bool {
         let text_thread = self.text_thread.read(cx);
         text_thread.messages(cx).count() > 0
     }
 
+    #[allow(dead_code)]
     fn regenerate_title(&mut self, cx: &mut Context<Self>) {
         self.regenerate_summary(cx);
     }
@@ -2036,37 +2038,34 @@ impl TextThreadEditor {
                 .on_click(cx.listener(|this, _, _window, cx| {
                     this.start_title_edit(cx);
                 }))
-                .when(!self.title_edit_mode, |this| {
-                    this.child(
+                .child(
+                    div().flex().items_center().children([
                         div()
-                            .flex()
-                            .items_center()
                             .text_ui(cx)
                             .text_color(cx.theme().colors().text)
-                            .child(current_title)
+                            .child(current_title),
+                        div()
+                            .ml_1()
                             .when(self.title_hovered && self.has_content(cx), |this| {
                                 this.child(
-                                    div().ml_1().child(
-                                        Button::new("regenerate-title", "🔃")
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.regenerate_title(cx);
-                                            }))
-                                            .style(ButtonStyle::Subtle)
-                                            .tooltip(Tooltip::text("Regenerate title")),
-                                    ),
+                                    Button::new("regenerate-title", "🔃")
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.regenerate_title(cx);
+                                        }))
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(Tooltip::text("Regenerate title")),
                                 )
                             })
                             .when(!(self.title_hovered && self.has_content(cx)), |this| {
                                 this.child(
                                     div()
-                                        .ml_1()
                                         .text_ui(cx)
                                         .text_color(cx.theme().colors().text_muted)
                                         .child("✏️"),
                                 )
                             }),
-                    )
-                });
+                    ]),
+                );
 
             title_display.into_any_element()
         }
