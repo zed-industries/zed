@@ -1165,10 +1165,11 @@ impl Vim {
         skip_points: &[MultiBufferOffset],
         skip_ranges: &[Range<MultiBufferOffset>],
     ) -> bool {
+        // Use inclusive end (<=) so cursor at last char of word skips that word
         skip_points
             .iter()
             .copied()
-            .any(|offset| offset >= word_start && offset < word_end)
+            .any(|offset| offset >= word_start && offset <= word_end)
             || skip_ranges
                 .iter()
                 .any(|range| range.start < word_end && word_start < range.end)

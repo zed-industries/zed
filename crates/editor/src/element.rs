@@ -3843,8 +3843,10 @@ impl EditorElement {
                 && let Some((x_target, line_width)) = x_position
             {
                 let margin = em_width * 2;
-                let inline = block.height() == 0;
-                if inline {
+                if block.height() == 0 && block.style() == BlockStyle::Fixed {
+                    // Render inline at cursor position (for helix jump labels)
+                    // Check this FIRST before the diagnostic block check, because
+                    // helix jump labels also have element_height_in_lines == 1.
                     if row.0 > 0 {
                         row = DisplayRow(row.0 - 1);
                     }
@@ -3861,6 +3863,7 @@ impl EditorElement {
                     && !row_block_types.contains_key(&(row - 1))
                     && element_height_in_lines == 1
                 {
+                    // Render inline at end of line (for diagnostic blocks that fit)
                     x_offset = line_width + margin;
                     row = row - 1;
                     is_block = false;

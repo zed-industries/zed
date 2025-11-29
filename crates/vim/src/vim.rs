@@ -1786,12 +1786,17 @@ impl Vim {
             HelixJumpBehaviour::Extend => {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        let target = candidate.range.start.to_display_point(map);
-                        selection.set_head(target, SelectionGoal::None);
+                        let word_start = candidate.range.start.to_display_point(map);
+                        let word_end = candidate.range.end.to_display_point(map);
+                        let tail = selection.tail();
 
-                        // Ensure the current character is included in the selection
-                        if !selection.reversed {
-                            selection.end = movement::right(map, selection.end);
+                        if word_start >= tail {
+                            // Jumping forward: extend head to end of target word
+                            selection.set_head(word_end, SelectionGoal::None);
+                        } else {
+                            // Jumping backward: extend backward while keeping current extent
+                            // Use current end as tail to preserve the selection
+                            selection.set_head_tail(word_start, selection.end, SelectionGoal::None);
                         }
                     });
                 });
