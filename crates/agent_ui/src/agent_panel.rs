@@ -1596,7 +1596,7 @@ impl AgentPanel {
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
                     let is_generating = thread_view
                         .read(cx)
-                        .thread()
+                        .as_native_thread(cx)
                         .map_or(false, |t| t.read(cx).is_generating_title());
 
                     h_flex()
@@ -1614,7 +1614,7 @@ impl AgentPanel {
                                         let thread_view = thread_view.clone();
                                         move |_, _window, cx| {
                                             thread_view.update(cx, |thread_view, cx| {
-                                                if let Some(thread) = thread_view.thread() {
+                                                if let Some(thread) = thread_view.as_native_thread(cx) {
                                                     thread.update(cx, |thread, cx| {
                                                         thread.generate_title(cx);
                                                     });
