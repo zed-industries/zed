@@ -2068,7 +2068,7 @@ mod tests {
             end: word_range.end,
             reversed: false,
             pending: true,
-            mode: SelectMode::Word(word_range.clone()),
+            mode: SelectMode::Word(word_range),
         };
 
         // Drag forward to "test" - should expand selection to include "test"
