@@ -22,11 +22,11 @@ use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, ClipboardItem, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement,
-    Styled, Subscription, Task, WeakEntity, actions, div, img, point, prelude::*,
-    pulsating_between, size, CursorStyle,
+    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, ClipboardItem, CursorStyle,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
+    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, actions, div, img, point,
+    prelude::*, pulsating_between, size,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -1948,7 +1948,7 @@ impl TextThreadEditor {
 
     fn render_title_editor(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         if self.title_edit_mode {
@@ -1965,13 +1965,16 @@ impl TextThreadEditor {
                         .p_3()
                         .min_w(px(300.0))
                         .cursor(CursorStyle::IBeam)
-                        .child(div().text_ui(cx).text_color(cx.theme().colors().text).child(
-                            if temp_input.is_empty() {
-                                "Enter thread title...".into()
-                            } else {
-                                temp_input.clone()
-                            },
-                        )),
+                        .child(
+                            div()
+                                .text_ui(cx)
+                                .text_color(cx.theme().colors().text)
+                                .child(if temp_input.is_empty() {
+                                    "Enter thread title...".into()
+                                } else {
+                                    temp_input
+                                }),
+                        ),
                 )
                 .child(
                     div()
@@ -1979,14 +1982,14 @@ impl TextThreadEditor {
                         .gap_1()
                         .child(
                             Button::new("save", "Save")
-                                .on_click(cx.listener(|this, _, window, cx| {
+                                .on_click(cx.listener(|this, _, _window, cx| {
                                     this.save_title_edit(cx);
                                 }))
                                 .style(ButtonStyle::Subtle),
                         )
                         .child(
                             Button::new("cancel", "Cancel")
-                                .on_click(cx.listener(|this, _, window, cx| {
+                                .on_click(cx.listener(|this, _, _window, cx| {
                                     this.cancel_title_edit(cx);
                                 }))
                                 .style(ButtonStyle::Subtle),
@@ -2001,7 +2004,7 @@ impl TextThreadEditor {
                 .items_center()
                 .cursor(CursorStyle::PointingHand)
                 .id("title-display")
-                .on_click(cx.listener(|this, _, window, cx| {
+                .on_click(cx.listener(|this, _, _window, cx| {
                     this.start_title_edit(cx);
                 }))
                 .child(
