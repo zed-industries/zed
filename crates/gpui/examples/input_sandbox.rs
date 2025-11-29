@@ -9,44 +9,20 @@ use gpui::{
     text_area,
 };
 
-const SAMPLE_TEXT: &str = r#"ABCDEFGHIJKLMNOPQRSTUVWXYZ
-abcdefghijklmnopqrstuvwxyz
-0123456789!?.
-
-Pixel preview  Resize to fit  zenith zone
-Frame  Group  Feedback  Reset
-Day day  Month month  Year year
-Hour hour  Minute minute  Second second
-
-The quick brown fox jumps over the lazy dog
-Pack my box with five dozen liquor jugs
-Sphinx of black quartz, judge my vow
-
-jumping far—but not really—over the bar
-We found a fix to the ffi problem
-Irrational  fi  ffi  fl  ffl
-
-12.4 pt  64%  90px  45 kg  12 o'clock
-$64 $7  €64 €64  £7 £7
-3° °C °F
-
-#80A6F3  #FFFFFF  #000000
-in Drafts • 3 hours ago
-
-• Buy milk?  cc cd ce cq co
-• ec ed ee eq eo  oc od oe oq oo"#;
-
 struct InputSandbox {
     multiline_input: Entity<InputState>,
     singleline_input: Entity<InputState>,
     use_multiline: bool,
+    current_sample: SampleText,
 }
 
 impl InputSandbox {
     fn new(cx: &mut Context<Self>) -> Self {
+        let initial_sample = SampleText::Typography;
+
         let multiline_input = cx.new(|cx| {
             let mut input = InputState::new_multiline(cx).cursor_blink(cx);
-            input.set_content(SAMPLE_TEXT, cx);
+            input.set_content(initial_sample.content(), cx);
             input
         });
 
@@ -60,11 +36,20 @@ impl InputSandbox {
             multiline_input,
             singleline_input,
             use_multiline: true,
+            current_sample: initial_sample,
         }
     }
 
     fn toggle_mode(&mut self, _: &ToggleMode, _window: &mut Window, cx: &mut Context<Self>) {
         self.use_multiline = !self.use_multiline;
+        cx.notify();
+    }
+
+    fn set_sample(&mut self, sample: SampleText, cx: &mut Context<Self>) {
+        self.current_sample = sample;
+        self.multiline_input.update(cx, |input, cx| {
+            input.set_content(sample.content(), cx);
+        });
         cx.notify();
     }
 
@@ -182,6 +167,25 @@ impl Render for InputSandbox {
                                 ),
                         ),
                     )
+                    // Sample text selector (only in multiline mode)
+                    .when(self.use_multiline, |this| {
+                        let current_sample = self.current_sample;
+                        this.child(
+                            sidebar_section("Sample Text").child(
+                                div().flex().flex_col().gap_1().children(
+                                    SampleText::ALL.iter().map(|sample| {
+                                        let sample = *sample;
+                                        let is_active = current_sample == sample;
+                                        sample_button(sample, is_active).on_click(cx.listener(
+                                            move |this, _, _window, cx| {
+                                                this.set_sample(sample, cx);
+                                            },
+                                        ))
+                                    }),
+                                ),
+                            ),
+                        )
+                    })
                     // Stats section
                     .child(
                         sidebar_section("Statistics")
@@ -268,6 +272,26 @@ fn toggle_button(id: &'static str, label: &str, active: bool) -> Stateful<Div> {
         .child(label.to_string())
 }
 
+fn sample_button(sample: SampleText, active: bool) -> Stateful<Div> {
+    div()
+        .id(sample.label())
+        .px_2()
+        .py_1()
+        .text_xs()
+        .rounded_sm()
+        .cursor_pointer()
+        .w_full()
+        .when(active, |this| {
+            this.bg(rgb(0x0e639c)).text_color(rgb(0xffffff))
+        })
+        .when(!active, |this| {
+            this.bg(rgb(0x3c3c3c))
+                .text_color(rgb(0x888888))
+                .hover(|s| s.bg(rgb(0x4c4c4c)))
+        })
+        .child(sample.label().to_string())
+}
+
 fn stat_row(label: &str, value: impl Into<gpui::SharedString>) -> gpui::Div {
     div()
         .flex()
@@ -326,3 +350,217 @@ fn main() {
         cx.activate(true);
     });
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SampleText {
+    Typography,
+    Emoji,
+    RtlMixed,
+    Multibyte,
+    EdgeCases,
+}
+
+impl SampleText {
+    const ALL: &[SampleText] = &[
+        SampleText::Typography,
+        SampleText::Emoji,
+        SampleText::RtlMixed,
+        SampleText::Multibyte,
+        SampleText::EdgeCases,
+    ];
+
+    fn label(&self) -> &'static str {
+        match self {
+            SampleText::Typography => "Typography",
+            SampleText::Emoji => "Emoji",
+            SampleText::RtlMixed => "RTL/Mixed",
+            SampleText::Multibyte => "Multibyte",
+            SampleText::EdgeCases => "Edge Cases",
+        }
+    }
+
+    fn content(&self) -> &'static str {
+        match self {
+            SampleText::Typography => TYPOGRAPHY_TEXT,
+            SampleText::Emoji => EMOJI_TEXT,
+            SampleText::RtlMixed => RTL_MIXED_TEXT,
+            SampleText::Multibyte => MULTIBYTE_TEXT,
+            SampleText::EdgeCases => EDGE_CASES_TEXT,
+        }
+    }
+}
+
+const TYPOGRAPHY_TEXT: &str = r#"ABCDEFGHIJKLMNOPQRSTUVWXYZ
+abcdefghijklmnopqrstuvwxyz
+0123456789!?.
+
+Pixel preview  Resize to fit  zenith zone
+Frame  Group  Feedback  Reset
+Day day  Month month  Year year
+Hour hour  Minute minute  Second second
+
+The quick brown fox jumps over the lazy dog
+Pack my box with five dozen liquor jugs
+Sphinx of black quartz, judge my vow
+
+jumping far—but not really—over the bar
+We found a fix to the ffi problem
+Irrational  fi  ffi  fl  ffl
+
+12.4 pt  64%  90px  45 kg  12 o'clock
+$64 $7  €64 €64  £7 £7
+3° °C °F
+
+#80A6F3  #FFFFFF  #000000
+in Drafts • 3 hours ago
+
+• Buy milk?  cc cd ce cq co
+• ec ed ee eq eo  oc od oe oq oo"#;
+
+const EMOJI_TEXT: &str = r#"Simple emoji: 😀 😎 🎉 ❤️ 🔥 ✨
+
+Skin tone modifiers:
+👋 👋🏻 👋🏼 👋🏽 👋🏾 👋🏿
+
+ZWJ sequences (family/profession):
+👨‍👩‍👧‍👦  👩‍💻  👨‍🍳  🧑‍🚀  👩‍❤️‍👨
+
+Flags (regional indicators):
+🇺🇸 🇬🇧 🇯🇵 🇩🇪 🇫🇷 🇨🇦 🏳️‍🌈
+
+Keycap sequences:
+1️⃣ 2️⃣ 3️⃣ #️⃣ *️⃣
+
+Complex ZWJ chains:
+👨‍👨‍👧‍👧  👩‍👩‍👦‍👦  🏳️‍⚧️
+
+Emoji with text presentation:
+☺︎ vs ☺️  ▶︎ vs ▶️
+
+Mixed text and emoji:
+Hello 👋 World 🌍! How are you? 🤔
+I ❤️ coding 💻 in Rust 🦀
+
+Cursor test: place cursor after each
+→😀← →👨‍👩‍👧‍👦← →🇺🇸← →1️⃣←"#;
+
+const RTL_MIXED_TEXT: &str = r#"Hebrew:
+שלום עולם
+מה שלומך היום?
+
+Arabic:
+مرحبا بالعالم
+كيف حالك اليوم؟
+
+Mixed LTR and RTL:
+Hello שלום World עולם
+The word مرحبا means hello
+
+Numbers in RTL context:
+בשנת 2024 היו 365 ימים
+في عام 2024 كان هناك 365 يومًا
+
+Bidirectional with punctuation:
+(שלום) "עולם" [מה]!
+«مرحبا» "العالم" (كيف)؟
+
+Mixed script sentence:
+I learned שלום in Hebrew class
+تعلمت "hello" في صف الإنجليزية
+
+Nested direction changes:
+Start שלום hello עולם end
+Begin مرحبا world العالم finish"#;
+
+const MULTIBYTE_TEXT: &str = r#"Chinese (Simplified):
+你好世界
+中文测试文本
+北京市朝阳区
+
+Chinese (Traditional):
+你好世界
+中文測試文本
+
+Japanese (mixed scripts):
+こんにちは世界
+日本語テスト
+東京都渋谷区
+カタカナとひらがな
+
+Korean:
+안녕하세요
+한국어 테스트
+서울특별시
+
+Thai (no word boundaries):
+สวัสดีครับ
+ภาษาไทยทดสอบ
+
+Devanagari (Hindi):
+नमस्ते दुनिया
+हिंदी परीक्षण
+
+Greek:
+Γεια σου κόσμε
+Ελληνικά τεστ
+
+Cyrillic (Russian):
+Привет мир
+Русский тест
+
+Mixed multibyte:
+Hello 你好 こんにちは 안녕 Привет"#;
+
+const EDGE_CASES_TEXT: &str = r#"Combining characters:
+é = e + ́ (precomposed)
+é = e + ́ (decomposed: e\u{0301})
+ñ vs ñ (composed vs decomposed)
+ü vs ü (composed vs decomposed)
+
+Multiple combiners:
+ẗ̈ (t + two diacritics)
+q̃̃ (q + two tildes)
+
+Zero-width characters:
+Word​Break (ZWJ between)
+Word‌Break (ZWNJ between)
+Word⁠Break (word joiner)
+
+Directional marks:
+Left‎Right (LRM between)
+Right‏Left (RLM between)
+
+Variation selectors:
+☺︎ (text) vs ☺️ (emoji)
+✓︎ (text) vs ✓️ (emoji)
+
+Homoglyphs (look similar, different chars):
+ABCabc (Latin)
+АВСавс (Cyrillic - different!)
+ΑΒΓαβγ (Greek - also different!)
+
+Surrogate pairs (astral plane):
+𝕳𝖊𝖑𝖑𝖔 (mathematical fraktur)
+𝒜𝒷𝒸 (mathematical script)
+🜀🜁🜂🜃 (alchemical symbols)
+
+Invisible characters:
+Before[ ]After (regular space)
+Before[ ]After (NBSP)
+Before[]After (zero-width space)
+
+Tab and special whitespace:
+Column1	Column2	Column3
+Line with trailing spaces
+  Line with leading spaces
+
+Long lines without breaks:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+Empty lines above and below:
+
+
+Single characters per line:
+a
+b
+c"#;
