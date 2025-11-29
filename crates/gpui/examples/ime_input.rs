@@ -9,7 +9,6 @@ use gpui::{Application, WindowOptions, EmptyView};
 fn main() {
     Application::new().run(|cx| {
         cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView))
-        })
-        .unwrap();
+            .unwrap();
     });
 }
