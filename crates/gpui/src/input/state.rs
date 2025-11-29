@@ -381,6 +381,7 @@ impl InputState {
     }
 
     pub(crate) fn up(&mut self, _: &Up, _window: &mut Window, cx: &mut Context<Self>) {
+        self.pause_cursor_blink(cx);
         if !self.multiline {
             // In single-line mode, up moves to start
             self.selected_range = 0..0;
@@ -398,6 +399,7 @@ impl InputState {
     }
 
     pub(crate) fn down(&mut self, _: &Down, _window: &mut Window, cx: &mut Context<Self>) {
+        self.pause_cursor_blink(cx);
         if !self.multiline {
             // In single-line mode, down moves to end
             let end = self.content.len();
@@ -424,6 +426,7 @@ impl InputState {
     }
 
     pub(crate) fn select_up(&mut self, _: &SelectUp, _window: &mut Window, cx: &mut Context<Self>) {
+        self.pause_cursor_blink(cx);
         if !self.multiline {
             // In single-line mode, select_up selects to start
             self.select_to(0, cx);
@@ -450,6 +453,7 @@ impl InputState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pause_cursor_blink(cx);
         if !self.multiline {
             // In single-line mode, select_down selects to end
             self.select_to(self.content.len(), cx);
@@ -691,6 +695,7 @@ impl InputState {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.pause_cursor_blink(cx);
         let offset = offset.min(self.content.len());
         self.selected_range = offset..offset;
         self.selection_reversed = false;
@@ -699,6 +704,7 @@ impl InputState {
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.pause_cursor_blink(cx);
         let offset = offset.min(self.content.len());
         if self.selection_reversed {
             self.selected_range.start = offset;

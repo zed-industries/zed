@@ -354,38 +354,30 @@ fn main() {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SampleText {
     Typography,
-    Emoji,
     RtlMixed,
-    Multibyte,
-    EdgeCases,
+    TrickyText,
 }
 
 impl SampleText {
     const ALL: &[SampleText] = &[
         SampleText::Typography,
-        SampleText::Emoji,
         SampleText::RtlMixed,
-        SampleText::Multibyte,
-        SampleText::EdgeCases,
+        SampleText::TrickyText,
     ];
 
     fn label(&self) -> &'static str {
         match self {
             SampleText::Typography => "Typography",
-            SampleText::Emoji => "Emoji",
-            SampleText::RtlMixed => "RTL/Mixed",
-            SampleText::Multibyte => "Multibyte",
-            SampleText::EdgeCases => "Edge Cases",
+            SampleText::RtlMixed => "RTL/Bidi",
+            SampleText::TrickyText => "Tricky Text",
         }
     }
 
     fn content(&self) -> &'static str {
         match self {
             SampleText::Typography => TYPOGRAPHY_TEXT,
-            SampleText::Emoji => EMOJI_TEXT,
             SampleText::RtlMixed => RTL_MIXED_TEXT,
-            SampleText::Multibyte => MULTIBYTE_TEXT,
-            SampleText::EdgeCases => EDGE_CASES_TEXT,
+            SampleText::TrickyText => TRICKY_TEXT,
         }
     }
 }
@@ -417,33 +409,6 @@ in Drafts • 3 hours ago
 • Buy milk?  cc cd ce cq co
 • ec ed ee eq eo  oc od oe oq oo"#;
 
-const EMOJI_TEXT: &str = r#"Simple emoji: 😀 😎 🎉 ❤️ 🔥 ✨
-
-Skin tone modifiers:
-👋 👋🏻 👋🏼 👋🏽 👋🏾 👋🏿
-
-ZWJ sequences (family/profession):
-👨‍👩‍👧‍👦  👩‍💻  👨‍🍳  🧑‍🚀  👩‍❤️‍👨
-
-Flags (regional indicators):
-🇺🇸 🇬🇧 🇯🇵 🇩🇪 🇫🇷 🇨🇦 🏳️‍🌈
-
-Keycap sequences:
-1️⃣ 2️⃣ 3️⃣ #️⃣ *️⃣
-
-Complex ZWJ chains:
-👨‍👨‍👧‍👧  👩‍👩‍👦‍👦  🏳️‍⚧️
-
-Emoji with text presentation:
-☺︎ vs ☺️  ▶︎ vs ▶️
-
-Mixed text and emoji:
-Hello 👋 World 🌍! How are you? 🤔
-I ❤️ coding 💻 in Rust 🦀
-
-Cursor test: place cursor after each
-→😀← →👨‍👩‍👧‍👦← →🇺🇸← →1️⃣←"#;
-
 const RTL_MIXED_TEXT: &str = r#"Hebrew:
 שלום עולם
 מה שלומך היום?
@@ -472,95 +437,70 @@ Nested direction changes:
 Start שלום hello עולם end
 Begin مرحبا world العالم finish"#;
 
-const MULTIBYTE_TEXT: &str = r#"Chinese (Simplified):
-你好世界
-中文测试文本
-北京市朝阳区
+const TRICKY_TEXT: &str = r#"═══ EMOJI ═══
 
-Chinese (Traditional):
-你好世界
-中文測試文本
+Simple: 😀 😎 🎉 ❤️ 🔥 ✨
+Skin tones: 👋 👋🏻 👋🏼 👋🏽 👋🏾 👋🏿
+ZWJ sequences: 👨‍👩‍👧‍👦  👩‍💻  👨‍🍳  🧑‍🚀
+Flags: 🇺🇸 🇬🇧 🇯🇵 🇩🇪 🇫🇷 🏳️‍🌈
+Keycaps: 1️⃣ 2️⃣ 3️⃣ #️⃣ *️⃣
+Presentation: ☺︎ vs ☺️  ▶︎ vs ▶️
+Mixed: Hello 👋 World 🌍! I ❤️ Rust 🦀
+Cursor test: →😀← →👨‍👩‍👧‍👦← →🇺🇸← →1️⃣←
 
-Japanese (mixed scripts):
-こんにちは世界
-日本語テスト
-東京都渋谷区
-カタカナとひらがな
+═══ MULTIBYTE ═══
 
-Korean:
-안녕하세요
-한국어 테스트
-서울특별시
+Chinese: 你好世界 中文测试
+Japanese: こんにちは世界 カタカナ
+Korean: 안녕하세요 한국어
+Thai: สวัสดีครับ
+Hindi: नमस्ते दुनिया
+Greek: Γεια σου κόσμε
+Russian: Привет мир
+Mixed: Hello 你好 こんにちは 안녕 Привет
 
-Thai (no word boundaries):
-สวัสดีครับ
-ภาษาไทยทดสอบ
+═══ COMBINING CHARACTERS ═══
 
-Devanagari (Hindi):
-नमस्ते दुनिया
-हिंदी परीक्षण
-
-Greek:
-Γεια σου κόσμε
-Ελληνικά τεστ
-
-Cyrillic (Russian):
-Привет мир
-Русский тест
-
-Mixed multibyte:
-Hello 你好 こんにちは 안녕 Привет"#;
-
-const EDGE_CASES_TEXT: &str = r#"Combining characters:
-é = e + ́ (precomposed)
-é = e + ́ (decomposed: e\u{0301})
-ñ vs ñ (composed vs decomposed)
-ü vs ü (composed vs decomposed)
+Precomposed vs decomposed:
+é (precomposed) vs é (e + ́)
+ñ vs ñ  •  ü vs ü
 
 Multiple combiners:
 ẗ̈ (t + two diacritics)
 q̃̃ (q + two tildes)
 
-Zero-width characters:
-Word​Break (ZWJ between)
-Word‌Break (ZWNJ between)
+═══ ZERO-WIDTH & INVISIBLE ═══
+
+Word​Break (ZWJ)
+Word‌Break (ZWNJ)
 Word⁠Break (word joiner)
+Left‎Right (LRM)
+Right‏Left (RLM)
 
-Directional marks:
-Left‎Right (LRM between)
-Right‏Left (RLM between)
+Spaces: [ ] (regular) [ ] (NBSP) [] (zero-width)
 
-Variation selectors:
-☺︎ (text) vs ☺️ (emoji)
-✓︎ (text) vs ✓️ (emoji)
+═══ HOMOGLYPHS ═══
 
-Homoglyphs (look similar, different chars):
 ABCabc (Latin)
 АВСавс (Cyrillic - different!)
-ΑΒΓαβγ (Greek - also different!)
+ΑΒΓαβγ (Greek - different!)
 
-Surrogate pairs (astral plane):
-𝕳𝖊𝖑𝖑𝖔 (mathematical fraktur)
-𝒜𝒷𝒸 (mathematical script)
-🜀🜁🜂🜃 (alchemical symbols)
+═══ ASTRAL PLANE ═══
 
-Invisible characters:
-Before[ ]After (regular space)
-Before[ ]After (NBSP)
-Before[]After (zero-width space)
+𝕳𝖊𝖑𝖑𝖔 (math fraktur)
+𝒜𝒷𝒸 (math script)
+🜀🜁🜂🜃 (alchemical)
 
-Tab and special whitespace:
-Column1	Column2	Column3
-Line with trailing spaces
-  Line with leading spaces
+═══ WHITESPACE ═══
 
-Long lines without breaks:
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Tab:	Column1	Column2
+Trailing spaces
+  Leading spaces
 
-Empty lines above and below:
+═══ STRESS TEST ═══
 
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
-Single characters per line:
 a
 b
 c"#;
