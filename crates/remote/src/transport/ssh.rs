@@ -1064,8 +1064,8 @@ impl SshSocket {
             o if o.ends_with("Darwin") => "macos",
             o if o.ends_with("Linux") => "linux",
             _ => anyhow::bail!(
-                    "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-                )
+                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+            ),
         };
 
         // exclude armv5,6,7 as they are 32-bit.
