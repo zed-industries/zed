@@ -1250,7 +1250,7 @@ unsafe extern "system" fn window_procedure(
 
 #[cfg(test)]
 mod tests {
-    use crate::{ClipboardItem, read_from_clipboard, write_to_clipboard};
+    use crate::ClipboardItem;
 
     #[test]
     fn test_clipboard() {
