@@ -20,6 +20,7 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
+use futures::channel::oneshot::Canceled;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
@@ -3263,8 +3264,23 @@ impl GitPanel {
             let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
 
             cx.spawn_in(window, async move |git_panel, cx| {
-                let Ok(access) = access.await else {
-                    return Ok(());
+                // When the user does not own the `.git` folder, the
+                // `GitStore.spawn_local_git_worker` will fail to actually
+                // create the receiver for the Git jobs, so the job to try and
+                // determine the `GitAccess` will always be cancelled will
+                // always be cancelled. As such, when that happens, we'll just assume `GitAccess::No`.
+                //
+                // TODO!: I believe there's more ways that the job actually gets
+                // cancelled, for example, when the
+                // `update_visible_entries_task` gets updated before the
+                // previous has not run and we were in the middle of checking
+                // the access? The proper solution might be to move this state
+                // setup to repository or git store itself, as I believe those
+                // will be able to determine whether we're able to read the
+                // `.git `folder or not?
+                let access = match access.await {
+                    Ok(access) => access,
+                    Err(Canceled) => GitAccess::No,
                 };
 
                 git_panel.update(cx, |this, _cx| {
