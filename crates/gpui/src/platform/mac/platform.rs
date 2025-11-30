@@ -15,10 +15,10 @@ use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSApplicationActivationPolicy,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSApplication, NSApplicationActivationPolicy, NSEventModifierFlags, NSMenu, NSMenuItem,
+        NSModalResponse, NSOpenPanel, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeRTF,
+        NSPasteboardTypeRTFD, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSSavePanel,
+        NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -48,9 +48,15 @@ impl ActivationPolicy {
     /// Convert to the corresponding NSApplicationActivationPolicy value.
     pub fn to_ns_activation_policy(self) -> NSApplicationActivationPolicy {
         match self {
-            ActivationPolicy::Regular => NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-            ActivationPolicy::Accessory => NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-            ActivationPolicy::Prohibited => NSApplicationActivationPolicy::NSApplicationActivationPolicyProhibited,
+            ActivationPolicy::Regular => {
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular
+            }
+            ActivationPolicy::Accessory => {
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
+            }
+            ActivationPolicy::Prohibited => {
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyProhibited
+            }
         }
     }
 }
@@ -1441,14 +1447,11 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        
-        let activation_policy = PENDING_ACTIVATION_POLICY
-            .lock()
-            .take()
-            .unwrap_or_default();
-        
+
+        let activation_policy = PENDING_ACTIVATION_POLICY.lock().take().unwrap_or_default();
+
         app.setActivationPolicy_(activation_policy.to_ns_activation_policy());
-        
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
 

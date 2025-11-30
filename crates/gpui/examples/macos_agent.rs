@@ -15,8 +15,8 @@
 // Note: This example only works on macOS. On other platforms, it will behave like a normal window.
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, size, App, Application, Bounds, Context, KeyBinding,
-    SharedString, Window, WindowBounds, WindowOptions,
+    App, Application, Bounds, Context, KeyBinding, SharedString, Window, WindowBounds,
+    WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 
 // Define a Quit action for the quit button
@@ -137,27 +137,23 @@ impl Render for AgentWindow {
             )
             .child(
                 // Quit button
-                div()
-                    .flex()
-                    .justify_center()
-                    .mt_2()
-                    .child(
-                        div()
-                            .id("quit-button")
-                            .flex()
-                            .px_4()
-                            .py_2()
-                            .bg(rgb(0xd32f2f))
-                            .hover(|style| style.bg(rgb(0xc62828)))
-                            .active(|style| style.bg(rgb(0xb71c1c)))
-                            .text_color(rgb(0xffffff))
-                            .rounded_md()
-                            .cursor_pointer()
-                            .child("Quit Application (Cmd+Q)")
-                            .on_click(|_, _, cx| {
-                                cx.quit();
-                            }),
-                    ),
+                div().flex().justify_center().mt_2().child(
+                    div()
+                        .id("quit-button")
+                        .flex()
+                        .px_4()
+                        .py_2()
+                        .bg(rgb(0xd32f2f))
+                        .hover(|style| style.bg(rgb(0xc62828)))
+                        .active(|style| style.bg(rgb(0xb71c1c)))
+                        .text_color(rgb(0xffffff))
+                        .rounded_md()
+                        .cursor_pointer()
+                        .child("Quit Application (Cmd+Q)")
+                        .on_click(|_, _, cx| {
+                            cx.quit();
+                        }),
+                ),
             )
     }
 }
