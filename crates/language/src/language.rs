@@ -2058,10 +2058,6 @@ impl LanguageScope {
         self.language.config.name.clone()
     }
 
-    pub fn language_config(&self) -> &LanguageConfig {
-        &self.language.config
-    }
-
     pub fn collapsed_placeholder(&self) -> &str {
         self.language.config.collapsed_placeholder.as_ref()
     }
