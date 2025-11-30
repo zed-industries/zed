@@ -1345,7 +1345,9 @@
       "alt-up": "notebook::MoveCellUp",
       "alt-down": "notebook::MoveCellDown",
       "ctrl-m": "notebook::AddCodeBlock",
-      "ctrl-shift-m": "notebook::AddMarkdownBlock"
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel"
     }
   },
   {

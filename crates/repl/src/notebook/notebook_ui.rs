@@ -16,7 +16,7 @@ use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use ui::{Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -28,11 +28,15 @@ use nbformat::v4::Metadata as NotebookMetadata;
 use serde_json;
 use uuid::Uuid;
 
+use crate::components::{KernelPickerDelegate, KernelSelector};
 use crate::kernels::{
     Kernel, KernelSession, KernelSpecification, KernelStatus, LocalKernelSpecification,
     NativeRunningKernel, RemoteRunningKernel,
 };
+use crate::repl_store::ReplStore;
+use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
+use ui::PopoverMenuHandle;
 
 actions!(
     notebook,
@@ -53,6 +57,10 @@ actions!(
         AddMarkdownBlock,
         /// Adds a new code cell.
         AddCodeBlock,
+        /// Restarts the kernel.
+        RestartKernel,
+        /// Interrupts the current execution.
+        InterruptKernel,
     ]
 );
 
@@ -85,6 +93,7 @@ pub fn init(cx: &mut App) {
 pub struct NotebookEditor {
     languages: Arc<LanguageRegistry>,
     project: Entity<Project>,
+    worktree_id: project::WorktreeId,
 
     focus_handle: FocusHandle,
     notebook_item: Entity<NotebookItem>,
@@ -97,7 +106,9 @@ pub struct NotebookEditor {
     cell_order: Vec<CellId>,
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
+    kernel_specification: Option<KernelSpecification>,
     execution_requests: HashMap<String, CellId>,
+    kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
 impl NotebookEditor {
@@ -111,6 +122,7 @@ impl NotebookEditor {
 
         let languages = project.read(cx).languages().clone();
         let language_name = notebook_item.read(cx).language_name();
+        let worktree_id = notebook_item.read(cx).project_path.worktree_id;
 
         let notebook_language = notebook_item.read(cx).notebook_language();
         let notebook_language = cx
@@ -226,6 +238,7 @@ impl NotebookEditor {
         let mut editor = Self {
             project,
             languages: languages.clone(),
+            worktree_id,
             focus_handle,
             notebook_item,
             notebook_language,
@@ -235,13 +248,46 @@ impl NotebookEditor {
             cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
+            kernel_specification: None,
             execution_requests: HashMap::default(),
+            kernel_picker_handle: PopoverMenuHandle::default(),
         };
         editor.launch_kernel(window, cx);
         editor
     }
 
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // use default Python kernel if no specification is set
+        let spec = self.kernel_specification.clone().unwrap_or_else(|| {
+            KernelSpecification::Jupyter(LocalKernelSpecification {
+                name: "python3".to_string(),
+                path: PathBuf::from("python3"),
+                kernelspec: JupyterKernelspec {
+                    argv: vec![
+                        "python3".to_string(),
+                        "-m".to_string(),
+                        "ipykernel_launcher".to_string(),
+                        "-f".to_string(),
+                        "{connection_file}".to_string(),
+                    ],
+                    display_name: "Python 3".to_string(),
+                    language: "python".to_string(),
+                    interrupt_mode: None,
+                    metadata: None,
+                    env: None,
+                },
+            })
+        });
+
+        self.launch_kernel_with_spec(spec, window, cx);
+    }
+
+    fn launch_kernel_with_spec(
+        &mut self,
+        spec: KernelSpecification,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let entity_id = cx.entity_id();
         let working_directory = self
             .project
@@ -253,28 +299,23 @@ impl NotebookEditor {
         let fs = self.project.read(cx).fs().clone();
         let view = cx.entity();
 
-        // Hardcoded python kernel for now
-        let spec = LocalKernelSpecification {
-            name: "python3".to_string(),
-            path: PathBuf::from("python3"),
-            kernelspec: JupyterKernelspec {
-                argv: vec![
-                    "python3".to_string(),
-                    "-m".to_string(),
-                    "ipykernel_launcher".to_string(),
-                    "-f".to_string(),
-                    "{connection_file}".to_string(),
-                ],
-                display_name: "Python 3".to_string(),
-                language: "python".to_string(),
-                interrupt_mode: None,
-                metadata: None,
-                env: None,
-            },
-        };
+        self.kernel_specification = Some(spec.clone());
 
-        let kernel_task =
-            NativeRunningKernel::new(spec, entity_id, working_directory, fs, view, window, cx);
+        let kernel_task = match spec {
+            KernelSpecification::Jupyter(local_spec)
+            | KernelSpecification::PythonEnv(local_spec) => NativeRunningKernel::new(
+                local_spec,
+                entity_id,
+                working_directory,
+                fs,
+                view,
+                window,
+                cx,
+            ),
+            KernelSpecification::Remote(remote_spec) => {
+                RemoteRunningKernel::new(remote_spec, working_directory, view, window, cx)
+            }
+        };
 
         let pending_kernel = cx
             .spawn(async move |this, cx| {
@@ -303,6 +344,59 @@ impl NotebookEditor {
         cx.notify();
     }
 
+    // Note: Python environments are only detected as kernels if ipykernel is installed.
+    // Users need to run `pip install ipykernel` (or `uv pip install ipykernel`) in their
+    // virtual environment for it to appear in the kernel selector.
+    // This happens because we have an ipykernel check inside the function python_env_kernel_specification in mod.rs L:121
+
+    fn change_kernel(
+        &mut self,
+        spec: KernelSpecification,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // shutdown the current kernel if running
+        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+            kernel.force_shutdown(window, cx).detach();
+        }
+
+        // clear execution requests since we're switching kernels
+        self.execution_requests.clear();
+
+        // launch new
+        self.launch_kernel_with_spec(spec, window, cx);
+    }
+
+    fn restart_kernel(&mut self, _: &RestartKernel, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(spec) = self.kernel_specification.clone() {
+            // shutdown
+            if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+                kernel.force_shutdown(window, cx).detach();
+            }
+
+            self.kernel = Kernel::Restarting;
+            cx.notify();
+
+            // relaunch
+            self.launch_kernel_with_spec(spec, window, cx);
+        }
+    }
+
+    fn interrupt_kernel(
+        &mut self,
+        _: &InterruptKernel,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Kernel::RunningKernel(kernel) = &self.kernel {
+            // interrupt request to the kernel
+            let interrupt_request = runtimelib::InterruptRequest {};
+            let message: JupyterMessage = interrupt_request.into();
+            kernel.request_tx().try_send(message).ok();
+            cx.notify();
+        }
+    }
+
     fn execute_cell(&mut self, cell_id: CellId, cx: &mut Context<Self>) {
         let code = if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
             let editor = cell.read(cx).editor().clone();
@@ -315,14 +409,15 @@ impl NotebookEditor {
             return;
         };
 
-        // Clear outputs if the cell has already been run
+        // clear output then -> start execution
         if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
-            if cell.read(cx).has_outputs() {
-                cell.update(cx, |cell, cx| {
+            cell.update(cx, |cell, cx| {
+                if cell.has_outputs() {
                     cell.clear_outputs();
-                    cx.notify();
-                });
-            }
+                }
+                cell.start_execution();
+                cx.notify();
+            });
         }
 
         let request = ExecuteRequest {
@@ -793,11 +888,141 @@ impl NotebookEditor {
                         Self::render_notebook_control("more-menu", IconName::Ellipsis, window, cx)
                             .tooltip(move |window, cx| (Tooltip::text("More options"))(window, cx)),
                     )
-                    .child(Self::button_group(window, cx).child(
-                        IconButton::new("repl", IconName::ReplNeutral).tooltip(
-                            move |window, cx| (Tooltip::text("Kernel information"))(window, cx),
-                        ),
+                    .child(Self::button_group(window, cx).child({
+                        let kernel_status = self.kernel.status();
+                        let (icon, icon_color) = match &kernel_status {
+                            KernelStatus::Idle => (IconName::ReplNeutral, Color::Success),
+                            KernelStatus::Busy => (IconName::ReplNeutral, Color::Warning),
+                            KernelStatus::Starting => (IconName::ReplNeutral, Color::Muted),
+                            KernelStatus::Error => (IconName::ReplNeutral, Color::Error),
+                            KernelStatus::ShuttingDown => (IconName::ReplNeutral, Color::Muted),
+                            KernelStatus::Shutdown => (IconName::ReplNeutral, Color::Disabled),
+                            KernelStatus::Restarting => (IconName::ReplNeutral, Color::Warning),
+                        };
+                        let kernel_name = self
+                            .kernel_specification
+                            .as_ref()
+                            .map(|spec| spec.name().to_string())
+                            .unwrap_or_else(|| "Select Kernel".to_string());
+                        IconButton::new("repl", icon)
+                            .icon_color(icon_color)
+                            .tooltip(move |window, cx| {
+                                Tooltip::text(format!(
+                                    "{} ({}). Click to change kernel.",
+                                    kernel_name,
+                                    kernel_status.to_string()
+                                ))(window, cx)
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.kernel_picker_handle.toggle(window, cx);
+                            }))
+                    })),
+            )
+    }
+
+    fn render_kernel_status_bar(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let kernel_status = self.kernel.status();
+        let kernel_name = self
+            .kernel_specification
+            .as_ref()
+            .map(|spec| spec.name().to_string())
+            .unwrap_or_else(|| "Select Kernel".to_string());
+
+        let (status_icon, status_color) = match &kernel_status {
+            KernelStatus::Idle => (IconName::Circle, Color::Success),
+            KernelStatus::Busy => (IconName::ArrowCircle, Color::Warning),
+            KernelStatus::Starting => (IconName::ArrowCircle, Color::Muted),
+            KernelStatus::Error => (IconName::XCircle, Color::Error),
+            KernelStatus::ShuttingDown => (IconName::ArrowCircle, Color::Muted),
+            KernelStatus::Shutdown => (IconName::Circle, Color::Muted),
+            KernelStatus::Restarting => (IconName::ArrowCircle, Color::Warning),
+        };
+
+        let is_spinning = matches!(
+            kernel_status,
+            KernelStatus::Busy
+                | KernelStatus::Starting
+                | KernelStatus::ShuttingDown
+                | KernelStatus::Restarting
+        );
+
+        let status_icon_element = if is_spinning {
+            Icon::new(status_icon)
+                .size(IconSize::Small)
+                .color(status_color)
+                .with_rotate_animation(2)
+                .into_any_element()
+        } else {
+            Icon::new(status_icon)
+                .size(IconSize::Small)
+                .color(status_color)
+                .into_any_element()
+        };
+
+        let worktree_id = self.worktree_id;
+        let kernel_picker_handle = self.kernel_picker_handle.clone();
+        let view = cx.entity().downgrade();
+
+        h_flex()
+            .w_full()
+            .px_3()
+            .py_1()
+            .gap_2()
+            .items_center()
+            .justify_between()
+            .bg(cx.theme().colors().status_bar_background)
+            .child(
+                KernelSelector::new(
+                    Box::new(move |spec: KernelSpecification, window, cx| {
+                        if let Some(view) = view.upgrade() {
+                            view.update(cx, |this, cx| {
+                                this.change_kernel(spec, window, cx);
+                            });
+                        }
+                    }),
+                    worktree_id,
+                    Button::new("kernel-selector", kernel_name.clone())
+                        .label_size(LabelSize::Small)
+                        .icon(status_icon)
+                        .icon_size(IconSize::Small)
+                        .icon_color(status_color)
+                        .icon_position(IconPosition::Start),
+                    Tooltip::text(format!(
+                        "Kernel: {} ({}). Click to change.",
+                        kernel_name,
+                        kernel_status.to_string()
                     )),
+                )
+                .with_handle(kernel_picker_handle),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("restart-kernel", IconName::RotateCw)
+                            .icon_size(IconSize::Small)
+                            .tooltip(|window, cx| {
+                                Tooltip::for_action("Restart Kernel", &RestartKernel, cx)
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.restart_kernel(&RestartKernel, window, cx);
+                            })),
+                    )
+                    .child(
+                        IconButton::new("interrupt-kernel", IconName::Stop)
+                            .icon_size(IconSize::Small)
+                            .disabled(!matches!(kernel_status, KernelStatus::Busy))
+                            .tooltip(|window, cx| {
+                                Tooltip::for_action("Interrupt Kernel", &InterruptKernel, cx)
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.interrupt_kernel(&InterruptKernel, window, cx);
+                            })),
+                    ),
             )
     }
 
@@ -884,6 +1109,12 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
+            .on_action(
+                cx.listener(|this, action, window, cx| this.restart_kernel(action, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, action, window, cx| this.interrupt_kernel(action, window, cx)),
+            )
             .child(
                 h_flex()
                     .flex_1()
@@ -893,14 +1124,7 @@ impl Render for NotebookEditor {
                     .child(div().flex_1().h_full().child(self.cell_list(window, cx)))
                     .child(self.render_notebook_controls(window, cx)),
             )
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .p_2()
-                    .bg(cx.theme().colors().status_bar_background)
-                    .child(format!("Kernel: {}", self.kernel.status().to_string())),
-            )
+            .child(self.render_kernel_status_bar(window, cx))
     }
 }
 
@@ -1147,6 +1371,13 @@ impl ProjectItem for NotebookEditor {
 
 impl KernelSession for NotebookEditor {
     fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
+        // Handle kernel status updates (these are broadcast to all)
+        if let JupyterMessageContent::Status(status) = &message.content {
+            self.kernel.set_execution_state(&status.execution_state);
+            cx.notify();
+        }
+
+        // Handle cell-specific messages
         if let Some(parent_header) = &message.parent_header {
             if let Some(cell_id) = self.execution_requests.get(&parent_header.msg_id) {
                 if let Some(Cell::Code(cell)) = self.cell_map.get(cell_id) {

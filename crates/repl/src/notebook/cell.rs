@@ -1,5 +1,6 @@
 #![allow(unused, dead_code)]
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
@@ -13,7 +14,7 @@ use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{IconButtonShape, prelude::*};
+use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
 use util::ResultExt;
 
 use crate::{
@@ -611,6 +612,9 @@ pub struct CodeCell {
     selected: bool,
     cell_position: Option<CellPosition>,
     language_task: Task<()>,
+    execution_start_time: Option<Instant>,
+    execution_duration: Option<Duration>,
+    is_executing: bool,
 }
 
 impl EventEmitter<CellEvent> for CodeCell {}
@@ -670,6 +674,9 @@ impl CodeCell {
             selected: false,
             cell_position: None,
             language_task,
+            execution_start_time: None,
+            execution_duration: None,
+            is_executing: false,
         }
     }
 
@@ -731,6 +738,9 @@ impl CodeCell {
             selected: false,
             cell_position: None,
             language_task,
+            execution_start_time: None,
+            execution_duration: None,
+            is_executing: false,
         }
     }
 
@@ -747,6 +757,41 @@ impl CodeCell {
 
     pub fn clear_outputs(&mut self) {
         self.outputs.clear();
+        self.execution_duration = None;
+    }
+
+    pub fn start_execution(&mut self) {
+        self.execution_start_time = Some(Instant::now());
+        self.execution_duration = None;
+        self.is_executing = true;
+    }
+
+    pub fn finish_execution(&mut self) {
+        if let Some(start_time) = self.execution_start_time.take() {
+            self.execution_duration = Some(start_time.elapsed());
+        }
+        self.is_executing = false;
+    }
+
+    pub fn is_executing(&self) -> bool {
+        self.is_executing
+    }
+
+    pub fn execution_duration(&self) -> Option<Duration> {
+        self.execution_duration
+    }
+
+    fn format_duration(duration: Duration) -> String {
+        let total_secs = duration.as_secs_f64();
+        if total_secs < 1.0 {
+            format!("{:.0}ms", duration.as_millis())
+        } else if total_secs < 60.0 {
+            format!("{:.1}s", total_secs)
+        } else {
+            let minutes = (total_secs / 60.0).floor() as u64;
+            let secs = total_secs % 60.0;
+            format!("{}m {:.1}s", minutes, secs)
+        }
     }
 
     pub fn handle_message(
@@ -774,6 +819,9 @@ impl CodeCell {
                     .ok()
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
+            }
+            JupyterMessageContent::ExecuteReply(_) => {
+                self.finish_execution();
             }
             JupyterMessageContent::ErrorOutput(error) => {
                 self.outputs.push(Output::ErrorOutput(ErrorView {
@@ -1023,68 +1071,116 @@ impl Render for CodeCell {
                     ),
             )
             // Output portion
-            .child(
-                h_flex()
-                    .w_full()
-                    .pr_6()
-                    .rounded_xs()
-                    .items_start()
-                    .gap(DynamicSpacing::Base08.rems(cx))
-                    .bg(self.selected_bg_color(window, cx))
-                    .child(self.gutter_output(window, cx))
-                    .child(
-                        div().py_1p5().w_full().child(
-                            div()
-                                .flex()
-                                .size_full()
-                                .flex_1()
-                                .py_3()
-                                .px_5()
-                                .rounded_lg()
-                                .border_1()
-                                // .border_color(cx.theme().colors().border)
-                                // .bg(cx.theme().colors().editor_background)
-                                .child(div().w_full().children(self.outputs.iter().map(
-                                    |output| {
-                                        let content = match output {
-                                            Output::Plain { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Markdown { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Stream { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Image { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Message(message) => Some(
-                                                div().child(message.clone()).into_any_element(),
-                                            ),
-                                            Output::Table { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::ErrorOutput(error_view) => {
-                                                error_view.render(window, cx)
-                                            }
-                                            Output::ClearOutputWaitMarker => None,
-                                        };
+            .when(
+                self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
+                |this| {
+                    let execution_time_label = self.execution_duration.map(Self::format_duration);
+                    let is_executing = self.is_executing;
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .pr_6()
+                            .rounded_xs()
+                            .items_start()
+                            .gap(DynamicSpacing::Base08.rems(cx))
+                            .bg(self.selected_bg_color(window, cx))
+                            .child(self.gutter_output(window, cx))
+                            .child(
+                                div().py_1p5().w_full().child(
+                                    v_flex()
+                                        .size_full()
+                                        .flex_1()
+                                        .py_3()
+                                        .px_5()
+                                        .rounded_lg()
+                                        .border_1()
+                                        // execution status/time at the TOP
+                                        .when(
+                                            is_executing || execution_time_label.is_some(),
+                                            |this| {
+                                                let time_element = if is_executing {
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .items_center()
+                                                        .child(
+                                                            Icon::new(IconName::ArrowCircle)
+                                                                .size(IconSize::XSmall)
+                                                                .color(Color::Warning)
+                                                                .with_rotate_animation(2)
+                                                                .into_any_element(),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    cx.theme().colors().text_muted,
+                                                                )
+                                                                .child("Running..."),
+                                                        )
+                                                        .into_any_element()
+                                                } else if let Some(duration_text) =
+                                                    execution_time_label.clone()
+                                                {
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .items_center()
+                                                        .child(
+                                                            Icon::new(IconName::Check)
+                                                                .size(IconSize::XSmall)
+                                                                .color(Color::Success),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    cx.theme().colors().text_muted,
+                                                                )
+                                                                .child(duration_text),
+                                                        )
+                                                        .into_any_element()
+                                                } else {
+                                                    div().into_any_element()
+                                                };
+                                                this.child(div().mb_2().child(time_element))
+                                            },
+                                        )
+                                        // output at bottom
+                                        .child(div().w_full().children(self.outputs.iter().map(
+                                            |output| {
+                                                let content = match output {
+                                                    Output::Plain { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Markdown { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Stream { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Image { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Message(message) => Some(
+                                                        div()
+                                                            .child(message.clone())
+                                                            .into_any_element(),
+                                                    ),
+                                                    Output::Table { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::ErrorOutput(error_view) => {
+                                                        error_view.render(window, cx)
+                                                    }
+                                                    Output::ClearOutputWaitMarker => None,
+                                                };
 
-                                        div()
-                                            // .w_full()
-                                            // .mt_3()
-                                            // .p_3()
-                                            // .rounded_sm()
-                                            // .bg(cx.theme().colors().editor_background)
-                                            // .border(px(1.))
-                                            // .border_color(cx.theme().colors().border)
-                                            // .shadow_xs()
-                                            .children(content)
-                                    },
-                                ))),
-                        ),
-                    ),
+                                                div().children(content)
+                                            },
+                                        ))),
+                                ),
+                            ),
+                    )
+                },
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(false, window, cx))
