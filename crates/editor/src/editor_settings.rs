@@ -16,6 +16,10 @@ use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 #[derive(Clone, RegisterSetting)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
+    /// Whether to animate cursor movement smoothly.
+    pub cursor_smooth_caret_animation: bool,
+    /// Duration of the cursor animation in milliseconds.
+    pub cursor_animation_duration_ms: u64,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
@@ -199,6 +203,8 @@ impl Settings for EditorSettings {
         let sticky_scroll = editor.sticky_scroll.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
+            cursor_smooth_caret_animation: editor.cursor_smooth_caret_animation.unwrap_or(false),
+            cursor_animation_duration_ms: editor.cursor_animation_duration_ms.unwrap_or(80),
             cursor_shape: editor.cursor_shape.map(Into::into),
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),

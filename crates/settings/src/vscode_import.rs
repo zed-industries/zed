@@ -236,6 +236,8 @@ impl VsCodeSettings {
                 "solid" => Some(false),
                 _ => None,
             }),
+            cursor_animation_duration_ms: None,
+            cursor_smooth_caret_animation: self.read_bool("editor.cursorSmoothCaretAnimation"),
             cursor_shape: self.read_enum("editor.cursorStyle", |s| match s {
                 "block" => Some(CursorShape::Block),
                 "block-outline" => Some(CursorShape::Hollow),
