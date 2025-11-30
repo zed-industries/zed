@@ -116,6 +116,7 @@ mod test {
             reveal_target: task::RevealTarget::Dock,
             hide: task::HideStrategy::Never,
             tags: vec!["python-module-main-method".into()],
+            languages: vec![],
             shell: task::Shell::System,
             show_summary: false,
             show_command: false,
