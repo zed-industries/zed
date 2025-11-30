@@ -441,7 +441,14 @@ message Envelope {
 
         RunGitHook run_git_hook = 395;
 
-        GitDeleteBranch git_delete_branch = 396; // current max
+        GitDeleteBranch git_delete_branch = 396;
+
+        PrepareCallHierarchy prepare_call_hierarchy = 397;
+        PrepareCallHierarchyResponse prepare_call_hierarchy_response = 398;
+        GetIncomingCalls get_incoming_calls = 399;
+        GetIncomingCallsResponse get_incoming_calls_response = 400;
+        GetOutgoingCalls get_outgoing_calls = 401;
+        GetOutgoingCallsResponse get_outgoing_calls_response = 402; // current max
     }
 
     reserved 87 to 88;

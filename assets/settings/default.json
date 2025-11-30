@@ -838,6 +838,27 @@
     // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
     "expand_outlines_with_depth": 100
   },
+  "call_hierarchy_panel": {
+    // Whether to show the call hierarchy panel button in the status bar.
+    "button": true,
+    // Default width of the call hierarchy panel.
+    "default_width": 240,
+    // Where to dock the call hierarchy panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Amount of indentation for nested items.
+    "indent_size": 20,
+    // Settings related to indent guides in the call hierarchy panel.
+    "indent_guides": {
+      // When to show indent guides. Can be 'always' or 'never'.
+      "show": "always"
+    },
+    // Scrollbar-related settings.
+    "scrollbar": {
+      // When to show the scrollbar. Can be 'inherit', 'always', 'never', or 'auto'.
+      // Default: inherits editor scrollbar settings
+      "show": null
+    }
+  },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,

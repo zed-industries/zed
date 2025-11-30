@@ -366,6 +366,15 @@ impl AnyProtoClient {
                             Response::InlayHintsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::PrepareCallHierarchyResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetIncomingCallsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetOutgoingCallsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,
