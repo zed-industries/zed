@@ -15409,6 +15409,7 @@ dependencies = [
  "settings_macros",
  "smallvec",
  "strum 0.27.2",
+ "transcription_settings",
  "unindent",
  "util",
  "zlog",
@@ -15492,6 +15493,7 @@ dependencies = [
  "telemetry",
  "theme",
  "title_bar",
+ "transcription_settings",
  "ui",
  "ui_input",
  "util",
@@ -17972,6 +17974,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "transcription"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel 2.5.0",
+ "audio",
+ "gpui",
+ "log",
+ "parking_lot",
+ "paths",
+ "rodio",
+ "transcription_settings",
+ "whisper-rs",
+]
+
+[[package]]
+name = "transcription_settings"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "transpose"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19728,6 +19754,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisper-rs"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71ea5d2401f30f51d08126a2d133fee4c1955136519d7ac6cf6f5ac0a91e6bc8"
+dependencies = [
+ "libc",
+ "tracing",
+ "whisper-rs-sys",
+]
+
+[[package]]
+name = "whisper-rs-sys"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5e2a6e06e7ac7b8f53c53a5f50bb0bc823ba69b63ecd887339f807a5598bbd2"
+dependencies = [
+ "bindgen 0.71.1",
+ "cfg-if",
+ "cmake",
+ "fs_extra",
+]
+
+[[package]]
 name = "whoami"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20807,6 +20856,7 @@ dependencies = [
  "telemetry",
  "tempfile",
  "theme",
+ "transcription",
  "ui",
  "util",
  "uuid",
@@ -21322,6 +21372,8 @@ dependencies = [
  "time",
  "title_bar",
  "toolchain_selector",
+ "transcription",
+ "transcription_settings",
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",

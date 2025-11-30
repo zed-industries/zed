@@ -35,6 +35,8 @@
   protobuf,
   sqlite,
   vulkan-loader,
+  vulkan-headers,
+  shaderc,
   wayland,
   xorg,
   zlib,
@@ -93,6 +95,7 @@ let
           protobuf
           cargo-about
           rustPlatform.bindgenHook
+          shaderc
         ]
         ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
@@ -140,6 +143,7 @@ let
           libxkbcommon
           wayland
           gpu-lib
+          vulkan-headers
           xorg.libX11
           xorg.libxcb
         ]

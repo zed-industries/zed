@@ -181,6 +181,8 @@ members = [
     "crates/theme_selector",
     "crates/time_format",
     "crates/title_bar",
+    "crates/transcription",
+    "crates/transcription_settings",
     "crates/toolchain_selector",
     "crates/ui",
     "crates/ui_input",
@@ -411,6 +413,8 @@ theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
+transcription = { path = "crates/transcription" }
+transcription_settings = { path = "crates/transcription_settings" }
 toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }

@@ -387,6 +387,9 @@ pub mod assistant {
     #[serde(deny_unknown_fields)]
     pub struct InlineAssist {
         pub prompt: Option<String>,
+        /// When true, the inline assistant should immediately start processing the prompt.
+        #[serde(default)]
+        pub auto_start: bool,
     }
 }
 

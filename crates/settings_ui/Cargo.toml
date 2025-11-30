@@ -34,6 +34,7 @@ schemars.workspace = true
 search.workspace = true
 serde.workspace = true
 settings.workspace = true
+transcription_settings.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true

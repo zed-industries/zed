@@ -7,10 +7,12 @@ mod serde_helper;
 mod settings_content;
 mod settings_file;
 mod settings_store;
+mod transcription_settings;
 mod vscode_import;
 
 pub use settings_content::*;
 pub use settings_macros::RegisterSetting;
+pub use transcription_settings::SpeechSettings;
 
 #[doc(hidden)]
 pub mod private {
