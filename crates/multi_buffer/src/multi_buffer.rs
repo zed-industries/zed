@@ -3357,7 +3357,7 @@ impl MultiBuffer {
 
                             new_diff_transforms.push(
                                 DiffTransform::DeletedHunk {
-                                    summary: base_text_summary.into(),
+                                    summary: base_text_summary,
                                     buffer_id: excerpt.buffer_id,
                                     hunk_info: hunk_info.clone(),
                                     has_trailing_newline,
@@ -6835,7 +6835,7 @@ where
 
                 let diff_base_byte_range = transform
                     .hunk_info()
-                    .map(|hunk_info| hunk_info.base_text_byte_range.clone());
+                    .map(|hunk_info| hunk_info.base_text_byte_range);
 
                 let buffer = &excerpt.buffer;
                 let buffer_context_start = excerpt.range.context.start.summary::<BD>(buffer);

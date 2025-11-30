@@ -2515,18 +2515,18 @@ impl ReferenceMultibuffer {
                             None => Some(
                                 main_buffer
                                     .as_ref()
-                                    .and_then(|main_buffer| {
+                                    .map(|main_buffer| {
                                         let diff = self
                                             .diffs
                                             .get(&main_buffer.read(cx).remote_id())
                                             .unwrap();
                                         let buffer_row = buffer_row.unwrap();
-                                        Some(BaseTextRow(
+                                        BaseTextRow(
                                             diff.read(cx).snapshot(cx).row_to_base_text_row(
                                                 buffer_row,
                                                 &main_buffer.read(cx).snapshot(),
                                             ),
-                                        ))
+                                        )
                                     })
                                     .unwrap_or_default(),
                             ),

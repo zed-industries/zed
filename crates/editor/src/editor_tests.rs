@@ -28247,7 +28247,7 @@ async fn test_filtered_editor_pair(cx: &mut gpui::TestAppContext) {
         leader_cx.new_window_entity(|window, cx| build_editor(follower, window, cx));
     // leader_cx.window.focus(&follower_editor.focus_handle(cx));
 
-    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut *leader_cx).await;
+    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut leader_cx).await;
     cx.run_until_parked();
 
     leader_cx.assert_editor_state(initial_state);
