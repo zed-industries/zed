@@ -30,10 +30,11 @@ use cocoa::{
 /// macOS application activation policy.
 ///
 /// Corresponds to [NSApplicationActivationPolicy](https://developer.apple.com/documentation/appkit/nsapplicationactivationpolicy).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActivationPolicy {
     /// The application is a regular app that appears in the Dock and can have UI.
     /// Corresponds to `NSApplicationActivationPolicyRegular` (value: 0).
+    #[default]
     Regular,
     /// The application doesn't appear in the Dock and doesn't have a menu bar,
     /// but can have windows and be brought to the front.
@@ -61,11 +62,6 @@ impl ActivationPolicy {
     }
 }
 
-impl Default for ActivationPolicy {
-    fn default() -> Self {
-        ActivationPolicy::Regular
-    }
-}
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
