@@ -3128,7 +3128,7 @@ impl BufferSnapshot {
         &self,
         row_range: Range<u32>,
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
-        let config = &self.language.as_ref()?.config;
+        let default_config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
         #[derive(Debug, Clone)]
@@ -3141,9 +3141,11 @@ impl BufferSnapshot {
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
         let end = Point::new(row_range.end, 0);
         let range = (start..end).to_offset(&self.text);
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            Some(&grammar.indents_config.as_ref()?.query)
-        });
+        let mut matches = self
+            .syntax
+            .indent_matches(range.clone(), &self.text, |grammar| {
+                Some(&grammar.indents_config.as_ref()?.query)
+            });
         let indent_configs = matches
             .grammars()
             .iter()
@@ -3241,14 +3243,22 @@ impl BufferSnapshot {
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
                 ..Point::new(row_range.end, 0),
             |row, line| {
-                if config
+                let row_language = self
+                    .language_scope_at(Point::new(row, 0))
+                    .map(|scope| Arc::clone(scope.language()));
+                let row_config = row_language
+                    .as_ref()
+                    .map(|lang| lang.config())
+                    .unwrap_or(default_config);
+
+                if row_config
                     .decrease_indent_pattern
                     .as_ref()
                     .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row, Ordering::Less));
                 }
-                if config
+                if row_config
                     .increase_indent_pattern
                     .as_ref()
                     .is_some_and(|regex| regex.is_match(line))
@@ -3266,7 +3276,7 @@ impl BufferSnapshot {
                         break;
                     }
                 }
-                for rule in &config.decrease_indent_patterns {
+                for rule in &row_config.decrease_indent_patterns {
                     if rule.pattern.as_ref().is_some_and(|r| r.is_match(line)) {
                         let row_start_column = self.indent_size_for_line(row).len;
                         let basis_row = rule
@@ -3286,7 +3296,7 @@ impl BufferSnapshot {
         );
 
         let mut indent_changes = indent_change_rows.into_iter().peekable();
-        let mut prev_row = if config.auto_indent_using_last_non_empty_line {
+        let mut prev_row = if default_config.auto_indent_using_last_non_empty_line {
             prev_non_blank_row.unwrap_or(0)
         } else {
             row_range.start.saturating_sub(1)
@@ -3344,42 +3354,42 @@ impl BufferSnapshot {
                 .iter()
                 .any(|e| e.start.row < row && e.end > row_start);
 
-            let suggestion = if outdent_to_row == prev_row
-                || (outdent_from_prev_row && indent_from_prev_row)
-            {
-                Some(IndentSuggestion {
-                    basis_row: prev_row,
-                    delta: Ordering::Equal,
-                    within_error: within_error && !from_regex,
-                })
-            } else if indent_from_prev_row {
-                Some(IndentSuggestion {
-                    basis_row: prev_row,
-                    delta: Ordering::Greater,
-                    within_error: within_error && !from_regex,
-                })
-            } else if outdent_to_row < prev_row {
-                Some(IndentSuggestion {
-                    basis_row: outdent_to_row,
-                    delta: Ordering::Equal,
-                    within_error: within_error && !from_regex,
-                })
-            } else if outdent_from_prev_row {
-                Some(IndentSuggestion {
-                    basis_row: prev_row,
-                    delta: Ordering::Less,
-                    within_error: within_error && !from_regex,
-                })
-            } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
-            {
-                Some(IndentSuggestion {
-                    basis_row: prev_row,
-                    delta: Ordering::Equal,
-                    within_error: within_error && !from_regex,
-                })
-            } else {
-                None
-            };
+            let suggestion =
+                if outdent_to_row == prev_row || (outdent_from_prev_row && indent_from_prev_row) {
+                    Some(IndentSuggestion {
+                        basis_row: prev_row,
+                        delta: Ordering::Equal,
+                        within_error: within_error && !from_regex,
+                    })
+                } else if indent_from_prev_row {
+                    Some(IndentSuggestion {
+                        basis_row: prev_row,
+                        delta: Ordering::Greater,
+                        within_error: within_error && !from_regex,
+                    })
+                } else if outdent_to_row < prev_row {
+                    Some(IndentSuggestion {
+                        basis_row: outdent_to_row,
+                        delta: Ordering::Equal,
+                        within_error: within_error && !from_regex,
+                    })
+                } else if outdent_from_prev_row {
+                    Some(IndentSuggestion {
+                        basis_row: prev_row,
+                        delta: Ordering::Less,
+                        within_error: within_error && !from_regex,
+                    })
+                } else if default_config.auto_indent_using_last_non_empty_line
+                    || !self.is_line_blank(prev_row)
+                {
+                    Some(IndentSuggestion {
+                        basis_row: prev_row,
+                        delta: Ordering::Equal,
+                        within_error: within_error && !from_regex,
+                    })
+                } else {
+                    None
+                };
 
             prev_row = row;
             prev_row_start = row_start;

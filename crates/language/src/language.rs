@@ -1334,6 +1334,7 @@ struct OverrideEntry {
 struct InjectionPatternConfig {
     language: Option<Box<str>>,
     combined: bool,
+    indent: bool,
 }
 
 #[derive(Debug)]
@@ -2049,8 +2050,16 @@ impl LanguageScope {
         self.language.path_suffixes()
     }
 
+    pub fn language(&self) -> &Arc<Language> {
+        &self.language
+    }
+
     pub fn language_name(&self) -> LanguageName {
         self.language.config.name.clone()
+    }
+
+    pub fn language_config(&self) -> &LanguageConfig {
+        &self.language.config
     }
 
     pub fn collapsed_placeholder(&self) -> &str {
