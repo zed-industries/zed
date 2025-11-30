@@ -72,7 +72,7 @@ Templates are just functions that modify the source of the docs pages (usually w
 
 ## Postprocessor
 
-A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in `html` renderer and applies post-processing to the `html` files, to add support for page-specific title and meta description values.
+A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific `title` and `meta` description values.
 
 An example of the syntax can be found in `git.md`, as well as below:
 
@@ -101,11 +101,11 @@ If no front matter is provided, or if one or both keys aren't provided, the `tit
 
 ### Implementation details
 
-Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the meta tag per book rather than per file. So in order to apply post-processing (necessary to modify the html head tags) the global book description is set to a marker value `#description#` and the html renderer is replaced with a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front-matter if there is one.
+Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the `meta` tag per book rather than per file. So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
 
 ### Known limitations
 
-The front-matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full yaml parsing.
+The front matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full yaml parsing.
 
 - Double quotes and multi-line values are not supported, i.e. Keys and values must be entirely on the same line, with no double quotes around the value.
 
@@ -127,6 +127,6 @@ title: "Some title"
 ---
 ```
 
-- The front-matter must be at the top of the file, with only white-space preceding it
+- The front matter must be at the top of the file, with only white-space preceding it
 
 - The contents of the title and description will not be html-escaped. They should be simple ascii text with no unicode or emoji characters
