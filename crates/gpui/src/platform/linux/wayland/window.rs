@@ -277,6 +277,20 @@ pub struct WaylandWindowStatePtr {
     callbacks: Rc<RefCell<Callbacks>>,
 }
 
+#[derive(Clone)]
+pub struct WaylandWindowStateWeakPtr {
+    state: std::rc::Weak<RefCell<WaylandWindowState>>,
+    callbacks: std::rc::Weak<RefCell<Callbacks>>,
+}
+
+impl WaylandWindowStateWeakPtr {
+    pub fn upgrade(&self) -> Option<WaylandWindowStatePtr> {
+        let state = self.state.upgrade()?;
+        let callbacks = self.callbacks.upgrade()?;
+        Some(WaylandWindowStatePtr { state, callbacks })
+    }
+}
+
 impl WaylandWindowState {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -487,6 +501,13 @@ impl WaylandWindow {
 impl WaylandWindowStatePtr {
     pub fn handle(&self) -> AnyWindowHandle {
         self.state.borrow().handle
+    }
+
+    pub fn weak(&self) -> WaylandWindowStateWeakPtr {
+        WaylandWindowStateWeakPtr {
+            state: Rc::downgrade(&self.state),
+            callbacks: Rc::downgrade(&self.callbacks),
+        }
     }
 
     pub fn surface(&self) -> wl_surface::WlSurface {
