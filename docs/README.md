@@ -20,7 +20,7 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 
 ## Preprocessor
 
-We have a custom mdbook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
+We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
 If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]
 ` from the `book.toml`.
@@ -101,7 +101,7 @@ If no front matter is provided, or if one or both keys aren't provided, the `tit
 
 ### Implementation details
 
-Unfortunately, `mdbook` does not support post-processing like it does pre-processing, and only supports defining one description to put in the meta tag per book rather than per file. So in order to apply post-processing (necessary to modify the html head tags) the global book description is set to a marker value `#description#` and the html renderer is replaced with a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front-matter if there is one.
+Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the meta tag per book rather than per file. So in order to apply post-processing (necessary to modify the html head tags) the global book description is set to a marker value `#description#` and the html renderer is replaced with a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front-matter if there is one.
 
 ### Known limitations
 
