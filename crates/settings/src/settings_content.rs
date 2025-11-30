@@ -511,6 +511,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
+
+    /// Whether to show files in a tree instead of a flat list.
+    ///
+    /// Default: false
+    pub tree_view: Option<bool>,
 }
 
 #[derive(
