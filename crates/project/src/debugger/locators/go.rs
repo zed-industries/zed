@@ -367,7 +367,7 @@ mod tests {
                 "-tags".to_string(),
                 "integration,unit".to_string(),
                 "-run".to_string(),
-                "Foo".to_string(),
+                "'^TestFoo$/^subtest_for_Konstantin'\\''s_case$'".to_string(),
                 ".".to_string(),
             ],
             ..Default::default()
@@ -388,7 +388,7 @@ mod tests {
                 build_flags: vec!["-tags".to_string(), "integration,unit".to_string(),],
                 args: vec![
                     "-test.run".to_string(),
-                    "Foo".to_string(),
+                    "^TestFoo$/^subtest_for_Konstantin's_case$".to_string(),
                     "-test.v".to_string()
                 ],
                 env: HashMap::default(),
