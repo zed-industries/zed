@@ -15,7 +15,7 @@ use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+        NSApplication, NSApplicationActivationPolicy,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
         NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
@@ -26,6 +26,40 @@ use cocoa::{
         NSUInteger, NSURL,
     },
 };
+
+/// macOS application activation policy.
+///
+/// Corresponds to [NSApplicationActivationPolicy](https://developer.apple.com/documentation/appkit/nsapplicationactivationpolicy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationPolicy {
+    /// The application is a regular app that appears in the Dock and can have UI.
+    /// Corresponds to `NSApplicationActivationPolicyRegular` (value: 0).
+    Regular,
+    /// The application doesn't appear in the Dock and doesn't have a menu bar,
+    /// but can have windows and be brought to the front.
+    /// Corresponds to `NSApplicationActivationPolicyAccessory` (value: 1).
+    Accessory,
+    /// The application runs in the background and can't have windows or UI.
+    /// Corresponds to `NSApplicationActivationPolicyProhibited` (value: 2).
+    Prohibited,
+}
+
+impl ActivationPolicy {
+    /// Convert to the corresponding NSApplicationActivationPolicy value.
+    pub fn to_ns_activation_policy(self) -> NSApplicationActivationPolicy {
+        match self {
+            ActivationPolicy::Regular => NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+            ActivationPolicy::Accessory => NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+            ActivationPolicy::Prohibited => NSApplicationActivationPolicy::NSApplicationActivationPolicyProhibited,
+        }
+    }
+}
+
+impl Default for ActivationPolicy {
+    fn default() -> Self {
+        ActivationPolicy::Regular
+    }
+}
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
@@ -154,6 +188,15 @@ unsafe fn build_classes() {
             decl.register()
         }
     }
+}
+
+// Static storage for activation policy that can be set before platform initialization
+static PENDING_ACTIVATION_POLICY: Mutex<Option<ActivationPolicy>> = Mutex::new(None);
+
+/// Sets the activation policy for the macOS application.
+/// This must be called before the application is launched to take effect.
+pub fn set_activation_policy(policy: ActivationPolicy) {
+    *PENDING_ACTIVATION_POLICY.lock() = Some(policy);
 }
 
 pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
@@ -1398,7 +1441,16 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        
+        let activation_policy = PENDING_ACTIVATION_POLICY
+            .lock()
+            .take()
+            .unwrap_or_default();
+        
+        app.setActivationPolicy_(activation_policy.to_ns_activation_policy());
+        
+        let platform = get_mac_platform(this);
+        let callback = platform.0.lock().finish_launching.take();
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];
@@ -1409,8 +1461,6 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
-        let platform = get_mac_platform(this);
-        let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
             callback();
         }

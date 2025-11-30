@@ -265,6 +265,9 @@ naga.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
 naga.workspace = true
 
+[[example]]
+name = "macos_agent"
+path = "examples/macos_agent.rs"
 
 [[example]]
 name = "hello_world"

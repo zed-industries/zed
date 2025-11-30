@@ -234,6 +234,30 @@ impl Application {
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.0.borrow().path_for_auxiliary_executable(name)
     }
+
+    /// Sets the activation policy for the application (macOS only).
+    ///
+    /// This determines how the application appears in the system:
+    /// - `Regular`: Normal app with Dock icon and menu bar
+    /// - `Accessory`: Background app without Dock icon (LSUIElement)
+    /// - `Prohibited`: Runs in background, no UI allowed
+    ///
+    /// This must be called before the application finishes launching to take effect.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use gpui::Application;
+    /// let app = Application::new()
+    ///     .with_activation_policy(gpui::ActivationPolicy::Accessory);
+    /// ```
+    #[cfg(target_os = "macos")]
+    pub fn with_activation_policy(self, policy: crate::ActivationPolicy) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            crate::set_activation_policy(policy);
+        }
+        self
+    }
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
