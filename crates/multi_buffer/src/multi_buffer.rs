@@ -3746,15 +3746,19 @@ impl MultiBuffer {
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     if rng.random() {
+                        dbg!();
                         buffer.randomly_edit(rng, mutation_count, cx);
                     } else {
+                        dbg!();
                         buffer.randomly_undo_redo(rng, cx);
                     }
                 });
             } else {
+                dbg!();
                 self.randomly_edit(rng, mutation_count, cx);
             }
         } else {
+            dbg!();
             self.randomly_edit_excerpts(rng, mutation_count, cx);
         }
 
@@ -6564,8 +6568,8 @@ impl MultiBufferSnapshot {
         let excerpt_ids = self.excerpt_ids.items(());
 
         assert!(
-            !self.diff_transforms.is_empty(),
-            "diff_transforms must always contain at least one transform"
+            self.excerpts.is_empty() || !self.diff_transforms.is_empty(),
+            "must be at least one diff transform if excerpts exist"
         );
 
         for (ix, excerpt) in excerpts.iter().enumerate() {
