@@ -32,9 +32,7 @@ use std::mem::MaybeUninit;
 
 use async_tar::Archive;
 use futures::{AsyncRead, FutureExt as _, Stream, StreamExt, future::BoxFuture, select_biased};
-use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, REMOTE_CANCELLED_BY_USER, RealGitRepository};
-use git::repository::{GitRepository, RealGitRepository};
 use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
