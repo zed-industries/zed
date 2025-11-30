@@ -1980,6 +1980,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "azure_foundry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum 0.27.2",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8895,6 +8910,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws_http_client",
+ "azure_foundry",
  "bedrock",
  "chrono",
  "client",

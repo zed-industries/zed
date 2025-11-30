@@ -1984,6 +1984,7 @@
     "anthropic": {
       "api_url": "https://api.anthropic.com"
     },
+    "azure_foundry": {},
     "bedrock": {},
     "google": {
       "api_url": "https://generativelanguage.googleapis.com"

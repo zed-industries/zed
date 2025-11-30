@@ -4,16 +4,17 @@ use collections::HashMap;
 use settings::RegisterSetting;
 
 use crate::provider::{
-    anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, x_ai::XAiSettings,
+    anthropic::AnthropicSettings, azure_foundry::AzureFoundrySettings,
+    bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
+    google::GoogleSettings, lmstudio::LmStudioSettings, mistral::MistralSettings,
+    ollama::OllamaSettings, open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
+    pub azure_foundry: AzureFoundrySettings,
     pub bedrock: AmazonBedrockSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
@@ -34,6 +35,7 @@ impl settings::Settings for AllLanguageModelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let language_models = content.language_models.clone().unwrap();
         let anthropic = language_models.anthropic.unwrap();
+        let azure_foundry = language_models.azure_foundry.unwrap_or_default();
         let bedrock = language_models.bedrock.unwrap();
         let deepseek = language_models.deepseek.unwrap();
         let google = language_models.google.unwrap();
@@ -50,6 +52,10 @@ impl settings::Settings for AllLanguageModelSettings {
             anthropic: AnthropicSettings {
                 api_url: anthropic.api_url.unwrap(),
                 available_models: anthropic.available_models.unwrap_or_default(),
+            },
+            azure_foundry: AzureFoundrySettings {
+                api_url: azure_foundry.api_url.unwrap_or_default(),
+                available_models: azure_foundry.available_models.unwrap_or_default(),
             },
             bedrock: AmazonBedrockSettings {
                 available_models: bedrock.available_models.unwrap_or_default(),
