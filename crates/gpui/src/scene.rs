@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, CustomShaderId, Edges,
+    Hsla, Pixels, Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
@@ -31,6 +31,8 @@ pub(crate) struct Scene {
     pub(crate) underlines: Vec<Underline>,
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
+    pub(crate) shaders: Vec<ShaderInstance>,
+    pub(crate) shader_data: Vec<u8>,
     pub(crate) surfaces: Vec<PaintSurface>,
 }
 
@@ -45,6 +47,7 @@ impl Scene {
         self.underlines.clear();
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
+        self.shaders.clear();
         self.surfaces.clear();
     }
 
@@ -105,6 +108,10 @@ impl Scene {
                 sprite.order = order;
                 self.polychrome_sprites.push(sprite.clone());
             }
+            Primitive::Shader(shader) => {
+                shader.order = order;
+                self.shaders.push(shader.clone());
+            }
             Primitive::Surface(surface) => {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
@@ -114,13 +121,41 @@ impl Scene {
             .push(PaintOperation::Primitive(primitive));
     }
 
+    pub fn push_shader_data(&mut self, data: &[u8]) -> Range<usize> {
+        let range = self.shader_data.len()..self.shader_data.len() + data.len();
+        self.shader_data.extend_from_slice(data);
+        range
+    }
+
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        let mut shader_data_range: Option<Range<usize>> = None;
+        let mut shader_data_tail = self.shader_data.len();
+
         for operation in &prev_scene.paint_operations[range] {
             match operation {
+                PaintOperation::Primitive(Primitive::Shader(shader_instance)) => {
+                    if let Some(shader_data_range) = shader_data_range.as_mut() {
+                        shader_data_range.end = shader_instance.data_range.end;
+                    } else {
+                        shader_data_range = Some(shader_instance.data_range.clone());
+                    }
+
+                    let mut shader_instance = shader_instance.clone();
+                    shader_instance.data_range =
+                        shader_data_tail..shader_data_tail + shader_instance.data_range.len();
+                    shader_data_tail += shader_instance.data_range.len();
+
+                    self.insert_primitive(shader_instance);
+                }
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
+        }
+
+        if let Some(shader_data_range) = shader_data_range {
+            self.shader_data
+                .extend_from_slice(&prev_scene.shader_data[shader_data_range]);
         }
     }
 
@@ -133,6 +168,7 @@ impl Scene {
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+        self.shaders.sort_by_key(|shader| shader.order);
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
@@ -163,6 +199,9 @@ impl Scene {
             polychrome_sprites: &self.polychrome_sprites,
             polychrome_sprites_start: 0,
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            shaders: &self.shaders,
+            shaders_start: 0,
+            shaders_iter: self.shaders.iter().peekable(),
             surfaces: &self.surfaces,
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
@@ -186,6 +225,7 @@ pub(crate) enum PrimitiveKind {
     Underline,
     MonochromeSprite,
     PolychromeSprite,
+    Shader,
     Surface,
 }
 
@@ -203,6 +243,7 @@ pub(crate) enum Primitive {
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
+    Shader(ShaderInstance),
     Surface(PaintSurface),
 }
 
@@ -215,6 +256,7 @@ impl Primitive {
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+            Primitive::Shader(shader) => &shader.base_data.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
     }
@@ -227,6 +269,7 @@ impl Primitive {
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+            Primitive::Shader(shader) => &shader.base_data.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
         }
     }
@@ -258,6 +301,9 @@ struct BatchIterator<'a> {
     polychrome_sprites: &'a [PolychromeSprite],
     polychrome_sprites_start: usize,
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
+    shaders: &'a [ShaderInstance],
+    shaders_start: usize,
+    shaders_iter: Peekable<slice::Iter<'a, ShaderInstance>>,
     surfaces: &'a [PaintSurface],
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -285,6 +331,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.polychrome_sprites_iter.peek().map(|s| s.order),
                 PrimitiveKind::PolychromeSprite,
+            ),
+            (
+                self.shaders_iter.peek().map(|s| s.order),
+                PrimitiveKind::Shader,
             ),
             (
                 self.surfaces_iter.peek().map(|s| s.order),
@@ -404,6 +454,26 @@ impl<'a> Iterator for BatchIterator<'a> {
                     sprites: &self.polychrome_sprites[sprites_start..sprites_end],
                 })
             }
+            PrimitiveKind::Shader => {
+                let shader_id = self.shaders_iter.peek().unwrap().shader_id;
+                let shaders_start = self.shaders_start;
+                let mut shaders_end = shaders_start + 1;
+                self.shaders_iter.next();
+                while self
+                    .shaders_iter
+                    .next_if(|shader| {
+                        (shader.order, batch_kind) < max_order_and_kind
+                            && shader.shader_id == shader_id
+                    })
+                    .is_some()
+                {
+                    shaders_end += 1;
+                }
+                self.shaders_start = shaders_end;
+                Some(PrimitiveBatch::Shaders(
+                    &self.shaders[shaders_start..shaders_end],
+                ))
+            }
             PrimitiveKind::Surface => {
                 let surfaces_start = self.surfaces_start;
                 let mut surfaces_end = surfaces_start + 1;
@@ -445,6 +515,7 @@ pub(crate) enum PrimitiveBatch<'a> {
         texture_id: AtlasTextureId,
         sprites: &'a [PolychromeSprite],
     },
+    Shaders(&'a [ShaderInstance]),
     Surfaces(&'a [PaintSurface]),
 }
 
@@ -650,6 +721,79 @@ pub(crate) struct PolychromeSprite {
 impl From<PolychromeSprite> for Primitive {
     fn from(sprite: PolychromeSprite) -> Self {
         Primitive::PolychromeSprite(sprite)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub(crate) struct ShaderInstanceBase {
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub opacity: f32,
+}
+
+#[allow(unused)]
+impl ShaderInstanceBase {
+    pub const ALIGN: usize = 8; // largest alignment is a vec2
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ShaderInstance {
+    pub order: DrawOrder,
+    pub shader_id: CustomShaderId,
+    pub base_data: ShaderInstanceBase,
+    pub data_range: Range<usize>,
+}
+
+#[allow(unused)]
+impl ShaderInstance {
+    /// Returns the data offset and instance size for a given instance data size and align
+    pub fn size_info(instance_data_size: usize, instance_data_align: usize) -> (usize, usize) {
+        let instance_align = ShaderInstanceBase::ALIGN.max(instance_data_align);
+        let instance_data_offset =
+            size_of::<ShaderInstanceBase>().next_multiple_of(instance_data_align);
+        let instance_size =
+            (instance_data_offset + instance_data_size).next_multiple_of(instance_align);
+
+        (instance_data_offset, instance_size)
+    }
+
+    /// Write an array of instances to a raw buffer. The buffer *must* be large enough for the data.
+    pub unsafe fn pack_instances(
+        buffer: *mut u8,
+        instances: &[Self],
+        data_buffer: &[u8],
+        data_size: usize,
+        data_align: usize,
+    ) {
+        if instances.is_empty() {
+            return;
+        }
+
+        let (data_offset, instance_size) = Self::size_info(data_size, data_align);
+        unsafe {
+            for (idx, instance) in instances.iter().enumerate() {
+                let offset = idx * instance_size;
+                let dst = buffer.add(offset);
+
+                let src = (&instance.base_data as *const ShaderInstanceBase) as *const u8;
+                std::ptr::copy_nonoverlapping(src, dst, size_of::<ShaderInstanceBase>());
+
+                if data_size > 0 {
+                    debug_assert_eq!(data_size, instance.data_range.len());
+
+                    let src = data_buffer[instance.data_range.clone()].as_ptr();
+                    let dst = dst.add(data_offset);
+                    std::ptr::copy_nonoverlapping(src, dst, data_size);
+                }
+            }
+        }
+    }
+}
+
+impl From<ShaderInstance> for Primitive {
+    fn from(value: ShaderInstance) -> Self {
+        Primitive::Shader(value)
     }
 }
 

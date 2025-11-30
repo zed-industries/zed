@@ -7,7 +7,7 @@ cbuffer GlobalParams: register(b0) {
     uint _pad;
 };
 
-Texture2D<float4> t_sprite: register(t0);
+Texture2D<float4> t_sprite: register(t1);
 SamplerState s_sprite: register(s0);
 
 struct Bounds {
@@ -489,7 +489,7 @@ struct QuadFragmentInput {
     nointerpolation float4 background_color1: COLOR3;
 };
 
-StructuredBuffer<Quad> quads: register(t1);
+StructuredBuffer<Quad> quads: register(t0);
 
 QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
@@ -835,7 +835,7 @@ struct ShadowFragmentInput {
   nointerpolation float4 color: COLOR;
 };
 
-StructuredBuffer<Shadow> shadows: register(t1);
+StructuredBuffer<Shadow> shadows: register(t0);
 
 ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
@@ -900,7 +900,7 @@ struct PathRasterizationSprite {
     Bounds bounds;
 };
 
-StructuredBuffer<PathRasterizationSprite> path_rasterization_sprites: register(t1);
+StructuredBuffer<PathRasterizationSprite> path_rasterization_sprites: register(t0);
 
 struct PathVertexOutput {
     float4 position: SV_Position;
@@ -968,7 +968,7 @@ struct PathSpriteVertexOutput {
     float2 texture_coords: TEXCOORD0;
 };
 
-StructuredBuffer<PathSprite> path_sprites: register(t1);
+StructuredBuffer<PathSprite> path_sprites: register(t0);
 
 PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
@@ -1019,7 +1019,7 @@ struct UnderlineFragmentInput {
   nointerpolation float4 color: COLOR;
 };
 
-StructuredBuffer<Underline> underlines: register(t1);
+StructuredBuffer<Underline> underlines: register(t0);
 
 UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underline_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
@@ -1094,7 +1094,7 @@ struct MonochromeSpriteFragmentInput {
     float4 clip_distance: SV_ClipDistance;
 };
 
-StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
+StructuredBuffer<MonochromeSprite> mono_sprites: register(t0);
 
 MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
@@ -1149,7 +1149,7 @@ struct PolychromeSpriteFragmentInput {
     float2 tile_position: POSITION;
 };
 
-StructuredBuffer<PolychromeSprite> poly_sprites: register(t1);
+StructuredBuffer<PolychromeSprite> poly_sprites: register(t0);
 
 PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));

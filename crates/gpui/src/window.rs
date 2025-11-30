@@ -11,8 +11,9 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene,
+    ShaderInstance, ShaderInstanceBase, ShaderUniform, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
@@ -3260,6 +3261,51 @@ impl Window {
             corner_radii,
             tile,
             opacity,
+        });
+        Ok(())
+    }
+
+    /// Paint a custom shader
+    ///
+    /// This method should only be called as a part of the paint phase of element drawing.
+    pub fn paint_shader<T: ShaderUniform>(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        shader: &str,
+        instance_data: &T,
+    ) -> anyhow::Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        let shader_id = self.platform_window.register_shader(
+            shader,
+            if T::DEFINITION.is_some() {
+                Some(T::NAME)
+            } else {
+                None
+            },
+            size_of::<T>(),
+            T::ALIGN,
+        )?;
+
+        let instance_data = unsafe {
+            std::slice::from_raw_parts((instance_data as *const T) as *const u8, size_of::<T>())
+        };
+
+        let data_range = self.next_frame.scene.push_shader_data(instance_data);
+        self.next_frame.scene.insert_primitive(ShaderInstance {
+            order: 0,
+            shader_id,
+            base_data: ShaderInstanceBase {
+                bounds: bounds
+                    .map_origin(|origin| origin.floor())
+                    .map_size(|size| size.ceil()),
+                content_mask,
+                opacity: self.element_opacity,
+            },
+            data_range,
         });
         Ok(())
     }

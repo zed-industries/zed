@@ -126,6 +126,18 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn size_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let methods =
+        generate_box_style_methods(size_box_style_prefixes(), box_style_suffixes(), visibility);
+    let output = quote! {
+        #(#methods)*
+    };
+
+    output.into()
+}
+
 pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
     let visibility = input.method_visibility;
@@ -895,7 +907,7 @@ fn position_box_style_prefixes() -> Vec<BoxStylePrefix> {
     ]
 }
 
-fn box_prefixes() -> Vec<BoxStylePrefix> {
+fn size_box_style_prefixes() -> Vec<BoxStylePrefix> {
     vec![
         BoxStylePrefix {
             prefix: "w",
@@ -947,6 +959,11 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             fields: vec![quote! { max_size.height }],
             doc_string_prefix: "Sets the maximum height of the element. [Docs](https://tailwindcss.com/docs/max-height)",
         },
+    ]
+}
+
+fn box_prefixes() -> Vec<BoxStylePrefix> {
+    vec![
         BoxStylePrefix {
             prefix: "gap",
             auto_allowed: false,

@@ -867,6 +867,21 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().renderer.draw(scene).log_err();
     }
 
+    fn register_shader(
+        &self,
+        source: &str,
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
+        self.0.state.borrow_mut().renderer.register_shader(
+            source,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
+        )
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.state.borrow().renderer.sprite_atlas()
     }

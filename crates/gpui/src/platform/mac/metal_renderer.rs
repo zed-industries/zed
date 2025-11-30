@@ -1,10 +1,12 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, CustomShaderId, DevicePixels,
+    MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, ShaderInstance, Shadow, Size, Surface, Underline,
+    platform::shader::{CustomShaderGlobalParams, naga_validate_custom_shader},
+    point, size,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -25,7 +27,13 @@ use metal::{
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 
-use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, HashMap},
+    ffi::c_void,
+    mem, ptr,
+    sync::Arc,
+};
 
 // Exported to metal
 pub(crate) type PointF = crate::Point<f32>;
@@ -108,6 +116,8 @@ pub(crate) struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
+    custom_shader_ids: HashMap<String, CustomShaderId>,
+    custom_shaders_pipeline_states: Vec<(metal::RenderPipelineState, usize, usize)>,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
@@ -276,6 +286,8 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
+            custom_shader_ids: HashMap::new(),
+            custom_shaders_pipeline_states: Vec::new(),
             surfaces_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
@@ -426,6 +438,100 @@ impl MetalRenderer {
         }
     }
 
+    pub fn register_custom_shader(
+        &mut self,
+        source: &str,
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<crate::CustomShaderId> {
+        if let Some(id) = self.custom_shader_ids.get(source).cloned() {
+            return Ok(id);
+        }
+
+        let id = CustomShaderId(self.custom_shaders_pipeline_states.len() as u32);
+
+        let (mut module, module_info, _) = naga_validate_custom_shader(
+            source,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
+        )?;
+
+        let mut bindings = BTreeMap::new();
+        for (_handle, global) in module.global_variables.iter_mut() {
+            assert!(global.binding.is_none()); // Blade doesn't like implicit bindings, so we will assign them here instead of in WGSL
+
+            let binding = match global.name.as_ref().unwrap().as_str() {
+                "globals" => ShaderInputIndex::Globals,
+                "b_instances" => ShaderInputIndex::Instances,
+                _ => unreachable!(),
+            };
+
+            global.binding = Some(naga::ResourceBinding {
+                group: 0,
+                binding: binding as u32,
+            });
+            bindings.insert(
+                global.binding.unwrap(),
+                naga::back::msl::BindTarget {
+                    buffer: Some(binding as u8),
+                    texture: None,
+                    sampler: None,
+                    mutable: false,
+                },
+            );
+        }
+
+        let mut msl = String::new();
+        naga::back::msl::Writer::new(&mut msl)
+            .write(
+                &module,
+                &module_info,
+                &naga::back::msl::Options {
+                    lang_version: (2, 0),
+                    per_entry_point_map: ["vs", "fs"]
+                        .into_iter()
+                        .map(|entry| {
+                            (
+                                entry.to_string(),
+                                naga::back::msl::EntryPointResources {
+                                    resources: bindings.clone(),
+                                    push_constant_buffer: None,
+                                    sizes_buffer: Some(ShaderInputIndex::BufferSizes as u8),
+                                },
+                            )
+                        })
+                        .collect(),
+                    fake_missing_bindings: false,
+                    ..Default::default()
+                },
+                &naga::back::msl::PipelineOptions::default(),
+            )
+            .context("Translation of WGSL to MSL failed")?;
+
+        let library = self
+            .device
+            .new_library_with_source(&msl, &metal::CompileOptions::new())
+            .map_err(|err| anyhow::anyhow!(err))?;
+
+        let pipeline = build_pipeline_state(
+            &self.device,
+            &library,
+            &format!("custom{}", id.0),
+            "vs",
+            "fs",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        self.custom_shaders_pipeline_states.push((
+            pipeline,
+            instance_data_size,
+            instance_data_align,
+        ));
+        self.custom_shader_ids.insert(source.to_string(), id);
+        Ok(id)
+    }
+
     fn draw_primitives(
         &mut self,
         scene: &Scene,
@@ -520,6 +626,14 @@ impl MetalRenderer {
                 } => self.draw_polychrome_sprites(
                     texture_id,
                     sprites,
+                    instance_buffer,
+                    &mut instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ),
+                PrimitiveBatch::Shaders(shaders) => self.draw_custom_shaders(
+                    shaders,
+                    &scene.shader_data,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
@@ -1066,6 +1180,92 @@ impl MetalRenderer {
         true
     }
 
+    fn draw_custom_shaders(
+        &mut self,
+        instances: &[ShaderInstance],
+        shader_data: &[u8],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        if instances.is_empty() {
+            return true;
+        }
+        align_offset(instance_offset);
+
+        let (pipeline, instance_data_size, instance_data_align) = self
+            .custom_shaders_pipeline_states
+            .get(instances[0].shader_id.0 as usize)
+            .expect("shader not registered");
+
+        let globals = CustomShaderGlobalParams {
+            viewport_size: [viewport_size.width.0 as f32, viewport_size.height.0 as f32],
+            premultiplied_alpha: 0,
+            pad: 0,
+        };
+
+        command_encoder.set_render_pipeline_state(&pipeline);
+        command_encoder.set_vertex_bytes(
+            ShaderInputIndex::Globals as u64,
+            size_of::<CustomShaderGlobalParams>() as u64,
+            &globals as *const CustomShaderGlobalParams as *const _,
+        );
+        command_encoder.set_fragment_bytes(
+            ShaderInputIndex::Globals as u64,
+            size_of::<CustomShaderGlobalParams>() as u64,
+            &globals as *const CustomShaderGlobalParams as *const _,
+        );
+        command_encoder.set_vertex_buffer(
+            ShaderInputIndex::Instances as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            ShaderInputIndex::Instances as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            ShaderInputIndex::BufferSizes as u64,
+            size_of::<u32>() as u64,
+            &(instances.len() as u32) as *const u32 as *const _,
+        );
+        command_encoder.set_fragment_bytes(
+            ShaderInputIndex::BufferSizes as u64,
+            size_of::<u32>() as u64,
+            &(instances.len() as u32) as *const u32 as *const _,
+        );
+
+        let (_, instance_size) =
+            ShaderInstance::size_info(*instance_data_size, *instance_data_align);
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+        let next_offset = *instance_offset + instance_size * instances.len();
+        if next_offset > instance_buffer.size {
+            return false;
+        }
+
+        unsafe {
+            ShaderInstance::pack_instances(
+                buffer_contents,
+                instances,
+                shader_data,
+                *instance_data_size,
+                *instance_data_align,
+            );
+        }
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::TriangleStrip,
+            0,
+            4,
+            instances.len() as u64,
+        );
+        *instance_offset = next_offset;
+        true
+    }
+
     fn draw_surfaces(
         &mut self,
         surfaces: &[PaintSurface],
@@ -1333,6 +1533,14 @@ enum SpriteInputIndex {
     ViewportSize = 2,
     AtlasTextureSize = 3,
     AtlasTexture = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+enum ShaderInputIndex {
+    Globals = 0,
+    Instances = 1,
+    BufferSizes = 2,
 }
 
 #[repr(C)]

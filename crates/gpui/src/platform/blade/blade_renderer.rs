@@ -2,16 +2,18 @@
 #![allow(irrefutable_let_patterns)]
 
 use super::{BladeAtlas, BladeContext};
+use crate::platform::shader::CustomShaderGlobalParams;
 use crate::{
-    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
-    get_gamma_correction_ratios,
+    Background, Bounds, CustomShaderId, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, ShaderInstance, Shadow, Size,
+    Underline, get_gamma_correction_ratios,
 };
-use blade_graphics as gpu;
+use blade_graphics::{self as gpu, ShaderData};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
@@ -100,6 +102,12 @@ struct ShaderPolySpritesData {
 }
 
 #[derive(blade_macros::ShaderData)]
+struct ShaderCustomShaderData {
+    globals: CustomShaderGlobalParams,
+    b_instances: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
 struct ShaderSurfacesData {
     globals: GlobalParams,
     surface_locals: SurfaceParams,
@@ -132,6 +140,9 @@ struct BladePipelines {
     mono_sprites: gpu::RenderPipeline,
     poly_sprites: gpu::RenderPipeline,
     surfaces: gpu::RenderPipeline,
+
+    custom: Vec<(gpu::RenderPipeline, usize, usize)>,
+    custom_ids: HashMap<String, CustomShaderId>,
 }
 
 impl BladePipelines {
@@ -301,7 +312,71 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
+            custom: Vec::new(),
+            custom_ids: HashMap::new(),
         }
+    }
+
+    fn register_custom_shader(
+        &mut self,
+        gpu: &gpu::Context,
+        surface_info: gpu::SurfaceInfo,
+        source: &str,
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
+        if let Some(id) = self.custom_ids.get(source).cloned() {
+            return Ok(id);
+        }
+
+        let id = CustomShaderId(self.custom.len() as u32);
+        let shader = gpu
+            .try_create_shader(gpu::ShaderDesc { source })
+            .map_err(|err| anyhow::anyhow!(err))?;
+        shader.check_struct_size::<GlobalParams>();
+
+        if let Some(data_struct_name) = instance_data_name {
+            assert_eq!(
+                shader.get_struct_size(data_struct_name) as usize,
+                instance_data_size.next_multiple_of(instance_data_align)
+            );
+        }
+
+        let (_, instance_size) = ShaderInstance::size_info(instance_data_size, instance_data_align);
+        assert_eq!(shader.get_struct_size("Instance") as usize, instance_size);
+
+        let blend_mode = match surface_info.alpha {
+            gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
+            gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
+        };
+        let color_targets = &[gpu::ColorTargetState {
+            format: surface_info.format,
+            blend: Some(blend_mode),
+            write_mask: gpu::ColorWrites::default(),
+        }];
+
+        self.custom.push((
+            gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: &format!("custom{}", id.0),
+                data_layouts: &[&ShaderCustomShaderData::layout()],
+                vertex: shader.at("vs"),
+                vertex_fetches: &[],
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: Some(shader.at("fs")),
+                color_targets,
+                multisample_state: gpu::MultisampleState::default(),
+            }),
+            instance_data_size,
+            instance_data_align,
+        ));
+        self.custom_ids.insert(source.to_string(), id);
+        Ok(id)
     }
 
     fn destroy(&mut self, gpu: &gpu::Context) {
@@ -313,6 +388,10 @@ impl BladePipelines {
         gpu.destroy_render_pipeline(&mut self.mono_sprites);
         gpu.destroy_render_pipeline(&mut self.poly_sprites);
         gpu.destroy_render_pipeline(&mut self.surfaces);
+
+        for (pipeline, _, _) in self.custom.iter_mut() {
+            gpu.destroy_render_pipeline(pipeline);
+        }
     }
 }
 
@@ -814,6 +893,45 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
+                PrimitiveBatch::Shaders(instances) => {
+                    let (pipeline, instance_data_size, instance_data_align) = self
+                        .pipelines
+                        .custom
+                        .get(instances[0].shader_id.0 as usize)
+                        .expect("Shader not registered");
+
+                    let (_, instance_size) =
+                        ShaderInstance::size_info(*instance_data_size, *instance_data_align);
+                    let instance_buf = self
+                        .instance_belt
+                        .alloc((instance_size * instances.len()) as u64, &self.gpu);
+                    unsafe {
+                        ShaderInstance::pack_instances(
+                            instance_buf.data(),
+                            instances,
+                            &scene.shader_data,
+                            *instance_data_size,
+                            *instance_data_align,
+                        )
+                    };
+
+                    let mut encoder = pass.with(pipeline);
+                    encoder.bind(
+                        0,
+                        &ShaderCustomShaderData {
+                            globals: CustomShaderGlobalParams {
+                                viewport_size: globals.viewport_size,
+                                premultiplied_alpha: match self.surface.info().alpha {
+                                    gpu::AlphaMode::Ignored | gpu::AlphaMode::PostMultiplied => 0,
+                                    gpu::AlphaMode::PreMultiplied => 1,
+                                },
+                                pad: 0,
+                            },
+                            b_instances: instance_buf,
+                        },
+                    );
+                    encoder.draw(0, 4, 0, instances.len() as u32);
+                }
                 PrimitiveBatch::Surfaces(surfaces) => {
                     let mut _encoder = pass.with(&self.pipelines.surfaces);
 
@@ -916,6 +1034,23 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
+    }
+
+    pub fn register_custom_shader(
+        &mut self,
+        source: &str,
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
+        self.pipelines.register_custom_shader(
+            &self.gpu,
+            self.surface.info(),
+            source,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
+        )
     }
 }
 
