@@ -42,6 +42,7 @@ async-trait.workspace = true
 chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
+globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 json_schema_store.workspace = true
@@ -98,6 +99,7 @@ text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true

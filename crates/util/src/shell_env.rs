@@ -34,11 +34,13 @@ async fn capture_unix(
 ) -> Result<collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
 
+    use crate::command::new_std_command;
+
     let shell_kind = ShellKind::new(shell_path, false);
     let zed_path = super::get_shell_safe_zed_path(shell_kind)?;
 
     let mut command_string = String::new();
-    let mut command = std::process::Command::new(shell_path);
+    let mut command = new_std_command(shell_path);
     command.args(args);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
@@ -53,6 +55,7 @@ async fn capture_unix(
         // xonsh doesn't support redirecting to stdin, and control sequences are printed to
         // stdout on startup
         ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
+        ShellKind::PowerShell => (FD_STDIN, format!(">{}", FD_STDIN)),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
 
@@ -93,7 +96,9 @@ async fn capture_unix(
 
     // Parse the JSON output from zed --printenv
     let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
-        .with_context(|| "Failed to deserialize environment variables from json: {env_output}")?;
+        .with_context(|| {
+            format!("Failed to deserialize environment variables from json: {env_output}")
+        })?;
     Ok(env_map)
 }
 
@@ -210,6 +215,7 @@ async fn capture_windows(
     let env_output = String::from_utf8_lossy(&output.stdout);
 
     // Parse the JSON output from zed --printenv
-    serde_json::from_str(&env_output)
-        .with_context(|| "Failed to deserialize environment variables from json: {env_output}")
+    serde_json::from_str(&env_output).with_context(|| {
+        format!("Failed to deserialize environment variables from json: {env_output}")
+    })
 }

@@ -56,7 +56,7 @@ const updateFunction = () => {
   }
 };
 
-window.addEventListener("load", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const pagetoc = getPagetoc();
   const headers = [...document.getElementsByClassName("header")];
 
@@ -64,13 +64,27 @@ window.addEventListener("load", () => {
     (header) => !header.parentElement.tagName.toLowerCase().startsWith("h1"),
   );
   const sidetoc = document.querySelector(".sidetoc");
+  const tocContainer = document.querySelector(".toc-container");
 
   if (nonH1Headers.length === 0) {
     if (sidetoc) {
       sidetoc.style.display = "none";
     }
+    if (tocContainer) {
+      tocContainer.classList.add("no-toc");
+    }
     return;
   }
+
+  if (tocContainer) {
+    tocContainer.classList.add("has-toc");
+  }
+
+  const tocTitle = Object.assign(document.createElement("p"), {
+    className: "toc-title",
+    textContent: "On This Page",
+  });
+  pagetoc.appendChild(tocTitle);
 
   headers.forEach((header) => {
     const link = Object.assign(document.createElement("a"), {

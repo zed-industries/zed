@@ -106,6 +106,7 @@ multi_buffer = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rand.workspace = true
+semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 text = { workspace = true, features = ["test-support"] }

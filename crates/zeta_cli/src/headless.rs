@@ -8,7 +8,7 @@ use language::LanguageRegistry;
 use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::project_settings::ProjectSettings;
-use release_channel::AppVersion;
+use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::path::PathBuf;
@@ -26,8 +26,14 @@ pub struct ZetaCliAppState {
 
 // TODO: dedupe with crates/eval/src/eval.rs
 pub fn init(cx: &mut App) -> ZetaCliAppState {
-    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
-    release_channel::init(app_version, cx);
+    let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
+
+    let app_version = AppVersion::load(
+        env!("ZED_PKG_VERSION"),
+        option_env!("ZED_BUILD_ID"),
+        app_commit_sha,
+    );
+    release_channel::init(app_version.clone(), cx);
     gpui_tokio::init(cx);
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());

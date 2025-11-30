@@ -30,16 +30,17 @@ pub fn init_test() {
     }
 }
 
-pub fn init_test_with(filter: &str) {
-    if try_init(Some(filter.to_owned())).is_ok() {
-        init_output_stdout();
-    }
-}
-
 fn get_env_config() -> Option<String> {
     std::env::var("ZED_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .ok()
+        .or_else(|| {
+            if std::env::var("CI").is_ok() {
+                Some("info".to_owned())
+            } else {
+                None
+            }
+        })
 }
 
 pub fn process_env(filter: Option<String>) {

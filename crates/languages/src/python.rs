@@ -10,8 +10,8 @@ use language::{ContextLocation, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
+use lsp::{LanguageServerBinary, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
@@ -163,10 +163,50 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let label_len = label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
+        };
+
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.detail.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
+
+        Some(language::CodeLabel::filtered(
+            text,
+            label_len,
+            item.filter_text.as_deref(),
+            highlight_id
+                .map(|id| (0..label_len, id))
+                .into_iter()
+                .collect(),
+        ))
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut ret = cx
@@ -263,7 +303,7 @@ impl LspInstaller for TyLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
@@ -478,6 +518,7 @@ impl LspAdapter for PyrightLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -952,6 +993,8 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
         PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
+        PythonEnvironmentKind::Uv => "uv",
+        PythonEnvironmentKind::UvWorkspace => "uv (Workspace)",
     }
 }
 
@@ -959,6 +1002,8 @@ pub(crate) struct PythonToolchainProvider;
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
+    PythonEnvironmentKind::UvWorkspace,
+    PythonEnvironmentKind::Uv,
     PythonEnvironmentKind::Poetry,
     PythonEnvironmentKind::Pipenv,
     PythonEnvironmentKind::VirtualEnvWrapper,
@@ -1550,6 +1595,7 @@ impl LspAdapter for PyLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -1841,6 +1887,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -2176,7 +2223,7 @@ impl LspInstaller for RuffLspAdapter {
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =

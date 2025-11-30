@@ -190,6 +190,12 @@ message GitRenameBranch {
     string new_name = 4;
 }
 
+message GitDeleteBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string branch_name = 3;
+}
+
 message GitDiff {
     uint64 project_id = 1;
     reserved 2;
@@ -347,6 +353,7 @@ message Commit {
     string message = 6;
     optional CommitOptions options = 7;
     reserved 8;
+    uint64 askpass_id = 9;
 
     message CommitOptions {
         bool amend = 1;
@@ -388,6 +395,7 @@ message GetRemotes {
     reserved 2;
     uint64 repository_id = 3;
     optional string branch_name = 4;
+    bool is_push = 5;
 }
 
 message GetRemotesResponse {
@@ -529,4 +537,14 @@ message GitCreateWorktree {
     string name = 3;
     string directory = 4;
     optional string commit = 5;
+}
+
+message RunGitHook {
+    enum GitHook {
+        PRE_COMMIT = 0;
+    }
+
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    GitHook hook = 3;
 }

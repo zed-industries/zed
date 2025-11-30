@@ -15,7 +15,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -37,7 +37,8 @@ use std::{
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
-    sync::Arc,
+    sync::{Arc, OnceLock},
+    time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
@@ -49,8 +50,8 @@ use workspace::{
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
     derive_paths_with_position, edit_prediction_registry, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
-    initialize_workspace, open_paths_with_positions,
+    handle_keymap_file_changes, handle_settings_file_changes, initialize_workspace,
+    open_paths_with_positions,
 };
 
 use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
@@ -87,31 +88,33 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
-            cx.new(|_| gpui::Empty)
-        }) {
-            window
-                .update(cx, |_, window, cx| {
-                    let response = window.prompt(
-                        gpui::PromptLevel::Critical,
-                        message,
-                        Some(&error_details),
-                        &["Exit"],
-                        cx,
-                    );
+    Application::new()
+        .with_quit_mode(QuitMode::Explicit)
+        .run(move |cx| {
+            if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+                cx.new(|_| gpui::Empty)
+            }) {
+                window
+                    .update(cx, |_, window, cx| {
+                        let response = window.prompt(
+                            gpui::PromptLevel::Critical,
+                            message,
+                            Some(&error_details),
+                            &["Exit"],
+                            cx,
+                        );
 
-                    cx.spawn_in(window, async move |_, cx| {
-                        response.await?;
-                        cx.update(|_, cx| cx.quit())
+                        cx.spawn_in(window, async move |_, cx| {
+                            response.await?;
+                            cx.update(|_, cx| cx.quit())
+                        })
+                        .detach_and_log_err(cx);
                     })
-                    .detach_and_log_err(cx);
-                })
-                .log_err();
-        } else {
-            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-        }
-    })
+                    .log_err();
+            } else {
+                fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
+            }
+        })
 }
 
 fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
@@ -160,7 +163,11 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
+pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
+
 pub fn main() {
+    STARTUP_TIME.get_or_init(|| Instant::now());
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -243,9 +250,10 @@ pub fn main() {
         };
     }
 
-    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
+    let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
 
     if args.system_specs {
         let system_specs = system_specs::SystemSpecs::new_stateless(
@@ -258,7 +266,7 @@ pub fn main() {
     }
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
         .thread_name(|ix| format!("RayonWorker{}", ix))
         .build_global()
@@ -334,7 +342,9 @@ pub fn main() {
         } else {
             None
         };
-    log::info!("Using git binary path: {:?}", git_binary_path);
+    if let Some(git_binary_path) = &git_binary_path {
+        log::info!("Using git binary path: {:?}", git_binary_path);
+    }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
     let user_settings_file_rx = watch_config_file(
@@ -402,12 +412,7 @@ pub fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(
-            user_settings_file_rx,
-            global_settings_file_rx,
-            cx,
-            handle_settings_changed,
-        );
+        handle_settings_file_changes(user_settings_file_rx, global_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         let user_agent = format!(
@@ -537,14 +542,10 @@ pub fn main() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
-        auto_update::init(client.http_client(), cx);
+        auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
-        reliability::init(
-            client.http_client(),
-            system_id.as_ref().map(|id| id.to_string()),
-            cx,
-        );
+        reliability::init(client.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -635,6 +636,7 @@ pub fn main() {
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
+        miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -1224,6 +1226,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
     ]
     .into_iter()
     .fold(HashMap::default(), |mut errors, path| {
@@ -1239,7 +1242,7 @@ pub fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true)]
+#[command(name = "zed", disable_version_flag = true, max_term_width = 100)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///
@@ -1254,11 +1257,12 @@ struct Args {
     diff: Vec<String>,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
+    ///
     /// This overrides the default platform-specific data directory location.
     /// On macOS, the default is `~/Library/Application Support/Zed`.
     /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
     /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", verbatim_doc_comment)]
     user_data_dir: Option<String>,
 
     /// The username and WSL distribution to use when opening paths. If not specified,
@@ -1278,8 +1282,11 @@ struct Args {
     #[arg(long)]
     dev_server_token: Option<String>,
 
-    /// Prints system specs. Useful for submitting issues on GitHub when encountering a bug
-    /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
+    /// Prints system specs.
+    ///
+    /// Useful for submitting issues on GitHub when encountering a bug that
+    /// prevents Zed from starting, so you can't run `zed: copy system specs to
+    /// clipboard`
     #[arg(long)]
     system_specs: bool,
 

@@ -44,6 +44,7 @@ design
 
 docs
   = @probably-neb
+  = @miguelraz
 
 extension
   = @kubkon
@@ -97,6 +98,9 @@ settings_ui
   = @Anthony-Eid
   = @danilo-leal
   = @probably-neb
+
+support
+  = @miguelraz
 
 tasks
   = @SomeoneToIgnore

@@ -13,7 +13,7 @@ use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::{
     AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
-    executor::Executor, rpc::ResultExt,
+    executor::Executor,
 };
 use db::Database;
 use std::{
@@ -95,8 +95,6 @@ async fn main() -> Result<()> {
                 let state = AppState::new(config, Executor::Production).await?;
 
                 if mode.is_collab() {
-                    state.db.purge_old_embeddings().await.trace_err();
-
                     let epoch = state
                         .db
                         .create_server(&state.config.zed_environment)

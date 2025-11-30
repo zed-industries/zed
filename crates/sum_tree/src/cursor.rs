@@ -381,6 +381,10 @@ where
             "Must call `seek`, `next` or `prev` before calling this method"
         );
     }
+
+    pub fn did_seek(&self) -> bool {
+        self.did_seek
+    }
 }
 
 impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
@@ -448,7 +452,7 @@ where
         aggregate: &mut dyn SeekAggregate<'a, T>,
     ) -> bool {
         assert!(
-            target.cmp(&self.position, self.cx) >= Ordering::Equal,
+            target.cmp(&self.position, self.cx).is_ge(),
             "cannot seek backward",
         );
 

@@ -37,6 +37,10 @@ pub struct InputField {
     disabled: bool,
     /// The minimum width of for the input
     min_width: Length,
+    /// The tab index for keyboard navigation order.
+    tab_index: Option<isize>,
+    /// Whether this field is a tab stop (can be focused via Tab key).
+    tab_stop: bool,
 }
 
 impl Focusable for InputField {
@@ -63,6 +67,8 @@ impl InputField {
             start_icon: None,
             disabled: false,
             min_width: px(192.).into(),
+            tab_index: None,
+            tab_stop: true,
         }
     }
 
@@ -86,6 +92,16 @@ impl InputField {
         self
     }
 
+    pub fn tab_index(mut self, index: isize) -> Self {
+        self.tab_index = Some(index);
+        self
+    }
+
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
+        self
+    }
+
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         self.disabled = disabled;
         self.editor
@@ -104,6 +120,11 @@ impl InputField {
         self.editor().read(cx).text(cx)
     }
 
+    pub fn clear(&self, window: &mut Window, cx: &mut App) {
+        self.editor()
+            .update(cx, |editor, cx| editor.clear(window, cx))
+    }
+
     pub fn set_text(&self, text: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
         self.editor()
             .update(cx, |editor, cx| editor.set_text(text, window, cx))
@@ -111,7 +132,8 @@ impl InputField {
 }
 
 impl Render for InputField {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = self.editor.clone();
         let settings = ThemeSettings::get_global(cx);
         let theme_color = cx.theme().colors();
 
@@ -151,6 +173,16 @@ impl Render for InputField {
             ..Default::default()
         };
 
+        let focus_handle = self.editor.focus_handle(cx);
+
+        let configured_handle = if let Some(tab_index) = self.tab_index {
+            focus_handle.tab_index(tab_index).tab_stop(self.tab_stop)
+        } else if !self.tab_stop {
+            focus_handle.tab_stop(false)
+        } else {
+            focus_handle
+        };
+
         v_flex()
             .id(self.placeholder.clone())
             .w_full()
@@ -168,6 +200,7 @@ impl Render for InputField {
             })
             .child(
                 h_flex()
+                    .track_focus(&configured_handle)
                     .min_w(self.min_width)
                     .min_h_8()
                     .w_full()
@@ -179,6 +212,10 @@ impl Render for InputField {
                     .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)
+                    .when(
+                        editor.focus_handle(cx).contains_focused(window, cx),
+                        |this| this.border_color(theme_color.border_focused),
+                    )
                     .when_some(self.start_icon, |this, icon| {
                         this.gap_1()
                             .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))

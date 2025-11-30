@@ -34,6 +34,9 @@ jobs:
     - name: steps::install_mold
       run: ./script/install-mold
       shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
       shell: bash -euxo pipefail {0}
@@ -73,6 +76,9 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux

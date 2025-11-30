@@ -6,25 +6,26 @@ use std::{
     io::Write,
     mem,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
+use crate::headless::ZetaCliAppState;
 use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
 use cloud_zeta2_prompt::CURSOR_MARKER;
 use collections::HashMap;
-use edit_prediction_context::Line;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
 };
-use gpui::{AsyncApp, Entity, http_client::Url};
+use futures::{FutureExt as _, future::Shared};
+use gpui::{AsyncApp, Entity, Task, http_client::Url};
 use language::{Anchor, Buffer};
 use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 use util::{paths::PathStyle, rel_path::RelPath};
-use zeta2::udiff::OpenedBuffers;
+use zeta::udiff::OpenedBuffers;
 
 use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
@@ -51,7 +52,6 @@ pub struct Example {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
-    pub expected_context: Vec<ExpectedContextEntry>,
 }
 
 pub type ActualExcerpt = Excerpt;
@@ -60,25 +60,6 @@ pub type ActualExcerpt = Excerpt;
 pub struct Excerpt {
     pub path: PathBuf,
     pub text: String,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub struct ExpectedContextEntry {
-    pub heading: String,
-    pub alternatives: Vec<ExpectedExcerptSet>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub struct ExpectedExcerptSet {
-    pub heading: String,
-    pub excerpts: Vec<ExpectedExcerpt>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExpectedExcerpt {
-    pub path: PathBuf,
-    pub text: String,
-    pub required_lines: Vec<Line>,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -130,7 +111,6 @@ impl NamedExample {
                 cursor_position: String::new(),
                 edit_history: String::new(),
                 expected_patch: String::new(),
-                expected_context: Vec::new(),
             },
         };
 
@@ -195,30 +175,10 @@ impl NamedExample {
                     };
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
-                    let heading = mem::take(&mut text);
-                    match current_section {
-                        Section::ExpectedExcerpts => {
-                            named.example.expected_context.push(ExpectedContextEntry {
-                                heading,
-                                alternatives: Vec::new(),
-                            });
-                        }
-                        _ => {}
-                    }
+                    mem::take(&mut text);
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H4)) => {
-                    let heading = mem::take(&mut text);
-                    match current_section {
-                        Section::ExpectedExcerpts => {
-                            let expected_context = &mut named.example.expected_context;
-                            let last_entry = expected_context.last_mut().unwrap();
-                            last_entry.alternatives.push(ExpectedExcerptSet {
-                                heading,
-                                excerpts: Vec::new(),
-                            })
-                        }
-                        _ => {}
-                    }
+                    mem::take(&mut text);
                 }
                 Event::End(TagEnd::Heading(level)) => {
                     anyhow::bail!("Unexpected heading level: {level}");
@@ -251,36 +211,7 @@ impl NamedExample {
                             named.example.cursor_position = mem::take(&mut text);
                         }
                         Section::ExpectedExcerpts => {
-                            let text = mem::take(&mut text);
-                            for excerpt in text.split("\n…\n") {
-                                let (mut text, required_lines) = extract_required_lines(&excerpt);
-                                if !text.ends_with('\n') {
-                                    text.push('\n');
-                                }
-                                let alternatives = &mut named
-                                    .example
-                                    .expected_context
-                                    .last_mut()
-                                    .unwrap()
-                                    .alternatives;
-
-                                if alternatives.is_empty() {
-                                    alternatives.push(ExpectedExcerptSet {
-                                        heading: String::new(),
-                                        excerpts: vec![],
-                                    });
-                                }
-
-                                alternatives
-                                    .last_mut()
-                                    .unwrap()
-                                    .excerpts
-                                    .push(ExpectedExcerpt {
-                                        path: block_info.into(),
-                                        text,
-                                        required_lines,
-                                    });
-                            }
+                            mem::take(&mut text);
                         }
                         Section::ExpectedPatch => {
                             named.example.expected_patch = mem::take(&mut text);
@@ -311,12 +242,58 @@ impl NamedExample {
         }
     }
 
+    pub async fn setup_project(
+        &self,
+        app_state: &Arc<ZetaCliAppState>,
+        cx: &mut AsyncApp,
+    ) -> Result<Entity<Project>> {
+        let worktree_path = self.setup_worktree().await?;
+
+        static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
+
+        AUTHENTICATED
+            .get_or_init(|| {
+                let client = app_state.client.clone();
+                cx.spawn(async move |cx| {
+                    client
+                        .sign_in_with_optional_connect(true, cx)
+                        .await
+                        .unwrap();
+                })
+                .shared()
+            })
+            .clone()
+            .await;
+
+        let project = cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                cx,
+            )
+        })?;
+
+        let worktree = project
+            .update(cx, |project, cx| {
+                project.create_worktree(&worktree_path, true, cx)
+            })?
+            .await?;
+        worktree
+            .read_with(cx, |worktree, _cx| {
+                worktree.as_local().unwrap().scan_complete()
+            })?
+            .await;
+
+        anyhow::Ok(project)
+    }
+
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
         let (repo_owner, repo_name) = self.repo_name()?;
         let file_name = self.file_name();
-
-        fs::create_dir_all(&*REPOS_DIR)?;
-        fs::create_dir_all(&*WORKTREES_DIR)?;
 
         let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
         let repo_lock = lock_repo(&repo_dir).await;
@@ -332,7 +309,14 @@ impl NamedExample {
         }
 
         // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(&repo_dir, &["rev-parse", &self.example.revision]).await;
+        let revision = run_git(
+            &repo_dir,
+            &[
+                "rev-parse",
+                &format!("{}^{{commit}}", self.example.revision),
+            ],
+        )
+        .await;
         let revision = if let Ok(revision) = revision {
             revision
         } else {
@@ -349,7 +333,7 @@ impl NamedExample {
         };
 
         // Create the worktree for this example if needed.
-        let worktree_path = WORKTREES_DIR.join(&file_name);
+        let worktree_path = WORKTREES_DIR.join(&file_name).join(repo_name.as_ref());
         if worktree_path.is_dir() {
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
@@ -394,7 +378,7 @@ impl NamedExample {
         Ok(worktree_path)
     }
 
-    fn file_name(&self) -> String {
+    pub fn file_name(&self) -> String {
         self.name
             .chars()
             .map(|c| {
@@ -477,7 +461,7 @@ impl NamedExample {
             let mut matches = text.match_indices(&cursor_excerpt);
             let Some((excerpt_offset, _)) = matches.next() else {
                 anyhow::bail!(
-                    "Cursor excerpt did not exist in buffer.\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n"
+                    "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
                 );
             };
             assert!(matches.next().is_none());
@@ -497,49 +481,8 @@ impl NamedExample {
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<OpenedBuffers<'_>> {
-        zeta2::udiff::apply_diff(&self.example.edit_history, project, cx).await
+        zeta::udiff::apply_diff(&self.example.edit_history, project, cx).await
     }
-}
-
-fn extract_required_lines(text: &str) -> (String, Vec<Line>) {
-    const MARKER: &str = "[ZETA]";
-    let mut new_text = String::new();
-    let mut required_lines = Vec::new();
-    let mut skipped_lines = 0_u32;
-
-    for (row, mut line) in text.split('\n').enumerate() {
-        if let Some(marker_column) = line.find(MARKER) {
-            let mut strip_column = marker_column;
-
-            while strip_column > 0 {
-                let prev_char = line[strip_column - 1..].chars().next().unwrap();
-                if prev_char.is_whitespace() || ['/', '#'].contains(&prev_char) {
-                    strip_column -= 1;
-                } else {
-                    break;
-                }
-            }
-
-            let metadata = &line[marker_column + MARKER.len()..];
-            if metadata.contains("required") {
-                required_lines.push(Line(row as u32 - skipped_lines));
-            }
-
-            if strip_column == 0 {
-                skipped_lines += 1;
-                continue;
-            }
-
-            line = &line[..strip_column];
-        }
-
-        new_text.push_str(line);
-        new_text.push('\n');
-    }
-
-    new_text.pop();
-
-    (new_text, required_lines)
 }
 
 async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
@@ -596,37 +539,6 @@ impl Display for NamedExample {
             )?;
         }
 
-        if !self.example.expected_context.is_empty() {
-            write!(f, "\n## {EXPECTED_CONTEXT_HEADING}\n\n")?;
-
-            for entry in &self.example.expected_context {
-                write!(f, "\n### {}\n\n", entry.heading)?;
-
-                let skip_h4 =
-                    entry.alternatives.len() == 1 && entry.alternatives[0].heading.is_empty();
-
-                for excerpt_set in &entry.alternatives {
-                    if !skip_h4 {
-                        write!(f, "\n#### {}\n\n", excerpt_set.heading)?;
-                    }
-
-                    for excerpt in &excerpt_set.excerpts {
-                        write!(
-                            f,
-                            "`````{}{}\n{}`````\n\n",
-                            excerpt
-                                .path
-                                .extension()
-                                .map(|ext| format!("{} ", ext.to_string_lossy()))
-                                .unwrap_or_default(),
-                            excerpt.path.display(),
-                            excerpt.text
-                        )?;
-                    }
-                }
-            }
-        }
-
         Ok(())
     }
 }
@@ -646,39 +558,4 @@ pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
         })
         .lock_owned()
         .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use indoc::indoc;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn test_extract_required_lines() {
-        let input = indoc! {"
-            zero
-            one // [ZETA] required
-            two
-            // [ZETA] something
-            three
-            four # [ZETA] required
-            five
-        "};
-
-        let expected_updated_input = indoc! {"
-            zero
-            one
-            two
-            three
-            four
-            five
-        "};
-
-        let expected_required_lines = vec![Line(1), Line(4)];
-
-        let (updated_input, required_lines) = extract_required_lines(input);
-        assert_eq!(updated_input, expected_updated_input);
-        assert_eq!(required_lines, expected_required_lines);
-    }
 }

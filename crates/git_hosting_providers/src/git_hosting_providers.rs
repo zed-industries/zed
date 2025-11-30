@@ -49,6 +49,8 @@ pub fn register_additional_providers(
         provider_registry.register_hosting_provider(Arc::new(forgejo_self_hosted));
     } else if let Ok(gitea_self_hosted) = Gitea::from_remote_url(&origin_url) {
         provider_registry.register_hosting_provider(Arc::new(gitea_self_hosted));
+    } else if let Ok(bitbucket_self_hosted) = Bitbucket::from_remote_url(&origin_url) {
+        provider_registry.register_hosting_provider(Arc::new(bitbucket_self_hosted));
     }
 }
 

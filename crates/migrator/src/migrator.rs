@@ -215,6 +215,15 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
         MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
         MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_12::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_12,
+        ),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_20::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_20,
+        ),
+        MigrationType::Json(migrations::m_2025_11_25::remove_context_server_source),
     ];
     run_migrations(text, migrations)
 }
@@ -332,6 +341,14 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_10_03,
     migrations::m_2025_10_03::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_11_12,
+    migrations::m_2025_11_12::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_11_20,
+    migrations::m_2025_11_20::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -1185,6 +1202,63 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_agent_server_settings_migration() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2025_11_20::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_11_20,
+            )],
+            r#"{
+    "agent_servers": {
+        "gemini": {
+            "default_model": "gemini-1.5-pro"
+        },
+        "claude": {},
+        "codex": {},
+        "my-custom-agent": {
+            "command": "/path/to/agent",
+            "args": ["--foo"],
+            "default_model": "my-model"
+        },
+        "already-migrated-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
+        },
+        "future-extension-agent": {
+            "type": "extension",
+            "default_model": "ext-model"
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "agent_servers": {
+        "gemini": {
+            "default_model": "gemini-1.5-pro"
+        },
+        "claude": {},
+        "codex": {},
+        "my-custom-agent": {
+            "type": "custom",
+            "command": "/path/to/agent",
+            "args": ["--foo"],
+            "default_model": "my-model"
+        },
+        "already-migrated-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
+        },
+        "future-extension-agent": {
+            "type": "extension",
+            "default_model": "ext-model"
+        }
+    }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
     fn test_remove_version_fields() {
         assert_migrate_settings(
             r#"{
@@ -1261,7 +1335,6 @@ mod tests {
             r#"{
     "context_servers": {
         "some-mcp-server": {
-            "source": "custom",
             "command": {
                 "path": "npx",
                 "args": [
@@ -1281,7 +1354,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "some-mcp-server": {
-            "source": "custom",
             "command": "npx",
             "args": [
                 "-y",
@@ -1303,7 +1375,6 @@ mod tests {
             r#"{
     "context_servers": {
         "server-with-extras": {
-            "source": "custom",
             "command": {
                 "path": "/usr/bin/node",
                 "args": ["server.js"]
@@ -1316,7 +1387,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "server-with-extras": {
-            "source": "custom",
             "command": "/usr/bin/node",
             "args": ["server.js"],
             "settings": {}
@@ -1331,7 +1401,6 @@ mod tests {
             r#"{
     "context_servers": {
         "simple-server": {
-            "source": "custom",
             "command": {
                 "path": "simple-mcp-server"
             }
@@ -1342,7 +1411,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "simple-server": {
-            "source": "custom",
             "command": "simple-mcp-server"
         }
     }
@@ -2189,6 +2257,99 @@ mod tests {
                         "include_ignored": "smart"
                     }
                 }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_project_panel_open_file_on_paste_migration() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": true }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": false }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_remove_context_server_source() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "context_servers": {
+                    "extension_server": {
+                        "source": "extension",
+                        "settings": {
+                            "foo": "bar"
+                        }
+                    },
+                    "custom_server": {
+                        "source": "custom",
+                        "command": "foo",
+                        "args": ["bar"],
+                        "env": {
+                            "FOO": "BAR"
+                        }
+                    },
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "context_servers": {
+                        "extension_server": {
+                            "settings": {
+                                "foo": "bar"
+                            }
+                        },
+                        "custom_server": {
+                            "command": "foo",
+                            "args": ["bar"],
+                            "env": {
+                                "FOO": "BAR"
+                            }
+                        },
+                    }
+                }
+                "#
                 .unindent(),
             ),
         );

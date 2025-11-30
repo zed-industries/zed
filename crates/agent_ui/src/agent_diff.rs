@@ -13,8 +13,8 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
+    Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
 use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
@@ -145,7 +145,7 @@ impl AgentDiffPane {
 
             let diff_hunk_ranges = diff
                 .hunks_intersecting_range(
-                    language::Anchor::MIN..language::Anchor::MAX,
+                    language::Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
                     cx,
                 )
@@ -580,11 +580,11 @@ impl Item for AgentDiffPane {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

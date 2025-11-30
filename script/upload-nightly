@@ -4,14 +4,14 @@ bash -euo pipefail
 source script/lib/blob-store.sh
 
 bucket_name="zed-nightly-host"
+version=$(./script/get-crate-version zed)-"${GITHUB_RUN_NUMBER}+${GITHUB_SHA}"
 
 for file_to_upload in ./release-artifacts/*; do
     [ -f "$file_to_upload" ] || continue
     upload_to_blob_store_public $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
-    upload_to_blob_store_public $bucket_name "$file_to_upload" "${GITHUB_SHA}/$(basename "$file_to_upload")"
+    upload_to_blob_store_public $bucket_name "$file_to_upload" "${version}/$(basename "$file_to_upload")"
     rm -f "$file_to_upload"
 done
 
-sha=$(git rev-parse HEAD)
-echo -n ${sha} > ./release-artifacts/latest-sha
+echo -n ${version} > ./release-artifacts/latest-sha
 upload_to_blob_store_public $bucket_name "release-artifacts/latest-sha" "nightly/latest-sha"

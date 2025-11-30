@@ -133,9 +133,7 @@ impl LanguageModels {
             for model in provider.provided_models(cx) {
                 let model_info = Self::map_language_model_to_info(&model, &provider);
                 let model_id = model_info.id.clone();
-                if !recommended_models.contains(&(model.provider_id(), model.id())) {
-                    provider_models.push(model_info);
-                }
+                provider_models.push(model_info);
                 models.insert(model_id, model);
             }
             if !provider_models.is_empty() {
@@ -962,6 +960,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 
     fn watch(&self, cx: &mut App) -> Option<watch::Receiver<()>> {
         Some(self.connection.0.read(cx).models.watch())
+    }
+
+    fn should_render_footer(&self) -> bool {
+        true
     }
 }
 

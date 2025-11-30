@@ -4,7 +4,7 @@ use std::{ops::Range, path::PathBuf};
 
 use anyhow::Result;
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, SelectionEffects};
+use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
@@ -281,7 +281,7 @@ impl MarkdownPreviewView {
                         let selection_range = editor.update(cx, |editor, cx| {
                             editor
                                 .selections
-                                .last::<usize>(&editor.display_snapshot(cx))
+                                .last::<MultiBufferOffset>(&editor.display_snapshot(cx))
                                 .range()
                         });
                         this.selected_block = this.get_block_index_under_cursor(selection_range);
@@ -358,7 +358,7 @@ impl MarkdownPreviewView {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        selection: Range<usize>,
+        selection: Range<MultiBufferOffset>,
     ) {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
@@ -375,7 +375,7 @@ impl MarkdownPreviewView {
 
     /// The absolute path of the file that is currently being previewed.
     fn get_folder_for_active_editor(editor: &Editor, cx: &App) -> Option<PathBuf> {
-        if let Some(file) = editor.file_at(0, cx) {
+        if let Some(file) = editor.file_at(MultiBufferOffset(0), cx) {
             if let Some(file) = file.as_local() {
                 file.abs_path(cx).parent().map(|p| p.to_path_buf())
             } else {
@@ -386,9 +386,9 @@ impl MarkdownPreviewView {
         }
     }
 
-    fn get_block_index_under_cursor(&self, selection_range: Range<usize>) -> usize {
+    fn get_block_index_under_cursor(&self, selection_range: Range<MultiBufferOffset>) -> usize {
         let mut block_index = None;
-        let cursor = selection_range.start;
+        let cursor = selection_range.start.0;
 
         let mut last_end = 0;
         if let Some(content) = &self.contents {
@@ -524,7 +524,15 @@ impl Render for MarkdownPreviewView {
                                                         if e.checked() { "[x]" } else { "[ ]" };
 
                                                     editor.edit(
-                                                        vec![(e.source_range(), task_marker)],
+                                                        vec![(
+                                                            MultiBufferOffset(
+                                                                e.source_range().start,
+                                                            )
+                                                                ..MultiBufferOffset(
+                                                                    e.source_range().end,
+                                                                ),
+                                                            task_marker,
+                                                        )],
                                                         cx,
                                                     );
                                                 });
@@ -564,7 +572,8 @@ impl Render for MarkdownPreviewView {
                                             this.move_cursor_to_block(
                                                 window,
                                                 cx,
-                                                source_range.start..source_range.start,
+                                                MultiBufferOffset(source_range.start)
+                                                    ..MultiBufferOffset(source_range.start),
                                             );
                                         }
                                     },
@@ -602,6 +611,6 @@ impl Render for MarkdownPreviewView {
                     .size_full(),
                 )
             }))
-            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+            .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }

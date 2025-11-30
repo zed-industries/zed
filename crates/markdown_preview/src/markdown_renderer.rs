@@ -679,33 +679,31 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             .to_highlight_style(&syntax_theme)
                             .map(|style| (range.clone(), style))
                     }),
-                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
-                        |(region, range)| {
-                            if region.code {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else if region.link.is_some() {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        color: Some(link_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        },
-                    ),
+                    parsed.regions.iter().filter_map(|(range, region)| {
+                        if region.code {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    background_color: Some(code_span_bg_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else if region.link.is_some() {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    color: Some(link_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else {
+                            None
+                        }
+                    }),
                 );
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
-                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                for (range, region) in parsed.regions.iter() {
                     if let Some(link) = region.link.clone() {
                         links.push(link);
                         link_ranges.push(range.clone());
@@ -927,7 +925,6 @@ mod tests {
             source_range: 0..text.len(),
             contents: SharedString::new(text),
             highlights: Default::default(),
-            region_ranges: Default::default(),
             regions: Default::default(),
         })
     }
