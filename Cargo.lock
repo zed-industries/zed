@@ -5923,6 +5923,7 @@ dependencies = [
  "release_channel",
  "remote",
  "reqwest_client",
+ "rpc",
  "semver",
  "serde",
  "serde_json",
