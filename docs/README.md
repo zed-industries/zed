@@ -72,9 +72,9 @@ Templates are just functions that modify the source of the docs pages (usually w
 
 ## Postprocessor
 
-A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, to add support for page-specific title and meta description values.
+A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in `html` renderer and applies post-processing to the `html` files, to add support for page-specific title and meta description values.
 
-An example of the syntax can be found in `git.md`, as well as below
+An example of the syntax can be found in `git.md`, as well as below:
 
 ```md
 ---
@@ -85,7 +85,7 @@ description: A page-specific description
 # Editor
 ```
 
-The above will be transformed into (with non-relevant tags removed)
+The above code will be transformed into (with non-relevant tags removed):
 
 ```html
 <head>
@@ -97,7 +97,7 @@ The above will be transformed into (with non-relevant tags removed)
 </body>
 ```
 
-If no front-matter is provided, or If one or both keys aren't provided, the title and description will be set based on the `default-title` and `default-description` keys in `book.toml` respectively.
+If no front matter is provided, or if one or both keys aren't provided, the `title` and `description` will be set based on the `default-title` and `default-description` keys in `book.toml` respectively.
 
 ### Implementation details
 
