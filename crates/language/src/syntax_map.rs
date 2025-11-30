@@ -894,22 +894,6 @@ impl SyntaxSnapshot {
         )
     }
 
-    pub fn indent_matches<'a>(
-        &'a self,
-        range: Range<usize>,
-        buffer: &'a BufferSnapshot,
-        query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapMatches<'a> {
-        SyntaxMapMatches::new(
-            range.clone(),
-            buffer.as_rope(),
-            self.layers_for_range(range, buffer, true)
-                .filter(|layer| layer.indent),
-            query,
-            TreeSitterOptions::default(),
-        )
-    }
-
     pub fn matches_with_options<'a>(
         &'a self,
         range: Range<usize>,

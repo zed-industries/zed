@@ -3141,11 +3141,9 @@ impl BufferSnapshot {
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
         let end = Point::new(row_range.end, 0);
         let range = (start..end).to_offset(&self.text);
-        let mut matches = self
-            .syntax
-            .indent_matches(range.clone(), &self.text, |grammar| {
-                Some(&grammar.indents_config.as_ref()?.query)
-            });
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            Some(&grammar.indents_config.as_ref()?.query)
+        });
         let indent_configs = matches
             .grammars()
             .iter()
