@@ -8,12 +8,16 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
+#[cfg(target_os = "ios")]
+mod ios;
+
 #[cfg(any(
     all(
         any(target_os = "linux", target_os = "freebsd"),
         any(feature = "x11", feature = "wayland")
     ),
-    all(target_os = "macos", feature = "macos-blade")
+    all(target_os = "macos", feature = "macos-blade"),
+    target_os = "ios"
 ))]
 mod blade;
 
@@ -72,6 +76,8 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
+#[cfg(target_os = "ios")]
+pub(crate) use ios::*;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
@@ -129,6 +135,11 @@ pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
+}
+
+#[cfg(target_os = "ios")]
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+    Rc::new(IosPlatform::new())
 }
 
 /// Return which compositor we're guessing we'll use.
