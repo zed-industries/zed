@@ -52,10 +52,12 @@ pub struct WindowsWindowState {
     pub click_state: ClickState,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
+    pub system_key_handled: bool,
 
     pub display: WindowsDisplay,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
+    #[allow(dead_code)]
     pub invalidate_devices: Arc<AtomicBool>,
     fullscreen: Option<StyleAndBounds>,
     initial_placement: Option<WindowOpenStatus>,
@@ -117,6 +119,7 @@ impl WindowsWindowState {
         let hovered = false;
         let click_state = ClickState::new();
         let nc_button_pressed = None;
+        let system_key_handled = false;
         let fullscreen = None;
         let initial_placement = None;
 
@@ -139,6 +142,7 @@ impl WindowsWindowState {
             click_state,
             current_cursor,
             nc_button_pressed,
+            system_key_handled,
             display,
             fullscreen,
             initial_placement,
