@@ -105,7 +105,7 @@ Unfortunately, mdBook does not support post-processing like it does pre-processi
 
 ### Known limitations
 
-The front matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full yaml parsing.
+The front matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full YAML parsing.
 
 - Double quotes and multi-line values are not supported, i.e. Keys and values must be entirely on the same line, with no double quotes around the value.
 
@@ -119,7 +119,7 @@ title: Some
 ---
 ```
 
-And neither will:
+neither this:
 
 ```md
 ---
@@ -127,6 +127,5 @@ title: "Some title"
 ---
 ```
 
-- The front matter must be at the top of the file, with only white-space preceding it
-
-- The contents of the title and description will not be html-escaped. They should be simple ascii text with no unicode or emoji characters
+- The front matter must be at the top of the file, with only white-space preceding it.
+- The contents of the title and description will not be html-escaped. They should be simple ascii text with no unicode or emoji characters.
