@@ -28198,3 +28198,87 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         3
         "});
 }
+
+#[gpui::test]
+async fn test_multibuffer_scroll_cursor_top_margin(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("1\n2\n3\n", vec![Point::row_range(0..3)]),
+                ("1\n2\n3\n4\n5\n6\n7\n8\n9\n", vec![Point::row_range(0..9)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ1
+        2
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        4
+        5
+        6
+        7
+        8
+        9
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(19)..MultiBufferOffset(19)]);
+        });
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        4
+        5
+        6
+        ˇ7
+        8
+        9
+        "});
+
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(editor.vertical_scroll_margin(), 0);
+        editor.scroll_cursor_top(&ScrollCursorTop, window, cx);
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 12.0)
+        );
+    });
+
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_vertical_scroll_margin(3, cx);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(editor.vertical_scroll_margin(), 3);
+        editor.scroll_cursor_top(&ScrollCursorTop, window, cx);
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 9.0)
+        );
+    });
+}

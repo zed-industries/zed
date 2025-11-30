@@ -389,11 +389,12 @@ impl Platform for WindowsPlatform {
         #[allow(
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
-        )]
-        let restart_process = util::command::new_std_command("powershell.exe")
-            .arg("-command")
-            .arg(script)
-            .spawn();
+        )] // todo(shell): There might be no powershell on the system
+        let restart_process =
+            util::command::new_std_command(util::shell::get_windows_system_shell())
+                .arg("-command")
+                .arg(script)
+                .spawn();
 
         match restart_process {
             Ok(_) => self.quit(),
@@ -641,14 +642,23 @@ impl Platform for WindowsPlatform {
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
-            unsafe {
+            let result = unsafe {
                 CredReadW(
                     PCWSTR::from_raw(target_name.as_ptr()),
                     CRED_TYPE_GENERIC,
                     None,
                     &mut credentials,
-                )?
+                )
             };
+
+            if let Err(err) = result {
+                // ERROR_NOT_FOUND means the credential doesn't exist.
+                // Return Ok(None) to match macOS and Linux behavior.
+                if err.code().0 == ERROR_NOT_FOUND.0 as i32 {
+                    return Ok(None);
+                }
+                return Err(err.into());
+            }
 
             if credentials.is_null() {
                 Ok(None)
@@ -803,9 +813,27 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
+        const MAIN_TASK_TIMEOUT: u128 = 10;
+
+        let start = std::time::Instant::now();
         loop {
-            for runnable in self.main_receiver.drain() {
-                WindowsDispatcher::execute_runnable(runnable);
+            loop {
+                if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
+                    // we spent our budget on gpui tasks, we likely have a lot of work queued so drain system events first
+                    // before returning to main thread task work
+                    let mut msg = MSG::default();
+                    let peek_msg_type = PM_REMOVE | PM_QS_INPUT | PM_QS_PAINT;
+                    while unsafe { PeekMessageW(&mut msg, None, 0, 0, peek_msg_type) }.as_bool() {
+                        if translate_accelerator(&msg).is_none() {
+                            _ = unsafe { TranslateMessage(&msg) };
+                            unsafe { DispatchMessageW(&msg) };
+                        }
+                    }
+                }
+                match self.main_receiver.try_recv() {
+                    Err(_) => break,
+                    Ok(runnable) => WindowsDispatcher::execute_runnable(runnable),
+                }
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.

@@ -4731,6 +4731,7 @@ mod tests {
                 "assistant",
                 "assistant2",
                 "auto_update",
+                "branch_picker",
                 "bedrock",
                 "branches",
                 "buffer_search",

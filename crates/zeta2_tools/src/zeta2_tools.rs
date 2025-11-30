@@ -42,43 +42,48 @@ actions!(
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(move |workspace, _: &OpenZeta2Inspector, window, cx| {
-            let project = workspace.project();
-            workspace.split_item(
-                SplitDirection::Right,
-                Box::new(cx.new(|cx| {
-                    Zeta2Inspector::new(
-                        &project,
-                        workspace.client(),
-                        workspace.user_store(),
-                        window,
-                        cx,
-                    )
-                })),
-                window,
-                cx,
-            );
-        });
-    })
-    .detach();
-
-    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(move |workspace, _: &OpenZeta2ContextView, window, cx| {
-            let project = workspace.project();
-            workspace.split_item(
-                SplitDirection::Right,
-                Box::new(cx.new(|cx| {
-                    Zeta2ContextView::new(
-                        project.clone(),
-                        workspace.client(),
-                        workspace.user_store(),
-                        window,
-                        cx,
-                    )
-                })),
-                window,
-                cx,
-            );
+        workspace.register_action_renderer(|div, _, _, cx| {
+            let has_flag = cx.has_flag::<Zeta2FeatureFlag>();
+            div.when(has_flag, |div| {
+                div.on_action(
+                    cx.listener(move |workspace, _: &OpenZeta2Inspector, window, cx| {
+                        let project = workspace.project();
+                        workspace.split_item(
+                            SplitDirection::Right,
+                            Box::new(cx.new(|cx| {
+                                Zeta2Inspector::new(
+                                    &project,
+                                    workspace.client(),
+                                    workspace.user_store(),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                            window,
+                            cx,
+                        )
+                    }),
+                )
+                .on_action(cx.listener(
+                    move |workspace, _: &OpenZeta2ContextView, window, cx| {
+                        let project = workspace.project();
+                        workspace.split_item(
+                            SplitDirection::Right,
+                            Box::new(cx.new(|cx| {
+                                Zeta2ContextView::new(
+                                    project.clone(),
+                                    workspace.client(),
+                                    workspace.user_store(),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                            window,
+                            cx,
+                        );
+                    },
+                ))
+            })
         });
     })
     .detach();

@@ -8420,8 +8420,14 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
+            let color = cx.theme().colors();
+
             let color = if is_phantom {
-                Color::Hint
+                if collides_with_existing {
+                    Color::Custom(color.debugger_accent.blend(color.text.opacity(0.6)))
+                } else {
+                    Color::Hint
+                }
             } else if is_rejected {
                 Color::Disabled
             } else {
@@ -21565,12 +21571,22 @@ impl Editor {
             return Vec::new();
         }
 
-        theme::ThemeSettings::get_global(cx)
+        let theme_settings = theme::ThemeSettings::get_global(cx);
+
+        theme_settings
             .theme_overrides
             .get(cx.theme().name.as_ref())
             .map(|theme_style| &theme_style.accents)
             .into_iter()
             .flatten()
+            .chain(
+                theme_settings
+                    .experimental_theme_overrides
+                    .as_ref()
+                    .map(|overrides| &overrides.accents)
+                    .into_iter()
+                    .flatten(),
+            )
             .flat_map(|accent| accent.0.clone())
             .collect()
     }

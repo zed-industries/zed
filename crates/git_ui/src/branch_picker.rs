@@ -4,9 +4,9 @@ use fuzzy::StringMatchCandidate;
 use collections::HashSet;
 use git::repository::Branch;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, Window, rems,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
@@ -14,13 +14,25 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
+use crate::{branch_picker, git_panel::show_error_toast};
+
+actions!(
+    branch_picker,
+    [
+        /// Deletes the selected git branch.
+        DeleteBranch
+    ]
+);
+
 pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(open);
+    workspace.register_action(|workspace, branch: &zed_actions::git::Branch, window, cx| {
+        open(workspace, branch, window, cx);
+    });
     workspace.register_action(switch);
     workspace.register_action(checkout_branch);
 }
@@ -49,10 +61,18 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let workspace_handle = workspace.weak_handle();
     let repository = workspace.project().read(cx).active_repository(cx);
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(repository, style, rems(34.), window, cx)
+        BranchList::new(
+            Some(workspace_handle),
+            repository,
+            style,
+            rems(34.),
+            window,
+            cx,
+        )
     })
 }
 
@@ -62,7 +82,14 @@ pub fn popover(
     cx: &mut App,
 ) -> Entity<BranchList> {
     cx.new(|cx| {
-        let list = BranchList::new(repository, BranchListStyle::Popover, rems(20.), window, cx);
+        let list = BranchList::new(
+            None,
+            repository,
+            BranchListStyle::Popover,
+            rems(20.),
+            window,
+            cx,
+        );
         list.focus_handle(cx).focus(window);
         list
     })
@@ -77,11 +104,13 @@ enum BranchListStyle {
 pub struct BranchList {
     width: Rems,
     pub picker: Entity<Picker<BranchListDelegate>>,
+    picker_focus_handle: FocusHandle,
     _subscription: Subscription,
 }
 
 impl BranchList {
     fn new(
+        workspace: Option<WeakEntity<Workspace>>,
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
         width: Rems,
@@ -148,8 +177,12 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(repository, style);
+        let delegate = BranchListDelegate::new(workspace, repository, style, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker_focus_handle = picker.focus_handle(cx);
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle.clone();
+        });
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
@@ -157,6 +190,7 @@ impl BranchList {
 
         Self {
             picker,
+            picker_focus_handle,
             width,
             _subscription,
         }
@@ -171,13 +205,26 @@ impl BranchList {
         self.picker
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
+
+    fn handle_delete_branch(
+        &mut self,
+        _: &branch_picker::DeleteBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .delete_branch_at(picker.delegate.selected_index, window, cx)
+        })
+    }
 }
 impl ModalView for BranchList {}
 impl EventEmitter<DismissEvent> for BranchList {}
 
 impl Focusable for BranchList {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.picker_focus_handle.clone()
     }
 }
 
@@ -187,6 +234,7 @@ impl Render for BranchList {
             .key_context("GitBranchSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_action(cx.listener(Self::handle_delete_branch))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -206,6 +254,7 @@ struct BranchEntry {
 }
 
 pub struct BranchListDelegate {
+    workspace: Option<WeakEntity<Workspace>>,
     matches: Vec<BranchEntry>,
     all_branches: Option<Vec<Branch>>,
     default_branch: Option<SharedString>,
@@ -214,11 +263,18 @@ pub struct BranchListDelegate {
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
+    focus_handle: FocusHandle,
 }
 
 impl BranchListDelegate {
-    fn new(repo: Option<Entity<Repository>>, style: BranchListStyle) -> Self {
+    fn new(
+        workspace: Option<WeakEntity<Workspace>>,
+        repo: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        cx: &mut Context<BranchList>,
+    ) -> Self {
         Self {
+            workspace,
             matches: vec![],
             repo,
             style,
@@ -227,6 +283,7 @@ impl BranchListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -254,6 +311,59 @@ impl BranchListDelegate {
             Some(e.to_string())
         });
         cx.emit(DismissEvent);
+    }
+
+    fn delete_branch_at(&self, idx: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(branch_entry) = self.matches.get(idx) else {
+            return;
+        };
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+
+        let workspace = self.workspace.clone();
+        let branch_name = branch_entry.branch.name().to_string();
+        let branch_ref = branch_entry.branch.ref_name.clone();
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let result = repo
+                .update(cx, |repo, _| repo.delete_branch(branch_name.clone()))?
+                .await?;
+
+            if let Err(e) = result {
+                log::error!("Failed to delete branch: {}", e);
+
+                if let Some(workspace) = workspace.and_then(|w| w.upgrade()) {
+                    cx.update(|_window, cx| {
+                        show_error_toast(workspace, format!("branch -d {branch_name}"), e, cx)
+                    })?;
+                }
+
+                return Ok(());
+            }
+
+            picker.update_in(cx, |picker, _, cx| {
+                picker
+                    .delegate
+                    .matches
+                    .retain(|entry| entry.branch.ref_name != branch_ref);
+
+                if let Some(all_branches) = &mut picker.delegate.all_branches {
+                    all_branches.retain(|branch| branch.ref_name != branch_ref);
+                }
+
+                if picker.delegate.matches.is_empty() {
+                    picker.delegate.selected_index = 0;
+                } else if picker.delegate.selected_index >= picker.delegate.matches.len() {
+                    picker.delegate.selected_index = picker.delegate.matches.len() - 1;
+                }
+
+                cx.notify();
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach();
     }
 }
 
@@ -372,6 +482,7 @@ impl PickerDelegate for BranchListDelegate {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
+
         if entry.is_new {
             let from_branch = if secondary {
                 self.default_branch.clone()
@@ -562,6 +673,39 @@ impl PickerDelegate for BranchListDelegate {
                         }),
                 )
                 .end_slot::<IconButton>(icon),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_0p5()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("delete-branch", "Delete")
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &branch_picker::DeleteBranch,
+                                &focus_handle,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
+                        }),
+                )
+                .into_any(),
         )
     }
 

@@ -199,12 +199,12 @@ impl ContextServerStore {
         )
     }
 
-    /// Returns all configured context server ids, regardless of enabled state.
+    /// Returns all configured context server ids, excluding the ones that are disabled
     pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
         self.context_server_settings
-            .keys()
-            .cloned()
-            .map(ContextServerId)
+            .iter()
+            .filter(|(_, settings)| settings.enabled())
+            .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
     }
 

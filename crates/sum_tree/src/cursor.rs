@@ -381,6 +381,10 @@ where
             "Must call `seek`, `next` or `prev` before calling this method"
         );
     }
+
+    pub fn did_seek(&self) -> bool {
+        self.did_seek
+    }
 }
 
 impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>

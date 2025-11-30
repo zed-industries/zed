@@ -1235,7 +1235,7 @@ impl DiffHunk {
     pub fn is_created_file(&self) -> bool {
         self.diff_base_byte_range == (0..0)
             && self.buffer_range.start.is_min()
-            && self.buffer_range.end.is_min()
+            && self.buffer_range.end.is_max()
     }
 
     pub fn status(&self) -> DiffHunkStatus {

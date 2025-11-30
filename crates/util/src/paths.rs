@@ -3,6 +3,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -331,10 +332,17 @@ impl PathStyle {
     }
 
     #[inline]
-    pub fn separator(&self) -> &'static str {
+    pub fn primary_separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",
+        }
+    }
+
+    pub fn separators(&self) -> &'static [&'static str] {
+        match self {
+            PathStyle::Posix => &["/"],
+            PathStyle::Windows => &["\\", "/"],
         }
     }
 
@@ -353,24 +361,53 @@ impl PathStyle {
         } else {
             Some(format!(
                 "{left}{}{right}",
-                if left.ends_with(self.separator()) {
+                if left.ends_with(self.primary_separator()) {
                     ""
                 } else {
-                    self.separator()
+                    self.primary_separator()
                 }
             ))
         }
     }
 
     pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
-        let Some(pos) = path_like.rfind(self.separator()) else {
+        let Some(pos) = path_like.rfind(self.primary_separator()) else {
             return (None, path_like);
         };
-        let filename_start = pos + self.separator().len();
+        let filename_start = pos + self.primary_separator().len();
         (
             Some(&path_like[..filename_start]),
             &path_like[filename_start..],
         )
+    }
+
+    pub fn strip_prefix<'a>(
+        &self,
+        child: &'a Path,
+        parent: &'a Path,
+    ) -> Option<std::borrow::Cow<'a, RelPath>> {
+        let parent = parent.to_str()?;
+        if parent.is_empty() {
+            return RelPath::new(child, *self).ok();
+        }
+        let parent = self
+            .separators()
+            .iter()
+            .find_map(|sep| parent.strip_suffix(sep))
+            .unwrap_or(parent);
+        let child = child.to_str()?;
+        let stripped = child.strip_prefix(parent)?;
+        if let Some(relative) = self
+            .separators()
+            .iter()
+            .find_map(|sep| stripped.strip_prefix(sep))
+        {
+            RelPath::new(relative.as_ref(), *self).ok()
+        } else if stripped.is_empty() {
+            Some(Cow::Borrowed(RelPath::empty()))
+        } else {
+            None
+        }
     }
 }
 
@@ -788,7 +825,7 @@ impl PathMatcher {
 
     fn check_with_end_separator(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        let separator = self.path_style.separator();
+        let separator = self.path_style.primary_separator();
         if path_str.ends_with(separator) {
             false
         } else {
@@ -1311,6 +1348,8 @@ impl WslPath {
 
 #[cfg(test)]
 mod tests {
+    use crate::rel_path::rel_path;
+
     use super::*;
     use util_macros::perf;
 
@@ -2478,6 +2517,89 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
+    }
+
+    #[test]
+    fn test_strip_prefix() {
+        let expected = [
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Posix, "/a/b/c", "", None),
+            (PathStyle::Posix, "/a/b//c", "/a/b/", None),
+            (PathStyle::Posix, "/a/bc", "/a/b", None),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/c",
+                Some(rel_path("").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
+            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
+            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b/",
+                Some(rel_path("c").into_arc()),
+            ),
+        ];
+        let actual = expected.clone().map(|(style, child, parent, _)| {
+            (
+                style,
+                child,
+                parent,
+                style
+                    .strip_prefix(child.as_ref(), parent.as_ref())
+                    .map(|rel_path| rel_path.into_arc()),
+            )
+        });
+        pretty_assertions::assert_eq!(actual, expected);
     }
 
     #[cfg(target_os = "windows")]

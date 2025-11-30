@@ -138,6 +138,7 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         content: Option<String>,
         _env: Arc<HashMap<String, String>>,
+        _is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
             if let Some(message) = &state.simulated_index_write_error_message {
@@ -431,6 +432,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn delete_branch(&self, _name: String) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
     fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
@@ -574,7 +579,15 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn get_remotes(&self, _branch: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_push_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
+        unimplemented!()
+    }
+
+    fn get_branch_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
+        unimplemented!()
+    }
+
+    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
         unimplemented!()
     }
 

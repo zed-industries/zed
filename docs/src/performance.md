@@ -4,7 +4,13 @@ How to use our internal tools to profile and keep Zed fast.
 
 See what the CPU spends the most time on. Strongly recommend you use
 [samply](https://github.com/mstange/samply). It opens an interactive profile in
-the browser. See its README on how to install and run.
+the browser (specifically a local instance of [firefox_profiler](https://profiler.firefox.com/)).
+
+See [samply](https://github.com/mstange/samply)'s README on how to install and run.
+
+The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile for for. To do that hit the upload local profile button in the top right corner.
+
+<img width="851" height="613" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" />
 
 # Task/Async profiling
 
