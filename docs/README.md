@@ -33,8 +33,8 @@ Putting binary assets such as images in the Git repository will bloat the reposi
 
 ## Internal notes:
 
-- We have a Cloudflare router called `docs-proxy` that intercepts requests to `zed.dev/docs` and forwards them to the "docs" Cloudflare Pages project.
-- CI uploads a new version to the Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.
+- We have a Cloudflare router called `docs-proxy` that intercepts requests to `zed.dev/docs` and forwards them to the "docs" in Cloudflare Pages project.
+- The CI uploads a new version to the Cloudflare Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.
 
 ### Table of Contents
 
@@ -44,17 +44,17 @@ Since all this preprocessor does is generate the static assets, we don't need to
 
 ## Referencing Keybindings and Actions
 
-When referencing keybindings or actions, use the following formats:
+When referencing keybindings or actions, use the following formats.
 
-### Keybindings:
+### Keybindings
 
 `{#kb scope::Action}` - e.g., `{#kb zed::OpenSettings}`.
 
-This will output a code element like: `<code>Cmd+,|Ctrl+,</code>`. We then use a client-side plugin to show the actual keybinding based on the user's platform.
+This will output a code element like: `<code>Cmd + , | Ctrl + ,</code>`. We then use a client-side plugin to show the actual keybinding based on the user's platform.
 
 By using the action name, we can ensure that the keybinding is always up-to-date rather than hardcoding the keybinding.
 
-### Actions:
+### Actions
 
 `{#action scope::Action}` - e.g., `{#action zed::OpenSettings}`.
 
@@ -62,7 +62,7 @@ This will render a human-readable version of the action name, e.g., "zed: open s
 
 ### Creating New Templates
 
-Templates are just functions that modify the source of the docs pages (usually with a regex match & replace). You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
+Templates are functions that modify the source of the docs pages (usually with a regex match and replace). You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
 
 ### References
 
@@ -72,7 +72,7 @@ Templates are just functions that modify the source of the docs pages (usually w
 
 ## Postprocessor
 
-A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific `title` and `meta` description values.
+A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific title and `meta` tag description values.
 
 An example of the syntax can be found in `git.md`, as well as below:
 
@@ -128,4 +128,4 @@ title: "Some title"
 ```
 
 - The front matter must be at the top of the file, with only white-space preceding it.
-- The contents of the title and description will not be html-escaped. They should be simple ascii text with no unicode or emoji characters.
+- The contents of the `title` and `description` will not be HTML escaped. They should be simple ASCII text with no unicode or emoji characters.
