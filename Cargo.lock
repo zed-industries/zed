@@ -6400,6 +6400,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ashpd 0.11.0",
+ "askpass",
  "async-tar",
  "async-trait",
  "cocoa 0.26.0",

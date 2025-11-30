@@ -12,6 +12,7 @@ workspace = true
 path = "src/fs.rs"
 
 [dependencies]
+askpass.workspace = true
 anyhow.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true

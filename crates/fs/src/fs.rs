@@ -11,6 +11,7 @@ use std::time::Instant;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
@@ -30,12 +31,15 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
+use futures::{AsyncRead, FutureExt as _, Stream, StreamExt, future::BoxFuture, select_biased};
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
+use git::repository::{GitRepository, REMOTE_CANCELLED_BY_USER, RealGitRepository};
 use git::repository::{GitRepository, RealGitRepository};
 use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
+use smol::process::Stdio;
 use std::{
     io::{self, Write},
     path::{Component, Path, PathBuf},
@@ -150,7 +154,12 @@ pub trait Fs: Send + Sync {
     ) -> Option<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
+    async fn git_clone(
+        &self,
+        repo_url: &str,
+        abs_work_directory: &Path,
+        askpass: Option<AskPassDelegate>,
+    ) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -493,6 +502,46 @@ impl RealFs {
         }
 
         Ok(new_path)
+    }
+
+    async fn run_git_clone_with_askpass(
+        &self,
+        mut command: smol::process::Command,
+        askpass: AskPassDelegate,
+    ) -> Result<()> {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut askpass_session = AskPassSession::new(&self.executor, askpass).await?;
+        command
+            .env("GIT_ASKPASS", askpass_session.script_path())
+            .env("SSH_ASKPASS", askpass_session.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force");
+
+        let git_process = command.spawn()?;
+
+        select_biased! {
+            result = askpass_session.run().fuse() => {
+                match result {
+                    AskPassResult::CancelledByUser => {
+                        anyhow::bail!(REMOTE_CANCELLED_BY_USER);
+                    }
+                    AskPassResult::Timedout => {
+                        anyhow::bail!("Connecting to host timed out");
+                    }
+                }
+            }
+            output = git_process.output().fuse() => {
+                let output = output?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "git clone failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1107,7 +1156,12 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(
+        &self,
+        repo_url: &str,
+        abs_work_directory: &Path,
+        askpass: Option<AskPassDelegate>,
+    ) -> Result<()> {
         let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
         let job_info = JobInfo {
             id: job_id,
@@ -1117,17 +1171,25 @@ impl Fs for RealFs {
 
         let _job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
 
-        let output = new_smol_command("git")
+        let mut command = new_smol_command("git");
+        command
             .current_dir(abs_work_directory)
-            .args(&["clone", repo_url])
-            .output()
-            .await?;
+            .args(&["clone", repo_url]);
 
-        if !output.status.success() {
-            anyhow::bail!(
-                "git clone failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+        match askpass {
+            Some(askpass_delegate) => {
+                self.run_git_clone_with_askpass(command, askpass_delegate)
+                    .await?;
+            }
+            None => {
+                let output = command.output().await?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "git clone failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -2749,7 +2811,12 @@ impl Fs for FakeFs {
         self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
-    async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(
+        &self,
+        _repo_url: &str,
+        _abs_work_directory: &Path,
+        _askpass: Option<AskPassDelegate>,
+    ) -> Result<()> {
         anyhow::bail!("Git clone is not supported in fake Fs")
     }
 

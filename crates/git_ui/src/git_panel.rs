@@ -2200,6 +2200,7 @@ impl GitPanel {
         });
 
         let workspace = self.workspace.clone();
+        let askpass = self.askpass_delegate("git clone", window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let mut paths = path.await.ok()?.ok()??;
@@ -2208,7 +2209,7 @@ impl GitPanel {
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
 
-            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+            let prompt_answer = match fs.git_clone(&repo, path.as_path(), Some(askpass)).await {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
