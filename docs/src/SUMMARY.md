@@ -85,6 +85,10 @@
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
+# Migrate
+
+- [VS Code](./migrate/vs-code.md)
+
 # Language Support
 
 - [All Languages](./languages.md)
