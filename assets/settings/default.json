@@ -1350,6 +1350,8 @@
   //      "load_direnv": "direct"
   // 2. Load direnv configuration through the shell hook, works for POSIX shells and fish.
   //      "load_direnv": "shell_hook"
+  // 3. Don't load direnv configuration at all.
+  //      "load_direnv": "disabled"
   "load_direnv": "direct",
   "edit_predictions": {
     // A list of globs representing files that edit predictions should be disabled for.

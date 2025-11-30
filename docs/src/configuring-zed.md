@@ -584,10 +584,11 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 **Options**
 
-There are two options to choose from:
+There are three options to choose from:
 
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
+3. `disabled`: No shell environment will be loaded automatically; direnv must be invoked manually (e.g. with `direnv exec`) to be used.
 
 ## Double Click In Multibuffer
 
