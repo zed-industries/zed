@@ -518,6 +518,25 @@ impl MentionSet {
             })
         })
     }
+
+    fn confirm_mention_for_diagnostics(
+        &self,
+        include_warnings: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        let diagnostics_task =
+            collect_default_diagnostics_output(self.project.clone(), include_warnings, cx);
+        cx.spawn(async move |_, _| {
+            let output = diagnostics_task.await?;
+            let content = output
+                .map(|output| output.text)
+                .unwrap_or_else(|| "No diagnostics found.".into());
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: Vec::new(),
+            })
+        })
+    }
 }
 
 pub(crate) fn paste_images_as_context(
