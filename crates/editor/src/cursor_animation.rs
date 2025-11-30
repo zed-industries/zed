@@ -39,14 +39,6 @@ impl Default for CursorAnimationState {
 }
 
 impl CursorAnimationState {
-    /// Creates a new cursor animation state with the specified duration.
-    pub fn new(duration_ms: u64) -> Self {
-        Self {
-            animation_duration: Duration::from_millis(duration_ms),
-            ..Default::default()
-        }
-    }
-
     /// Updates the animation duration.
     pub fn set_duration(&mut self, duration_ms: u64) {
         self.animation_duration = Duration::from_millis(duration_ms);
@@ -67,14 +59,6 @@ impl CursorAnimationState {
         self.is_animating = true;
     }
 
-    /// Immediately sets the cursor position without animation.
-    /// Use this for initial positioning or when animation is disabled.
-    pub fn set_position_immediately(&mut self, position: Point<Pixels>) {
-        self.start_position = position;
-        self.target_position = position;
-        self.is_animating = false;
-    }
-
     /// Returns the current interpolated cursor position.
     pub fn current_position(&self) -> Point<Pixels> {
         if !self.is_animating {
@@ -82,7 +66,6 @@ impl CursorAnimationState {
         }
 
         let elapsed = self.animation_start.elapsed();
-
         if elapsed >= self.animation_duration {
             return self.target_position;
         }
@@ -112,11 +95,6 @@ impl CursorAnimationState {
         self.animation_start.elapsed() < self.animation_duration
     }
 
-    /// Returns the target position (final destination).
-    pub fn target_position(&self) -> Point<Pixels> {
-        self.target_position
-    }
-
     /// Linear interpolation between two pixel values.
     fn lerp(&self, start: Pixels, end: Pixels, t: f32) -> Pixels {
         let start_f: f32 = start.into();
@@ -137,39 +115,6 @@ impl CursorAnimationState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_immediate_positioning() {
-        let mut state = CursorAnimationState::new(80);
-        let pos = point(px(100.0), px(200.0));
-        state.set_position_immediately(pos);
-
-        assert_eq!(state.current_position(), pos);
-        assert!(!state.is_animating());
-    }
-
-    #[test]
-    fn test_animation_start() {
-        let mut state = CursorAnimationState::new(80);
-        state.set_position_immediately(point(px(0.0), px(0.0)));
-
-        let target = point(px(100.0), px(100.0));
-        state.animate_to(target);
-
-        assert!(state.is_animating());
-        assert_eq!(state.target_position(), target);
-    }
-
-    #[test]
-    fn test_no_animation_for_same_target() {
-        let mut state = CursorAnimationState::new(80);
-        let pos = point(px(100.0), px(100.0));
-        state.set_position_immediately(pos);
-
-        // Animating to the same position should not start animation
-        state.animate_to(pos);
-        assert!(!state.is_animating());
-    }
 
     #[test]
     fn test_ease_out_quint() {
