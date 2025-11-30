@@ -253,7 +253,10 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
             (Feature::AgentClaude, vec!["claude", "claude code"]),
             (Feature::AgentCodex, vec!["codex", "codex cli"]),
             (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
-            (Feature::ExtensionBasedpyright, vec!["basedpyright", "pyright"]),
+            (
+                Feature::ExtensionBasedpyright,
+                vec!["basedpyright", "pyright"],
+            ),
             (Feature::ExtensionRuff, vec!["ruff"]),
             (Feature::ExtensionTailwind, vec!["tail", "tailwind"]),
             (Feature::ExtensionTy, vec!["ty"]),
