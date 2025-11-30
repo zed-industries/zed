@@ -419,7 +419,6 @@ impl BranchListDelegate {
                 } else {
                     log::error!("Failed to delete branch: {}", e);
                 }
-                dbg!(&e);
 
                 if let Some(workspace) = workspace.and_then(|w| w.upgrade()) {
                     cx.update(|_window, cx| {
@@ -953,32 +952,23 @@ impl PickerDelegate for BranchListDelegate {
                     .border_color(cx.theme().colors().border_variant)
                     .justify_between()
                     .child(
-                        h_flex().child(
-                            ToggleButtonGroup::single_row(
-                                "filter-remotes",
-                                [ToggleButtonSimple::new(
-                                    "Filter remotes",
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.delegate.display_remotes =
-                                            !this.delegate.display_remotes;
-                                        cx.spawn_in(window, async move |this, cx| {
-                                            this.update_in(cx, |this, window, cx| {
-                                                let last_query = this.delegate.last_query.clone();
-                                                this.delegate.update_matches(last_query, window, cx)
-                                            })?
-                                            .await;
+                        Button::new("filter-remotes", "Filter remotes")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.delegate.display_remotes = !this.delegate.display_remotes;
+                                cx.spawn_in(window, async move |this, cx| {
+                                    this.update_in(cx, |this, window, cx| {
+                                        let last_query = this.delegate.last_query.clone();
+                                        this.delegate.update_matches(last_query, window, cx)
+                                    })?
+                                    .await;
 
-                                            Result::Ok::<_, anyhow::Error>(())
-                                        })
-                                        .detach_and_log_err(cx);
-                                        cx.notify();
-                                    }),
-                                )
-                                .selected(self.display_remotes)],
-                            )
-                            .selected_index(1)
-                            .style(ui::ToggleButtonGroupStyle::Transparent),
-                        ),
+                                    Result::Ok::<_, anyhow::Error>(())
+                                })
+                                .detach_and_log_err(cx);
+                                cx.notify();
+                            }))
+                            .style(ButtonStyle::Subtle)
+                            .toggle_state(self.display_remotes),
                     )
                     .child(
                         Button::new("delete-branch", "Delete")
