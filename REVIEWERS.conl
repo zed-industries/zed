@@ -43,8 +43,9 @@ design
   = @danilo-leal
 
 docs
-  = @probably-neb
   = @miguelraz
+  = @probably-neb
+  = @yeskunall
 
 extension
   = @kubkon
