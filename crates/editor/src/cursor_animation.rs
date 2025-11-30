@@ -8,7 +8,7 @@
 //!
 //! Related issue: https://github.com/zed-industries/zed/issues/4688
 
-use gpui::{point, Point, Pixels};
+use gpui::{point, Pixels, Point};
 use std::time::{Duration, Instant};
 
 /// Represents the animated state of a cursor.
@@ -91,8 +91,16 @@ impl CursorAnimationState {
         let eased_progress = Self::ease_out_quint(progress);
 
         point(
-            self.lerp(self.start_position.x, self.target_position.x, eased_progress),
-            self.lerp(self.start_position.y, self.target_position.y, eased_progress),
+            self.lerp(
+                self.start_position.x,
+                self.target_position.x,
+                eased_progress,
+            ),
+            self.lerp(
+                self.start_position.y,
+                self.target_position.y,
+                eased_progress,
+            ),
         )
     }
 

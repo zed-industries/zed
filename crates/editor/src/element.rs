@@ -1730,7 +1730,9 @@ impl EditorElement {
                         let settings = EditorSettings::get_global(cx);
                         if settings.cursor_smooth_caret_animation {
                             let target = point(x, y);
-                            editor.cursor_animation_state.set_duration(settings.cursor_animation_duration_ms);
+                            editor
+                                .cursor_animation_state
+                                .set_duration(settings.cursor_animation_duration_ms);
                             editor.cursor_animation_state.animate_to(target);
                             let animated_pos = editor.cursor_animation_state.current_position();
                             // Request re-render if still animating
