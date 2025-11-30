@@ -428,6 +428,7 @@ fn substitute_all_template_variables_in_map(
     Some(new_map)
 }
 
+// Finish the old single-quoted sequence, add "\'", start a new single-quoted sequence
 const SINGLE_QUOTE_QUOTED_IN_SINGLE_QUOTED_STRING: &str = "'\\''";
 
 /// Quotes an argument (e.g. a test name) for use in a shell command.
