@@ -17458,7 +17458,9 @@ impl Editor {
 
             workspace.add_item_to_active_pane(item, preview_item_idx, true, window, cx);
 
-            if let Some(preview_item_id) = preview_item_id {
+            if let Some(preview_item_id) = preview_item_id
+                && preview_item_id != item_id
+            {
                 workspace.active_pane().update(cx, |pane, cx| {
                     pane.remove_item(preview_item_id, false, false, window, cx);
                 });
