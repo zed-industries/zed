@@ -3274,6 +3274,8 @@ impl EditorElement {
             line_number.clear();
             let non_relative_number = if relative.wrapped() {
                 row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
+            } else if self.editor.read(cx).use_base_text_line_numbers {
+                row_info.base_text_row?.0 + 1
             } else {
                 row_info.buffer_row? + 1
             };
@@ -3282,6 +3284,7 @@ impl EditorElement {
                 && row_info
                     .diff_status
                     .is_some_and(|status| status.is_deleted())
+                && !self.editor.read(cx).use_base_text_line_numbers
             {
                 return None;
             }

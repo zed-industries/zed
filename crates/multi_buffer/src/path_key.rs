@@ -50,6 +50,11 @@ impl MultiBuffer {
         if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
         }
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.remove_excerpts_for_path(path, cx);
+            });
+        }
     }
 
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
