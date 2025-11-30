@@ -904,14 +904,15 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Rules));
         }
 
+        if self.source.supports_context(PromptContextType::Fetch, cx) {
+            entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
+        }
+
         if self
             .source
             .supports_context(PromptContextType::Diagnostics, cx)
         {
             entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
-        }
-        if self.source.supports_context(PromptContextType::Fetch, cx) {
-            entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
         }
 
         entries
