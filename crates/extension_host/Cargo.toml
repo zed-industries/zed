@@ -38,6 +38,7 @@ paths.workspace = true
 project.workspace = true
 remote.workspace = true
 release_channel.workspace = true
+rpc.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
