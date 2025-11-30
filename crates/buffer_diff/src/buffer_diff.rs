@@ -88,6 +88,7 @@ struct PendingHunk {
 #[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
+    base_text_byte_range: Range<usize>,
 }
 
 impl sum_tree::Item for InternalDiffHunk {
@@ -96,6 +97,7 @@ impl sum_tree::Item for InternalDiffHunk {
     fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
+            base_text_byte_range: self.diff_base_byte_range.clone(),
         }
     }
 }
@@ -106,6 +108,7 @@ impl sum_tree::Item for PendingHunk {
     fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
+            base_text_byte_range: self.diff_base_byte_range.clone(),
         }
     }
 }
@@ -116,6 +119,7 @@ impl sum_tree::Summary for DiffHunkSummary {
     fn zero(_cx: Self::Context<'_>) -> Self {
         DiffHunkSummary {
             buffer_range: Anchor::MIN..Anchor::MIN,
+            base_text_byte_range: 0..0,
         }
     }
 
@@ -125,6 +129,16 @@ impl sum_tree::Summary for DiffHunkSummary {
             .start
             .min(&other.buffer_range.start, buffer);
         self.buffer_range.end = *self.buffer_range.end.max(&other.buffer_range.end, buffer);
+
+        self.base_text_byte_range.start = self
+            .base_text_byte_range
+            .start
+            .min(other.base_text_byte_range.start);
+
+        self.base_text_byte_range.end = self
+            .base_text_byte_range
+            .end
+            .max(other.base_text_byte_range.end);
     }
 }
 
@@ -304,6 +318,39 @@ impl BufferDiffSnapshot {
         let (old_id, old_empty) = (left.remote_id(), left.is_empty());
         let (new_id, new_empty) = (right.remote_id(), right.is_empty());
         new_id == old_id || (new_empty && old_empty)
+    }
+
+    pub fn base_text_offset(
+        &self,
+        anchor: Anchor,
+        bias: Bias,
+        buffer: &language::BufferSnapshot,
+    ) -> usize {
+        let mut cursor = self.inner.hunks.cursor(buffer);
+        cursor.seek(&anchor, Bias::Left);
+        match cursor.item() {
+            Some(hunk) => {
+                if anchor.cmp(&hunk.buffer_range.start, buffer).is_ge()
+                    && anchor.cmp(&hunk.buffer_range.end, buffer).is_lt()
+                {
+                    match bias {
+                        Bias::Left => hunk.diff_base_byte_range.start,
+                        Bias::Right => hunk.diff_base_byte_range.end,
+                    }
+                } else {
+                    let overshoot = anchor.to_offset(buffer) as isize
+                        - cursor.start().buffer_range.end.to_offset(buffer) as isize;
+
+                    (cursor.start().base_text_byte_range.end as isize + overshoot) as usize
+                }
+            }
+            None => {
+                let overshoot = anchor.to_offset(buffer) as isize
+                    - cursor.start().buffer_range.end.to_offset(buffer) as isize;
+
+                (cursor.start().base_text_byte_range.end as isize + overshoot) as usize
+            }
+        }
     }
 }
 
@@ -946,6 +993,7 @@ impl BufferDiff {
         if self.secondary_diff.is_some() {
             self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
                 buffer_range: Anchor::min_min_range_for_buffer(self.buffer_id),
+                base_text_byte_range: 0..0,
             });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::min_max_range_for_buffer(self.buffer_id)),
@@ -1436,6 +1484,75 @@ mod tests {
             &diff_base,
             &[],
         );
+    }
+
+    #[gpui::test]
+    async fn test_base_text_offset(cx: &mut gpui::TestAppContext) {
+        let diff_base = "
+            zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+        "
+        .unindent();
+
+        let buffer_text = "
+            zero
+            one
+            alpha
+            two
+            THREE
+            FOUR
+            FIVE
+            six
+            seven
+            ten
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local_normalized(
+                Rope::from(buffer_text.as_str()),
+                text::LineEnding::default(),
+                cx,
+            )
+        });
+        let text_buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff = BufferDiffSnapshot::new_sync(text_buffer_snapshot, diff_base, cx);
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        let offset_before_changes = 5;
+        let anchor_before_changes = buffer_snapshot.anchor_before(offset_before_changes);
+
+        let offset_before_changes_in_base_text =
+            diff.base_text_offset(anchor_before_changes, Bias::Left, &buffer_snapshot);
+        assert_eq!(offset_before_changes, offset_before_changes_in_base_text);
+
+        let offset_within_changes = 21;
+        let anchor_within_changes = buffer_snapshot.anchor_before(offset_within_changes);
+
+        let offset_within_changes_in_base_text_with_bias_left =
+            diff.base_text_offset(anchor_within_changes, Bias::Left, &buffer_snapshot);
+        assert_eq!(offset_within_changes_in_base_text_with_bias_left, 13);
+
+        let offset_within_changes_in_base_text_with_bias_right =
+            diff.base_text_offset(anchor_within_changes, Bias::Right, &buffer_snapshot);
+        assert_eq!(offset_within_changes_in_base_text_with_bias_right, 29);
+
+        let offset_after_changes = 47;
+        let anchor_after_changes = buffer_snapshot.anchor_before(offset_after_changes);
+
+        let offset_after_changes_in_base_text =
+            diff.base_text_offset(anchor_after_changes, Bias::Left, &buffer_snapshot);
+        assert_eq!(offset_after_changes_in_base_text, 52);
     }
 
     #[gpui::test]

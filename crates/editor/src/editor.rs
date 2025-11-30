@@ -20451,9 +20451,42 @@ impl Editor {
                 buffer_ranges.last()
             }?;
 
-            let selection = text::ToPoint::to_point(&range.start, buffer).row
-                ..text::ToPoint::to_point(&range.end, buffer).row;
-            Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection))
+            let Some(buffer_diff) = multi_buffer.diff_for(buffer.remote_id()) else {
+                let selection = text::ToPoint::to_point(&range.start, buffer).row
+                    ..text::ToPoint::to_point(&range.end, buffer).row;
+
+                return Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection));
+            };
+
+            let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+
+            let start_anchor = buffer.anchor_before(&range.start);
+            let end_anchor = buffer.anchor_before(&range.end);
+
+            let range_is_point = range.start == range.end;
+
+            let start_offset =
+                buffer_diff_snapshot.base_text_offset(start_anchor, Bias::Left, &buffer);
+
+            let end_offset = if range_is_point {
+                start_offset
+            } else {
+                buffer_diff_snapshot.base_text_offset(end_anchor, Bias::Right, &buffer)
+            };
+
+            let start_row_in_base_buffer = buffer_diff_snapshot
+                .base_text()
+                .offset_to_point(start_offset)
+                .row;
+            let end_row_in_base_buffer = buffer_diff_snapshot
+                .base_text()
+                .offset_to_point(end_offset)
+                .row;
+
+            Some((
+                multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                start_row_in_base_buffer..end_row_in_base_buffer,
+            ))
         });
 
         let Some((buffer, selection)) = buffer_and_selection else {
