@@ -8,7 +8,7 @@
 //!
 //! Related issue: https://github.com/zed-industries/zed/issues/4688
 
-use gpui::{point, px, Pixels, Point};
+use gpui::{Pixels, Point, point, px};
 use std::time::{Duration, Instant};
 
 /// Represents the animated state of a cursor.
