@@ -4,10 +4,10 @@ use std::num;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings_macros::{MergeFrom, with_fallible_options};
+use settings_macros::{with_fallible_options, MergeFrom};
 
 use crate::{
-    DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
+    serialize_f32_with_two_decimal_places, DelayMs, DiagnosticSeverityContent, ShowScrollbar,
 };
 
 #[with_fallible_options]
