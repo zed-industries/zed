@@ -419,6 +419,7 @@ impl BranchListDelegate {
                 } else {
                     log::error!("Failed to delete branch: {}", e);
                 }
+                dbg!(&e);
 
                 if let Some(workspace) = workspace.and_then(|w| w.upgrade()) {
                     cx.update(|_window, cx| {
@@ -1138,6 +1139,264 @@ mod tests {
                 // Verify the last entry is the "create new branch" option
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new);
+            })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delete_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".git": {},
+                "file.txt": "buffer_text".to_string()
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/dir/.git").as_ref(),
+            &[("file.txt", "test".to_string())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/dir/.git").as_ref(),
+            &[("file.txt", "index_text".to_string())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+        let repository = cx.read(|cx| project.read(cx).active_repository(cx));
+
+        let branches = vec![
+            create_test_branch("main", true, None, Some(1000)),
+            create_test_branch("feature-auth", false, None, Some(900)),
+            create_test_branch("feature-ui", false, None, Some(800)),
+            create_test_branch("develop", false, None, Some(700)),
+        ];
+
+        let branch_names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<String>>();
+        let repo = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in branch_names {
+                repo.as_ref()
+                    .unwrap()
+                    .update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .unwrap()
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let window = cx.add_window(move |window, cx| {
+            let mut delegate =
+                BranchListDelegate::new(None, repository, BranchListStyle::Modal, cx);
+            delegate.all_branches = Some(branches);
+            let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+            let picker_focus_handle = picker.focus_handle(cx);
+            picker.update(cx, |picker, _| {
+                picker.delegate.focus_handle = picker_focus_handle.clone();
+            });
+
+            let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            });
+
+            BranchList {
+                picker,
+                picker_focus_handle,
+                width: rems(34.),
+                _subscription,
+            }
+        });
+
+        let branch_list = window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        branch_list
+            .update_in(cx, |branch_list, window, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker.delegate.update_matches(String::new(), window, cx)
+                })
+            })
+            .await;
+        cx.run_until_parked();
+
+        let branch_to_delete = branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                // Should have 4 existing branches
+                assert_eq!(picker.delegate.matches.len(), 4);
+                let branch_to_delete = picker
+                    .delegate
+                    .matches
+                    .get(1)
+                    .unwrap()
+                    .branch
+                    .name()
+                    .to_string();
+                picker.delegate.delete_at(1, window, cx);
+                branch_to_delete
+            })
+        });
+        cx.run_until_parked();
+
+        branch_list.update(cx, move |branch_list, cx| {
+            branch_list.picker.update(cx, move |picker, _cx| {
+                // Should have 3 existing branches
+                assert_eq!(picker.delegate.matches.len(), 3);
+                let sorted_branches = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.branch.name())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    sorted_branches,
+                    ["main", "feature-auth", "feature-ui", "develop"]
+                        .into_iter()
+                        .filter(|name| name != &branch_to_delete)
+                        .collect::<HashSet<_>>()
+                );
+            })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delete_remote(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".git": {},
+                "file.txt": "buffer_text".to_string()
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/dir/.git").as_ref(),
+            &[("file.txt", "test".to_string())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/dir/.git").as_ref(),
+            &[("file.txt", "index_text".to_string())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+        let repository = cx.read(|cx| project.read(cx).active_repository(cx));
+
+        let branches = vec![
+            create_test_branch("main", true, Some("origin"), Some(1000)),
+            create_test_branch("feature-auth", false, Some("origin"), Some(900)),
+            create_test_branch("feature-ui", false, Some("fork"), Some(800)),
+            create_test_branch("develop", false, Some("private"), Some(700)),
+        ];
+
+        let remote_names = branches
+            .iter()
+            .filter_map(|branch| branch.remote_name().map(|r| r.to_string()))
+            .collect::<Vec<String>>();
+        let repo = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in remote_names {
+                repo.as_ref()
+                    .unwrap()
+                    .update(&mut cx, |repo, _| {
+                        repo.create_remote(branch, String::from("test"))
+                    })
+                    .unwrap()
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let window = cx.add_window(move |window, cx| {
+            let mut delegate =
+                BranchListDelegate::new(None, repository, BranchListStyle::Modal, cx);
+            delegate.all_branches = Some(branches);
+            delegate.display_remotes = true;
+            let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+            let picker_focus_handle = picker.focus_handle(cx);
+            picker.update(cx, |picker, _| {
+                picker.delegate.focus_handle = picker_focus_handle.clone();
+            });
+
+            let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            });
+
+            BranchList {
+                picker,
+                picker_focus_handle,
+                width: rems(34.),
+                _subscription,
+            }
+        });
+
+        let branch_list = window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        branch_list
+            .update_in(cx, |branch_list, window, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker.delegate.update_matches(String::new(), window, cx)
+                })
+            })
+            .await;
+        cx.run_until_parked();
+
+        let branch_to_delete = branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                // Should have 4 existing branches
+                assert_eq!(picker.delegate.matches.len(), 4);
+                let branch_to_delete = picker
+                    .delegate
+                    .matches
+                    .get(1)
+                    .unwrap()
+                    .branch
+                    .name()
+                    .to_string();
+                picker.delegate.delete_at(1, window, cx);
+                branch_to_delete
+            })
+        });
+        cx.run_until_parked();
+
+        branch_list.update(cx, move |branch_list, cx| {
+            branch_list.picker.update(cx, move |picker, _cx| {
+                // Should have 3 existing branches
+                assert_eq!(picker.delegate.matches.len(), 3);
+                let sorted_branches = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.branch.name())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    sorted_branches,
+                    [
+                        "origin/main",
+                        "origin/feature-auth",
+                        "fork/feature-ui",
+                        "private/develop"
+                    ]
+                    .into_iter()
+                    .filter(|name| name != &branch_to_delete)
+                    .collect::<HashSet<_>>()
+                );
             })
         });
     }

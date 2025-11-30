@@ -434,8 +434,13 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, _name: String) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            if !state.branches.remove(&name) {
+                bail!("no such branch: {name}");
+            }
+            Ok(())
+        })
     }
 
     fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
