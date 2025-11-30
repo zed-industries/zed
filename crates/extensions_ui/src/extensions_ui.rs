@@ -229,8 +229,10 @@ enum Feature {
     AgentClaude,
     AgentCodex,
     AgentGemini,
+    ExtensionBasedpyright,
     ExtensionRuff,
     ExtensionTailwind,
+    ExtensionTy,
     Git,
     LanguageBash,
     LanguageC,
@@ -251,8 +253,10 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
             (Feature::AgentClaude, vec!["claude", "claude code"]),
             (Feature::AgentCodex, vec!["codex", "codex cli"]),
             (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
+            (Feature::ExtensionBasedpyright, vec!["basedpyright", "pyright"]),
             (Feature::ExtensionRuff, vec!["ruff"]),
             (Feature::ExtensionTailwind, vec!["tail", "tailwind"]),
+            (Feature::ExtensionTy, vec!["ty"]),
             (Feature::Git, vec!["git"]),
             (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
@@ -1364,6 +1368,20 @@ impl ExtensionsPage {
             return;
         };
 
+        // Check if searching by ID for a suppressed extension
+        if let Some(id) = search.strip_prefix("id:") {
+            let id_lower = id.to_lowercase();
+            self.upsells.clear();
+            if id_lower == "ruff" {
+                self.upsells.insert(Feature::ExtensionRuff);
+            } else if id_lower == "basedpyright" {
+                self.upsells.insert(Feature::ExtensionBasedpyright);
+            } else if id_lower == "ty" {
+                self.upsells.insert(Feature::ExtensionTy);
+            }
+            return;
+        }
+
         let search = search.to_lowercase();
         let search_terms = search
             .split_whitespace()
@@ -1482,6 +1500,12 @@ impl ExtensionsPage {
                     false,
                     cx,
                 ),
+                Feature::ExtensionBasedpyright => self.render_feature_upsell_banner(
+                    "Basedpyright (Python language server) support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/python#basedpyright".into(),
+                    false,
+                    cx,
+                ),
                 Feature::ExtensionRuff => self.render_feature_upsell_banner(
                     "Ruff (linter for Python) support is built-in to Zed!".into(),
                     "https://zed.dev/docs/languages/python#code-formatting--linting".into(),
@@ -1491,6 +1515,12 @@ impl ExtensionsPage {
                 Feature::ExtensionTailwind => self.render_feature_upsell_banner(
                     "Tailwind CSS support is built-in to Zed!".into(),
                     "https://zed.dev/docs/languages/tailwindcss".into(),
+                    false,
+                    cx,
+                ),
+                Feature::ExtensionTy => self.render_feature_upsell_banner(
+                    "Ty (Python language server) support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/languages/python".into(),
                     false,
                     cx,
                 ),

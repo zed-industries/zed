@@ -62,3 +62,10 @@ pub struct ExtensionMetadata {
 pub struct GetExtensionsResponse {
     pub data: Vec<ExtensionMetadata>,
 }
+
+/// Extensions that have been integrated into Zed core and should no longer
+/// be available for installation.
+///
+/// These extensions are filtered out of API responses and prevented from
+/// being installed or auto-installed.
+pub const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];

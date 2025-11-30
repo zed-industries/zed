@@ -10,7 +10,7 @@ use axum::{
     routing::get,
 };
 use collections::{BTreeSet, HashMap};
-use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
+use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse, SUPPRESSED_EXTENSIONS};
 use semver::Version as SemanticVersion;
 use serde::Deserialize;
 use std::str::FromStr;
@@ -100,6 +100,9 @@ async fn get_extensions(
         tracing::info!(query, count, "extension_search")
     }
 
+    // Filter out suppressed extensions that have been integrated into core
+    extensions.retain(|ext| !SUPPRESSED_EXTENSIONS.contains(&ext.id.as_ref()));
+
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
 
@@ -140,6 +143,11 @@ async fn get_extension_versions(
     Extension(app): Extension<Arc<AppState>>,
     Path(params): Path<GetExtensionVersionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
+    // Filter out suppressed extensions
+    if SUPPRESSED_EXTENSIONS.contains(&params.extension_id.as_str()) {
+        return Ok(Json(GetExtensionsResponse { data: vec![] }));
+    }
+
     let extension_versions = app.db.get_extension_versions(&params.extension_id).await?;
 
     Ok(Json(GetExtensionsResponse {
