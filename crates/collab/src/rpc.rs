@@ -469,6 +469,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)

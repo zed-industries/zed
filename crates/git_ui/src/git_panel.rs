@@ -173,6 +173,8 @@ fn git_panel_context_menu(
                 Some(Box::new(ToggleSortByPath)),
                 move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
             )
+            .separator()
+            .action("Remotes", project_diff::Diff.boxed_clone())
     })
 }
 
@@ -3442,7 +3444,6 @@ impl GitPanel {
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
         let panel_editor_style = panel_editor_style(true, window, cx);
-
         let enable_coauthors = self.render_co_authors(cx);
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
@@ -4748,7 +4749,6 @@ impl RenderOnce for PanelRepoFooter {
         const MAX_REPO_LEN: usize = 16;
         const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
         const MAX_SHORT_SHA_LEN: usize = 8;
-
         let branch_name = self
             .branch
             .as_ref()

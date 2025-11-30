@@ -190,6 +190,19 @@ message GitRenameBranch {
     string new_name = 4;
 }
 
+message GitCreateRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+    string remote_url = 4;
+}
+
+message GitRemoveRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+}
+
 message GitDeleteBranch {
     uint64 project_id = 1;
     uint64 repository_id = 2;

@@ -1,17 +1,19 @@
+use std::str::FromStr;
 use std::sync::LazyLock;
 
 use derive_more::Deref;
+use derive_more::Into;
 use regex::Regex;
 use url::Url;
 
 /// The URL to a Git remote.
-#[derive(Debug, PartialEq, Eq, Clone, Deref)]
+#[derive(Debug, PartialEq, Eq, Clone, Deref, Into, Hash)]
 pub struct RemoteUrl(Url);
 
 static USERNAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[0-9a-zA-Z\-_]+@").expect("Failed to create USERNAME_REGEX"));
 
-impl std::str::FromStr for RemoteUrl {
+impl FromStr for RemoteUrl {
     type Err = url::ParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {

@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+
 use git::repository::{Remote, RemoteCommandOutput};
 use linkify::{LinkFinder, LinkKind};
 use ui::SharedString;
