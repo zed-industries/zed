@@ -97,9 +97,6 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_aarch64:
-    if: |-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-mini-macos
     env:
       CARGO_INCREMENTAL: 0

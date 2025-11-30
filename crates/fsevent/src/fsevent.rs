@@ -458,6 +458,12 @@ mod tests {
 
     #[test]
     fn test_event_stream_shutdown_by_dropping_handle() {
+        let timeout_duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(2)
+        };
+
         let dir = tempfile::Builder::new()
             .prefix("test-event-stream")
             .tempdir()
@@ -479,11 +485,19 @@ mod tests {
         });
 
         fs::write(path.join("new-file"), "").unwrap();
-        assert_eq!(rx.recv_timeout(timeout()).unwrap(), "running");
+        assert_eq!(
+            rx.recv_timeout(timeout_duration)
+                .expect("Failed to receive 'running' message within timeout"),
+            "running"
+        );
 
         // Dropping the handle causes `EventStream::run` to return.
         drop(handle);
-        assert_eq!(rx.recv_timeout(timeout()).unwrap(), "stopped");
+        assert_eq!(
+            rx.recv_timeout(timeout_duration)
+                .expect("Failed to receive 'stopped' message after dropping handle within timeout"),
+            "stopped"
+        );
     }
 
     #[test]

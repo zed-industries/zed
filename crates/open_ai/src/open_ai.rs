@@ -419,6 +419,8 @@ pub struct ResponseMessageDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -440,9 +442,12 @@ pub struct FunctionChunk {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -481,6 +486,8 @@ pub enum ResponseStreamResult {
 pub struct ResponseStreamEvent {
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
+    #[serde(flatten)]
+    pub additional_fields: std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub async fn stream_completion(
