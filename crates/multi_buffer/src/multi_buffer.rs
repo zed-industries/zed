@@ -545,7 +545,8 @@ impl DiffState {
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     diffs: TreeMap<BufferId, BufferDiffSnapshot>,
-    diff_transforms: SumTree<DiffTransform>,
+    // FIXME
+    pub diff_transforms: SumTree<DiffTransform>,
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
@@ -560,8 +561,9 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
+// FIXME
 #[derive(Debug, Clone)]
-enum DiffTransform {
+pub enum DiffTransform {
     Unmodified {
         summary: MBTextSummary,
     },
@@ -2532,7 +2534,14 @@ impl MultiBuffer {
             text::Anchor::min_max_range_for_buffer(buffer_id),
             cx,
         );
-        self.diffs.insert(buffer_id, DiffState::new(diff, cx));
+        self.diffs
+            .insert(buffer_id, DiffState::new(diff.clone(), cx));
+
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.add_diff(diff, cx);
+            })
+        }
     }
 
     pub fn diff_for(&self, buffer_id: BufferId) -> Option<Entity<BufferDiff>> {
@@ -3746,19 +3755,15 @@ impl MultiBuffer {
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     if rng.random() {
-                        dbg!();
                         buffer.randomly_edit(rng, mutation_count, cx);
                     } else {
-                        dbg!();
                         buffer.randomly_undo_redo(rng, cx);
                     }
                 });
             } else {
-                dbg!();
                 self.randomly_edit(rng, mutation_count, cx);
             }
         } else {
-            dbg!();
             self.randomly_edit_excerpts(rng, mutation_count, cx);
         }
 

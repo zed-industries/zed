@@ -2748,12 +2748,12 @@ async fn test_random_multibuffer_impl(
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
     let mut base_texts: HashMap<BufferId, String> = HashMap::default();
     let multibuffer = cx.new(|cx| {
-        let mut mb = MultiBuffer::new(Capability::ReadWrite);
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
         if filter_mode.is_some() {
-            mb.set_all_diff_hunks_expanded(cx);
+            multibuffer.set_all_diff_hunks_expanded(cx);
         }
-        mb.set_filter_mode(filter_mode);
-        mb
+        multibuffer.set_filter_mode(filter_mode);
+        multibuffer
     });
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();

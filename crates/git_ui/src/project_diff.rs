@@ -228,7 +228,11 @@ impl ProjectDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
 
         let editor = cx.new(|cx| {
             let diff_display_editor = SplittableEditor::new_unsplit(
@@ -242,7 +246,6 @@ impl ProjectDiff {
                 .primary_editor()
                 .update(cx, |editor, cx| {
                     editor.disable_diagnostics(cx);
-                    editor.set_expand_all_diff_hunks(cx);
 
                     match branch_diff.read(cx).diff_base() {
                         DiffBase::Head => {

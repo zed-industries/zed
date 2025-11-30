@@ -28336,21 +28336,20 @@ async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
     let buffer1 = cx.new(|cx| Buffer::local(buffer_text, cx));
     let diff1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer1, cx));
 
-    let extra_buffer_1 = cx.new(|cx| Buffer::local("dummy text\n", cx));
+    let extra_buffer_1 = cx.new(|cx| Buffer::local("dummy text 1\n", cx));
     let extra_diff_1 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_1, cx));
-    let extra_buffer_2 = cx.new(|cx| Buffer::local("dummy text\n", cx));
+    let extra_buffer_2 = cx.new(|cx| Buffer::local("dummy text 2\n", cx));
     let extra_diff_2 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_2, cx));
 
     let leader = cx.new(|cx| {
         let mut leader = MultiBuffer::new(Capability::ReadWrite);
         leader.set_all_diff_hunks_expanded(cx);
+        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
         leader
     });
-    let follower = leader.update(cx, |leader, cx| {
-        leader.add_diff(diff1.clone(), cx);
-        leader.add_diff(extra_diff_1.clone(), cx);
-        leader.add_diff(extra_diff_2.clone(), cx);
-        leader.get_or_create_follower(cx)
+    let follower = leader.update(cx, |leader, cx| leader.get_or_create_follower(cx));
+    follower.update(cx, |follower, _| {
+        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
     });
 
     leader.update(cx, |leader, cx| {
@@ -28360,6 +28359,7 @@ async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
             vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
             cx,
         );
+        leader.add_diff(extra_diff_2.clone(), cx);
 
         leader.insert_excerpts_after(
             ExcerptId::min(),
@@ -28367,6 +28367,7 @@ async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
             vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
             cx,
         );
+        leader.add_diff(extra_diff_1.clone(), cx);
 
         leader.insert_excerpts_after(
             ExcerptId::min(),
@@ -28374,6 +28375,7 @@ async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
             vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
             cx,
         );
+        leader.add_diff(diff1.clone(), cx);
     });
 
     cx.run_until_parked();
@@ -28389,13 +28391,15 @@ async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
     leader_cx.assert_editor_state(indoc! {"
        ˇbuffer
 
-       dummy text
+       dummy text 1
 
-       dummy text
+       dummy text 2
     "});
     let mut follower_cx = EditorTestContext::for_editor_in(follower_editor.clone(), &mut cx).await;
     follower_cx.assert_editor_state(indoc! {"
         ˇbase
+
+
     "});
 }
 

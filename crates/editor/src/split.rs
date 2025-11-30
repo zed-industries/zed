@@ -136,19 +136,17 @@ impl SplittableEditor {
         let follower = self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, cx| {
                 let follower = buffer.get_or_create_follower(cx);
-                buffer.set_all_diff_hunks_expanded(cx);
                 buffer.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
                 follower
             })
         });
-        follower.update(cx, |follower, cx| {
-            follower.set_all_diff_hunks_expanded(cx);
+        follower.update(cx, |follower, _| {
             follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-            // TODO(split-diff) set readonly here too?
         });
         let secondary_editor = workspace.update(cx, |workspace, cx| {
             cx.new(|cx| {
                 let mut editor = Editor::for_multibuffer(follower, Some(project), window, cx);
+                // FIXME this should be at the multibuffer level
                 editor.set_use_base_text_line_numbers(true, cx);
                 editor.added_to_workspace(workspace, window, cx);
                 editor
