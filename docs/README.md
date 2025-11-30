@@ -23,7 +23,7 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 We have a custom mdbook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
 If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]
-` from the `book.toml`.:
+` from the `book.toml`.
 
 ## Images and videos
 
