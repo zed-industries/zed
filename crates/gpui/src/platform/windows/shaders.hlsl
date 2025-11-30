@@ -41,7 +41,7 @@ struct LinearColorStop {
     float percentage;
 };
 
-struct Background {
+struct BackgroundColor {
     // 0u is Solid
     // 1u is LinearGradient
     // 2u is PatternSlash
@@ -328,7 +328,7 @@ float2x2 rotate2d(float angle) {
     return float2x2(c, -s, s, c);
 }
 
-float4 gradient_color(Background background,
+float4 gradient_color(BackgroundColor background,
                       float2 position,
                       Bounds bounds,
                       float4 solid_color, float4 color0, float4 color1) {
@@ -464,7 +464,7 @@ struct Quad {
     uint border_style;
     Bounds bounds;
     Bounds content_mask;
-    Background background;
+    BackgroundColor background;
     Hsla border_color;
     Corners corner_radii;
     Edges border_widths;
@@ -896,7 +896,7 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 struct PathRasterizationSprite {
     float2 xy_position;
     float2 st_position;
-    Background color;
+    BackgroundColor color;
     Bounds bounds;
 };
 
@@ -932,7 +932,7 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     float2 dy = ddy(input.st_position);
     PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
 
-    Background background = sprite.color;
+    BackgroundColor background = sprite.color;
     Bounds bounds = sprite.bounds;
 
     float alpha;
