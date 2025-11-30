@@ -7,7 +7,8 @@ mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{EditorSettings, actions::SelectAll};
+use gpui::input::BlinkManager;
 use gpui::{
     Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
@@ -234,18 +235,7 @@ impl TerminalView {
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
-        let blink_manager = cx.new(|cx| {
-            BlinkManager::new(
-                CURSOR_BLINK_INTERVAL,
-                |cx| {
-                    !matches!(
-                        TerminalSettings::get_global(cx).blinking,
-                        TerminalBlink::Off
-                    )
-                },
-                cx,
-            )
-        });
+        let blink_manager = cx.new(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let _subscriptions = vec![
             focus_in,

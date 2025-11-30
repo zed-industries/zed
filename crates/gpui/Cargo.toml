@@ -132,6 +132,8 @@ strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.9.0"
 thiserror.workspace = true
+unicode-bidi.workspace = true
+unicode-segmentation.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
@@ -277,6 +279,10 @@ path = "examples/image/image.rs"
 [[example]]
 name = "input"
 path = "examples/input.rs"
+
+[[example]]
+name = "input_sandbox"
+path = "examples/input_sandbox.rs"
 
 [[example]]
 name = "on_window_close_quit"
