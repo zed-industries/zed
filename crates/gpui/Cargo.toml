@@ -78,6 +78,9 @@ x11 = [
 screen-capture = [
     "scap",
 ]
+wayland-touch-to-mouse-translation = [
+    "wayland",
+]
 windows-manifest = []
 
 [lib]

@@ -70,6 +70,7 @@ gpui = { workspace = true, features = [
     "x11",
     "font-kit",
     "windows-manifest",
+    "wayland-touch-to-mouse-translation",
 ] }
 gpui_tokio.workspace = true
 rayon.workspace = true

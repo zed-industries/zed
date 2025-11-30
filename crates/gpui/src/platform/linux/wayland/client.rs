@@ -1419,7 +1419,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
 
                 state.wl_pointer = Some(pointer);
             }
-            if capabilities.contains(wl_seat::Capability::Touch) {
+            if cfg!(feature = "wayland-touch-to-mouse-translation")
+                && capabilities.contains(wl_seat::Capability::Touch)
+            {
                 if let Some(p) = state.wl_touch.replace(seat.get_touch(qh, ())) {
                     p.release();
                 }
@@ -2416,6 +2418,10 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if !cfg!(feature = "wayland-touch-to-mouse-translation") {
+            return;
+        }
+
         let mut client = this.get_client();
         let mut state = client.borrow_mut();
 
