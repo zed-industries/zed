@@ -66,9 +66,9 @@ Templates are just functions that modify the source of the docs pages (usually w
 
 ### References
 
-- Template Trait: crates/docs_preprocessor/src/templates.rs
-- Example template: crates/docs_preprocessor/src/templates/keybinding.rs
-- Client-side plugins: docs/theme/plugins.js
+- Template Trait: `crates/docs_preprocessor/src/templates.rs`
+- Example template: `crates/docs_preprocessor/src/templates/keybinding.rs`
+- Client-side plugins: `docs/theme/plugins.js`
 
 ## Postprocessor
 
