@@ -15118,6 +15118,7 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "picker",
  "pretty_assertions",
  "project",
  "schemars",
