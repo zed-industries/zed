@@ -70,7 +70,10 @@ async fn main() -> Result<()> {
         .compile_extension(
             &extension_path,
             &mut manifest,
-            CompileExtensionOptions { release: true },
+            CompileExtensionOptions {
+                release: true,
+                dev_extension: false,
+            },
         )
         .await
         .context("failed to compile extension")?;
