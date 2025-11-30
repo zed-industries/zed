@@ -12,6 +12,7 @@ mod inline_prompt_editor;
 mod language_model_selector;
 mod mention_set;
 mod profile_selector;
+mod selection_context;
 mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
@@ -235,6 +236,7 @@ pub fn init(
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
+    selection_context::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

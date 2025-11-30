@@ -2085,6 +2085,19 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    pub fn shell_kind(&self) -> task::ShellKind {
+        self.template.shell.shell_kind(cfg!(windows))
+    }
+
+    pub fn shell_name(&self) -> String {
+        let program = self.template.shell.program();
+        std::path::Path::new(&program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("shell")
+            .to_string()
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
