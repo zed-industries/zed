@@ -3241,22 +3241,23 @@ impl BufferSnapshot {
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
                 ..Point::new(row_range.end, 0),
             |row, line| {
+                // Either the parent language, or an injected language
                 let row_language = self
                     .language_scope_at(Point::new(row, 0))
                     .map(|scope| Arc::clone(scope.language()));
-                let row_config = row_language
+                let row_language_config = row_language
                     .as_ref()
                     .map(|lang| lang.config())
                     .unwrap_or(config);
 
-                if row_config
+                if row_language_config
                     .decrease_indent_pattern
                     .as_ref()
                     .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row, Ordering::Less));
                 }
-                if row_config
+                if row_language_config
                     .increase_indent_pattern
                     .as_ref()
                     .is_some_and(|regex| regex.is_match(line))
@@ -3274,7 +3275,7 @@ impl BufferSnapshot {
                         break;
                     }
                 }
-                for rule in &row_config.decrease_indent_patterns {
+                for rule in &row_language_config.decrease_indent_patterns {
                     if rule.pattern.as_ref().is_some_and(|r| r.is_match(line)) {
                         let row_start_column = self.indent_size_for_line(row).len;
                         let basis_row = rule
