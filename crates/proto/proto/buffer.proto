@@ -258,6 +258,7 @@ message Diagnostic {
     Anchor start = 1;
     Anchor end = 2;
     optional string source = 3;
+    optional string registration_id = 17;
 
     enum SourceKind {
         Pulled = 0;
