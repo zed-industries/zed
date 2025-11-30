@@ -1,6 +1,7 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
+    mem,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
@@ -33,7 +34,7 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_shm_pool, wl_surface, wl_touch,
     },
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
@@ -68,7 +69,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
     display::WaylandDisplay,
-    window::{ImeInput, WaylandWindowStatePtr},
+    window::{ImeInput, WaylandWindowStatePtr, WaylandWindowStateWeakPtr},
 };
 
 use crate::{
@@ -98,10 +99,25 @@ use crate::{
     },
 };
 
+type TouchEventId = i32;
+
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
 
 const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
+
+// The maximum duration between touch down and up events to be considered a click.
+const MAX_TAP_DURATION_MILLIS: u32 = 1000;
+
+// The minimum distance a touch must move to be considered a drag.
+//
+// Once a touch exceeds this distance, it will never be considered a tap, and
+// will start generating scroll events.
+const MIN_DRAG_DISTANCE: Pixels = px(15.0);
+
+// The maximum number of active touches to track simultaneously.
+// Ensures we can use linear search for touch IDs.
+const MAX_ACTIVE_TOUCHES: usize = 32;
 
 #[derive(Clone)]
 pub struct Globals {
@@ -203,6 +219,7 @@ pub(crate) struct WaylandClientState {
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
+    wl_touch: Option<wl_touch::WlTouch>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
@@ -234,6 +251,7 @@ pub(crate) struct WaylandClientState {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
+    touch_state: WaylandClientGlobalTouchState,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
@@ -243,6 +261,163 @@ pub(crate) struct WaylandClientState {
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
+}
+
+impl WaylandClientState {
+    #[must_use]
+    fn process_touch_event(&mut self, ev: wl_touch::Event) -> Vec<TouchAction> {
+        self.touch_state.push_event(ev, &self.windows)
+    }
+}
+
+#[derive(Clone)]
+struct TouchInfo {
+    id: TouchEventId,
+    start_position: Point<Pixels>,
+    curr_position: Point<Pixels>,
+    start_time_millis: u32,
+    is_drag: bool,
+    window: WaylandWindowStateWeakPtr,
+}
+
+#[derive(Default)]
+struct WaylandClientGlobalTouchState {
+    touches: Vec<TouchInfo>,
+    pending_touch_motion_updates: Vec<(TouchEventId, Point<Pixels>)>,
+}
+
+enum TouchAction {
+    Tap {
+        position: Point<Pixels>,
+        window: WaylandWindowStateWeakPtr,
+    },
+    Scroll {
+        position: Point<Pixels>,
+        delta: Point<Pixels>,
+        window: WaylandWindowStateWeakPtr,
+    },
+}
+
+impl WaylandClientGlobalTouchState {
+    fn remove_touch(&mut self, id: TouchEventId) -> Option<TouchInfo> {
+        if let Some(ix) = self.touches.iter().position(|t| t.id == id) {
+            Some(self.touches.remove(ix))
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::mutable_key_type)]
+    fn push_event(
+        &mut self,
+        event: wl_touch::Event,
+        windows: &HashMap<ObjectId, WaylandWindowStatePtr>,
+    ) -> Vec<TouchAction> {
+        let mut ret = Vec::new();
+        match event {
+            // Handle eagerly (don't wait for `wl_touch::Event::Frame`)
+            wl_touch::Event::Down {
+                time,
+                surface,
+                id,
+                x,
+                y,
+                ..
+            } => {
+                let Some(window) = windows.get(&surface.id()).map(|w| w.weak()) else {
+                    log::warn!("Touch event window {} not found", surface.id());
+                    return ret;
+                };
+                if let Some(_) = self.remove_touch(id) {
+                    log::warn!("Duplicate touch event with id {id} found, dropping older one");
+                };
+
+                if self.touches.len() >= MAX_ACTIVE_TOUCHES {
+                    log::warn!("Too many active touches, dropping new touch with id {id}");
+                    return ret;
+                }
+
+                let p = point(x.into(), y.into());
+                self.touches.push(TouchInfo {
+                    id,
+                    window,
+                    start_position: p,
+                    curr_position: p,
+                    start_time_millis: time,
+                    is_drag: false,
+                })
+            }
+            wl_touch::Event::Up { time, id, .. } => {
+                let Some(t) = self.remove_touch(id) else {
+                    log::warn!("Missing touch event with id {id}");
+                    return ret;
+                };
+
+                if !t.is_drag {
+                    let duration = i64::from(time) - i64::from(t.start_time_millis);
+
+                    if duration <= MAX_TAP_DURATION_MILLIS.into() {
+                        ret.push(TouchAction::Tap {
+                            position: t.curr_position,
+                            window: t.window,
+                        });
+                    }
+                }
+            }
+            wl_touch::Event::Cancel => {
+                self.touches.clear();
+                self.pending_touch_motion_updates.clear();
+            }
+
+            // Handle lazily
+            wl_touch::Event::Motion { id, x, y, .. } => {
+                // Remove outdated motion updates for this touch ID
+                self.pending_touch_motion_updates.retain(|&(i, _)| i != id);
+                self.pending_touch_motion_updates
+                    .push((id, point(x.into(), y.into())))
+            }
+            wl_touch::Event::Shape { .. } | wl_touch::Event::Orientation { .. } => {}
+
+            // Process all pending events
+            wl_touch::Event::Frame => {
+                let first_touch_id = self.touches.first().map(|t| t.id);
+
+                for (id, new_pos) in self.pending_touch_motion_updates.drain(..) {
+                    let Some(t) = self.touches.iter_mut().find(|t| t.id == id) else {
+                        log::warn!("Missing touch event with id {id}");
+                        continue;
+                    };
+
+                    let old_pos = mem::replace(&mut t.curr_position, new_pos);
+                    let delta = new_pos - old_pos;
+
+                    if !t.is_drag {
+                        let distance_from_start: Pixels =
+                            (new_pos - t.start_position).magnitude().into();
+                        if distance_from_start >= MIN_DRAG_DISTANCE {
+                            t.is_drag = true;
+                        } else {
+                            // not yet a drag
+                            continue;
+                        }
+                    }
+
+                    // Only emit scroll events for the earliest active touch
+                    if first_touch_id.map_or(false, |first_id| first_id == id) {
+                        ret.push(TouchAction::Scroll {
+                            position: t.start_position,
+                            delta,
+                            window: t.window.clone(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        ret
+    }
 }
 
 pub struct DragState {
@@ -590,6 +765,7 @@ impl WaylandClient {
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
+            wl_touch: None,
             cursor_shape_device: None,
             data_device,
             primary_selection,
@@ -639,6 +815,7 @@ impl WaylandClient {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
+            touch_state: WaylandClientGlobalTouchState::default(),
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
@@ -1241,6 +1418,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                 }
 
                 state.wl_pointer = Some(pointer);
+            }
+            if capabilities.contains(wl_seat::Capability::Touch) {
+                if let Some(p) = state.wl_touch.replace(seat.get_touch(qh, ())) {
+                    p.release();
+                }
             }
         }
     }
@@ -2221,6 +2403,64 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
                 selection_source.destroy();
             }
             _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _wl_touch: &wl_touch::WlTouch,
+        event: wl_touch::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        let modifiers = state.modifiers;
+        let actions = state.process_touch_event(event);
+
+        drop(state);
+
+        for ev in actions {
+            match ev {
+                TouchAction::Scroll {
+                    position,
+                    delta,
+                    window,
+                } => {
+                    let Some(window) = window.upgrade() else {
+                        continue;
+                    };
+                    window.handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(delta),
+                        modifiers: Modifiers::default(),
+                        touch_phase: TouchPhase::Moved,
+                    }));
+                }
+                TouchAction::Tap { position, window } => {
+                    let Some(window) = window.upgrade() else {
+                        continue;
+                    };
+                    window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers,
+                        click_count: 1,
+                        first_mouse: true,
+                    }));
+
+                    window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers,
+                        click_count: 1,
+                    }));
+                }
+            };
         }
     }
 }
