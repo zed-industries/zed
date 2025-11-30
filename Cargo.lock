@@ -5002,6 +5002,87 @@ dependencies = [
 ]
 
 [[package]]
+name = "dioxus-cli-config"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d28a6973d779e73f4b8ce705b1ea4c96f4083567ede862e734da2ab7c1dfc4b6"
+
+[[package]]
+name = "dioxus-core"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743e05cc98a6c7189e7df49791c0affb860cb858ba2a19dde4ecadf2a8729e8c"
+dependencies = [
+ "anyhow",
+ "const_format",
+ "dioxus-core-types",
+ "futures-channel",
+ "futures-util",
+ "generational-box",
+ "longest-increasing-subsequence",
+ "rustc-hash 2.1.1",
+ "rustversion",
+ "serde",
+ "slab",
+ "slotmap",
+ "subsecond",
+ "tracing",
+ "warnings",
+]
+
+[[package]]
+name = "dioxus-core-types"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d16343cebee52e82686963ccd6f5590ebca567229bfa59aa3d598210f3a9fc0"
+
+[[package]]
+name = "dioxus-devtools"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419353dace2fb67ac7b35070a56c00a66c920c0191e7a81cf9c9ac8dd7ab3798"
+dependencies = [
+ "dioxus-cli-config",
+ "dioxus-core",
+ "dioxus-devtools-types",
+ "dioxus-signals",
+ "serde",
+ "serde_json",
+ "subsecond",
+ "thiserror 2.0.17",
+ "tracing",
+ "tungstenite 0.27.0",
+ "warnings",
+]
+
+[[package]]
+name = "dioxus-devtools-types"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6eb8755823ca644da88a50e80676330f4f0c1a40650af03d2fd617d3478a8e7"
+dependencies = [
+ "dioxus-core",
+ "serde",
+ "subsecond-types",
+]
+
+[[package]]
+name = "dioxus-signals"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fce8fe43f49769d7a05bef9e1acafcefc9b5f7da2b9bb58e0bde12a145028b9"
+dependencies = [
+ "dioxus-core",
+ "futures-channel",
+ "futures-util",
+ "generational-box",
+ "parking_lot",
+ "rustc-hash 2.1.1",
+ "tracing",
+ "warnings",
+]
+
+[[package]]
 name = "dirs"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6919,6 +7000,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "generational-box"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f067a79c49f237b1017258357a9789477be4f47f11422c74547a8bec189adb4"
+dependencies = [
+ "parking_lot",
+ "tracing",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7298,6 +7389,7 @@ dependencies = [
  "cosmic-text",
  "ctor",
  "derive_more 0.99.20",
+ "dioxus-devtools",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7345,6 +7437,7 @@ dependencies = [
  "spin 0.10.0",
  "stacksafe",
  "strum 0.27.2",
+ "subsecond",
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
@@ -9467,6 +9560,12 @@ dependencies = [
  "serde",
  "value-bag",
 ]
+
+[[package]]
+name = "longest-increasing-subsequence"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3bd0dd2cd90571056fdb71f6275fada10131182f84899f4b2a916e565d81d86"
 
 [[package]]
 name = "loop9"
@@ -15714,6 +15813,7 @@ version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbff4acf519f630b3a3ddcfaea6c06b42174d9a44bc70c620e9ed1649d58b82a"
 dependencies = [
+ "serde",
  "version_check",
 ]
 
@@ -16384,6 +16484,34 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "subsecond"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e778134c310fa884270b226bbf58df76da727acf921f46834b0af896d739235c"
+dependencies = [
+ "js-sys",
+ "libc",
+ "libloading",
+ "memfd",
+ "memmap2",
+ "serde",
+ "subsecond-types",
+ "thiserror 2.0.17",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "subsecond-types"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcfc02dd02f2ce7c9aa6c0eb4f490fc455925c2590de7a3c54dde088c3ef481d"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -18934,6 +19062,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
 dependencies = [
  "try-lock",
+]
+
+[[package]]
+name = "warnings"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64f68998838dab65727c9b30465595c6f7c953313559371ca8bf31759b3680ad"
+dependencies = [
+ "pin-project",
+ "tracing",
+ "warnings-macro",
+]
+
+[[package]]
+name = "warnings-macro"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59195a1db0e95b920366d949ba5e0d3fc0e70b67c09be15ce5abb790106b0571"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]
