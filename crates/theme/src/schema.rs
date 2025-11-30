@@ -287,6 +287,15 @@ pub fn theme_colors_refinement(
         .panel_background
         .as_ref()
         .and_then(|color| try_parse_color(color).ok());
+    let search_match_background = this
+        .search_match_background
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let search_active_match_background = this
+        .search_active_match_background
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok())
+        .or(search_match_background);
     ThemeColorsRefinement {
         border,
         border_variant: this
@@ -442,10 +451,8 @@ pub fn theme_colors_refinement(
             .tab_active_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        search_match_background: this
-            .search_match_background
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
+        search_match_background: search_match_background,
+        search_active_match_background: search_active_match_background,
         panel_background,
         panel_focused_border: this
             .panel_focused_border
