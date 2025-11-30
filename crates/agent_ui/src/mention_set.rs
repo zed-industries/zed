@@ -3,7 +3,7 @@ use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_slash_commands::codeblock_fence_for_path;
+use assistant_slash_commands::{codeblock_fence_for_path, collect_default_diagnostics_output};
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
@@ -229,6 +229,9 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Diagnostics { include_warnings } => {
+                self.confirm_mention_for_diagnostics(include_warnings, cx)
+            }
             MentionUri::PastedImage => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
@@ -524,8 +527,11 @@ impl MentionSet {
         include_warnings: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let diagnostics_task =
-            collect_default_diagnostics_output(self.project.clone(), include_warnings, cx);
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow!("project not found")));
+        };
+
+        let diagnostics_task = collect_default_diagnostics_output(project, include_warnings, cx);
         cx.spawn(async move |_, _| {
             let output = diagnostics_task.await?;
             let content = output

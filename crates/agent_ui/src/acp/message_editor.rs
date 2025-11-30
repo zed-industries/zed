@@ -12,8 +12,7 @@ use acp_thread::MentionUri;
 use agent::HistoryStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use assistant_slash_commands::{codeblock_fence_for_path, collect_default_diagnostics_output};
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset,
@@ -73,6 +72,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
                 PromptContextType::Thread,
                 PromptContextType::Fetch,
                 PromptContextType::Rules,
+                PromptContextType::Diagnostics,
             ]);
         }
         supported

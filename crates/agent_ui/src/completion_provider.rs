@@ -55,6 +55,7 @@ pub(crate) enum PromptContextType {
     Fetch,
     Thread,
     Rules,
+    Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +93,7 @@ impl TryFrom<&str> for PromptContextType {
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             "rule" => Ok(Self::Rules),
+            "diagnostics" => Ok(Self::Diagnostics),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -105,6 +107,7 @@ impl PromptContextType {
             Self::Fetch => "fetch",
             Self::Thread => "thread",
             Self::Rules => "rule",
+            Self::Diagnostics => "diagnostics",
         }
     }
 
@@ -115,6 +118,7 @@ impl PromptContextType {
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
             Self::Rules => "Rules",
+            Self::Diagnostics => "Diagnostics",
         }
     }
 
@@ -125,6 +129,7 @@ impl PromptContextType {
             Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
             Self::Rules => IconName::Reader,
+            Self::Diagnostics => IconName::Warning,
         }
     }
 }
@@ -213,6 +218,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     fn completion_for_entry(
         entry: PromptContextEntry,
         source_range: Range<Anchor>,
+        source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: &Entity<Workspace>,
@@ -220,8 +226,15 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     ) -> Option<Completion> {
         match entry {
             PromptContextEntry::Mode(PromptContextType::Diagnostics) => {
-                Self::completion_for_diagnostics(source_range, message_editor, cx)
-            },
+                Self::completion_for_diagnostics(
+                    source_range,
+                    source,
+                    editor,
+                    mention_set,
+                    workspace.clone(),
+                    cx,
+                )
+            }
 
             PromptContextEntry::Mode(mode) => Some(Completion {
                 replace_range: source_range,
@@ -577,7 +590,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn completion_for_diagnostics(
         source_range: Range<Anchor>,
-        message_editor: WeakEntity<MessageEditor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Option<Completion> {
         let uri = MentionUri::Diagnostics {
@@ -593,13 +609,18 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 "Diagnostics".into(),
                 source_range.start,
                 new_text_len - 1,
-                message_editor,
                 uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
             )),
         })
     }
@@ -883,7 +904,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Rules));
         }
 
+        if self
+            .source
+            .supports_context(PromptContextType::Diagnostics, cx)
+        {
             entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+        }
         if self.source.supports_context(PromptContextType::Fetch, cx) {
             entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
         }
@@ -991,14 +1017,19 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 })
             }
             PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
-                 if let Some(PromptContextType::Diagnostics) = mode {
+                if let Some(PromptContextType::Diagnostics) = mode {
                     if argument.is_some() {
                         return Task::ready(Ok(Vec::new()));
                     }
 
-                    if let Some(completion) =
-                        Self::completion_for_diagnostics(source_range.clone(), editor.clone(), cx)
-                    {
+                    if let Some(completion) = Self::completion_for_diagnostics(
+                        source_range.clone(),
+                        source.clone(),
+                        editor.clone(),
+                        mention_set.clone(),
+                        workspace.clone(),
+                        cx,
+                    ) {
                         return Task::ready(Ok(vec![CompletionResponse {
                             completions: vec![completion],
                             display_options: CompletionDisplayOptions::default(),
@@ -1136,6 +1167,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Self::completion_for_entry(
                                         entry,
                                         source_range.clone(),
+                                        source.clone(),
                                         editor.clone(),
                                         mention_set.clone(),
                                         &workspace,
@@ -1852,6 +1884,11 @@ mod tests {
     #[test]
     fn test_mention_completion_parse() {
         let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+        let supported_modes_with_diagnostics = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Diagnostics,
+        ];
 
         assert_eq!(
             MentionCompletion::try_parse("Lorem Ipsum", 0, &supported_modes),
@@ -1952,10 +1989,14 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse(true, "Lorem @diagnostics", 0),
+            MentionCompletion::try_parse(
+                "Lorem @diagnostics",
+                0,
+                &supported_modes_with_diagnostics
+            ),
             Some(MentionCompletion {
                 source_range: 6..18,
-                mode: Some(ContextPickerMode::Diagnostics),
+                mode: Some(PromptContextType::Diagnostics),
                 argument: None,
             })
         );
