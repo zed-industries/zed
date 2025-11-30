@@ -128,7 +128,14 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.external_thread(action.agent.clone(), None, None, window, cx)
+                            panel.external_thread(
+                                action.agent.clone(),
+                                None,
+                                None,
+                                false,
+                                window,
+                                cx,
+                            )
                         });
                     }
                 })
@@ -551,6 +558,7 @@ impl AgentPanel {
                         Some(crate::ExternalAgent::NativeAgent),
                         Some(thread.clone()),
                         None,
+                        false,
                         window,
                         cx,
                     );
@@ -772,6 +780,7 @@ impl AgentPanel {
             Some(ExternalAgent::NativeAgent),
             None,
             Some(thread.clone()),
+            action.auto_send,
             window,
             cx,
         );
@@ -826,6 +835,7 @@ impl AgentPanel {
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<DbThreadMetadata>,
         summarize_thread: Option<DbThreadMetadata>,
+        auto_send: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -911,11 +921,21 @@ impl AgentPanel {
                 });
 
                 this.set_active_view(
-                    ActiveView::ExternalAgentThread { thread_view },
+                    ActiveView::ExternalAgentThread {
+                        thread_view: thread_view.clone(),
+                    },
                     !loading,
                     window,
                     cx,
                 );
+
+                // If auto_send is enabled (e.g., when auto-summarizing on token limit),
+                // automatically send the message that was inserted
+                if auto_send {
+                    thread_view.update(cx, |view, cx| {
+                        view.send(window, cx);
+                    });
+                }
             })
         })
         .detach_and_log_err(cx);
@@ -1357,6 +1377,7 @@ impl AgentPanel {
                                     Some(ExternalAgent::NativeAgent),
                                     Some(entry.clone()),
                                     None,
+                                    false,
                                     window,
                                     cx,
                                 ),
@@ -1433,12 +1454,18 @@ impl AgentPanel {
                 Some(crate::ExternalAgent::NativeAgent),
                 None,
                 None,
+                false,
                 window,
                 cx,
             ),
-            AgentType::Gemini => {
-                self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
-            }
+            AgentType::Gemini => self.external_thread(
+                Some(crate::ExternalAgent::Gemini),
+                None,
+                None,
+                false,
+                window,
+                cx,
+            ),
             AgentType::ClaudeCode => {
                 self.selected_agent = AgentType::ClaudeCode;
                 self.serialize(cx);
@@ -1446,6 +1473,7 @@ impl AgentPanel {
                     Some(crate::ExternalAgent::ClaudeCode),
                     None,
                     None,
+                    false,
                     window,
                     cx,
                 )
@@ -1453,12 +1481,20 @@ impl AgentPanel {
             AgentType::Codex => {
                 self.selected_agent = AgentType::Codex;
                 self.serialize(cx);
-                self.external_thread(Some(crate::ExternalAgent::Codex), None, None, window, cx)
+                self.external_thread(
+                    Some(crate::ExternalAgent::Codex),
+                    None,
+                    None,
+                    false,
+                    window,
+                    cx,
+                )
             }
             AgentType::Custom { name } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name }),
                 None,
                 None,
+                false,
                 window,
                 cx,
             ),
@@ -1475,6 +1511,7 @@ impl AgentPanel {
             Some(ExternalAgent::NativeAgent),
             Some(thread),
             None,
+            false,
             window,
             cx,
         );
@@ -1917,6 +1954,7 @@ impl AgentPanel {
                                                 window.dispatch_action(
                                                     Box::new(NewNativeAgentThreadFromSummary {
                                                         from_session_id: session_id.clone(),
+                                                        auto_send: false,
                                                     }),
                                                     cx,
                                                 );
