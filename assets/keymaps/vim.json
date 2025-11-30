@@ -379,6 +379,13 @@
     }
   },
   {
+    "context": "mode == single_line && vim_mode == insert",
+    "bindings": {
+      "shift-escape": "vim::SwitchToNormalMode",
+      "escape": "menu::Cancel"
+    }
+  },
+  {
     "context": "showing_completions",
     "bindings": {
       "ctrl-d": "vim::ScrollDown",
@@ -980,7 +987,7 @@
     }
   },
   {
-    "context": "Editor && mode == auto_height && VimControl",
+    "context": "Editor && (mode == auto_height || mode == single_line) && VimControl",
     "bindings": {
       // TODO: Implement search
       "/": null,
