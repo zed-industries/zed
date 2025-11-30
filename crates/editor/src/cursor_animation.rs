@@ -8,7 +8,7 @@
 //!
 //! Related issue: https://github.com/zed-industries/zed/issues/4688
 
-use gpui::{Pixels, Point, point};
+use gpui::{Pixels, Point, point, px};
 use std::time::{Duration, Instant};
 
 /// Represents the animated state of a cursor.
@@ -119,7 +119,9 @@ impl CursorAnimationState {
 
     /// Linear interpolation between two pixel values.
     fn lerp(&self, start: Pixels, end: Pixels, t: f32) -> Pixels {
-        Pixels(start.0 + (end.0 - start.0) * t)
+        let start_f: f32 = start.into();
+        let end_f: f32 = end.into();
+        px(start_f + (end_f - start_f) * t)
     }
 
     /// Ease-out quint easing function for smooth deceleration.
@@ -139,7 +141,7 @@ mod tests {
     #[test]
     fn test_immediate_positioning() {
         let mut state = CursorAnimationState::new(80);
-        let pos = point(Pixels(100.0), Pixels(200.0));
+        let pos = point(px(100.0), px(200.0));
         state.set_position_immediately(pos);
 
         assert_eq!(state.current_position(), pos);
@@ -149,9 +151,9 @@ mod tests {
     #[test]
     fn test_animation_start() {
         let mut state = CursorAnimationState::new(80);
-        state.set_position_immediately(point(Pixels(0.0), Pixels(0.0)));
+        state.set_position_immediately(point(px(0.0), px(0.0)));
 
-        let target = point(Pixels(100.0), Pixels(100.0));
+        let target = point(px(100.0), px(100.0));
         state.animate_to(target);
 
         assert!(state.is_animating());
@@ -161,7 +163,7 @@ mod tests {
     #[test]
     fn test_no_animation_for_same_target() {
         let mut state = CursorAnimationState::new(80);
-        let pos = point(Pixels(100.0), Pixels(100.0));
+        let pos = point(px(100.0), px(100.0));
         state.set_position_immediately(pos);
 
         // Animating to the same position should not start animation
