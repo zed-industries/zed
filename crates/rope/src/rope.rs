@@ -1,3 +1,4 @@
+#![feature(portable_simd)]
 mod chunk;
 mod offset_utf16;
 mod point;
