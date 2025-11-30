@@ -2126,7 +2126,6 @@ impl Window {
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
         sorted_deferred_draws.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
-        self.prepaint_deferred_draws(&sorted_deferred_draws, cx);
 
         let mut prompt_element = None;
         let mut active_drag_element = None;
@@ -2143,8 +2142,18 @@ impl Window {
             active_drag_element = Some(element);
             cx.active_drag = Some(active_drag);
         } else {
+            // TODO(gpui): Avoid constructing tooltips when a blocking surface is active.
+            // Today, tooltips can still be requested even if a popover/menu/modal sits above
+            // the source. A more robust solution would detect active blockers (prompt, active drag,
+            // or a deferred draw under the cursor that occludes interaction) and skip building
+            // the tooltip entirely. Until then, we prepaint tooltips before deferred draws so
+            // popovers/menus win both hit-testing and interaction.
             tooltip_element = self.prepaint_tooltip(cx);
         }
+
+        // Prepaint deferred draws after tooltips so their hitboxes take precedence
+        // over tooltip hitboxes, making context menus/popovers actionable.
+        self.prepaint_deferred_draws(&sorted_deferred_draws, cx);
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
@@ -2155,14 +2164,17 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
 
+        // Paint tooltips before deferred draws so popovers/menus render on top
+        if let Some(mut tooltip_element) = tooltip_element {
+            tooltip_element.paint(self, cx);
+        }
+
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self, cx);
         } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self, cx);
-        } else if let Some(mut tooltip_element) = tooltip_element {
-            tooltip_element.paint(self, cx);
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
