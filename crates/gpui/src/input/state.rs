@@ -842,32 +842,14 @@ impl InputState {
         let (visual_line_idx, x_pixels) = self.find_visual_line_and_x_offset(offset);
         let target_visual_line_idx = (visual_line_idx as i32 + direction).max(0) as usize;
 
-        eprintln!(
-            "[move_vertically] offset={}, direction={}, visual_line_idx={}, x_pixels={}, target_visual_line_idx={}",
-            offset, direction, visual_line_idx, x_pixels, target_visual_line_idx
-        );
-
         let mut current_visual_line = 0;
-        for (layout_idx, layout) in self.line_layouts.iter().enumerate() {
+        for layout in self.line_layouts.iter() {
             let visual_lines_in_layout = layout.visual_line_count;
-
-            eprintln!(
-                "[move_vertically] layout {}: current_visual_line={}, visual_lines_in_layout={}, text_range={:?}",
-                layout_idx, current_visual_line, visual_lines_in_layout, layout.text_range
-            );
 
             if target_visual_line_idx < current_visual_line + visual_lines_in_layout {
                 let visual_line_within_layout = target_visual_line_idx - current_visual_line;
-                eprintln!(
-                    "[move_vertically] -> target is in this layout, visual_line_within_layout={}",
-                    visual_line_within_layout
-                );
 
                 if layout.text_range.is_empty() {
-                    eprintln!(
-                        "[move_vertically] -> empty line, returning {}",
-                        layout.text_range.start
-                    );
                     return Some(layout.text_range.start);
                 }
 
@@ -877,30 +859,14 @@ impl InputState {
 
                     let closest_result =
                         wrapped.closest_index_for_position(target_point, self.line_height);
-                    eprintln!(
-                        "[move_vertically] -> closest_index_for_position({:?}) = {:?}",
-                        target_point, closest_result
-                    );
 
                     let closest_idx = closest_result.unwrap_or_else(|closest| closest);
                     let clamped = closest_idx.min(wrapped.text.len());
                     let result = layout.text_range.start + clamped;
 
-                    eprintln!(
-                        "[move_vertically] -> closest_idx={}, wrapped.text.len()={}, clamped={}, result={}",
-                        closest_idx,
-                        wrapped.text.len(),
-                        clamped,
-                        result
-                    );
-
                     return Some(result);
                 }
 
-                eprintln!(
-                    "[move_vertically] -> no wrapped line, returning {}",
-                    layout.text_range.start
-                );
                 return Some(layout.text_range.start);
             }
 
@@ -908,13 +874,8 @@ impl InputState {
         }
 
         if direction > 0 {
-            eprintln!(
-                "[move_vertically] -> past end, returning content.len()={}",
-                self.content.len()
-            );
             Some(self.content.len())
         } else {
-            eprintln!("[move_vertically] -> before start, returning None");
             None
         }
     }
