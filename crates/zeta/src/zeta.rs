@@ -896,6 +896,7 @@ impl Zeta {
                 .await;
 
             Self::handle_api_response(&this, response, cx)?;
+            dbg!();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -911,6 +912,7 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         let last_rejection = self.rejected_predictions.last().cloned();
+        dbg!(self.rejected_predictions.len());
         let Some(last_rejection) = last_rejection else {
             return Task::ready(anyhow::Ok(()));
         };
@@ -938,10 +940,11 @@ impl Zeta {
             .context("Failed to reject edit predictions")?;
 
             this.update(cx, |this, _| {
-                if let Some(ix) = this
+                if let Some(ix) =
+                    dbg!(this
                     .rejected_predictions
                     .iter()
-                    .position(|rejection| rejection.request_id == last_rejection.request_id)
+                    .position(|rejection| rejection.request_id == last_rejection.request_id))
                 {
                     this.rejected_predictions.drain(..ix + 1);
                 }
@@ -996,7 +999,7 @@ impl Zeta {
             self.rejected_predictions.len() >= MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST / 2;
         let reject_tx = self.reject_predictions_tx.clone();
         self.reject_predictions_debounce_task = Some(cx.spawn(async move |_this, cx| {
-            const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
+            const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(2);
             if !reached_request_limit {
                 cx.background_executor()
                     .timer(REJECT_REQUEST_DEBOUNCE)
