@@ -243,11 +243,11 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
             OLD_VERSION="{}"
 
             if [[ -f "extension.toml" ]]; then
-                EXTENSION_TOML=extension.toml
+                EXTENSION_TOML="extension.toml"
             fi
 
             if [[ -f "Cargo.toml" ]]; then
-                CARGO_TOML=Cargo.toml
+                CARGO_TOML="Cargo.toml"
             fi
 
             bump2version --verbose --current-version ${{OLD_VERSION}} --no-configured-files {} ${{EXTENSION_TOML}} ${{CARGO_TOML}}

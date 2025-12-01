@@ -115,11 +115,11 @@ jobs:
         OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
 
         if [[ -f "extension.toml" ]]; then
-            EXTENSION_TOML=extension.toml
+            EXTENSION_TOML="extension.toml"
         fi
 
         if [[ -f "Cargo.toml" ]]; then
-            CARGO_TOML=Cargo.toml
+            CARGO_TOML="Cargo.toml"
         fi
 
         bump2version --verbose --current-version ${OLD_VERSION} --no-configured-files ${{ inputs.bump-type }} ${EXTENSION_TOML} ${CARGO_TOML}
