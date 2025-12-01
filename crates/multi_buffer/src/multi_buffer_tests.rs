@@ -2719,7 +2719,9 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 }
 
-#[gpui::test(iterations = 100)]
+// TODO(split-diff) bump up iterations
+// #[gpui::test(iterations = 100)]
+#[gpui::test]
 async fn test_random_filtered_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);

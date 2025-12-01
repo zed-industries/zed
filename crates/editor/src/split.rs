@@ -146,7 +146,7 @@ impl SplittableEditor {
         let secondary_editor = workspace.update(cx, |workspace, cx| {
             cx.new(|cx| {
                 let mut editor = Editor::for_multibuffer(follower, Some(project), window, cx);
-                // FIXME this should be at the multibuffer level
+                // TODO(split-diff) this should be at the multibuffer level
                 editor.set_use_base_text_line_numbers(true, cx);
                 editor.added_to_workspace(workspace, window, cx);
                 editor
