@@ -69,7 +69,7 @@ fn determine_bump_type() -> (NamedJob, StepOutput) {
 }
 
 fn get_bump_type() -> (Step<Run>, StepOutput) {
-    let step = named::bash(format!(
+    let step = named::bash(
         indoc! {r#"
             if [ "$HAS_MAJOR_LABEL" = "true" ]; then
                 bump_type="major"
@@ -80,8 +80,7 @@ fn get_bump_type() -> (Step<Run>, StepOutput) {
             fi
             echo "bump_type=$bump_type" >> $GITHUB_OUTPUT
         "#},
-    ))
-
+    )
     .add_env(("HAS_MAJOR_LABEL",
         indoc!{
             "${{ (github.event.action == 'labeled' && github.event.label.name == 'major') ||
