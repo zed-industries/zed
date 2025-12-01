@@ -2157,7 +2157,7 @@ mod tests {
         let range = diff_1.inner.compare(&empty_diff.inner, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
-        // Edit affects the word diff within the hunk.
+        // Edit does not affect the diff.
         buffer.edit_via_marked_text(
             &"
                 one
@@ -2172,9 +2172,7 @@ mod tests {
             .unindent(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        // The word diff has changed (SIX vs SIX.5), so compare detects a change
-        let range = diff_2.inner.compare(&diff_1.inner, &buffer).unwrap();
-        assert_eq!(range.to_point(&buffer), Point::new(4, 0)..Point::new(5, 0));
+        assert_eq!(None, diff_2.inner.compare(&diff_1.inner, &buffer));
 
         // Edit turns a deletion hunk into a modification.
         buffer.edit_via_marked_text(
