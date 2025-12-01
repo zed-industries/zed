@@ -670,6 +670,7 @@ pub trait LanguageModel: Send + Sync {
                 .chain(events.filter_map({
                     let last_token_usage = last_token_usage.clone();
                     move |result| {
+                        dbg!(&result);
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {
@@ -703,6 +704,40 @@ pub trait LanguageModel: Send + Sync {
                 stream,
                 last_token_usage,
             })
+        }
+        .boxed()
+    }
+
+    fn stream_completion_tool(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelToolUse, LanguageModelCompletionError>> {
+        let future = self.stream_completion(request, cx);
+
+        async move {
+            let events = future.await?;
+            let mut events = events.fuse();
+
+            // Iterate through events until we find a complete ToolUse
+            while let Some(event) = events.next().await {
+                match event {
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                        if tool_use.is_input_complete =>
+                    {
+                        return Ok(tool_use);
+                    }
+                    Err(err) => {
+                        return Err(err);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Stream ended without a complete tool use
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "Stream ended without receiving a complete tool use"
+            )))
         }
         .boxed()
     }

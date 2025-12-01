@@ -1,10 +1,15 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
+use agent::{
+    AgentTool as _, FailureMessageInput, FailureMessageTool, RewriteSectionInput,
+    RewriteSectionTool, SystemPromptTemplate, Template, Templates,
+};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
+use feature_flags::{FeatureFlagAppExt as _, InlineAssistantV2FeatureFlag};
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
@@ -14,12 +19,14 @@ use futures::{
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role, report_assistant_event,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolUse, Role,
+    report_assistant_event,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use prompt_store::PromptBuilder;
+use prompt_store::{ProjectContext, PromptBuilder};
 use rope::Rope;
 use smol::future::FutureExt;
 use std::{
@@ -214,6 +221,13 @@ impl BufferCodegen {
     pub fn last_equal_ranges<'a>(&self, cx: &'a App) -> &'a [Range<Anchor>] {
         self.active_alternative().read(cx).last_equal_ranges()
     }
+
+    pub fn tool_description<'a>(&self, cx: &'a App) -> Option<&'a str> {
+        self.active_alternative()
+            .read(cx)
+            .tool_description
+            .as_deref()
+    }
 }
 
 impl EventEmitter<CodegenEvent> for BufferCodegen {}
@@ -238,6 +252,7 @@ pub struct CodegenAlternative {
     elapsed_time: Option<f64>,
     completion: Option<String>,
     pub message_id: Option<String>,
+    pub tool_description: Option<String>,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -288,14 +303,15 @@ impl CodegenAlternative {
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
-            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             builder,
-            active,
+            active: false,
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
             elapsed_time: None,
             completion: None,
+            tool_description: None,
+            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
 
@@ -358,18 +374,133 @@ impl CodegenAlternative {
         let api_key = model.api_key(cx);
         let telemetry_id = model.telemetry_id();
         let provider_id = model.provider_id();
-        let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
-            if user_prompt.trim().to_lowercase() == "delete" {
-                async { Ok(LanguageModelTextStream::default()) }.boxed_local()
-            } else {
-                let request = self.build_request(&model, user_prompt, context_task, cx)?;
-                cx.spawn(async move |_, cx| {
-                    Ok(model.stream_completion_text(request.await, cx).await?)
+
+        if cx.has_flag::<InlineAssistantV2FeatureFlag>() {
+            // if false {
+            // let request = self.build_request_v2(&model, user_prompt, context_task, cx)?;
+            let request = self.build_request(&model, user_prompt, context_task, cx)?;
+            let tool_use = cx
+                .spawn(async move |_, cx| {
+                    Ok(model.stream_completion_tool(request.await, cx).await?)
                 })
-                .boxed_local()
-            };
-        self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
+                // .boxed_local();
+                ;
+            self.handle_tool_use(telemetry_id, provider_id.to_string(), api_key, tool_use, cx);
+        } else {
+            let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
+                if user_prompt.trim().to_lowercase() == "delete" {
+                    async { Ok(LanguageModelTextStream::default()) }.boxed_local()
+                } else {
+                    let request = self.build_request(&model, user_prompt, context_task, cx)?;
+                    cx.spawn(async move |_, cx| {
+                        Ok(model.stream_completion_text(request.await, cx).await?)
+                    })
+                    .boxed_local()
+                };
+            self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
+        }
+
         Ok(())
+    }
+
+    fn build_request_v2(
+        &self,
+        model: &Arc<dyn LanguageModel>,
+        user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
+        cx: &mut App,
+    ) -> Result<Task<LanguageModelRequest>> {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let language = buffer.language_at(self.range.start);
+        let language_name = if let Some(language) = language.as_ref() {
+            if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
+                None
+            } else {
+                Some(language.name())
+            }
+        } else {
+            None
+        };
+
+        let language_name = language_name.as_ref();
+        let start = buffer.point_to_buffer_offset(self.range.start);
+        let end = buffer.point_to_buffer_offset(self.range.end);
+        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+            let (start_buffer, start_buffer_offset) = start;
+            let (end_buffer, end_buffer_offset) = end;
+            if start_buffer.remote_id() == end_buffer.remote_id() {
+                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
+            } else {
+                anyhow::bail!("invalid transformation range");
+            }
+        } else {
+            anyhow::bail!("invalid transformation range");
+        };
+
+        let system_prompt = self
+            .builder
+            .generate_inline_transformation_prompt_v2(
+                language_name,
+                buffer,
+                range.start.0..range.end.0,
+            )
+            .context("generating content prompt")?;
+
+        let temperature = AgentSettings::temperature_for_model(model, cx);
+
+        let tool_input_format = model.tool_input_format();
+
+        Ok(cx.spawn(async move |_cx| {
+            let mut messages = vec![LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![system_prompt.into()],
+                cache: false,
+                reasoning_details: None,
+            }];
+
+            let mut user_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+                reasoning_details: None,
+            };
+
+            if let Some(context) = context_task.await {
+                context.add_to_request_message(&mut user_message);
+            }
+
+            user_message.content.push(user_prompt.into());
+            messages.push(user_message);
+            dbg!(&messages);
+
+            let tools = vec![
+                LanguageModelRequestTool {
+                    name: RewriteSectionTool::name().to_string(),
+                    description: RewriteSectionTool::description().to_string(),
+                    input_schema: RewriteSectionTool::input_schema(tool_input_format).to_value(),
+                },
+                LanguageModelRequestTool {
+                    name: FailureMessageTool::name().to_string(),
+                    description: FailureMessageTool::description().to_string(),
+                    input_schema: FailureMessageTool::input_schema(tool_input_format).to_value(),
+                },
+            ];
+
+            let req = LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                intent: Some(CompletionIntent::InlineAssist),
+                mode: None,
+                tools,
+                tool_choice: None,
+                stop: Vec::new(),
+                temperature,
+                messages,
+                thinking_allowed: false,
+            };
+            dbg!(&req);
+            req
+        }))
     }
 
     fn build_request(
@@ -379,6 +510,10 @@ impl CodegenAlternative {
         context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
+        if cx.has_flag::<InlineAssistantV2FeatureFlag>() {
+            return self.build_request_v2(model, user_prompt, context_task, cx);
+        }
+
         let buffer = self.buffer.read(cx).snapshot(cx);
         let language = buffer.language_at(self.range.start);
         let language_name = if let Some(language) = language.as_ref() {
@@ -415,6 +550,7 @@ impl CodegenAlternative {
                 range.start.0..range.end.0,
             )
             .context("generating content prompt")?;
+        dbg!(&prompt);
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
@@ -508,8 +644,16 @@ impl CodegenAlternative {
         let completion = Arc::new(Mutex::new(String::new()));
         let completion_clone = completion.clone();
 
+        dbg!("AAA 0");
         self.generation = cx.spawn(async move |codegen, cx| {
+            dbg!("AAA 1");
             let stream = stream.await;
+            dbg!("AAA 2");
+
+            // use futures::stream::StreamExt;
+            // let all_chunks: Vec<Result<String, _>> = stream.unwrap().collect().await;
+            // dbg!(&all_chunks);
+
             let token_usage = stream
                 .as_ref()
                 .ok()
@@ -518,16 +662,19 @@ impl CodegenAlternative {
                 .as_ref()
                 .ok()
                 .and_then(|stream| stream.message_id.clone());
+            dbg!("AAA 3");
             let generate = async {
                 let model_telemetry_id = model_telemetry_id.clone();
                 let model_provider_id = model_provider_id.clone();
                 let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                 let executor = cx.background_executor().clone();
                 let message_id = message_id.clone();
+                dbg!("AAA 4");
                 let line_based_stream_diff: Task<anyhow::Result<()>> =
                     cx.background_spawn(async move {
                         let mut response_latency = None;
                         let request_start = Instant::now();
+                        dbg!("AAA 5");
                         let diff = async {
                             let chunks = StripInvalidSpans::new(
                                 stream?.stream.map_err(|error| error.into()),
@@ -541,11 +688,14 @@ impl CodegenAlternative {
                             let mut line_indent = None;
                             let mut first_line = true;
 
+                            dbg!("AAA 6");
                             while let Some(chunk) = chunks.next().await {
+                                dbg!("AAA 7");
                                 if response_latency.is_none() {
                                     response_latency = Some(request_start.elapsed());
                                 }
                                 let chunk = chunk?;
+                                dbg!(&chunk);
                                 completion_clone.lock().push_str(&chunk);
 
                                 let mut lines = chunk.split('\n').peekable();
@@ -898,6 +1048,126 @@ impl CodegenAlternative {
                 })
                 .ok();
         })
+    }
+
+    fn handle_tool_use(
+        &mut self,
+        _telemetry_id: String,
+        _provider_id: String,
+        _api_key: Option<String>,
+        tool_use: impl 'static
+        + Future<
+            Output = Result<language_model::LanguageModelToolUse, LanguageModelCompletionError>,
+        >,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff = Diff::default();
+        self.status = CodegenStatus::Pending;
+
+        self.generation = cx.spawn(async move |codegen, cx| {
+            let tool_use = tool_use.await;
+            dbg!(&tool_use);
+
+            match tool_use {
+                Ok(tool_use) if tool_use.name.as_ref() == "rewrite_section" => {
+                    eprintln!("Received tool use: {:?}", tool_use);
+
+                    // Parse the input JSON into RewriteSectionInput
+                    match serde_json::from_value::<RewriteSectionInput>(tool_use.input) {
+                        Ok(input) => {
+                            eprintln!("Description: {}", input.description);
+                            eprintln!("Replacement text length: {}", input.replacement_text.len());
+
+                            // Store the description if non-empty
+                            let description = if !input.description.trim().is_empty() {
+                                Some(input.description.clone())
+                            } else {
+                                None
+                            };
+
+                            // Apply the replacement text to the buffer and compute diff
+                            let batch_diff_task = codegen
+                                .update(cx, |this, cx| {
+                                    this.tool_description = description;
+                                    let range = this.range.clone();
+                                    this.apply_edits(
+                                        std::iter::once((range, input.replacement_text)),
+                                        cx,
+                                    );
+                                    this.reapply_batch_diff(cx)
+                                })
+                                .ok();
+
+                            // Wait for the diff computation to complete
+                            if let Some(diff_task) = batch_diff_task {
+                                diff_task.await;
+                            }
+
+                            let _ = codegen.update(cx, |this, cx| {
+                                this.status = CodegenStatus::Done;
+                                cx.emit(CodegenEvent::Finished);
+                                cx.notify();
+                            });
+                            return;
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse RewriteSectionInput: {:?}", e);
+                            let _ = codegen.update(cx, |this, cx| {
+                                this.status = CodegenStatus::Error(e.into());
+                                cx.emit(CodegenEvent::Finished);
+                                cx.notify();
+                            });
+                            return;
+                        }
+                    }
+                }
+                Ok(tool_use) if tool_use.name.as_ref() == "failure_message" => {
+                    // Handle failure message tool use
+                    match serde_json::from_value::<FailureMessageInput>(tool_use.input) {
+                        Ok(input) => {
+                            eprintln!("Failure message: {}", input.message);
+
+                            let _ = codegen.update(cx, |this, cx| {
+                                // Store the failure message as the tool description
+                                this.tool_description = Some(input.message);
+                                this.status = CodegenStatus::Done;
+                                cx.emit(CodegenEvent::Finished);
+                                cx.notify();
+                            });
+                            return;
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse FailureMessageInput: {:?}", e);
+                            let _ = codegen.update(cx, |this, cx| {
+                                this.status = CodegenStatus::Error(e.into());
+                                cx.emit(CodegenEvent::Finished);
+                                cx.notify();
+                            });
+                            return;
+                        }
+                    }
+                }
+                Ok(tool_use) => {
+                    eprintln!("Unexpected tool {}", tool_use.name);
+
+                    let _ = codegen.update(cx, |this, cx| {
+                        this.status = CodegenStatus::Done;
+                        cx.emit(CodegenEvent::Finished);
+                    });
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("Failed to get tool use: {:?}", e);
+                    let _ = codegen.update(cx, |this, cx| {
+                        this.status = CodegenStatus::Error(e.into());
+                        cx.emit(CodegenEvent::Finished);
+                        cx.notify();
+                    });
+                    return;
+                }
+            }
+        });
+        cx.notify();
     }
 }
 
