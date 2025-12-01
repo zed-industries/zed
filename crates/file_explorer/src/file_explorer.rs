@@ -3,8 +3,8 @@ mod file_explorer_tests;
 
 use file_icons::FileIcons;
 use gpui::{
-    actions, px, Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, ParentElement, Render, Styled, Task, WeakEntity, Window,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, ParentElement, Render, Styled, Task, WeakEntity, Window, actions, px,
 };
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
@@ -12,8 +12,8 @@ use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{path::Path, sync::Arc};
 use ui::{
-    prelude::*, Button, ContextMenu, Icon, IconButton, IconName, IconSize, Indicator, KeyBinding,
-    Label, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
+    Button, ContextMenu, Icon, IconButton, IconName, IconSize, Indicator, KeyBinding, Label,
+    ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{ModalView, SplitDirection, Workspace, item::PreviewTabsSettings, pane};
@@ -63,7 +63,11 @@ pub fn init(cx: &mut App) {
 }
 
 impl FileExplorer {
-    fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut Context<Workspace>,
+    ) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             if workspace.active_modal::<Self>(cx).is_some() {
                 return;
@@ -133,26 +137,31 @@ impl FileExplorer {
             Some((Some(project_path.worktree_id), parent, file_name))
         });
 
-        let (worktree_id, current_path, initial_selected_path) = if let Some(result) = from_active_item {
-            result
-        } else {
-            // No active item with a valid worktree
-            let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
-            let first_worktree = visible_worktrees.next();
-            let has_multiple = visible_worktrees.next().is_some();
-
-            if has_multiple {
-                // Multiple worktrees, show worktree selection
-                (None, RelPath::empty().to_owned().into(), None)
-            } else if let Some(worktree) = first_worktree {
-                // Single worktree, navigate to its root
-                let worktree = worktree.read(cx);
-                (Some(worktree.id()), RelPath::empty().to_owned().into(), None)
+        let (worktree_id, current_path, initial_selected_path) =
+            if let Some(result) = from_active_item {
+                result
             } else {
-                // No worktrees at all
-                return;
-            }
-        };
+                // No active item with a valid worktree
+                let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
+                let first_worktree = visible_worktrees.next();
+                let has_multiple = visible_worktrees.next().is_some();
+
+                if has_multiple {
+                    // Multiple worktrees, show worktree selection
+                    (None, RelPath::empty().to_owned().into(), None)
+                } else if let Some(worktree) = first_worktree {
+                    // Single worktree, navigate to its root
+                    let worktree = worktree.read(cx);
+                    (
+                        Some(worktree.id()),
+                        RelPath::empty().to_owned().into(),
+                        None,
+                    )
+                } else {
+                    // No worktrees at all
+                    return;
+                }
+            };
 
         let weak_workspace = cx.entity().downgrade();
 
@@ -198,7 +207,10 @@ impl FileExplorer {
         cx: &mut Context<Self>,
     ) {
         self.picker.update(cx, |picker, cx| {
-            picker.delegate.filter_popover_menu_handle.toggle(window, cx);
+            picker
+                .delegate
+                .filter_popover_menu_handle
+                .toggle(window, cx);
         });
     }
 
@@ -263,7 +275,11 @@ impl FileExplorer {
     ) {
         let result = self.picker.update(cx, |picker, cx| {
             let delegate = &picker.delegate;
-            let Some(entry) = delegate.filtered_entries.get(delegate.selected_index).cloned() else {
+            let Some(entry) = delegate
+                .filtered_entries
+                .get(delegate.selected_index)
+                .cloned()
+            else {
                 return None;
             };
 
@@ -292,10 +308,18 @@ impl FileExplorer {
             }
         });
 
-        let Some((project_path, Some(workspace), allow_preview)) = result else { return };
+        let Some((project_path, Some(workspace), allow_preview)) = result else {
+            return;
+        };
 
         let open_task = workspace.update(cx, move |workspace, cx| {
-            workspace.split_path_preview(project_path, allow_preview, Some(split_direction), window, cx)
+            workspace.split_path_preview(
+                project_path,
+                allow_preview,
+                Some(split_direction),
+                window,
+                cx,
+            )
         });
         open_task.detach_and_log_err(cx);
         cx.emit(DismissEvent);
@@ -410,7 +434,7 @@ impl FileExplorerDelegate {
                     FileExplorerEntry::Worktree(wt.id(), wt.root_name().into())
                 })
                 .collect();
-            worktrees.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+            worktrees.sort_by_key(|a| a.display_name());
             self.all_entries = worktrees;
             self.filtered_entries = self.all_entries.clone();
             self.selected_index = 0;
@@ -428,19 +452,17 @@ impl FileExplorerDelegate {
         let has_multiple_worktrees = project.visible_worktrees(cx).count() > 1;
 
         if !at_worktree_root {
-            self.all_entries
-                .push(FileExplorerEntry::ParentDirectory);
+            self.all_entries.push(FileExplorerEntry::ParentDirectory);
         } else if has_multiple_worktrees {
-            self.all_entries
-                .push(FileExplorerEntry::AllWorktrees);
+            self.all_entries.push(FileExplorerEntry::AllWorktrees);
         }
 
         let mut dirs: Vec<Entry> = Vec::new();
         let mut files: Vec<Entry> = Vec::new();
 
-        let include_ignored = self.include_ignored.unwrap_or_else(|| {
-            worktree.root_entry().is_some_and(|entry| entry.is_ignored)
-        });
+        let include_ignored = self
+            .include_ignored
+            .unwrap_or_else(|| worktree.root_entry().is_some_and(|entry| entry.is_ignored));
 
         for entry in worktree.child_entries(&self.current_path) {
             if !include_ignored && entry.is_ignored {
@@ -555,7 +577,12 @@ impl FileExplorerDelegate {
             .project
             .read(cx)
             .worktree_for_id(worktree_id, cx)
-            .map(|wt| wt.read(cx).root_name().display(PathStyle::local()).into_owned())
+            .map(|wt| {
+                wt.read(cx)
+                    .root_name()
+                    .display(PathStyle::local())
+                    .into_owned()
+            })
             .unwrap_or_else(|| ".".to_string());
 
         let path_str = self.current_path.as_ref().as_unix_str();
@@ -739,9 +766,7 @@ impl PickerDelegate for FileExplorerDelegate {
         let (display_name, suffix) = match entry {
             FileExplorerEntry::ParentDirectory => ("..".to_string(), ""),
             FileExplorerEntry::AllWorktrees => ("All Worktrees".to_string(), ""),
-            FileExplorerEntry::Worktree(_, name) => {
-                (name.as_ref().as_unix_str().to_string(), "")
-            }
+            FileExplorerEntry::Worktree(_, name) => (name.as_ref().as_unix_str().to_string(), ""),
             FileExplorerEntry::Entry(e) => {
                 let name = e
                     .path
@@ -861,10 +886,19 @@ impl PickerDelegate for FileExplorerDelegate {
                                             let focus_handle = focus_handle.clone();
                                             move |menu, _, _| {
                                                 menu.context(focus_handle)
-                                                    .action("Split Left", pane::SplitLeft.boxed_clone())
-                                                    .action("Split Right", pane::SplitRight.boxed_clone())
+                                                    .action(
+                                                        "Split Left",
+                                                        pane::SplitLeft.boxed_clone(),
+                                                    )
+                                                    .action(
+                                                        "Split Right",
+                                                        pane::SplitRight.boxed_clone(),
+                                                    )
                                                     .action("Split Up", pane::SplitUp.boxed_clone())
-                                                    .action("Split Down", pane::SplitDown.boxed_clone())
+                                                    .action(
+                                                        "Split Down",
+                                                        pane::SplitDown.boxed_clone(),
+                                                    )
                                             }
                                         }))
                                     }

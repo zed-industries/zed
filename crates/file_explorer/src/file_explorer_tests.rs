@@ -150,11 +150,13 @@ async fn test_navigate_to_parent(cx: &mut TestAppContext) {
 
     // Now in subdirectory, parent directory entry appears
     picker.update(cx, |picker, _| {
-        assert!(picker
-            .delegate
-            .filtered_entries
-            .iter()
-            .any(|e| e.display_name() == ".."));
+        assert!(
+            picker
+                .delegate
+                .filtered_entries
+                .iter()
+                .any(|e| e.display_name() == "..")
+        );
     });
 
     cx.dispatch_action(NavigateToParent);
