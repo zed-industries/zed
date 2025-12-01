@@ -378,6 +378,9 @@ impl ProjectSearch {
                     })
                     .ok()?;
                 while let Some(new_ranges) = new_ranges.next().await {
+                    // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
+                    // will not reschedule, starving other front end tasks, insert a yield point for that here
+                    smol::future::yield_now().await;
                     project_search
                         .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
@@ -1651,12 +1654,12 @@ impl ProjectSearchView {
         if enable {
             if let Some(regex_language) = self.regex_language.clone() {
                 query_buffer.update(cx, |query_buffer, cx| {
-                    query_buffer.set_language(Some(regex_language), cx);
+                    query_buffer.set_language_immediate(Some(regex_language), cx);
                 })
             }
         } else {
             query_buffer.update(cx, |query_buffer, cx| {
-                query_buffer.set_language(None, cx);
+                query_buffer.set_language_immediate(None, cx);
             })
         }
     }

@@ -1223,8 +1223,9 @@ impl TextThread {
         cx.spawn(async move |this, cx| {
             let markdown = markdown.await?;
             this.update(cx, |this, cx| {
-                this.buffer
-                    .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
+                this.buffer.update(cx, |buffer, cx| {
+                    buffer.set_language_immediate(Some(markdown), cx)
+                });
             })
         })
         .detach_and_log_err(cx);

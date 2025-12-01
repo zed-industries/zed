@@ -1628,7 +1628,7 @@ impl GitPanel {
         }
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(message, cx);
-            buffer.set_language(git_commit_language, cx);
+            buffer.set_language_immediate(git_commit_language, cx);
             buffer
         });
         let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));

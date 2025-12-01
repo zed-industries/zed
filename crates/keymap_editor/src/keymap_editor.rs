@@ -2225,7 +2225,7 @@ impl KeybindingEditorModal {
                     .update(cx, |editor, cx| {
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(language), cx);
+                                buffer.set_language_immediate(Some(language), cx);
                             });
                         }
                         editor.set_completion_provider(Some(std::rc::Rc::new(
@@ -2815,7 +2815,7 @@ impl ActionArgumentsEditor {
                     this.editor.update(cx, |editor, cx| {
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(json_language.clone()), cx)
+                                buffer.set_language_immediate(Some(json_language.clone()), cx)
                             });
                         }
                     })

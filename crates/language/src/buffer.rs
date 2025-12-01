@@ -1036,6 +1036,16 @@ impl Buffer {
         self
     }
 
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
+    pub fn with_language_immediate(
+        mut self,
+        language: Arc<Language>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        self.set_language_immediate(Some(language), cx);
+        self
+    }
+
     /// Returns the [`Capability`] of this buffer.
     pub fn capability(&self) -> Capability {
         self.capability
@@ -1210,7 +1220,7 @@ impl Buffer {
             }
 
             // Reparse the branch buffer so that we get syntax highlighting immediately.
-            branch.reparse(cx);
+            branch.reparse(cx, true);
 
             branch
         })
@@ -1363,11 +1373,29 @@ impl Buffer {
 
     /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
+    }
+
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer.
+    pub fn set_language_immediate(
+        &mut self,
+        language: Option<Arc<Language>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_language_(language, true, cx);
+    }
+
+    fn set_language_(
+        &mut self,
+        language: Option<Arc<Language>>,
+        may_block: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.was_changed();
-        self.reparse(cx);
+        self.reparse(cx, may_block);
         cx.emit(BufferEvent::LanguageChanged);
     }
 
@@ -1610,9 +1638,9 @@ impl Buffer {
     /// The snapshot with the interpolated edits is sent to a background thread,
     /// where we ask Tree-sitter to perform an incremental parse.
     ///
-    /// Meanwhile, in the foreground, we block the main thread for up to 1ms
-    /// waiting on the parse to complete. As soon as it completes, we proceed
-    /// synchronously, unless a 1ms timeout elapses.
+    /// Meanwhile, in the foreground if `may_block` is true, we block the main
+    /// thread for up to 1ms waiting on the parse to complete. As soon as it
+    /// completes, we proceed synchronously, unless a 1ms timeout elapses.
     ///
     /// If we time out waiting on the parse, we spawn a second task waiting
     /// until the parse does complete and return with the interpolated tree still
@@ -1623,7 +1651,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    pub fn reparse(&mut self, cx: &mut Context<Self>) {
+    pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.reparse.is_some() {
             return;
         }
@@ -1652,42 +1680,70 @@ impl Buffer {
         });
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        match cx
-            .background_executor()
-            .block_with_timeout(self.sync_parse_timeout, parse_task)
-        {
-            Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, cx);
-                self.reparse = None;
-            }
-            Err(parse_task) => {
-                // todo(lw): hot foreground spawn
-                self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = cx.background_spawn(parse_task).await;
-                    this.update(cx, move |this, cx| {
-                        let grammar_changed = || {
-                            this.language.as_ref().is_none_or(|current_language| {
-                                !Arc::ptr_eq(&language, current_language)
-                            })
-                        };
-                        let language_registry_changed = || {
-                            new_syntax_map.contains_unknown_injections()
-                                && language_registry.is_some_and(|registry| {
-                                    registry.version() != new_syntax_map.language_registry_version()
+        if may_block {
+            match cx
+                .background_executor()
+                .block_with_timeout(self.sync_parse_timeout, parse_task)
+            {
+                Ok(new_syntax_snapshot) => {
+                    self.did_finish_parsing(new_syntax_snapshot, cx);
+                    self.reparse = None;
+                }
+                Err(parse_task) => {
+                    self.reparse = Some(cx.spawn(async move |this, cx| {
+                        let new_syntax_map = cx.background_spawn(parse_task).await;
+                        this.update(cx, move |this, cx| {
+                            let grammar_changed = || {
+                                this.language.as_ref().is_none_or(|current_language| {
+                                    !Arc::ptr_eq(&language, current_language)
                                 })
-                        };
-                        let parse_again = this.version.changed_since(&parsed_version)
-                            || language_registry_changed()
-                            || grammar_changed();
-                        this.did_finish_parsing(new_syntax_map, cx);
-                        this.reparse = None;
-                        if parse_again {
-                            this.reparse(cx);
-                        }
-                    })
-                    .ok();
-                }));
+                            };
+                            let language_registry_changed = || {
+                                new_syntax_map.contains_unknown_injections()
+                                    && language_registry.is_some_and(|registry| {
+                                        registry.version()
+                                            != new_syntax_map.language_registry_version()
+                                    })
+                            };
+                            let parse_again = this.version.changed_since(&parsed_version)
+                                || language_registry_changed()
+                                || grammar_changed();
+                            this.did_finish_parsing(new_syntax_map, cx);
+                            this.reparse = None;
+                            if parse_again {
+                                this.reparse(cx, false);
+                            }
+                        })
+                        .ok();
+                    }));
+                }
             }
+        } else {
+            self.reparse = Some(cx.spawn(async move |this, cx| {
+                let new_syntax_map = cx.background_spawn(parse_task).await;
+                this.update(cx, move |this, cx| {
+                    let grammar_changed = || {
+                        this.language.as_ref().is_none_or(|current_language| {
+                            !Arc::ptr_eq(&language, current_language)
+                        })
+                    };
+                    let language_registry_changed = || {
+                        new_syntax_map.contains_unknown_injections()
+                            && language_registry.is_some_and(|registry| {
+                                registry.version() != new_syntax_map.language_registry_version()
+                            })
+                    };
+                    let parse_again = this.version.changed_since(&parsed_version)
+                        || language_registry_changed()
+                        || grammar_changed();
+                    this.did_finish_parsing(new_syntax_map, cx);
+                    this.reparse = None;
+                    if parse_again {
+                        this.reparse(cx, false);
+                    }
+                })
+                .ok();
+            }));
         }
     }
 
@@ -2588,7 +2644,7 @@ impl Buffer {
             return;
         }
 
-        self.reparse(cx);
+        self.reparse(cx, true);
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);

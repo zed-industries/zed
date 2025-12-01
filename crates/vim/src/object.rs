@@ -3244,7 +3244,7 @@ mod test {
             let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
             if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_ids[1]) {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(Some(language::rust_lang()), cx);
+                    buffer.set_language_immediate(Some(language::rust_lang()), cx);
                 })
             };
 

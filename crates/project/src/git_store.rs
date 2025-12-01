@@ -3885,7 +3885,7 @@ impl Repository {
                         let git_commit_language =
                             language_registry.language_for_name("Git Commit").await?;
                         buffer.update(&mut cx, |buffer, cx| {
-                            buffer.set_language(Some(git_commit_language), cx);
+                            buffer.set_language_immediate(Some(git_commit_language), cx);
                         })?;
                     }
                     this.update(&mut cx, |this, _| {
@@ -3912,7 +3912,7 @@ impl Repository {
             if let Some(language_registry) = language_registry {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
                 buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(Some(git_commit_language), cx);
+                    buffer.set_language_immediate(Some(git_commit_language), cx);
                 })?;
             }
 

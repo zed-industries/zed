@@ -240,7 +240,7 @@ fn build_clipboard_buffer(
     cx.new(|cx| {
         let mut buffer = language::Buffer::local(source_buffer_snapshot.text(), cx);
         let language = source_buffer.read(cx).language().cloned();
-        buffer.set_language(language, cx);
+        buffer.set_language_immediate(language, cx);
 
         let range_start = source_buffer_snapshot.point_to_offset(replacement_range.start);
         let range_end = source_buffer_snapshot.point_to_offset(replacement_range.end);

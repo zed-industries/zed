@@ -2210,7 +2210,7 @@ pub mod tests {
             })
         });
 
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language_immediate(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -2312,7 +2312,7 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language_immediate(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
@@ -2647,7 +2647,7 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language_immediate(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -2734,7 +2734,7 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»«:» B = "c «d»""#, false);
 
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language_immediate(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));

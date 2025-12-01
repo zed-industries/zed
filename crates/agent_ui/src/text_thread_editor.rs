@@ -3095,7 +3095,7 @@ mod tests {
             "#
             .unindent();
             let mut buffer = Buffer::local(text, cx);
-            buffer.set_language(Some(markdown.clone()), cx);
+            buffer.set_language_immediate(Some(markdown.clone()), cx);
             buffer
         });
         let snapshot = buffer.read(cx).snapshot();

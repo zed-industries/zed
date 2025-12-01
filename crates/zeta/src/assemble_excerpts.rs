@@ -119,8 +119,9 @@ mod tests {
             let input_without_caret = input.replace('ˇ', "");
             let cursor_offset = input_without_ranges.find('ˇ');
             let (input, ranges) = marked_text_ranges(&input_without_caret, false);
-            let buffer =
-                cx.new(|cx| Buffer::local(input, cx).with_language(Arc::new(rust_lang()), cx));
+            let buffer = cx.new(|cx| {
+                Buffer::local(input, cx).with_language_immediate(Arc::new(rust_lang()), cx)
+            });
             buffer.read_with(cx, |buffer, _cx| {
                 let insertions = cursor_offset
                     .map(|offset| {
