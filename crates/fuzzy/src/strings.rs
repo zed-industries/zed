@@ -142,7 +142,7 @@ where
     }
 
     if query.is_empty() {
-        return candidates
+        let mut results: Vec<StringMatch> = candidates
             .iter()
             .map(|candidate| StringMatch {
                 candidate_id: candidate.borrow().id,
@@ -151,6 +151,8 @@ where
                 string: candidate.borrow().string.clone(),
             })
             .collect();
+        results.sort_by(|a, b| b.cmp(a));
+        return results;
     }
 
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
