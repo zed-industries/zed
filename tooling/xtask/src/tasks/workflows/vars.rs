@@ -80,8 +80,18 @@ pub fn bundle_envs(platform: Platform) -> Env {
 }
 
 pub fn one_workflow_per_non_main_branch() -> Concurrency {
+    one_workflow_per_non_main_branch_and_token("")
+}
+
+pub fn one_workflow_per_non_main_branch_and_token<T: AsRef<str>>(token: T) -> Concurrency {
     Concurrency::default()
-        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+        .group(format!(
+            concat!(
+                "${{{{ github.workflow }}}}-${{{{ github.ref_name }}}}-",
+                "${{{{ github.ref_name == 'main' && github.sha || 'anysha{}' }}}}"
+            ),
+            token.as_ref()
+        ))
         .cancel_in_progress(true)
 }
 
