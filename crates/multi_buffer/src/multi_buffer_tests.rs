@@ -4127,6 +4127,7 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
     let mut modified_text = base_text.clone();
     let mut expected_total_word_diff_count = 0;
     let mutation_count = rng.random_range(1..word_count.min(5));
+    let mut modified_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     for _ in 0..mutation_count {
         if words.is_empty() {
@@ -4137,6 +4138,33 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
         let word = &words[word_idx];
 
         if let Some(word_pos) = modified_text.find(word) {
+            let line_number = modified_text[..word_pos].matches('\n').count();
+
+            if modified_lines.contains(&line_number) {
+                words.remove(word_idx);
+                continue;
+            }
+
+            let end = word_pos + word.len();
+
+            let line_start = modified_text[..word_pos]
+                .rfind('\n')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            let line_end = modified_text[word_pos..]
+                .find('\n')
+                .map(|i| word_pos + i)
+                .unwrap_or(modified_text.len());
+            let line = &modified_text[line_start..line_end];
+
+            let other_content =
+                line[..word_pos - line_start].trim().len() + line[end - line_start..].trim().len();
+
+            if other_content == 0 {
+                words.remove(word_idx);
+                continue;
+            }
+
             let action = rng.random_range(0..100);
 
             if action < 70 {
@@ -4146,32 +4174,17 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
 
                 expected_total_word_diff_count += 2;
                 modified_text.replace_range(word_pos..word_pos + word.len(), &new_word);
+                modified_lines.insert(line_number);
             } else {
-                let end = word_pos + word.len();
+                let delete_end = if modified_text.as_bytes().get(end) == Some(&b' ') {
+                    end + 1
+                } else {
+                    end
+                };
 
-                let line_start = modified_text[..word_pos]
-                    .rfind('\n')
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-                let line_end = modified_text[word_pos..]
-                    .find('\n')
-                    .map(|i| word_pos + i)
-                    .unwrap_or(modified_text.len());
-                let line = &modified_text[line_start..line_end];
-
-                let other_content = line[..word_pos - line_start].trim().len()
-                    + line[end - line_start..].trim().len();
-
-                if other_content > 0 {
-                    let delete_end = if modified_text.as_bytes().get(end) == Some(&b' ') {
-                        end + 1
-                    } else {
-                        end
-                    };
-
-                    expected_total_word_diff_count += 1;
-                    modified_text.replace_range(word_pos..delete_end, "");
-                }
+                expected_total_word_diff_count += 1;
+                modified_text.replace_range(word_pos..delete_end, "");
+                modified_lines.insert(line_number);
             }
 
             words.remove(word_idx);
