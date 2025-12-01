@@ -232,7 +232,7 @@ mod tests {
             false,
             10,
             &AtomicBool::new(false),
-            cx.background_executor().clone(),
+            cx.background_executor.clone(),
         )
         .await;
 
@@ -261,7 +261,7 @@ mod tests {
             false,
             10,
             &AtomicBool::new(false),
-            cx.background_executor().clone(),
+            cx.background_executor.clone(),
         )
         .await;
 
@@ -289,7 +289,7 @@ mod tests {
             false,
             10,
             &AtomicBool::new(false),
-            cx.background_executor().clone(),
+            cx.background_executor.clone(),
         )
         .await;
 
@@ -316,7 +316,7 @@ mod tests {
             false,
             10,
             &AtomicBool::new(false),
-            cx.background_executor().clone(),
+            cx.background_executor.clone(),
         )
         .await;
 
