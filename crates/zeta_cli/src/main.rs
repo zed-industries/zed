@@ -1,6 +1,7 @@
 mod evaluate;
 mod example;
 mod headless;
+mod metrics;
 mod paths;
 mod predict;
 mod source_location;
@@ -25,6 +26,7 @@ use edit_prediction_context::{
 };
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, Point};
+use metrics::delta_chr_f;
 use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -32,6 +34,7 @@ use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
 use zeta::ContextMode;
+use zeta::udiff::DiffLine;
 
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
@@ -52,6 +55,10 @@ enum Command {
         path: PathBuf,
         #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
         output_format: ExampleFormat,
+    },
+    Score {
+        golden_patch: PathBuf,
+        actual_patch: PathBuf,
     },
     Clean,
 }
@@ -454,6 +461,7 @@ async fn zeta1_context(
             &snapshot,
             clipped_cursor,
             prompt_for_events,
+            cloud_llm_client::PredictEditsRequestTrigger::Cli,
             cx,
         )
     })?
@@ -519,6 +527,26 @@ fn main() {
                 }) => {
                     let example = NamedExample::load(path).unwrap();
                     example.write(output_format, io::stdout()).unwrap();
+                }
+                Some(Command::Score {
+                    golden_patch,
+                    actual_patch,
+                }) => {
+                    let golden_content = std::fs::read_to_string(golden_patch).unwrap();
+                    let actual_content = std::fs::read_to_string(actual_patch).unwrap();
+
+                    let golden_diff: Vec<DiffLine> = golden_content
+                        .lines()
+                        .map(|line| DiffLine::parse(line))
+                        .collect();
+
+                    let actual_diff: Vec<DiffLine> = actual_content
+                        .lines()
+                        .map(|line| DiffLine::parse(line))
+                        .collect();
+
+                    let score = delta_chr_f(&golden_diff, &actual_diff);
+                    println!("{:.2}", score);
                 }
                 Some(Command::Clean) => {
                     std::fs::remove_dir_all(&*crate::paths::TARGET_ZETA_DIR).unwrap()

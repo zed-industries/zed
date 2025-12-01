@@ -668,9 +668,9 @@ impl UniformList {
     }
 
     /// Track and render scroll state of this list with reference to the given scroll handle.
-    pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
+    pub fn track_scroll(mut self, handle: &UniformListScrollHandle) -> Self {
         self.interactivity.tracked_scroll_handle = Some(handle.0.borrow().base_handle.clone());
-        self.scroll_handle = Some(handle);
+        self.scroll_handle = Some(handle.clone());
         self
     }
 
@@ -780,7 +780,7 @@ mod test {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                         .h(px(200.0)),
                     )
             }

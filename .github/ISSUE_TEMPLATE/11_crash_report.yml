@@ -1,6 +1,7 @@
 name: Report a crash
 description: Zed is crashing or freezing or hanging.
 type: Crash
+labels: "state:needs triage"
 body:
   - type: textarea
     attributes:

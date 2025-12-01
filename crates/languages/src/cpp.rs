@@ -20,7 +20,7 @@ mod tests {
         let language = crate::language("cpp", tree_sitter_cpp::LANGUAGE.into());
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
 
             buffer.edit([(0..0, "int main() {}")], None, cx);
 
@@ -50,7 +50,7 @@ mod tests {
         let language = crate::language("cpp", tree_sitter_cpp::LANGUAGE.into());
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
 
             buffer.edit(
                 [(

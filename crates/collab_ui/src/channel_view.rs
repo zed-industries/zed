@@ -171,7 +171,7 @@ impl ChannelView {
                     let Some(markdown) = markdown else {
                         return;
                     };
-                    buffer.set_language(Some(markdown), cx);
+                    buffer.set_language_immediate(Some(markdown), cx);
                 })
             })?;
 
@@ -541,7 +541,7 @@ impl Item for ChannelView {
         })
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

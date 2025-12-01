@@ -7,6 +7,7 @@ use std::ops::Range;
 use crate::Editor;
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
+use itertools::Itertools;
 use language::language_settings;
 use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
@@ -26,17 +27,20 @@ impl Editor {
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let all_excerpts = self.buffer().read(cx).excerpt_ids();
-        let anchor_in_multi_buffer = |current_excerpt: ExcerptId, text_anchor: text::Anchor| {
+        let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
+                                       text_anchors: [text::Anchor; 4]|
+         -> Option<[Option<_>; 4]> {
             multi_buffer_snapshot
-                .anchor_in_excerpt(current_excerpt, text_anchor)
+                .anchors_in_excerpt(current_excerpt, text_anchors)
                 .or_else(|| {
                     all_excerpts
                         .iter()
                         .filter(|&&excerpt_id| excerpt_id != current_excerpt)
                         .find_map(|&excerpt_id| {
-                            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)
+                            multi_buffer_snapshot.anchors_in_excerpt(excerpt_id, text_anchors)
                         })
-                })
+                })?
+                .collect_array()
         };
 
         let bracket_matches_by_accent = self.visible_excerpts(cx).into_iter().fold(
@@ -77,13 +81,24 @@ impl Editor {
                             let buffer_close_range = buffer_snapshot
                                 .anchor_before(pair.close_range.start)
                                 ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            let [
+                                buffer_open_range_start,
+                                buffer_open_range_end,
+                                buffer_close_range_start,
+                                buffer_close_range_end,
+                            ] = anchors_in_multi_buffer(
+                                excerpt_id,
+                                [
+                                    buffer_open_range.start,
+                                    buffer_open_range.end,
+                                    buffer_close_range.start,
+                                    buffer_close_range.end,
+                                ],
+                            )?;
                             let multi_buffer_open_range =
-                                anchor_in_multi_buffer(excerpt_id, buffer_open_range.start)
-                                    .zip(anchor_in_multi_buffer(excerpt_id, buffer_open_range.end));
+                                buffer_open_range_start.zip(buffer_open_range_end);
                             let multi_buffer_close_range =
-                                anchor_in_multi_buffer(excerpt_id, buffer_close_range.start).zip(
-                                    anchor_in_multi_buffer(excerpt_id, buffer_close_range.end),
-                                );
+                                buffer_close_range_start.zip(buffer_close_range_end);
 
                             let mut ranges = Vec::with_capacity(2);
                             if let Some((open_start, open_end)) = multi_buffer_open_range {
@@ -161,7 +176,7 @@ mod tests {
     use gpui::{AppContext as _, UpdateGlobal as _};
     use indoc::indoc;
     use itertools::Itertools;
-    use language::Capability;
+    use language::{Capability, markdown_lang};
     use languages::rust_lang;
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use pretty_assertions::assert_eq;
@@ -258,6 +273,31 @@ where
 "#,
             &bracket_colors_markup(&mut cx),
             "All brackets should be colored based on their depth"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_bracket_colorization(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {r#"ˇ[LLM-powered features](./ai/overview.md), [bring and configure your own API keys](./ai/llm-providers.md#use-your-own-keys)"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"«1[LLM-powered features]1»«1(./ai/overview.md)1», «1[bring and configure your own API keys]1»«1(./ai/llm-providers.md#use-your-own-keys)1»
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "All markdown brackets should be colored based on their depth"
         );
     }
 

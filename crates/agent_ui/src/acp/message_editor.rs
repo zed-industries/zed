@@ -118,7 +118,8 @@ impl MessageEditor {
         );
 
         let editor = cx.new(|cx| {
-            let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
+            let buffer =
+                cx.new(|cx| Buffer::local("", cx).with_language_immediate(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
@@ -1423,7 +1424,7 @@ mod tests {
             rel_path("b/eight.txt"),
         ];
 
-        let slash = PathStyle::local().separator();
+        let slash = PathStyle::local().primary_separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {

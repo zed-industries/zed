@@ -929,7 +929,11 @@ impl Item for Editor {
         })
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1135,7 +1139,7 @@ impl SerializableItem for Editor {
                     buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
-                            buffer.set_language(Some(language), cx);
+                            buffer.set_language_immediate(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {

@@ -638,7 +638,7 @@ mod jsx_tag_autoclose_tests {
         cx.update_buffer(|buffer, cx| {
             let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
 
-            buffer.set_language(Some(language), cx)
+            buffer.set_language_immediate(Some(language), cx)
         });
 
         cx
@@ -802,7 +802,7 @@ mod jsx_tag_autoclose_tests {
 
         let buffer_a = cx.new(|cx| {
             let mut buf = language::Buffer::local("<div", cx);
-            buf.set_language(
+            buf.set_language_immediate(
                 Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
                 cx,
             );
@@ -810,7 +810,7 @@ mod jsx_tag_autoclose_tests {
         });
         let buffer_b = cx.new(|cx| {
             let mut buf = language::Buffer::local("<pre", cx);
-            buf.set_language(
+            buf.set_language_immediate(
                 Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
                 cx,
             );

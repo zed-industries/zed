@@ -684,8 +684,9 @@ impl LocalBufferStore {
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |buffer_store, cx| {
-            let buffer =
-                cx.new(|cx| Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx))?;
+            let buffer = cx.new(|cx| {
+                Buffer::local("", cx).with_language_immediate(language::PLAIN_TEXT.clone(), cx)
+            })?;
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
                 if !project_searchable {
@@ -1591,8 +1592,10 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Entity<Buffer> {
         let buffer = cx.new(|cx| {
-            Buffer::local(text, cx)
-                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+            Buffer::local(text, cx).with_language_immediate(
+                language.unwrap_or_else(|| language::PLAIN_TEXT.clone()),
+                cx,
+            )
         });
 
         self.add_buffer(buffer.clone(), cx).log_err();

@@ -224,7 +224,7 @@ fn main() {
         .unwrap();
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(rust_lang())), cx);
+        buffer.set_language_immediate(Some(Arc::new(rust_lang())), cx);
     });
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
@@ -1593,7 +1593,7 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
         .unwrap();
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(python_lang())), cx);
+        buffer.set_language_immediate(Some(Arc::new(python_lang())), cx);
     });
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
@@ -2091,7 +2091,7 @@ async fn test_inline_values_util(
         .unwrap();
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(language)), cx);
+        buffer.set_language_immediate(Some(Arc::new(language)), cx);
     });
 
     let (editor, cx) = cx.add_window_view(|window, cx| {

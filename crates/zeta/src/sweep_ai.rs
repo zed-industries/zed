@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use cloud_llm_client::predict_edits_v3::Event;
 use futures::AsyncReadExt as _;
 use gpui::{
@@ -17,9 +17,8 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use util::ResultExt as _;
 
-use crate::{EditPrediction, EditPredictionId, EditPredictionInputs};
+use crate::{EditPredictionId, EditPredictionInputs, prediction::EditPredictionResult};
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
@@ -31,9 +30,7 @@ pub struct SweepAi {
 impl SweepAi {
     pub fn new(cx: &App) -> Self {
         SweepAi {
-            api_token: std::env::var("SWEEP_AI_TOKEN")
-                .context("No SWEEP_AI_TOKEN environment variable set")
-                .log_err(),
+            api_token: std::env::var("SWEEP_AI_TOKEN").ok(),
             debug_info: debug_info(cx),
         }
     }
@@ -48,7 +45,7 @@ impl SweepAi {
         recent_paths: &VecDeque<ProjectPath>,
         diagnostic_search_range: Range<Point>,
         cx: &mut App,
-    ) -> Task<Result<Option<EditPrediction>>> {
+    ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
         let Some(api_token) = self.api_token.clone() else {
             return Task::ready(Ok(None));
@@ -167,6 +164,7 @@ impl SweepAi {
                 file_chunks,
                 retrieval_chunks: vec![],
                 recent_user_actions: vec![],
+                use_bytes: true,
                 // TODO
                 privacy_mode_enabled: false,
             };
@@ -245,8 +243,8 @@ impl SweepAi {
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;
-            anyhow::Ok(
-                EditPrediction::new(
+            anyhow::Ok(Some(
+                EditPredictionResult::new(
                     EditPredictionId(id.into()),
                     &buffer,
                     &old_snapshot,
@@ -257,7 +255,7 @@ impl SweepAi {
                     cx,
                 )
                 .await,
-            )
+            ))
         })
     }
 }
@@ -278,6 +276,7 @@ struct AutocompleteRequest {
     pub multiple_suggestions: bool,
     pub privacy_mode_enabled: bool,
     pub changes_above_cursor: bool,
+    pub use_bytes: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
