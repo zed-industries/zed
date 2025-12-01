@@ -60,17 +60,23 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 10
+        fetch-depth: 0
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
-        git checkout "$(git log -1 --format=%H)"~1
+        if [[ -z "$PARENT_SHA" ]]; then
+            git checkout "$PARENT_SHA"
+        else
+            git checkout "$(git log -1 --format=%H)"~1
+        fi
 
-        PREV_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
-        [[ "$CURRENT_VERSION" == "$PREV_COMMIT_VERSION" ]] && \
+        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+
+        [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
           echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
           echo "needs_bump=false" >> "$GITHUB_OUTPUT"
 
@@ -105,7 +111,7 @@ jobs:
     - id: bump-version
       name: extension_bump::bump_version
       run: |
-        OLD_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
 
         cat <<EOF > .bumpversion.cfg
         [bumpversion]
@@ -123,7 +129,6 @@ jobs:
 
         rm .bumpversion.cfg
 
-        echo "old_version=${OLD_VERSION}" >> "$GITHUB_OUTPUT"
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
@@ -132,7 +137,7 @@ jobs:
         title: Bump version to ${{ steps.bump-version.outputs.new_version }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
         commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
-        branch: bump-from-${{ steps.bump-version.outputs.old_version }}
+        branch: zed-zippy-autobump
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
