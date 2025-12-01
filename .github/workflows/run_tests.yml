@@ -520,6 +520,7 @@ jobs:
       uses: bufbuild/buf-setup-action@v1
       with:
         version: v1.29.0
+        github_token: ${{ secrets.GITHUB_TOKEN }}
     - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
       uses: bufbuild/buf-breaking-action@v1
       with:
