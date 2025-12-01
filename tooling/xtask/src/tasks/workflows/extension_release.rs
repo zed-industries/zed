@@ -2,7 +2,7 @@ use gh_workflow::{Event, Job, Run, Step, Use, Workflow, WorkflowCall};
 use indoc::indoc;
 
 use crate::tasks::workflows::{
-    extension_bump::generate_token,
+    extension_bump::{RepositoryTarget, generate_token},
     runners,
     steps::{CommonJobConditions, NamedJob, checkout_repo, named},
     vars::{StepOutput, WorkflowSecret},
@@ -26,7 +26,9 @@ pub(crate) fn extension_release() -> Workflow {
 }
 
 fn create_release(app_id: &WorkflowSecret, app_secret: &WorkflowSecret) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(&app_id, &app_secret);
+    let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
+    let (generate_token, generated_token) =
+        generate_token(&app_id, &app_secret, Some(extension_registry));
     let (get_extension_id, extension_id) = get_extension_id();
 
     let job = Job::default()
