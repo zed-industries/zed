@@ -5,9 +5,9 @@ use crate::tasks::workflows::{
     extension_release::extension_workflow_secrets,
     extension_tests::{self},
     runners,
-    steps::{self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
+    steps::{self, named, CommonJobConditions, NamedJob, DEFAULT_REPOSITORY_OWNER_GUARD},
     vars::{
-        JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
+        one_workflow_per_non_main_branch, JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
     },
 };
 
@@ -198,7 +198,7 @@ fn bump_extension_version(
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
-            "({DEFAULT_REPOSITORY_OWNER_GUARD} && ({} == 'true || {} == 'true'))",
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({} == 'true' || {} == 'true')",
             force_bump.expr(),
             needs_bump.expr(),
         )))
