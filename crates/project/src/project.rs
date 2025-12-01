@@ -367,7 +367,7 @@ pub struct ProjectPath {
 impl ProjectPath {
     pub fn from_file(value: &dyn language::File, cx: &App) -> Self {
         ProjectPath {
-            worktree_id: value.project_worktree(cx),
+            worktree_id: WorktreeId(value.project_worktree(cx).worktree_id as usize),
             path: value.path().clone(),
         }
     }
@@ -5435,15 +5435,6 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 
 impl EventEmitter<Event> for Project {}
 
-impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
-    fn from(val: &'a ProjectPath) -> Self {
-        SettingsLocation {
-            worktree: val.worktree_id,
-            path: val.path.as_ref(),
-        }
-    }
-}
-
 impl<P: Into<Arc<RelPath>>> From<(WorktreeId, P)> for ProjectPath {
     fn from((worktree_id, path): (WorktreeId, P)) -> Self {
         Self {
@@ -5516,7 +5507,7 @@ impl ProjectItem for Buffer {
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.file().map(|file| ProjectPath {
-            worktree_id: file.project_worktree(cx).worktree_id,
+            worktree_id: file.project_worktree(cx).worktree_id(),
             path: file.path().clone(),
         })
     }

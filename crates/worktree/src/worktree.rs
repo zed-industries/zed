@@ -98,6 +98,12 @@ impl WorktreeId {
     }
 }
 
+impl From<ProjectWorktree> for WorktreeId {
+    fn from(value: ProjectWorktree) -> Self {
+        Self(value.worktree_id as usize)
+    }
+}
+
 impl fmt::Display for WorktreeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         std::fmt::Display::fmt(&self.0, f)
@@ -652,8 +658,7 @@ impl Worktree {
         SettingsLocation {
             worktree: ProjectWorktree {
                 project_id: self.project_id_for_settings,
-                worktree_id: self.id.to_proto()
-
+                worktree_id: self.id.to_proto(),
             },
             path: RelPath::empty(),
         }
