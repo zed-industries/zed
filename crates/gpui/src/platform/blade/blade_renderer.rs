@@ -548,6 +548,17 @@ impl BladeRenderer {
         &self.atlas
     }
 
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn prepare_atlas(&self) {
+        self.atlas.handle_device_lost();
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn adopt_atlas(&mut self, atlas: &Arc<BladeAtlas>) {
+        atlas.update_gpu_context(&self.gpu);
+        self.atlas = Arc::clone(atlas);
+    }
+
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub fn gpu_specs(&self) -> GpuSpecs {
         let info = self.gpu.device_information();
@@ -653,56 +664,26 @@ impl BladeRenderer {
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    pub fn recreate_after_device_loss<
-        I: raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle,
-    >(
-        &mut self,
-        new_context: &BladeContext,
-        window: &I,
-    ) -> anyhow::Result<()> {
-        let size = self.surface_config.size;
-        let transparent = self.surface_config.transparent;
-
-        self.atlas.destroy();
-        self.gpu.destroy_sampler(self.atlas_sampler);
-        self.instance_belt.destroy(&self.gpu);
-        self.gpu.destroy_command_encoder(&mut self.command_encoder);
-        self.pipelines.destroy(&self.gpu);
-        self.gpu.destroy_surface(&mut self.surface);
-        self.gpu.destroy_texture(self.path_intermediate_texture);
-        self.gpu
-            .destroy_texture_view(self.path_intermediate_texture_view);
-        if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
-            self.gpu.destroy_texture(msaa_texture);
-        }
-        if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
-            self.gpu.destroy_texture_view(msaa_view);
-        }
-
-        self.atlas.handle_device_lost();
-        let old_atlas = self.atlas.clone();
-
-        let config = BladeSurfaceConfig { size, transparent };
-        let new_renderer = Self::new(new_context, window, config)?;
-
-        old_atlas.update_gpu_context(&new_renderer.gpu);
-
-        *self = new_renderer;
-        self.atlas = old_atlas;
-        self.skip_draws = true;
-
-        Ok(())
+    pub fn resume_rendering(&mut self) {
+        self.skip_draws = false;
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    pub fn mark_drawable(&mut self) {
-        self.skip_draws = false;
+    pub fn pause_rendering(&mut self) {
+        self.skip_draws = true;
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn destroy_surface(&mut self) {
+        self.gpu.destroy_surface(&mut self.surface);
     }
 
     pub fn draw(&mut self, scene: &Scene) -> anyhow::Result<()> {
         if self.skip_draws {
             return Ok(());
         }
+
+        self.wait_for_gpu()?;
 
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
@@ -974,13 +955,24 @@ impl BladeRenderer {
         drop(pass);
 
         self.command_encoder.present(frame);
-        let sync_point = self.gpu.submit(&mut self.command_encoder);
+
+        let sync_point = {
+            use std::panic::{AssertUnwindSafe, catch_unwind};
+            match catch_unwind(AssertUnwindSafe(|| {
+                self.gpu.submit(&mut self.command_encoder)
+            })) {
+                Ok(sp) => sp,
+                Err(e) => {
+                    log::error!("GPU submit panicked - device lost: {:?}", e);
+                    return Err(anyhow::anyhow!("GPU device crashed during submit"));
+                }
+            }
+        };
 
         profiling::scope!("finish");
         self.instance_belt.flush(&sync_point);
         self.atlas.after_frame(&sync_point);
 
-        self.wait_for_gpu()?;
         self.last_sync_point = Some(sync_point);
         Ok(())
     }

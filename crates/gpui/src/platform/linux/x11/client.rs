@@ -232,6 +232,84 @@ impl X11ClientStatePtr {
         }
     }
 
+    pub(crate) fn recover_gpu(&self) -> anyhow::Result<()> {
+        use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
+        use std::sync::{Arc, mpsc};
+
+        let Some(client) = self.get_client() else {
+            return Err(anyhow!("Client state unavailable during GPU recovery"));
+        };
+
+        let windows: Vec<_> = {
+            let state = client.0.borrow();
+            state.windows.values().map(|r| r.window.clone()).collect()
+        };
+
+        for window in &windows {
+            window.pause_rendering();
+        }
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            tx.send(BladeContext::new()).ok();
+        });
+
+        let new_context = rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| anyhow!("GPU context creation timed out"))??;
+
+        let atlases: Vec<_> = windows.iter().map(|window| window.get_atlas()).collect();
+
+        for window in &windows {
+            window.prepare_atlas();
+        }
+
+        for window in &windows {
+            window.destroy_surface();
+        }
+
+        let renderer_params: Vec<_> = windows
+            .iter()
+            .map(|window| window.renderer_params())
+            .collect();
+
+        let (tx, rx) = mpsc::channel();
+        let context_arc = Arc::new(new_context);
+        let context_for_thread = Arc::clone(&context_arc);
+        std::thread::spawn(move || {
+            let result: anyhow::Result<Vec<BladeRenderer>> = renderer_params
+                .into_iter()
+                .map(|(raw_window, extent, transparent)| {
+                    let config = BladeSurfaceConfig {
+                        size: extent,
+                        transparent,
+                    };
+                    BladeRenderer::new(&context_for_thread, &raw_window, config)
+                })
+                .collect();
+            tx.send(result).ok();
+        });
+
+        let new_renderers = rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| anyhow!("Renderer creation timed out"))??;
+
+        for ((window, renderer), atlas) in windows.iter().zip(new_renderers).zip(atlases) {
+            window.replace_renderer(renderer, &atlas);
+        }
+
+        let new_context =
+            Arc::try_unwrap(context_arc).map_err(|_| anyhow!("Failed to unwrap context Arc"))?;
+        self.update_gpu_context(new_context);
+
+        for window in &windows {
+            window.resume_rendering();
+        }
+
+        log::info!("GPU recovery successful for {} windows", windows.len());
+        Ok(())
+    }
+
     pub fn drop_window(&self, x_window: u32) {
         let Some(client) = self.get_client() else {
             return;
@@ -796,7 +874,7 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
 
                 if event.type_ == state.atoms._GPUI_FORCE_UPDATE_WINDOW {
-                    window.mark_renderer_drawable();
+                    window.resume_rendering();
                     drop(state);
                     window.refresh(RequestFrameOptions {
                         force_render: true,
