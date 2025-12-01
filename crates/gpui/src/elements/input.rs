@@ -7,8 +7,6 @@
 //!
 //! Use `input()` for single-line text fields and `text_area()` for multi-line text editing.
 
-use refineable::Refineable;
-
 use crate::{
     Action, App, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior,
@@ -152,6 +150,26 @@ impl Input {
         );
         register_action(&mut self.interactivity, &self.input, InputState::backspace);
         register_action(&mut self.interactivity, &self.input, InputState::delete);
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::delete_word_left,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::delete_word_right,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::delete_to_beginning_of_line,
+        );
+        register_action(
+            &mut self.interactivity,
+            &self.input,
+            InputState::delete_to_end_of_line,
+        );
         register_action(&mut self.interactivity, &self.input, InputState::enter);
         register_action(&mut self.interactivity, &self.input, InputState::tab);
         register_action(&mut self.interactivity, &self.input, InputState::paste);

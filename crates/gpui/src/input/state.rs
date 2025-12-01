@@ -12,9 +12,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::bidi::{TextDirection, detect_base_direction};
 use super::bindings::{
-    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste,
-    Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd,
-    SelectUp, SelectWordLeft, SelectWordRight, Tab, Undo, Up, WordLeft, WordRight,
+    Backspace, Copy, Cut, Delete, DeleteToBeginningOfLine, DeleteToEndOfLine, DeleteWordLeft,
+    DeleteWordRight, Down, End, Enter, Home, Left, MoveToBeginning, MoveToEnd, Paste, Redo, Right,
+    SelectAll, SelectDown, SelectLeft, SelectRight, SelectToBeginning, SelectToEnd, SelectUp,
+    SelectWordLeft, SelectWordRight, Tab, Undo, Up, WordLeft, WordRight,
 };
 
 /// Default interval for grouping consecutive edits into a single undo entry.
@@ -580,6 +581,54 @@ impl InputState {
     pub(crate) fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    pub(crate) fn delete_word_left(
+        &mut self,
+        _: &DeleteWordLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.previous_word_boundary(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    pub(crate) fn delete_word_right(
+        &mut self,
+        _: &DeleteWordRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.next_word_boundary(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    pub(crate) fn delete_to_beginning_of_line(
+        &mut self,
+        _: &DeleteToBeginningOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.find_line_start(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    pub(crate) fn delete_to_end_of_line(
+        &mut self,
+        _: &DeleteToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.find_line_end(self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx);
     }
@@ -3082,6 +3131,227 @@ mod tests {
 
                 input.enter(&Enter, window, cx);
                 assert_eq!(input.content(), "hello\n world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_left(cx: &mut TestAppContext) {
+        // Cursor at end of "hello" in "hello world"
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_word_left(&DeleteWordLeft, window, cx);
+                assert_eq!(input.content(), " world");
+                assert_eq!(input.selected_range, 0..0);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_left_with_selection(cx: &mut TestAppContext) {
+        // Selection from 0 to 5 ("hello")
+        let view = create_test_input(cx, "hello world", 0..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_word_left(&DeleteWordLeft, window, cx);
+                assert_eq!(input.content(), " world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_left_at_start(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_word_left(&DeleteWordLeft, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_right(cx: &mut TestAppContext) {
+        // Cursor at start
+        let view = create_test_input(cx, "hello world", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_word_right(&DeleteWordRight, window, cx);
+                assert_eq!(input.content(), " world");
+                assert_eq!(input.selected_range, 0..0);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_right_with_selection(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 0..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_word_right(&DeleteWordRight, window, cx);
+                assert_eq!(input.content(), " world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_right_at_end(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 11..11);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_word_right(&DeleteWordRight, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+                assert_eq!(input.content(), " world");
+                assert_eq!(input.selected_range, 0..0);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_beginning_of_line_multiline(cx: &mut TestAppContext) {
+        // Cursor at position 8 (middle of "line2")
+        let view = create_test_input(cx, "line1\nline2\nline3", 8..8);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+                assert_eq!(input.content(), "line1\nne2\nline3");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_beginning_of_line_at_start(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 0..0);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_end_of_line(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_to_end_of_line(&DeleteToEndOfLine, window, cx);
+                assert_eq!(input.content(), "hello");
+                assert_eq!(input.selected_range, 5..5);
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_end_of_line_multiline(cx: &mut TestAppContext) {
+        // Cursor at position 8 (middle of "line2")
+        let view = create_test_input(cx, "line1\nline2\nline3", 8..8);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_to_end_of_line(&DeleteToEndOfLine, window, cx);
+                assert_eq!(input.content(), "line1\nli\nline3");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_end_of_line_at_end(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 11..11);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.delete_to_end_of_line(&DeleteToEndOfLine, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_left_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.delete_word_left(&DeleteWordLeft, window, cx);
+                assert_eq!(input.content(), " world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_word_right_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 6..6);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.delete_word_right(&DeleteWordRight, window, cx);
+                assert_eq!(input.content(), "hello ");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_beginning_of_line_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+                assert_eq!(input.content(), " world");
+
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.content(), "hello world");
+            });
+        })
+        .unwrap();
+    }
+
+    #[crate::test]
+    fn test_delete_to_end_of_line_is_undoable(cx: &mut TestAppContext) {
+        let view = create_test_input(cx, "hello world", 5..5);
+        view.update(cx, |view, window, cx| {
+            view.input.update(cx, |input, cx| {
+                input.set_group_interval(Duration::from_secs(0));
+
+                input.delete_to_end_of_line(&DeleteToEndOfLine, window, cx);
+                assert_eq!(input.content(), "hello");
 
                 input.undo(&Undo, window, cx);
                 assert_eq!(input.content(), "hello world");

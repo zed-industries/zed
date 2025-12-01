@@ -7,6 +7,14 @@ actions!(
         Backspace,
         /// Delete the character after the cursor.
         Delete,
+        /// Delete the word before the cursor.
+        DeleteWordLeft,
+        /// Delete the word after the cursor.
+        DeleteWordRight,
+        /// Delete from the cursor to the beginning of the line.
+        DeleteToBeginningOfLine,
+        /// Delete from the cursor to the end of the line.
+        DeleteToEndOfLine,
         /// Insert a tab character at the cursor position.
         Tab,
         /// Move the cursor one character to the left.
@@ -82,6 +90,22 @@ pub struct InputBindings {
     /// Binding for deleting the character after the cursor.
     /// Default: `delete`
     pub delete: Option<KeyBinding>,
+
+    /// Binding for deleting the word before the cursor.
+    /// Default: `alt-backspace` (macOS) / `ctrl-backspace` (other platforms)
+    pub delete_word_left: Option<KeyBinding>,
+
+    /// Binding for deleting the word after the cursor.
+    /// Default: `alt-delete` (macOS) / `ctrl-delete` (other platforms)
+    pub delete_word_right: Option<KeyBinding>,
+
+    /// Binding for deleting from cursor to beginning of line.
+    /// Default: `cmd-backspace` (macOS) / `ctrl-shift-backspace` (other platforms)
+    pub delete_to_beginning_of_line: Option<KeyBinding>,
+
+    /// Binding for deleting from cursor to end of line.
+    /// Default: `ctrl-k` (macOS) / `ctrl-shift-delete` (other platforms)
+    pub delete_to_end_of_line: Option<KeyBinding>,
 
     /// Binding for inserting a tab character.
     /// Default: `tab`
@@ -198,6 +222,14 @@ impl Default for InputBindings {
             Self {
                 backspace: Some(KeyBinding::new("backspace", Backspace, context)),
                 delete: Some(KeyBinding::new("delete", Delete, context)),
+                delete_word_left: Some(KeyBinding::new("alt-backspace", DeleteWordLeft, context)),
+                delete_word_right: Some(KeyBinding::new("alt-delete", DeleteWordRight, context)),
+                delete_to_beginning_of_line: Some(KeyBinding::new(
+                    "cmd-backspace",
+                    DeleteToBeginningOfLine,
+                    context,
+                )),
+                delete_to_end_of_line: Some(KeyBinding::new("ctrl-k", DeleteToEndOfLine, context)),
                 tab: Some(KeyBinding::new("tab", Tab, context)),
                 enter: Some(KeyBinding::new("enter", Enter, context)),
                 left: Some(KeyBinding::new("left", Left, context)),
@@ -240,6 +272,18 @@ impl Default for InputBindings {
             Self {
                 backspace: Some(KeyBinding::new("backspace", Backspace, context)),
                 delete: Some(KeyBinding::new("delete", Delete, context)),
+                delete_word_left: Some(KeyBinding::new("ctrl-backspace", DeleteWordLeft, context)),
+                delete_word_right: Some(KeyBinding::new("ctrl-delete", DeleteWordRight, context)),
+                delete_to_beginning_of_line: Some(KeyBinding::new(
+                    "ctrl-shift-backspace",
+                    DeleteToBeginningOfLine,
+                    context,
+                )),
+                delete_to_end_of_line: Some(KeyBinding::new(
+                    "ctrl-shift-delete",
+                    DeleteToEndOfLine,
+                    context,
+                )),
                 tab: Some(KeyBinding::new("tab", Tab, context)),
                 enter: Some(KeyBinding::new("enter", Enter, context)),
                 left: Some(KeyBinding::new("left", Left, context)),
@@ -292,6 +336,10 @@ impl InputBindings {
         Self {
             backspace: None,
             delete: None,
+            delete_word_left: None,
+            delete_word_right: None,
+            delete_to_beginning_of_line: None,
+            delete_to_end_of_line: None,
             tab: None,
             enter: None,
             left: None,
@@ -328,6 +376,14 @@ impl InputBindings {
         Self {
             backspace: self.backspace.or(defaults.backspace),
             delete: self.delete.or(defaults.delete),
+            delete_word_left: self.delete_word_left.or(defaults.delete_word_left),
+            delete_word_right: self.delete_word_right.or(defaults.delete_word_right),
+            delete_to_beginning_of_line: self
+                .delete_to_beginning_of_line
+                .or(defaults.delete_to_beginning_of_line),
+            delete_to_end_of_line: self
+                .delete_to_end_of_line
+                .or(defaults.delete_to_end_of_line),
             tab: self.tab.or(defaults.tab),
             enter: self.enter.or(defaults.enter),
             left: self.left.or(defaults.left),
@@ -362,6 +418,10 @@ impl InputBindings {
         [
             self.backspace,
             self.delete,
+            self.delete_word_left,
+            self.delete_word_right,
+            self.delete_to_beginning_of_line,
+            self.delete_to_end_of_line,
             self.tab,
             self.enter,
             self.left,
