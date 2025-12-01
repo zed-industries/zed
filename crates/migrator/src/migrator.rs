@@ -220,8 +220,8 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_11_12,
         ),
         MigrationType::TreeSitter(
-            migrations::m_2025_11_13::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_11_13,
+            migrations::m_2025_12_01::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_12_01,
         ),
     ];
     run_migrations(text, migrations)
@@ -346,8 +346,8 @@ define_query!(
     migrations::m_2025_11_12::SETTINGS_PATTERNS
 );
 define_query!(
-    SETTINGS_QUERY_2025_11_13,
-    migrations::m_2025_11_13::SETTINGS_PATTERNS
+    SETTINGS_QUERY_2025_12_01,
+    migrations::m_2025_12_01::SETTINGS_PATTERNS
 );
 
 // custom query
