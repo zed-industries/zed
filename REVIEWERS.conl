@@ -100,6 +100,9 @@ settings_ui
   = @danilo-leal
   = @probably-neb
 
+sum_tree
+  = @Veykril
+
 support
   = @miguelraz
 
@@ -111,6 +114,9 @@ terminal
   = @kubkon
   = @Veykril
 
+text
+  = @Veykril
+
 vim
   = @ConradIrwin
   = @dinocosta
@@ -120,3 +126,4 @@ vim
 windows
   = @localcc
   = @reflectronic
+  = @Veykril
