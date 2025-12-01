@@ -205,7 +205,7 @@ pub fn expand_macro_recursively(
         workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(macro_expansion.expansion, cx);
-                buffer.set_language_immediate(Some(rust_language), cx);
+                buffer.set_language(Some(rust_language), cx);
                 buffer.set_capability(Capability::ReadOnly, cx);
             });
             let multibuffer =

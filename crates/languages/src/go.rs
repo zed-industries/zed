@@ -868,9 +868,8 @@ mod tests {
         }
         "#;
 
-        let buffer = cx.new(|cx| {
-            crate::Buffer::local(testify_suite, cx).with_language_immediate(language.clone(), cx)
-        });
+        let buffer = cx
+            .new(|cx| crate::Buffer::local(testify_suite, cx).with_language(language.clone(), cx));
         cx.executor().run_until_parked();
 
         let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
@@ -927,8 +926,7 @@ mod tests {
         "#;
 
         let buffer = cx.new(|cx| {
-            crate::Buffer::local(interpreted_string_subtest, cx)
-                .with_language_immediate(language.clone(), cx)
+            crate::Buffer::local(interpreted_string_subtest, cx).with_language(language.clone(), cx)
         });
         cx.executor().run_until_parked();
 
@@ -957,8 +955,7 @@ mod tests {
         );
 
         let buffer = cx.new(|cx| {
-            crate::Buffer::local(raw_string_subtest, cx)
-                .with_language_immediate(language.clone(), cx)
+            crate::Buffer::local(raw_string_subtest, cx).with_language(language.clone(), cx)
         });
         cx.executor().run_until_parked();
 
@@ -1002,9 +999,8 @@ mod tests {
         }
         "#;
 
-        let buffer = cx.new(|cx| {
-            crate::Buffer::local(example_test, cx).with_language_immediate(language.clone(), cx)
-        });
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(example_test, cx).with_language(language.clone(), cx));
         cx.executor().run_until_parked();
 
         let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
@@ -1074,9 +1070,8 @@ mod tests {
         }
         "#;
 
-        let buffer = cx.new(|cx| {
-            crate::Buffer::local(table_test, cx).with_language_immediate(language.clone(), cx)
-        });
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
         cx.executor().run_until_parked();
 
         let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
@@ -1143,9 +1138,8 @@ mod tests {
         }
         "#;
 
-        let buffer = cx.new(|cx| {
-            crate::Buffer::local(table_test, cx).with_language_immediate(language.clone(), cx)
-        });
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
         cx.executor().run_until_parked();
 
         let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
@@ -1216,9 +1210,8 @@ mod tests {
         }
         "#;
 
-        let buffer = cx.new(|cx| {
-            crate::Buffer::local(table_test, cx).with_language_immediate(language.clone(), cx)
-        });
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
         cx.executor().run_until_parked();
 
         let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
@@ -1284,9 +1277,8 @@ mod tests {
         }
         "#;
 
-        let buffer = cx.new(|cx| {
-            crate::Buffer::local(table_test, cx).with_language_immediate(language.clone(), cx)
-        });
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
         cx.executor().run_until_parked();
 
         let runnables: Vec<_> = buffer.update(cx, |buffer, _| {

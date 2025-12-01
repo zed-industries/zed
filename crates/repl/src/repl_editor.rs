@@ -521,7 +521,7 @@ mod tests {
                 "# },
                 cx,
             )
-            .with_language_immediate(test_language, cx)
+            .with_language(test_language, cx)
         });
         let snapshot = buffer.read(cx).snapshot();
 
@@ -595,7 +595,7 @@ mod tests {
                 "# },
                 cx,
             )
-            .with_language_immediate(test_language, cx)
+            .with_language(test_language, cx)
         });
         let snapshot = buffer.read(cx).snapshot();
 
@@ -716,7 +716,7 @@ mod tests {
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
-            buffer.set_language_immediate(Some(markdown.clone()), cx);
+            buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
         let snapshot = buffer.read(cx).snapshot();
@@ -761,7 +761,7 @@ mod tests {
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
-            buffer.set_language_immediate(Some(markdown.clone()), cx);
+            buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
         let snapshot = buffer.read(cx).snapshot();
@@ -800,7 +800,7 @@ mod tests {
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
-            buffer.set_language_immediate(Some(markdown.clone()), cx);
+            buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
         let snapshot = buffer.read(cx).snapshot();

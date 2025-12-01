@@ -94,9 +94,7 @@ impl ConfigurationSource {
                 editor.set_show_gutter(false, cx);
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.set_language_immediate(jsonc_language, cx)
-                    })
+                    buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
                 }
                 editor
             })

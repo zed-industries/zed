@@ -862,7 +862,7 @@ impl EditPreview {
                 self.applied_edits_snapshot.line_ending(),
                 cx,
             );
-            buffer.set_language(self.syntax_snapshot.root_language(), cx);
+            buffer.set_language_async(self.syntax_snapshot.root_language(), cx);
             buffer
         })
     }
@@ -1031,18 +1031,14 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, returning the buffer.
-    pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
-        self.set_language(Some(language), cx);
+    pub fn with_language_async(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
+        self.set_language_async(Some(language), cx);
         self
     }
 
     /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
-    pub fn with_language_immediate(
-        mut self,
-        language: Arc<Language>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        self.set_language_immediate(Some(language), cx);
+    pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
+        self.set_language(Some(language), cx);
         self
     }
 
@@ -1372,16 +1368,12 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer.
-    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+    pub fn set_language_async(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
         self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
     }
 
     /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer.
-    pub fn set_language_immediate(
-        &mut self,
-        language: Option<Arc<Language>>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
         self.set_language_(language, true, cx);
     }
 

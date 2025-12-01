@@ -269,7 +269,7 @@ impl CodegenAlternative {
                 .language_registry();
 
             let mut buffer = Buffer::local_normalized(text, line_ending, cx);
-            buffer.set_language_immediate(language, cx);
+            buffer.set_language(language, cx);
             if let Some(language_registry) = language_registry {
                 buffer.set_language_registry(language_registry);
             }
@@ -1077,8 +1077,7 @@ mod tests {
                 }
             }
         "};
-        let buffer =
-            cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1140,8 +1139,7 @@ mod tests {
                 le
             }
         "};
-        let buffer =
-            cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1205,8 +1203,7 @@ mod tests {
             "  \n",
             "}\n" //
         );
-        let buffer =
-            cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1322,8 +1319,7 @@ mod tests {
                 let x = 0;
             }
         "};
-        let buffer =
-            cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
