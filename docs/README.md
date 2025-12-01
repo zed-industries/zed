@@ -22,8 +22,7 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 
 We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
-If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]
-` from the `book.toml`.
+If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]` from the `book.toml`.
 
 ## Images and videos
 
@@ -33,7 +32,7 @@ Putting binary assets such as images in the Git repository will bloat the reposi
 
 ## Internal notes:
 
-- We have a Cloudflare router called `docs-proxy` that intercepts requests to `zed.dev/docs` and forwards them to the "docs" in Cloudflare Pages project.
+- We have a Cloudflare router called `docs-proxy` that intercepts requests to `zed.dev/docs` and forwards them to the "docs" Cloudflare Pages project.
 - The CI uploads a new version to the Cloudflare Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.
 
 ### Table of Contents
@@ -44,7 +43,7 @@ Since all this preprocessor does is generate the static assets, we don't need to
 
 ## Referencing Keybindings and Actions
 
-When referencing keybindings or actions, use the following formats.
+When referencing keybindings or actions, use the following formats:
 
 ### Keybindings
 
@@ -62,7 +61,8 @@ This will render a human-readable version of the action name, e.g., "zed: open s
 
 ### Creating New Templates
 
-Templates are functions that modify the source of the docs pages (usually with a regex match and replace). You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
+Templates are functions that modify the source of the docs pages (usually with a regex match and replace).
+You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
 
 ### References
 
@@ -101,7 +101,8 @@ If no front matter is provided, or if one or both keys aren't provided, the `tit
 
 ### Implementation details
 
-Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the `meta` tag per book rather than per file. So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
+Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the `meta` tag per book rather than per file.
+So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
 
 ### Known limitations
 
