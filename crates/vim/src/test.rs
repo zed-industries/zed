@@ -1478,7 +1478,7 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
         },
         Some(language::tree_sitter_rust::LANGUAGE.into()),
     ));
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.update_buffer(|buffer, cx| buffer.set_language_immediate(Some(language), cx));
 
     // works in normal model
     cx.set_state(
@@ -2363,7 +2363,7 @@ async fn test_wrap_selections_in_tag_line_mode(cx: &mut gpui::TestAppContext) {
         None,
     ));
 
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+    cx.update_buffer(|buffer, cx| buffer.set_language_immediate(Some(js_language), cx));
 
     cx.set_state(
         indoc! {

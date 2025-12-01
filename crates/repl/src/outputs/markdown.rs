@@ -60,7 +60,7 @@ impl OutputContent for MarkdownView {
         let buffer = cx.new(|cx| {
             // TODO: Bring in the language registry so we can set the language to markdown
             let mut buffer = Buffer::local(self.raw_text.clone(), cx)
-                .with_language(language::PLAIN_TEXT.clone(), cx);
+                .with_language_immediate(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });

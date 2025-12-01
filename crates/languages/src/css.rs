@@ -224,7 +224,8 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let buffer =
+            cx.new(|cx| language::Buffer::local(text, cx).with_language_immediate(language, cx));
         let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline

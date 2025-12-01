@@ -1,0 +1,99 @@
+name: Report a bug
+description: Report a problem with Zed.
+type: Bug
+labels: "state:needs triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Is this bug already reported? Upvote to get it noticed faster. [Here's the search](https://github.com/zed-industries/zed/issues). Upvote means giving it a :+1: reaction.
+
+        Feature request? Please open in [discussions](https://github.com/zed-industries/zed/discussions/new/choose) instead.
+
+        Just have a question or need support? Welcome to [Discord Support Forums](https://discord.com/invite/zedindustries).
+  - type: textarea
+    attributes:
+      label: Reproduction steps
+      description: A step-by-step description of how to reproduce the bug from a **clean Zed install**. The more context you provide, the easier it is to find and fix the problem fast.
+      placeholder: |
+        1. Start Zed
+        2. Click X
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Current vs. Expected behavior
+      description: |
+        Current behavior (screenshots, videos, etc. are appreciated), vs. what you expected the behavior to be.
+
+      placeholder: |
+        Current behavior: <screenshot with an arrow> The icon is blue. Expected behavior: The icon should be red because this is what the setting is documented to do.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Zed version and system specs
+      description: |
+        Open the command palette in Zed, then type “zed: copy system specs into clipboard”.
+      placeholder: |
+        Zed: v0.215.0 (Zed Nightly bfe141ea79aa4984028934067ba75c48d99136ae)
+        OS: macOS 15.1
+        Memory: 36 GiB
+        Architecture: aarch64
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Attach Zed log file
+      description: |
+        Open the command palette in Zed, then type `zed: open log` to see the last 1000 lines. Or type `zed: reveal log in file manager` in the command palette to reveal the log file itself.
+      value: |
+        <details><summary>Zed.log</summary>
+
+        <!-- Paste your log inside the code block. -->
+        ```log
+
+        ```
+
+        </details>
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Relevant Zed settings
+      description: |
+        Open the command palette in Zed, then type “zed: open settings file” and copy/paste any relevant (e.g., LSP-specific) settings.
+      value: |
+        <details><summary>settings.json</summary>
+
+        <!-- Paste your settings inside the code block. -->
+        ```json
+
+        ```
+
+        </details>
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: (for AI issues) Model provider details
+      placeholder: |
+        - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc.)
+        - Model Name: (Claude Sonnet 4.5, Gemini 3 Pro, GPT-5)
+        - Mode: (Agent Panel, Inline Assistant, Terminal Assistant or Text Threads)
+        - Other details (ACPs, MCPs, other settings, etc.):
+    validations:
+      required: false
+  - type: dropdown
+    attributes:
+      label: If you are using WSL on Windows, what flavor of Linux are you using?
+      multiple: false
+      options:
+        - Arch Linux
+        - Ubuntu
+        - Fedora
+        - Mint
+        - Pop!_OS
+        - NixOS
+        - Other

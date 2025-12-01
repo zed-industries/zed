@@ -830,7 +830,7 @@ impl DapLogView {
                         async move |buffer, cx| {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(language, cx);
+                                buffer.set_language_immediate(language, cx);
                             })
                         }
                     })
@@ -901,7 +901,7 @@ impl DapLogView {
                         async move |_, cx| {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(language, cx);
+                                buffer.set_language_immediate(language, cx);
                             })
                         }
                     })
@@ -998,7 +998,11 @@ impl Item for DapLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 }

@@ -2326,7 +2326,7 @@ mod tests {
         });
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);

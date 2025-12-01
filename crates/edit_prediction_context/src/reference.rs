@@ -148,8 +148,9 @@ mod test {
     }
 
     fn create_buffer(text: &str, cx: &mut TestAppContext) -> BufferSnapshot {
-        let buffer =
-            cx.new(|cx| language::Buffer::local(text, cx).with_language(rust_lang().into(), cx));
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(text, cx).with_language_immediate(rust_lang().into(), cx)
+        });
         buffer.read_with(cx, |buffer, _| buffer.snapshot())
     }
 

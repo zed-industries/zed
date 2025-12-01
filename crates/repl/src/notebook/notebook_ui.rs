@@ -1353,6 +1353,88 @@ impl Item for NotebookEditor {
             .when(params.preview, |this| this.italic())
             .into_any_element()
     }
+
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        let path = &self.notebook_item.read(cx).path;
+        let title = path
+            .file_name()
+            .unwrap_or_else(|| path.as_os_str())
+            .to_string_lossy()
+            .to_string();
+        title.into()
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(IconName::Book.into())
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
+    }
+
+    // TODO
+    fn pixel_position_of_cursor(&self, _: &App) -> Option<Point<Pixels>> {
+        None
+    }
+
+    // TODO
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        None
+    }
+
+    fn set_nav_history(
+        &mut self,
+        _: workspace::ItemNavHistory,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        // TODO
+    }
+
+    // TODO
+    fn can_save(&self, _cx: &App) -> bool {
+        false
+    }
+    // TODO
+    fn save(
+        &mut self,
+        _options: SaveOptions,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save() must be implemented if can_save() returns true")
+    }
+
+    // TODO
+    fn save_as(
+        &mut self,
+        _project: Entity<Project>,
+        _path: ProjectPath,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save_as() must be implemented if can_save() returns true")
+    }
+    // TODO
+    fn reload(
+        &mut self,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("reload() must be implemented if can_save() returns true")
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.cell_map.values().any(|cell| {
+            if let Cell::Code(code_cell) = cell {
+                code_cell.read(cx).is_dirty(cx)
+            } else {
+                false
+            }
+        })
+    }
 }
 
 impl ProjectItem for NotebookEditor {

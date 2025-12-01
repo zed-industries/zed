@@ -87,8 +87,7 @@ pub async fn run_retrieval_searches(
         let exclude_patterns = global_settings
             .file_scan_exclusions
             .sources()
-            .iter()
-            .chain(global_settings.private_files.sources().iter());
+            .chain(global_settings.private_files.sources());
         let path_style = project.path_style(cx);
         anyhow::Ok((PathMatcher::new(exclude_patterns, path_style)?, path_style))
     })??;

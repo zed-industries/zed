@@ -23,7 +23,7 @@ use smol::{
 };
 
 use text::BufferId;
-use util::{ResultExt, maybe, paths::compare_rel_paths};
+use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
@@ -267,10 +267,6 @@ impl Search {
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
                                     let response = request.await?;
-                                    log::error!(
-                                        "Received {} match candidates for a project search",
-                                        response.buffer_ids.len()
-                                    );
                                     for buffer_id in response.buffer_ids {
                                         let buffer_id = BufferId::new(buffer_id)?;
                                         let buffer = buffer_store
@@ -547,7 +543,7 @@ impl Search {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.match_path(file.path().as_std_path()) {
+                    if !search_query.match_path(file.path()) {
                         return false;
                     }
                     if !search_query.include_ignored()
@@ -744,11 +740,11 @@ impl RequestHandler<'_> {
 
             if self.query.filters_path() {
                 let matched_path = if self.query.match_full_paths() {
-                    let mut full_path = snapshot.root_name().as_std_path().to_owned();
-                    full_path.push(entry.path.as_std_path());
+                    let mut full_path = snapshot.root_name().to_owned();
+                    full_path.push(&entry.path);
                     self.query.match_path(&full_path)
                 } else {
-                    self.query.match_path(entry.path.as_std_path())
+                    self.query.match_path(&entry.path)
                 };
                 if !matched_path {
                     return Ok(());
@@ -815,7 +811,6 @@ impl PathInclusionMatcher {
                 query
                     .files_to_include()
                     .sources()
-                    .iter()
                     .flat_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
             );
         }
@@ -842,10 +837,10 @@ impl PathInclusionMatcher {
         }
 
         let as_abs_path = LazyCell::new(move || snapshot.absolutize(&entry.path));
-        let entry_path = entry.path.as_std_path();
+        let entry_path = &entry.path;
         // 3. Check Exclusions (Pruning)
         // If the current path is a child of an excluded path, we stop.
-        let is_excluded = self.path_is_definitely_excluded(entry_path, snapshot);
+        let is_excluded = self.path_is_definitely_excluded(&entry_path, snapshot);
 
         if is_excluded {
             return false;
@@ -865,10 +860,12 @@ impl PathInclusionMatcher {
                     as_abs_path.starts_with(prefix),
                 )
             } else {
-                (
-                    prefix.starts_with(entry_path),
-                    entry_path.starts_with(prefix),
-                )
+                RelPath::new(prefix, snapshot.path_style()).map_or((false, false), |prefix| {
+                    (
+                        prefix.starts_with(entry_path),
+                        entry_path.starts_with(&prefix),
+                    )
+                })
             };
 
             // Logic:
@@ -879,10 +876,10 @@ impl PathInclusionMatcher {
 
         is_included
     }
-    fn path_is_definitely_excluded(&self, path: &Path, snapshot: &Snapshot) -> bool {
-        if !self.query.files_to_exclude().sources().is_empty() {
+    fn path_is_definitely_excluded(&self, path: &RelPath, snapshot: &Snapshot) -> bool {
+        if !self.query.files_to_exclude().sources().next().is_none() {
             let mut path = if self.query.match_full_paths() {
-                let mut full_path = snapshot.root_name().as_std_path().to_owned();
+                let mut full_path = snapshot.root_name().to_owned();
                 full_path.push(path);
                 full_path
             } else {
