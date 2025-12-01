@@ -123,6 +123,8 @@ fn cron_unit_evals() -> NamedJob {
 const UNIT_EVAL_MODELS: &[&str] = &[
     "anthropic/claude-sonnet-4-5-latest",
     "anthropic/claude-opus-4-5-latest",
+    "google/gemini-3-pro",
+    "openai/gpt-5",
 ];
 
 fn cron_unit_evals_job() -> Job {
