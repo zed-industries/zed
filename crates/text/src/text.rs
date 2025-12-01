@@ -2223,9 +2223,19 @@ impl BufferSnapshot {
     where
         D: TextDimension,
     {
-        self.visible_text
-            .cursor(range.start.to_offset(self))
-            .summary(range.end.to_offset(self))
+        let cursor = self.visible_text.cursor(range.start.to_offset(self));
+        self.text_summary_for_range_(cursor, range)
+    }
+
+    pub fn text_summary_for_range_<D, O: ToOffset>(
+        &self,
+        mut cursor: Cursor<'_>,
+        range: Range<O>,
+    ) -> D
+    where
+        D: TextDimension,
+    {
+        cursor.summary(range.end.to_offset(self))
     }
 
     pub fn summaries_for_anchors<'a, D, A>(&'a self, anchors: A) -> impl 'a + Iterator<Item = D>

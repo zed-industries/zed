@@ -1,12 +1,14 @@
+use crate::display_map::{InlayOffset, InlayPoint, inlay_map};
+
 use super::{
     Highlights,
     fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
 
 use language::Point;
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MBDiffCursor, MultiBufferOffset, MultiBufferSnapshot};
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
-use sum_tree::Bias;
+use sum_tree::{Bias, Dimensions};
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
@@ -195,21 +197,44 @@ impl TabSnapshot {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
 
-    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {}
+    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
+        let mut mbcursor = self
+            .buffer
+            .diff_transforms
+            .cursor::<multi_buffer::CursorType>(());
+        let mut inlay_cursor = self
+            .inlay_snapshot
+            .transforms
+            .cursor::<Dimensions<InlayOffset, MultiBufferOffset>>(());
+        let mut fold_cursor = self
+            .fold_snapshot
+            .transforms
+            .cursor::<Dimensions<FoldPoint, InlayPoint>>(());
+        let mut cursor = self.tab_point_cursor();
+        self.text_summary_for_range_(
+            &mut mbcursor,
+            &mut inlay_cursor,
+            &mut fold_cursor,
+            cursor,
+            range,
+        )
+    }
 
-    pub fn text_summary_for_range_(&self,
+    pub fn text_summary_for_range_(
+        &self,
         mbcursor: &mut multi_buffer::MBDiffCursor<'_>,
         inlay_cursor: &mut inlay_map::InlayOffsetCursor<'_>,
-        fold_cursor: &mut FoldCursor<'_>,
-        cursor: &mut <'_>,
-        range: Range<TabPoint>) -> TextSummary {
-        // we can use cursor here
+        fold_cursor: &mut fold_map::FoldCursor<'_>,
+        cursor: &mut TabPointCursor<'_>,
+        range: Range<TabPoint>,
+    ) -> TextSummary {
+        // TODO we can use cursor here
         let input_start = self.tab_point_to_fold_point(range.start, Bias::Left).0;
-        // we can use cursor here
+        // TODO we can use cursor here
         let input_end = self.tab_point_to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
             .fold_snapshot
-            .text_summary_for_range_(input_start..input_end);
+            .text_summary_for_range(input_start..input_end);
 
         let line_end = if range.start.row() == range.end.row() {
             range.end
