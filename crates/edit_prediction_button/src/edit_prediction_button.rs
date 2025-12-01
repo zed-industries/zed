@@ -623,7 +623,13 @@ impl EditPredictionButton {
 
                         let entry = entry.handler(move |window, cx| {
                             if should_open_modal {
-                                open_sweep_api_key_modal(window, cx);
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.toggle_modal(window, cx, |window, cx| {
+                                            SweepApiKeyModal::new(window, cx)
+                                        });
+                                    });
+                                };
                             } else {
                                 set_completion_provider(fs.clone(), cx, provider);
                             }
@@ -1354,14 +1360,6 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                         ..Default::default()
                     });
             }
-        });
-    }
-}
-
-fn open_sweep_api_key_modal(window: &mut Window, cx: &mut App) {
-    if let Some(workspace) = window.root::<Workspace>().flatten() {
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| SweepApiKeyModal::new(window, cx));
         });
     }
 }
