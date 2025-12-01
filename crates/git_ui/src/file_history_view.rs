@@ -391,11 +391,12 @@ impl Render for FileHistoryView {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_1p5()
                             .child(
                                 Label::new(format!("{} commits", entry_count))
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    .color(Color::Muted)
+                                    .when(self.has_more, |this| this.mr_1()),
                             )
                             .when(self.has_more, |this| {
                                 this.child(Divider::vertical()).child(
