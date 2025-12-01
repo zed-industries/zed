@@ -815,7 +815,7 @@ impl WindowsPlatformInner {
     fn run_foreground_task(&self) -> Option<isize> {
         const MAIN_TASK_TIMEOUT: u128 = 10;
 
-        let start = std::time::Instant::now();
+        let mut start = std::time::Instant::now();
         loop {
             loop {
                 if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
@@ -842,6 +842,7 @@ impl WindowsPlatformInner {
                     if peek_msg(&mut msg, PM_QS_PAINT) {
                         process_message(&msg);
                     }
+                    start = std::time::Instant::now();
                 }
                 match self.main_receiver.try_recv() {
                     Err(_) => break,
