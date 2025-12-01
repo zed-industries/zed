@@ -1,5 +1,7 @@
 use std::{
-    cmp::Ordering, fmt::{self, Debug}, ops::{Add, AddAssign, Range, Sub}
+    cmp::Ordering,
+    fmt::{self, Debug},
+    ops::{Add, AddAssign, Range, Sub},
 };
 
 /// A zero-indexed point in a text buffer consisting of a row and column.
@@ -11,7 +13,7 @@ pub struct Point {
 
 impl Debug for Point {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-       write!(f, "Point({}:{})", self.row, self.column) 
+        write!(f, "Point({}:{})", self.row, self.column)
     }
 }
 
