@@ -70,7 +70,7 @@ jobs:
         if [[ -z "$PR_PARENT_SHA" ]]; then
             git checkout "$(git log -1 --format=%H)"~1
         else
-            git checkout "$PARENT_SHA"
+            git checkout "$PR_PARENT_SHA"
         fi
 
 
