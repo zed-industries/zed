@@ -4,8 +4,7 @@ use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
     AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, rems,
-    uniform_list,
+    IntoElement, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
 };
 use project::{
     Project, ProjectPath,
@@ -14,7 +13,7 @@ use project::{
 use std::any::{Any, TypeId};
 
 use time::OffsetDateTime;
-use ui::{Avatar, Chip, ListItem, WithScrollbar, prelude::*};
+use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, Workspace,
@@ -383,9 +382,27 @@ impl Render for FileHistoryView {
                             .size(LabelSize::Default),
                     )
                     .child(
-                        Label::new(format!("{} commits", entry_count))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(format!("{} commits", entry_count))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .when(self.has_more, |this| {
+                                this.child(Divider::vertical()).child(
+                                    Button::new("load-more", "Load More")
+                                        .disabled(self.loading_more)
+                                        .label_size(LabelSize::Small)
+                                        .icon(IconName::ArrowCircle)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.load_more(window, cx);
+                                        })),
+                                )
+                            }),
                     ),
             )
             .child(
@@ -417,21 +434,6 @@ impl Render for FileHistoryView {
                         .flex_1()
                         .size_full()
                         .track_scroll(&self.scroll_handle)
-                    })
-                    .when(self.has_more, |this| {
-                        this.child(
-                            div().p(rems(0.75)).flex().justify_start().child(
-                                Button::new("load-more", "Load more")
-                                    .style(ButtonStyle::Subtle)
-                                    .disabled(self.loading_more)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::ArrowCircle)
-                                    .icon_position(IconPosition::Start)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.load_more(window, cx);
-                                    })),
-                            ),
-                        )
                     })
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
