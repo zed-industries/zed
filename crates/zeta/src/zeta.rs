@@ -941,7 +941,7 @@ impl Zeta {
         });
 
         let reached_request_limit =
-            self.rejected_predictions.len() >= MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST;
+            self.rejected_predictions.len() >= MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST / 2;
         let reject_tx = self.reject_predictions_tx.clone();
         self.reject_predictions_debounce_task = Some(cx.spawn(async move |_this, cx| {
             const DISCARD_COMPLETIONS_DEBOUNCE: Duration = Duration::from_secs(15);
