@@ -66,11 +66,14 @@ jobs:
       run: |
         CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
         PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
+        BRANCH_PARENT_SHA="$(git merge-base main zed-zippy-autobump)"
 
-        if [[ -z "$PR_PARENT_SHA" ]]; then
-            git checkout "$(git log -1 --format=%H)"~1
-        else
+        if [[ -n "$PR_PARENT_SHA" ]]; then
             git checkout "$PR_PARENT_SHA"
+        elif [[ -n "$BRANCH_PARENT_SHA" ]]; then
+            git checkout "$BRANCH_PARENT_SHA"
+        else
+            git checkout "$(git log -1 --format=%H)"~1
         fi
 
 
