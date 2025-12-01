@@ -1060,7 +1060,7 @@ impl SshSocket {
             _ => anyhow::bail!("unknown uname: {uname:?}"),
         };
 
-        // The junk infor before the uname output may look lke "Welcome to Ubuntu 20.04.4 LTS"
+        // The junk info before the uname output may look like "Welcome to Ubuntu 20.04.4 LTS"
         // and doesn't have a trailing newline, so os may become like "LTSLinux". We just check
         // the ending here.
         let os = match os {
