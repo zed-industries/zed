@@ -1354,16 +1354,6 @@ impl Item for NotebookEditor {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        let path = &self.notebook_item.read(cx).path;
-        let title = path
-            .file_name()
-            .unwrap_or_else(|| path.as_os_str())
-            .to_string_lossy()
-            .to_string();
-        title.into()
-    }
-
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(IconName::Book.into())
     }
