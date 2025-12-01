@@ -622,6 +622,7 @@ impl VsCodeSettings {
                 .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
             enable_preview_from_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
+            enable_preview_from_file_explorer: None,
         })
     }
 
