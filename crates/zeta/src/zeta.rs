@@ -20,7 +20,7 @@ use edit_prediction_context::{
 };
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use futures::channel::{mpsc, oneshot};
-use futures::{AsyncReadExt as _, StreamExt as _};
+use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
@@ -61,7 +61,7 @@ mod prediction;
 mod provider;
 mod rate_prediction_modal;
 pub mod retrieval_search;
-mod sweep_ai;
+pub mod sweep_ai;
 pub mod udiff;
 mod xml_edits;
 pub mod zeta1;
@@ -80,7 +80,7 @@ use crate::rate_prediction_modal::{
     NextEdit, PreviousEdit, RatePredictionsModal, ThumbsDownActivePrediction,
     ThumbsUpActivePrediction,
 };
-use crate::sweep_ai::SweepAi;
+pub use crate::sweep_ai::SweepAi;
 use crate::zeta1::request_prediction_with_zeta1;
 pub use provider::ZetaEditPredictionProvider;
 
@@ -193,7 +193,7 @@ pub struct Zeta {
     #[cfg(feature = "eval-support")]
     eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: ZetaEditPredictionModel,
-    sweep_ai: SweepAi,
+    pub sweep_ai: SweepAi,
     data_collection_choice: DataCollectionChoice,
     rejected_predictions: Vec<EditPredictionRejection>,
     reject_predictions_tx: mpsc::UnboundedSender<()>,
@@ -553,7 +553,12 @@ impl Zeta {
     }
 
     pub fn has_sweep_api_token(&self) -> bool {
-        self.sweep_ai.api_token.is_some()
+        self.sweep_ai
+            .api_token
+            .clone()
+            .now_or_never()
+            .flatten()
+            .is_some()
     }
 
     #[cfg(feature = "eval-support")]

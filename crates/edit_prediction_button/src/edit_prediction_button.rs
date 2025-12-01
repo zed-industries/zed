@@ -1,3 +1,7 @@
+mod sweep_api_token_modal;
+
+pub use sweep_api_token_modal::SweepApiKeyModal;
+
 use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
@@ -40,8 +44,7 @@ use workspace::{
     notifications::NotificationId,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletions;
-use zeta::{SweepFeatureFlag, Zeta2FeatureFlag};
+use zeta::{RateCompletions, SweepFeatureFlag, Zeta2FeatureFlag};
 
 actions!(
     edit_prediction,
@@ -313,6 +316,10 @@ impl Render for EditPredictionButton {
                     )
                 );
 
+                let sweep_missing_token = is_sweep
+                    && !zeta::Zeta::try_global(cx)
+                        .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
+
                 let zeta_icon = match (is_sweep, enabled) {
                     (true, _) => IconName::SweepAi,
                     (false, true) => IconName::ZedPredict,
@@ -360,19 +367,24 @@ impl Render for EditPredictionButton {
                 let show_editor_predictions = self.editor_show_predictions;
                 let user = self.user_store.read(cx).current_user();
 
+                let indicator_color = if sweep_missing_token {
+                    Some(Color::Error)
+                } else if enabled && (!show_editor_predictions || over_limit) {
+                    Some(if over_limit {
+                        Color::Error
+                    } else {
+                        Color::Muted
+                    })
+                } else {
+                    None
+                };
+
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
-                    .when(
-                        enabled && (!show_editor_predictions || over_limit),
-                        |this| {
-                            this.indicator(Indicator::dot().when_else(
-                                over_limit,
-                                |dot| dot.color(Color::Error),
-                                |dot| dot.color(Color::Muted),
-                            ))
+                    .when_some(indicator_color, |this, color| {
+                        this.indicator(Indicator::dot().color(color))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                        },
-                    )
+                    })
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
                         let user = user.clone();
                         element.tooltip(move |_window, cx| {
@@ -537,23 +549,23 @@ impl EditPredictionButton {
 
         const ZED_AI_CALLOUT: &str =
             "Zed's edit prediction is powered by Zeta, an open-source, dataset mode.";
-        const USE_SWEEP_API_TOKEN_CALLOUT: &str =
-            "Set the SWEEP_API_TOKEN environment variable to use Sweep";
 
-        let other_providers: Vec<_> = available_providers
+        let providers: Vec<_> = available_providers
             .into_iter()
-            .filter(|p| *p != current_provider && *p != EditPredictionProvider::None)
+            .filter(|p| *p != EditPredictionProvider::None)
             .collect();
 
-        if !other_providers.is_empty() {
-            menu = menu.separator().header("Switch Providers");
+        if !providers.is_empty() {
+            menu = menu.separator().header("Providers");
 
-            for provider in other_providers {
+            for provider in providers {
+                let is_current = provider == current_provider;
                 let fs = self.fs.clone();
 
                 menu = match provider {
                     EditPredictionProvider::Zed => menu.item(
                         ContextMenuEntry::new("Zed AI")
+                            .toggleable(IconPosition::Start, is_current)
                             .documentation_aside(
                                 DocumentationSide::Left,
                                 DocumentationEdge::Bottom,
@@ -563,46 +575,77 @@ impl EditPredictionButton {
                                 set_completion_provider(fs.clone(), cx, provider);
                             }),
                     ),
-                    EditPredictionProvider::Copilot => {
-                        menu.entry("GitHub Copilot", None, move |_, cx| {
-                            set_completion_provider(fs.clone(), cx, provider);
-                        })
-                    }
-                    EditPredictionProvider::Supermaven => {
-                        menu.entry("Supermaven", None, move |_, cx| {
-                            set_completion_provider(fs.clone(), cx, provider);
-                        })
-                    }
-                    EditPredictionProvider::Codestral => {
-                        menu.entry("Codestral", None, move |_, cx| {
-                            set_completion_provider(fs.clone(), cx, provider);
-                        })
-                    }
+                    EditPredictionProvider::Copilot => menu.item(
+                        ContextMenuEntry::new("GitHub Copilot")
+                            .toggleable(IconPosition::Start, is_current)
+                            .handler(move |_, cx| {
+                                set_completion_provider(fs.clone(), cx, provider);
+                            }),
+                    ),
+                    EditPredictionProvider::Supermaven => menu.item(
+                        ContextMenuEntry::new("Supermaven")
+                            .toggleable(IconPosition::Start, is_current)
+                            .handler(move |_, cx| {
+                                set_completion_provider(fs.clone(), cx, provider);
+                            }),
+                    ),
+                    EditPredictionProvider::Codestral => menu.item(
+                        ContextMenuEntry::new("Codestral")
+                            .toggleable(IconPosition::Start, is_current)
+                            .handler(move |_, cx| {
+                                set_completion_provider(fs.clone(), cx, provider);
+                            }),
+                    ),
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
                         let has_api_token = zeta::Zeta::try_global(cx)
                             .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
 
-                        let entry = ContextMenuEntry::new("Sweep")
-                            .when(!has_api_token, |this| {
-                                this.disabled(true).documentation_aside(
+                        let should_open_modal = !has_api_token || is_current;
+
+                        let entry = if has_api_token {
+                            ContextMenuEntry::new("Sweep")
+                                .toggleable(IconPosition::Start, is_current)
+                        } else {
+                            ContextMenuEntry::new("Sweep")
+                                .icon(IconName::XCircle)
+                                .icon_color(Color::Error)
+                                .documentation_aside(
                                     DocumentationSide::Left,
                                     DocumentationEdge::Bottom,
-                                    |_| Label::new(USE_SWEEP_API_TOKEN_CALLOUT).into_any_element(),
+                                    |_| {
+                                        Label::new("Click to configure your Sweep API token")
+                                            .into_any_element()
+                                    },
                                 )
-                            })
-                            .handler(move |_, cx| {
+                        };
+
+                        let entry = entry.handler(move |window, cx| {
+                            if should_open_modal {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.toggle_modal(window, cx, |window, cx| {
+                                            SweepApiKeyModal::new(window, cx)
+                                        });
+                                    });
+                                };
+                            } else {
                                 set_completion_provider(fs.clone(), cx, provider);
-                            });
+                            }
+                        });
 
                         menu.item(entry)
                     }
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => menu.entry("Zeta2", None, move |_, cx| {
-                        set_completion_provider(fs.clone(), cx, provider);
-                    }),
+                    ) => menu.item(
+                        ContextMenuEntry::new("Zeta2")
+                            .toggleable(IconPosition::Start, is_current)
+                            .handler(move |_, cx| {
+                                set_completion_provider(fs.clone(), cx, provider);
+                            }),
+                    ),
                     EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => {
                         continue;
                     }
