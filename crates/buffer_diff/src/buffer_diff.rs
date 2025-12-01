@@ -1002,14 +1002,12 @@ fn process_patch_hunk(
     let end = Point::new(buffer_row_range.end, 0);
     let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
 
-    let largest_diff_line_count = buffer_row_range
-        .len()
-        .max(line_item_count.saturating_sub(buffer_row_range.len()));
+    let base_line_count = line_item_count.saturating_sub(buffer_row_range.len());
 
     let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
-        && !diff_base_byte_range.is_empty()
         && !buffer_row_range.is_empty()
-        && diff_options.max_word_diff_line_count >= largest_diff_line_count
+        && base_line_count == buffer_row_range.len()
+        && diff_options.max_word_diff_line_count >= base_line_count
     {
         let base_text: String = diff_base
             .chunks_in_range(diff_base_byte_range.clone())

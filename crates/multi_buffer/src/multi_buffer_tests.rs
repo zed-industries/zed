@@ -4438,101 +4438,13 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
     }
 }
 
-#[gpui::test(iterations = 100)]
-async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng) {
-    let settings_store = cx.update(|cx| SettingsStore::test(cx));
-    cx.set_global(settings_store);
-
-    log::info!("Starting word diff test iteration");
-    let word_count = rng.random_range(5..30);
-    let mut base_text = String::new();
-    let mut words = Vec::new();
-
-    for i in 0..word_count {
-        let word: String = (0..rng.random_range(3..10))
-            .map(|_| rng.random_range(b'a'..=b'z') as char)
-            .collect();
-        words.push(word.clone());
-        base_text.push_str(&word);
-
-        if i < word_count - 1 {
-            if rng.random_range(0..100) < 30 {
-                base_text.push('\n');
-            } else {
-                base_text.push(' ');
-            }
-        }
-    }
-
-    let mut modified_text = base_text.clone();
-    let mut expected_total_word_diff_count = 0;
-    let mutation_count = rng.random_range(1..word_count.min(5));
-    let mut modified_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
-
-    for _ in 0..mutation_count {
-        if words.is_empty() {
-            break;
-        }
-
-        let word_idx = rng.random_range(0..words.len());
-        let word = &words[word_idx];
-
-        if let Some(word_pos) = modified_text.find(word) {
-            let line_number = modified_text[..word_pos].matches('\n').count();
-
-            if modified_lines.contains(&line_number) {
-                words.remove(word_idx);
-                continue;
-            }
-
-            let end = word_pos + word.len();
-
-            let line_start = modified_text[..word_pos]
-                .rfind('\n')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let line_end = modified_text[word_pos..]
-                .find('\n')
-                .map(|i| word_pos + i)
-                .unwrap_or(modified_text.len());
-            let line = &modified_text[line_start..line_end];
-
-            let other_content =
-                line[..word_pos - line_start].trim().len() + line[end - line_start..].trim().len();
-
-            if other_content == 0 {
-                words.remove(word_idx);
-                continue;
-            }
-
-            let action = rng.random_range(0..100);
-
-            if action < 70 {
-                let new_word: String = (0..rng.random_range(3..10))
-                    .map(|_| rng.random_range(b'A'..=b'Z') as char)
-                    .collect();
-
-                expected_total_word_diff_count += 2;
-                modified_text.replace_range(word_pos..word_pos + word.len(), &new_word);
-                modified_lines.insert(line_number);
-            } else {
-                let delete_end = if modified_text.as_bytes().get(end) == Some(&b' ') {
-                    end + 1
-                } else {
-                    end
-                };
-
-                expected_total_word_diff_count += 1;
-                modified_text.replace_range(word_pos..delete_end, "");
-                modified_lines.insert(line_number);
-            }
-
-            words.remove(word_idx);
-        }
-    }
-
-    let buffer = cx.new(|cx| Buffer::local(&modified_text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+fn collect_word_diffs(
+    base_text: &str,
+    modified_text: &str,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    let buffer = cx.new(|cx| Buffer::local(modified_text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -4548,47 +4460,81 @@ async fn test_random_word_diff_offsets(cx: &mut TestAppContext, mut rng: StdRng)
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     let text = snapshot.text();
 
-    let mut found_word_diffs = false;
-    let mut actual_total_word_diff_count = 0;
+    snapshot
+        .diff_hunks()
+        .flat_map(|hunk| hunk.word_diffs)
+        .map(|range| text[range.start.0..range.end.0].to_string())
+        .collect()
+}
 
-    for (hunk_idx, diff_hunk) in snapshot.diff_hunks().enumerate() {
-        if !diff_hunk.word_diffs.is_empty() {
-            found_word_diffs = true;
-            actual_total_word_diff_count += diff_hunk.word_diffs.len();
+#[gpui::test]
+async fn test_word_diff_simple_replacement(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
 
-            for word_diff in &diff_hunk.word_diffs {
-                assert!(
-                    word_diff.start < word_diff.end,
-                    "Word diff is empty in hunk {}",
-                    hunk_idx
-                );
+    let base_text = "hello world foo bar\n";
+    let modified_text = "hello WORLD foo BAR\n";
 
-                assert!(
-                    word_diff.end.0 <= text.len(),
-                    "Word diff end {} exceeds text length {} in hunk {}",
-                    word_diff.end.0,
-                    text.len(),
-                    hunk_idx
-                );
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
 
-                let word_diff_text = &text[word_diff.start.0..word_diff.end.0];
-                assert!(
-                    !word_diff_text.is_empty(),
-                    "Word diff at {:?} points to empty text in hunk {}",
-                    word_diff,
-                    hunk_idx
-                );
-            }
-        }
-    }
+    assert_eq!(word_diffs, vec!["world", "bar", "WORLD", "BAR"]);
+}
 
-    if expected_total_word_diff_count > 0 {
-        assert!(
-            found_word_diffs,
-            "Expected to find word_diffs after expanding hunks with mutations"
-        );
-    }
-    assert_eq!(actual_total_word_diff_count, expected_total_word_diff_count);
+#[gpui::test]
+async fn test_word_diff_consecutive_modified_lines(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "aaa bbb\nccc ddd\n";
+    let modified_text = "aaa BBB\nccc DDD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        vec!["bbb", "ddd", "BBB", "DDD"],
+        "consecutive modified lines should produce word diffs when line counts match"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "aaa bbb\ndeleted line\nccc ddd\n";
+    let modified_text = "aaa BBB\nccc DDD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        Vec::<String>::new(),
+        "modified lines with a deleted line between should not produce word diffs"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_disabled(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| {
+        let mut settings_store = SettingsStore::test(cx);
+        settings_store.update_user_settings(cx, |settings| {
+            settings.project.all_languages.defaults.word_diff_enabled = Some(false);
+        });
+        settings_store
+    });
+    cx.set_global(settings_store);
+
+    let base_text = "hello world\n";
+    let modified_text = "hello WORLD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        Vec::<String>::new(),
+        "word diffs should be empty when disabled"
+    );
 }
 
 /// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)
