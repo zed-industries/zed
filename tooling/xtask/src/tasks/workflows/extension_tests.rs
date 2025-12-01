@@ -82,7 +82,7 @@ pub(crate) fn check_extension() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
-        .timeout_minutes(1u32)
+        .timeout_minutes(2u32)
         .add_step(steps::checkout_repo())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
