@@ -5,7 +5,6 @@ on:
   pull_request:
     types:
     - labeled
-    - synchronize
   push:
     branches:
     - main

@@ -19,11 +19,7 @@ pub(crate) fn bump_version() -> Workflow {
     named::workflow()
         .on(Event::default()
             .push(Push::default().add_branch("main"))
-            .pull_request(
-                PullRequest::default()
-                    .add_type(PullRequestType::Labeled)
-                    .add_type(PullRequestType::Synchronize),
-            ))
+            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled)))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)
 }
