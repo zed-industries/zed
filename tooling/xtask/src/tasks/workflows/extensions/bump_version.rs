@@ -7,7 +7,7 @@ use indoc::indoc;
 use crate::tasks::workflows::{
     runners,
     steps::{NamedJob, named},
-    vars::{self, JobOutput, StepOutput},
+    vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
 pub(crate) fn bump_version() -> Workflow {
@@ -20,6 +20,7 @@ pub(crate) fn bump_version() -> Workflow {
         .on(Event::default()
             .push(Push::default().add_branch("main"))
             .pull_request(PullRequest::default().add_type(PullRequestType::Labeled)))
+        .concurrency(one_workflow_per_non_main_branch_and_token("labels"))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)
 }

@@ -46,3 +46,6 @@ jobs:
     with:
       bump-type: ${{ needs.determine_bump_type.outputs.bump_type }}
       force-bump: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anyshalabels' }}
+  cancel-in-progress: true
