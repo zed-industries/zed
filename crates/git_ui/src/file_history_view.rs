@@ -4,8 +4,7 @@ use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
     AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ListSizingBehavior, Render, Task, UniformListScrollHandle, WeakEntity, Window,
-    actions, rems, uniform_list,
+    IntoElement, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
 };
 use project::{
     Project, ProjectPath,
@@ -14,11 +13,8 @@ use project::{
 use std::any::{Any, TypeId};
 
 use time::OffsetDateTime;
-use ui::{
-    Avatar, Button, ButtonStyle, Color, Icon, IconName, IconSize, Label, LabelCommon as _,
-    LabelSize, SharedString, prelude::*,
-};
-use util::{ResultExt, truncate_and_trailoff};
+use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
+use util::ResultExt;
 use workspace::{
     Item, Workspace,
     item::{ItemEvent, SaveOptions},
@@ -195,38 +191,24 @@ impl FileHistoryView {
         task.detach();
     }
 
-    fn list_item_height(&self) -> Rems {
-        rems(2.0)
-    }
-
-    fn fallback_commit_avatar() -> AnyElement {
-        Icon::new(IconName::Person)
-            .color(Color::Muted)
-            .size(IconSize::Small)
-            .into_element()
-            .into_any()
-    }
-
     fn render_commit_avatar(
         &self,
         sha: &SharedString,
         window: &mut Window,
         cx: &mut App,
-    ) -> AnyElement {
+    ) -> impl IntoElement {
         let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
+        let size = rems_from_px(20.);
 
         if let Some(remote) = remote {
             let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
             if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                Avatar::new(url.to_string())
-                    .size(rems(1.25))
-                    .into_element()
-                    .into_any()
+                Avatar::new(url.to_string()).size(size)
             } else {
-                Self::fallback_commit_avatar()
+                Avatar::new("").size(size)
             }
         } else {
-            Self::fallback_commit_avatar()
+            Avatar::new("").size(size)
         }
     }
 
@@ -263,34 +245,52 @@ impl FileHistoryView {
             time_format::TimestampFormat::Relative,
         );
 
-        let selected = self.selected_entry == Some(ix);
         let sha = entry.sha.clone();
         let repo = self.repository.clone();
         let workspace = self.workspace.clone();
         let file_path = self.history.path.clone();
 
-        let base_bg = if selected {
-            cx.theme().status().info.alpha(0.1)
-        } else {
-            cx.theme().colors().editor_background
-        };
-
-        let hover_bg = if selected {
-            cx.theme().status().info.alpha(0.15)
-        } else {
-            cx.theme().colors().element_hover
-        };
-
-        h_flex()
-            .id(("commit", ix))
-            .h(self.list_item_height())
-            .w_full()
-            .items_center()
-            .px(rems(0.75))
-            .gap_2()
-            .bg(base_bg)
-            .hover(|style| style.bg(hover_bg))
-            .cursor_pointer()
+        ListItem::new(("commit", ix))
+            .child(
+                h_flex()
+                    .h_8()
+                    .w_full()
+                    .pl_0p5()
+                    .pr_2p5()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(rems_from_px(52.))
+                            .flex_none()
+                            .child(Chip::new(pr_number)),
+                    )
+                    .child(self.render_commit_avatar(&entry.sha, window, cx))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(entry.author_name.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Default),
+                                    )
+                                    .child(
+                                        Label::new(&entry.subject)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    ),
+                            )
+                            .child(
+                                Label::new(relative_timestamp)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected_entry = Some(ix);
                 cx.notify();
@@ -308,56 +308,6 @@ impl FileHistoryView {
                     );
                 }
             }))
-            .child(
-                div().flex_none().min_w(rems(4.0)).child(
-                    div()
-                        .px(rems(0.5))
-                        .py(rems(0.25))
-                        .rounded_md()
-                        .bg(cx.theme().colors().element_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Label::new(pr_number)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .single_line(),
-                        ),
-                ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .w(rems(1.75))
-                    .child(self.render_commit_avatar(&entry.sha, window, cx)),
-            )
-            .child(
-                div().flex_1().overflow_hidden().child(
-                    h_flex()
-                        .gap_3()
-                        .items_center()
-                        .child(
-                            Label::new(entry.author_name.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default)
-                                .single_line(),
-                        )
-                        .child(
-                            Label::new(truncate_and_trailoff(&entry.subject, 100))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .single_line(),
-                        ),
-                ),
-            )
-            .child(
-                div().flex_none().child(
-                    Label::new(relative_timestamp)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .single_line(),
-                ),
-            )
             .into_any_element()
     }
 }
@@ -419,31 +369,49 @@ impl Focusable for FileHistoryView {
 }
 
 impl Render for FileHistoryView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _file_name = self.history.path.file_name().unwrap_or("File");
         let entry_count = self.history.entries.len();
 
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
-                    .px(rems(0.75))
-                    .py(rems(0.5))
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().title_bar_background)
-                    .items_center()
+                    .h(rems_from_px(41.))
+                    .pl_3()
+                    .pr_2()
                     .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
-                        h_flex().gap_2().items_center().child(
-                            Label::new(format!("History: {}", self.history.path.as_unix_str()))
-                                .size(LabelSize::Default),
-                        ),
+                        Label::new(self.history.path.as_unix_str().to_string())
+                            .color(Color::Muted)
+                            .buffer_font(cx),
                     )
                     .child(
-                        Label::new(format!("{} commits", entry_count))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Label::new(format!("{} commits", entry_count))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .when(self.has_more, |this| this.mr_1()),
+                            )
+                            .when(self.has_more, |this| {
+                                this.child(Divider::vertical()).child(
+                                    Button::new("load-more", "Load More")
+                                        .disabled(self.loading_more)
+                                        .label_size(LabelSize::Small)
+                                        .icon(IconName::ArrowCircle)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.load_more(window, cx);
+                                        })),
+                                )
+                            }),
                     ),
             )
             .child(
@@ -474,24 +442,9 @@ impl Render for FileHistoryView {
                         )
                         .flex_1()
                         .size_full()
-                        .with_sizing_behavior(ListSizingBehavior::Auto)
                         .track_scroll(&self.scroll_handle)
                     })
-                    .when(self.has_more, |this| {
-                        this.child(
-                            div().p(rems(0.75)).flex().justify_start().child(
-                                Button::new("load-more", "Load more")
-                                    .style(ButtonStyle::Subtle)
-                                    .disabled(self.loading_more)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::ArrowCircle)
-                                    .icon_position(IconPosition::Start)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.load_more(window, cx);
-                                    })),
-                            ),
-                        )
-                    }),
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
@@ -518,7 +471,7 @@ impl Item for FileHistoryView {
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::FileGit))
+        Some(Icon::new(IconName::GitBranch))
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
