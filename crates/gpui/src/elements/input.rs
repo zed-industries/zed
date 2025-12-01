@@ -13,7 +13,8 @@ use crate::{
     Hsla, InputLineLayout, InputState, InspectorElementId, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement, Styled, TextAlign,
-    TextDirection, TextRun, TextStyle, Window, WrappedLine, colors, fill, input::INPUT_CONTEXT,
+    TextDirection, TextRun, TextStyle, Window, WrappedLine, colors, fill,
+    input::{INPUT_CONTEXT, bindings::Escape},
     point, px, relative, size,
 };
 
@@ -177,6 +178,11 @@ impl Input {
         register_action(&mut self.interactivity, &self.input, InputState::cut);
         register_action(&mut self.interactivity, &self.input, InputState::undo);
         register_action(&mut self.interactivity, &self.input, InputState::redo);
+
+        self.interactivity
+            .on_action::<Escape>(|_action, window, _cx| {
+                window.blur();
+            });
     }
 }
 

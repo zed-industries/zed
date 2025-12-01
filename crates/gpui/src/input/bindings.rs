@@ -7,6 +7,8 @@ actions!(
         Backspace,
         /// Delete the character after the cursor.
         Delete,
+        /// Blur focus from the input.
+        Escape,
         /// Delete the word before the cursor.
         DeleteWordLeft,
         /// Delete the word after the cursor.
@@ -210,6 +212,10 @@ pub struct InputBindings {
     /// Binding for redoing the last undone edit.
     /// Default: `cmd-shift-z` (macOS) / `ctrl-shift-z` (other platforms)
     pub redo: Option<KeyBinding>,
+
+    /// Binding for blurring focus from the input.
+    /// Default: `escape`
+    pub escape: Option<KeyBinding>,
 }
 
 impl Default for InputBindings {
@@ -264,6 +270,7 @@ impl Default for InputBindings {
                 paste: Some(KeyBinding::new("cmd-v", Paste, context)),
                 undo: Some(KeyBinding::new("cmd-z", Undo, context)),
                 redo: Some(KeyBinding::new("cmd-shift-z", Redo, context)),
+                escape: Some(KeyBinding::new("escape", Escape, context)),
             }
         }
 
@@ -318,6 +325,7 @@ impl Default for InputBindings {
                 paste: Some(KeyBinding::new("ctrl-v", Paste, context)),
                 undo: Some(KeyBinding::new("ctrl-z", Undo, context)),
                 redo: Some(KeyBinding::new("ctrl-shift-z", Redo, context)),
+                escape: Some(KeyBinding::new("escape", Escape, context)),
             }
         }
     }
@@ -366,6 +374,7 @@ impl InputBindings {
             paste: None,
             undo: None,
             redo: None,
+            escape: None,
         }
     }
 
@@ -410,6 +419,7 @@ impl InputBindings {
             paste: self.paste.or(defaults.paste),
             undo: self.undo.or(defaults.undo),
             redo: self.redo.or(defaults.redo),
+            escape: self.escape.or(defaults.escape),
         }
     }
 
@@ -448,6 +458,7 @@ impl InputBindings {
             self.paste,
             self.undo,
             self.redo,
+            self.escape,
         ]
         .into_iter()
         .flatten()
