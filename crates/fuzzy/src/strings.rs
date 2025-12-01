@@ -30,6 +30,7 @@ impl StringMatchCandidate {
     }
 
     pub fn with_boost(id: usize, string: &str, boost: f64) -> Self {
+        debug_assert!(boost > 0.0, "boost must be positive");
         Self {
             id,
             string: string.into(),

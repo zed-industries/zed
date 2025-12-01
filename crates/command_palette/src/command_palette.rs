@@ -306,13 +306,9 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .iter()
                     .enumerate()
                     .map(|(ix, command)| {
-                        // Calculate boost from hit counts using square root scaling
-                        // This is more aggressive for low counts, giving frequently-used commands
-                        // a fighting chance against better fuzzy matches:
-                        // 1 use → 2.5x, 5 uses → 4.35x, 10 uses → 5.74x, 50 uses → 11.6x
                         let boost = hit_counts
                             .get(&command.name)
-                            .map(|&count| 1.0 + (count as f64).sqrt() * 1.5)
+                            .map(|&count| (count as f64 + 1.0).sqrt())
                             .unwrap_or(1.0);
                         StringMatchCandidate::with_boost(ix, &command.name, boost)
                     })
