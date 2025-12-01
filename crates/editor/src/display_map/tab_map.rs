@@ -215,7 +215,7 @@ impl TabSnapshot {
             &mut mbcursor,
             &mut inlay_cursor,
             &mut fold_cursor,
-            cursor,
+            &mut cursor,
             range,
         )
     }
