@@ -98,7 +98,7 @@ impl Render for AgentModelSelector {
                 .child(
                     Icon::new(IconName::ChevronDown)
                         .color(color)
-                        .size(IconSize::XSmall),
+                        .size(IconSize::Small),
                 ),
             move |_window, cx| {
                 Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
