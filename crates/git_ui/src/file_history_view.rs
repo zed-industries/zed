@@ -256,7 +256,6 @@ impl FileHistoryView {
                 h_flex()
                     .h_8()
                     .w_full()
-                    .py_2()
                     .pl_0p5()
                     .pr_2p5()
                     .gap_2()
