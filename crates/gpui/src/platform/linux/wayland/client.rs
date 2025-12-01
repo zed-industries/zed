@@ -2451,12 +2451,19 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     let Some(window) = window.upgrade() else {
                         continue;
                     };
+
+                    // Touch events don't have enter/leave, which is how
+                    // `first_mouse` is determined for mouse events. Pass
+                    // `false` to mark all events as non-focusing (i.e. they
+                    // perform an action, not just change focus).
+                    let first_mouse = false;
+
                     window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
                         button: MouseButton::Left,
                         position,
                         modifiers,
                         click_count: 1,
-                        first_mouse: true,
+                        first_mouse,
                     }));
 
                     window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
