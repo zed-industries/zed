@@ -258,7 +258,12 @@ impl FileHistoryView {
                     .pl_0p5()
                     .pr_2p5()
                     .gap_2()
-                    .child(div().w(rems_from_px(52.)).child(Chip::new(pr_number)))
+                    .child(
+                        div()
+                            .w(rems_from_px(52.))
+                            .flex_none()
+                            .child(Chip::new(pr_number)),
+                    )
                     .child(self.render_commit_avatar(&entry.sha, window, cx))
                     .child(
                         h_flex()
