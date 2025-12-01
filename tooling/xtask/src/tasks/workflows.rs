@@ -82,10 +82,10 @@ impl WorkflowType {
                 "# Generated from xtask::workflows::{}{}\n",
                 "# Rebuild with `cargo xtask workflows`.",
             ),
+            workflow_name,
             matches!(self, WorkflowType::Extensions)
                 .then_some(" within the Zed repository.")
                 .unwrap_or_default(),
-            workflow_name
         )
     }
 
