@@ -145,7 +145,7 @@ fn load_embedded_fonts(cx: &App) -> anyhow::Result<()> {
 }
 
 fn load_storybook_keymap(cx: &mut App) {
-    cx.bind_keys(KeymapFile::load_asset("keymaps/storybook.json", None, cx).unwrap());
+    cx.bind_keys(KeymapFile::load_asset("keymaps/storybook.json", None, cx).unwrap().key_bindings);
 }
 
 pub fn init(cx: &mut App) {

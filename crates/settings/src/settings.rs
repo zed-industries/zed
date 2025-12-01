@@ -27,7 +27,7 @@ pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
-    KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
+    KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult, KeymapLabel, KeymapLabels, KeymapLoad,
 };
 pub use serde_helper::*;
 pub use settings_file::*;

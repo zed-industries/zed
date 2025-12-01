@@ -96,15 +96,15 @@ impl VimTestContext {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |s| s.vim_mode = Some(enabled));
         });
-        let mut default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+        let mut default_keymap = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-macos.json",
             cx,
         )
         .unwrap();
-        for key_binding in &mut default_key_bindings {
+        for key_binding in &mut default_keymap.key_bindings {
             key_binding.set_meta(settings::KeybindSource::Default.meta());
         }
-        cx.bind_keys(default_key_bindings);
+        cx.bind_keys(default_keymap.key_bindings);
         if enabled {
             let vim_key_bindings = settings::KeymapFile::load_asset(
                 "keymaps/vim.json",
@@ -112,7 +112,7 @@ impl VimTestContext {
                 cx,
             )
             .unwrap();
-            cx.bind_keys(vim_key_bindings);
+            cx.bind_keys(vim_key_bindings.key_bindings);
         }
     }
 

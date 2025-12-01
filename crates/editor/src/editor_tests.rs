@@ -22895,7 +22895,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
             cx,
         )
         .unwrap();
-        cx.bind_keys(default_key_bindings);
+        cx.bind_keys(default_key_bindings.key_bindings);
     });
 
     let (editor, cx) = cx.add_window_view(|window, cx| {

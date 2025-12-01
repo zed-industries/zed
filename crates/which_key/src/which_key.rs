@@ -1,9 +1,11 @@
 //! Which-key support for Zed.
 
+mod which_key_labels;
 mod which_key_modal;
 mod which_key_settings;
 
 use gpui::{App, Keystroke};
+use settings::KeymapLabels;
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
 use util::ResultExt;
@@ -13,6 +15,7 @@ use workspace::Workspace;
 
 pub fn init(cx: &mut App) {
     WhichKeySettings::register(cx);
+    which_key_labels::register(cx);
 
     cx.observe_new(|_: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -55,6 +58,10 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
+}
+
+pub fn set_keymap_labels(cx: &mut App, labels: KeymapLabels) {
+    which_key_labels::set_labels(cx, labels);
 }
 
 // Hard-coded list of keystrokes to filter out from which-key display

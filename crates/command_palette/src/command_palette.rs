@@ -793,8 +793,9 @@ mod tests {
             go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
-            cx.bind_keys(KeymapFile::load_panic_on_failure(
-                r#"[
+            cx.bind_keys(
+                KeymapFile::load_panic_on_failure(
+                    r#"[
                     {
                         "bindings": {
                             "cmd-n": "workspace::NewFile",
@@ -803,8 +804,10 @@ mod tests {
                         }
                     }
                 ]"#,
-                cx,
-            ));
+                    cx,
+                )
+                .key_bindings,
+            );
             app_state
         })
     }

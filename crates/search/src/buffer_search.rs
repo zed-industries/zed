@@ -1593,7 +1593,7 @@ mod tests {
                 cx,
             )
             .unwrap();
-            cx.bind_keys(default_key_bindings);
+            cx.bind_keys(default_key_bindings.key_bindings);
             editor = Some(cx.new(|cx| Editor::for_buffer(buffer.clone(), None, window, cx)));
             let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);

@@ -30,9 +30,9 @@ use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
-    actions, image_cache, point, px, retain_all,
+    Focusable, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled,
+    Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -59,9 +59,9 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsStore, VIM_KEYMAP_PATH,
-    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file,
+    KeymapFileLoadResult, KeymapLabels, KeymapLoad, MigrationStatus, Settings, SettingsStore,
+    VIM_KEYMAP_PATH, initial_local_debug_tasks_content, initial_project_settings_content,
+    initial_tasks_content, update_settings_file,
 };
 use std::time::Duration;
 use std::{
@@ -1574,7 +1574,8 @@ pub fn handle_keymap_file_changes(
         .detach();
     }
 
-    load_default_keymap(cx);
+    let initial_labels = load_default_keymap(cx);
+    which_key::set_keymap_labels(cx, initial_labels);
 
     struct KeymapParseErrorNotification;
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
@@ -1609,16 +1610,32 @@ pub fn handle_keymap_file_changes(
                 }
                 let load_result = KeymapFile::load(&user_keymap_content, cx);
                 match load_result {
-                    KeymapFileLoadResult::Success { key_bindings } => {
-                        reload_keymaps(cx, key_bindings);
+                    KeymapFileLoadResult::Success {
+                        key_bindings,
+                        labels,
+                    } => {
+                        reload_keymaps(
+                            cx,
+                            KeymapLoad {
+                                key_bindings,
+                                labels,
+                            },
+                        );
                         dismiss_app_notification(&notification_id.clone(), cx);
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
+                        labels,
                         error_message,
                     } => {
                         if !key_bindings.is_empty() {
-                            reload_keymaps(cx, key_bindings);
+                            reload_keymaps(
+                                cx,
+                                KeymapLoad {
+                                    key_bindings,
+                                    labels,
+                                },
+                            );
                         }
                         show_keymap_file_load_error(notification_id.clone(), error_message, cx);
                     }
@@ -1721,14 +1738,15 @@ fn show_markdown_app_notification<F>(
     .detach();
 }
 
-fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(cx: &mut App, mut user_keymap: KeymapLoad) {
     cx.clear_key_bindings();
-    load_default_keymap(cx);
 
-    for key_binding in &mut user_key_bindings {
-        key_binding.set_meta(KeybindSource::User.meta());
-    }
-    cx.bind_keys(user_key_bindings);
+    let mut labels = load_default_keymap(cx);
+
+    user_keymap.apply_meta(KeybindSource::User.meta());
+    labels.merge(user_keymap.labels);
+    cx.bind_keys(user_keymap.key_bindings);
+    which_key::set_keymap_labels(cx, labels);
 
     let menus = app_menus(cx);
     cx.set_menus(menus);
@@ -1742,25 +1760,34 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     keymap_editor::KeymapEventChannel::trigger_keymap_changed(cx);
 }
 
-pub fn load_default_keymap(cx: &mut App) {
+pub fn load_default_keymap(cx: &mut App) -> KeymapLabels {
     let base_keymap = *BaseKeymap::get_global(cx);
     if base_keymap == BaseKeymap::None {
-        return;
+        return KeymapLabels::default();
     }
 
-    cx.bind_keys(
-        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-    );
+    let mut labels = KeymapLabels::default();
+
+    let default_keymap =
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap();
+    labels.merge(default_keymap.labels);
+    cx.bind_keys(default_keymap.key_bindings);
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
+        let base_keymap =
+            KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap();
+        labels.merge(base_keymap.labels);
+        cx.bind_keys(base_keymap.key_bindings);
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(
-            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
-        );
+        let vim_keymap =
+            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap();
+        labels.merge(vim_keymap.labels);
+        cx.bind_keys(vim_keymap.key_bindings);
     }
+
+    labels
 }
 
 pub fn open_new_ssh_project_from_project(

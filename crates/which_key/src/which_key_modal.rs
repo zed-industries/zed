@@ -3,7 +3,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AvailableSpace, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Keystroke, ScrollHandle, Subscription, WeakEntity, Window,
+    KeyContext, Keystroke, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
 use std::collections::HashMap;
@@ -14,13 +14,13 @@ use ui::{
 };
 use workspace::{ModalView, Workspace};
 
-use crate::FILTERED_KEYSTROKES;
+use crate::{FILTERED_KEYSTROKES, which_key_labels};
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    bindings: Vec<(SharedString, SharedString)>,
+    bindings: Vec<(SharedString, SharedString, bool)>,
     pending_keys: SharedString,
     _pending_input_subscription: Subscription,
     _focus_out_subscription: Subscription,
@@ -66,71 +66,82 @@ impl WhichKeyModal {
             return;
         };
         let bindings = window.possible_bindings_for_input(pending_keys);
+        let context_stack = window.context_stack();
+        let labels = which_key_labels::labels(cx);
 
         let mut binding_data = bindings
             .iter()
             .map(|binding| {
                 // Map to keystrokes
                 (
+                    binding,
                     binding
                         .keystrokes()
                         .iter()
                         .map(|k| k.inner().to_owned())
                         .collect::<Vec<_>>(),
-                    binding.action(),
                 )
             })
-            .filter(|(keystrokes, _action)| {
+            .filter(|(_binding, keystrokes)| {
                 // Check if this binding matches any filtered keystroke pattern
                 !FILTERED_KEYSTROKES.iter().any(|filtered| {
                     keystrokes.len() >= filtered.len()
                         && keystrokes[..filtered.len()] == filtered[..]
                 })
             })
-            .map(|(keystrokes, action)| {
+            .map(|(binding, keystrokes)| {
                 // Map to remaining keystrokes and action name
                 let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
-                let action_name: SharedString =
-                    command_palette::humanize_action_name(action.name()).into();
-                (remaining_keystrokes, action_name)
+                let action_name: SharedString = labels
+                    .resolve_binding_label(binding.keystrokes(), &context_stack)
+                    .unwrap_or_else(|| {
+                        command_palette::humanize_action_name(binding.action().name()).into()
+                    });
+                (remaining_keystrokes, action_name, false)
             })
             .collect();
 
-        binding_data = group_bindings(binding_data);
+        binding_data = group_bindings(binding_data, &pending_keys, &labels, &context_stack);
 
         // Sort bindings from shortest to longest, with groups last
         // Using stable sort to preserve relative order of equal elements
-        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
-            // Groups (actions starting with "+") should go last
-            let is_group_a = action_a.starts_with('+');
-            let is_group_b = action_b.starts_with('+');
+        binding_data.sort_by(
+            |(keystrokes_a, _action_a, is_group_a), (keystrokes_b, _action_b, is_group_b)| {
+                // First, separate groups from non-groups
+                let group_cmp = is_group_a.cmp(&is_group_b);
+                if group_cmp != std::cmp::Ordering::Equal {
+                    return group_cmp;
+                }
 
-            // First, separate groups from non-groups
-            let group_cmp = is_group_a.cmp(&is_group_b);
-            if group_cmp != std::cmp::Ordering::Equal {
-                return group_cmp;
-            }
+                // Then sort by keystroke count
+                let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
+                if keystroke_cmp != std::cmp::Ordering::Equal {
+                    return keystroke_cmp;
+                }
 
-            // Then sort by keystroke count
-            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
-            if keystroke_cmp != std::cmp::Ordering::Equal {
-                return keystroke_cmp;
-            }
-
-            // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keystrokes(keystrokes_b, cx);
-            let text_len_cmp = text_a.len().cmp(&text_b.len());
-            if text_len_cmp != std::cmp::Ordering::Equal {
-                return text_len_cmp;
-            }
-            text_a.cmp(&text_b)
-        });
+                // Finally sort by text length, then lexicographically for full stability
+                let text_a = text_for_keystrokes(keystrokes_a, cx);
+                let text_b = text_for_keystrokes(keystrokes_b, cx);
+                let text_len_cmp = text_a.len().cmp(&text_b.len());
+                if text_len_cmp != std::cmp::Ordering::Equal {
+                    return text_len_cmp;
+                }
+                text_a.cmp(&text_b)
+            },
+        );
         binding_data.dedup();
-        self.pending_keys = text_for_keystrokes(&pending_keys, cx).into();
+        self.pending_keys = labels
+            .resolve_group_label(&pending_keys, &context_stack)
+            .unwrap_or_else(|| text_for_keystrokes(&pending_keys, cx).into());
         self.bindings = binding_data
             .into_iter()
-            .map(|(keystrokes, action)| (text_for_keystrokes(&keystrokes, cx).into(), action))
+            .map(|(keystrokes, action, is_group)| {
+                (
+                    text_for_keystrokes(&keystrokes, cx).into(),
+                    action,
+                    is_group,
+                )
+            })
             .collect();
     }
 }
@@ -201,7 +212,7 @@ impl Render for WhichKeyModal {
         let key_column_width = self
             .bindings
             .iter()
-            .map(|(keystrokes, _)| {
+            .map(|(keystrokes, _, _)| {
                 Label::new(keystrokes.clone())
                     .size(LabelSize::Default)
                     .into_any_element()
@@ -214,10 +225,11 @@ impl Render for WhichKeyModal {
 
         // Measure rows (unconstrained) to derive natural width
         let mut max_row_width = px(0.);
-        for (keystrokes, action_name) in &self.bindings {
+        for (keystrokes, action_name, is_group) in &self.bindings {
             let row_size = measure_binding_row(
                 keystrokes.clone(),
                 action_name.clone(),
+                *is_group,
                 key_column_width,
                 key_action_gap,
                 row_padding_y,
@@ -251,10 +263,11 @@ impl Render for WhichKeyModal {
             .height;
 
         let mut row_height = px(0.);
-        for (keystrokes, action_name) in &self.bindings {
+        for (keystrokes, action_name, is_group) in &self.bindings {
             let row_size = measure_binding_row(
                 keystrokes.clone(),
                 action_name.clone(),
+                *is_group,
                 key_column_width,
                 key_action_gap,
                 row_padding_y,
@@ -270,6 +283,7 @@ impl Render for WhichKeyModal {
             row_height = measure_binding_row(
                 SharedString::new_static(""),
                 SharedString::new_static(""),
+                false,
                 key_column_width,
                 key_action_gap,
                 row_padding_y,
@@ -307,16 +321,21 @@ impl Render for WhichKeyModal {
             .gap(row_gap)
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
-            .children(self.bindings.iter().map(|(keystrokes, action_name)| {
-                binding_row(
-                    keystrokes.clone(),
-                    action_name.clone(),
-                    key_column_width,
-                    key_action_gap,
-                    row_padding_y,
-                )
-                .into_any_element()
-            }));
+            .children(
+                self.bindings
+                    .iter()
+                    .map(|(keystrokes, action_name, is_group)| {
+                        binding_row(
+                            keystrokes.clone(),
+                            action_name.clone(),
+                            key_column_width,
+                            key_action_gap,
+                            row_padding_y,
+                            *is_group,
+                        )
+                        .into_any_element()
+                    }),
+            );
 
         div()
             .id("which-key-buffer-panel-scroll")
@@ -362,31 +381,43 @@ impl ModalView for WhichKeyModal {
 }
 
 fn group_bindings(
-    binding_data: Vec<(Vec<Keystroke>, SharedString)>,
-) -> Vec<(Vec<Keystroke>, SharedString)> {
-    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString)>> =
+    binding_data: Vec<(Vec<Keystroke>, SharedString, bool)>,
+    pending_keys: &[Keystroke],
+    labels: &settings::KeymapLabels,
+    context_stack: &Vec<KeyContext>,
+) -> Vec<(Vec<Keystroke>, SharedString, bool)> {
+    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString, bool)>> =
         HashMap::new();
 
-    // Group bindings by their first keystroke
-    for (remaining_keystrokes, action_name) in binding_data {
+    // Build the Group Bindings HashMap by their first keystroke
+    for (remaining_keystrokes, action_name, is_group) in binding_data {
         let first_key = remaining_keystrokes.first().cloned();
         groups
             .entry(first_key)
             .or_default()
-            .push((remaining_keystrokes, action_name));
+            .push((remaining_keystrokes, action_name, is_group));
     }
 
     let mut result = Vec::new();
 
     for (first_key, mut group_bindings) in groups {
         // Remove duplicates within each group
-        group_bindings.dedup_by_key(|(keystrokes, _)| keystrokes.clone());
+        group_bindings.dedup_by_key(|(keystrokes, _, _)| keystrokes.clone());
 
-        if group_bindings.len() > 1 && first_key.is_some() {
+        if group_bindings.len() > 1 {
+            let Some(first_keystroke) = first_key.clone() else {
+                result.append(&mut group_bindings);
+                continue;
+            };
+
+            let mut full_keystrokes: Vec<Keystroke> = pending_keys.to_vec();
+            full_keystrokes.push(first_keystroke.clone());
+            let label = labels
+                .resolve_group_label(&full_keystrokes, context_stack)
+                .unwrap_or_else(|| format!("+{} keybinds", group_bindings.len()).into());
+
             // This is a group - create a single entry with just the first keystroke
-            let first_keystroke = vec![first_key.unwrap()];
-            let count = group_bindings.len();
-            result.push((first_keystroke, format!("+{} keybinds", count).into()));
+            result.push((vec![first_keystroke], label, true));
         } else {
             // Not a group or empty keystrokes - add all bindings as-is
             result.append(&mut group_bindings);
@@ -402,8 +433,8 @@ fn binding_row(
     key_column_width: Pixels,
     key_action_gap: Pixels,
     row_padding_y: Pixels,
+    is_group: bool,
 ) -> impl IntoElement {
-    let is_group = action_name.starts_with('+');
     let label_color = if is_group {
         Color::Success
     } else {
@@ -441,6 +472,7 @@ fn binding_row(
 fn measure_binding_row(
     keystrokes: SharedString,
     action_name: SharedString,
+    is_group: bool,
     key_column_width: Pixels,
     key_action_gap: Pixels,
     row_padding_y: Pixels,
@@ -454,6 +486,7 @@ fn measure_binding_row(
         key_column_width,
         key_action_gap,
         row_padding_y,
+        is_group,
     )
     .into_any_element()
     .layout_as_root(

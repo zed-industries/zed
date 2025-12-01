@@ -2,13 +2,14 @@ use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
-    Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString, register_action,
+    Action, ActionBuildError, App, AsKeystroke, InvalidKeystrokeError,
+    KEYSTROKE_PARSE_EXPECTED_MESSAGE, KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex,
+    KeyContext, KeybindingKeystroke, Keystroke, NoAction, SharedString, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
 use util::ResultExt as _;
@@ -81,6 +82,14 @@ pub struct KeymapSection {
     /// the later binding for the same action is preferred.
     #[serde(default)]
     bindings: Option<IndexMap<String, KeymapAction>>,
+    /// Labels for specific keybindings that override the default action name. Each key must be a
+    /// full keystroke sequence matching a binding in this or another section.
+    #[serde(default)]
+    pub binding_labels: Option<IndexMap<String, String>>,
+    /// Labels for keybinding prefixes. Each key must be a valid prefix keystroke sequence, such as
+    /// `ctrl-w` or `space f`.
+    #[serde(default)]
+    pub group_labels: Option<IndexMap<String, String>>,
     #[serde(flatten)]
     unrecognized_fields: IndexMap<String, Value>,
     // This struct intentionally uses permissive types for its fields, rather than validating during
@@ -139,14 +148,125 @@ impl JsonSchema for KeymapAction {
 pub enum KeymapFileLoadResult {
     Success {
         key_bindings: Vec<KeyBinding>,
+        labels: KeymapLabels,
     },
     SomeFailedToLoad {
         key_bindings: Vec<KeyBinding>,
+        labels: KeymapLabels,
         error_message: MarkdownString,
     },
     JsonParseFailure {
         error: anyhow::Error,
     },
+}
+
+/// Parsed bindings and label metadata from a keymap.
+#[derive(Default, Clone, Debug)]
+pub struct KeymapLoad {
+    pub key_bindings: Vec<KeyBinding>,
+    pub labels: KeymapLabels,
+}
+
+impl KeymapLoad {
+    pub fn apply_meta(&mut self, meta: KeyBindingMetaIndex) {
+        for key_binding in &mut self.key_bindings {
+            key_binding.set_meta(meta);
+        }
+        self.labels.apply_meta(meta);
+    }
+}
+
+/// Metadata for which-key labels pulled from keymap sections
+#[derive(Default, Clone, Debug)]
+pub struct KeymapLabels {
+    pub binding_labels: Vec<KeymapLabel>,
+    pub group_labels: Vec<KeymapLabel>,
+}
+
+impl KeymapLabels {
+    pub fn is_empty(&self) -> bool {
+        self.binding_labels.is_empty() && self.group_labels.is_empty()
+    }
+
+    pub fn merge(&mut self, mut other: KeymapLabels) {
+        self.binding_labels.append(&mut other.binding_labels);
+        self.group_labels.append(&mut other.group_labels);
+    }
+
+    pub fn apply_meta(&mut self, meta: KeyBindingMetaIndex) {
+        for label in self
+            .binding_labels
+            .iter_mut()
+            .chain(self.group_labels.iter_mut())
+        {
+            label.meta = Some(meta);
+        }
+    }
+
+    pub fn resolve_binding_label(
+        &self,
+        keystrokes: &[impl AsKeystroke],
+        context_stack: &[KeyContext],
+    ) -> Option<SharedString> {
+        resolve_label(&self.binding_labels, keystrokes, context_stack)
+    }
+
+    pub fn resolve_group_label(
+        &self,
+        prefix: &[impl AsKeystroke],
+        context_stack: &[KeyContext],
+    ) -> Option<SharedString> {
+        resolve_label(&self.group_labels, prefix, context_stack)
+    }
+}
+
+fn resolve_label(
+    labels: &[KeymapLabel],
+    keystrokes: &[impl AsKeystroke],
+    context_stack: &[KeyContext],
+) -> Option<SharedString> {
+    labels
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, label)| {
+            let depth = label.context_depth(context_stack)?;
+            if !label.keystrokes_match(keystrokes) {
+                return None;
+            }
+            Some((depth, ix, label.label.clone()))
+        })
+        .max_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| depth_a.cmp(depth_b).then(ix_a.cmp(ix_b)))
+        .map(|(_, _, label)| label)
+}
+
+/// A single label tied to a keystroke sequence
+#[derive(Clone, Debug)]
+pub struct KeymapLabel {
+    pub keystrokes: SmallVec<[KeybindingKeystroke; 2]>,
+    pub label: SharedString,
+    pub context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+    pub meta: Option<KeyBindingMetaIndex>,
+}
+
+impl KeymapLabel {
+    fn context_depth(&self, contexts: &[KeyContext]) -> Option<usize> {
+        if let Some(predicate) = &self.context_predicate {
+            predicate.depth_of(contexts)
+        } else {
+            Some(contexts.len())
+        }
+    }
+
+    fn keystrokes_match(&self, keystrokes: &[impl AsKeystroke]) -> bool {
+        if self.keystrokes.len() != keystrokes.len() {
+            return false;
+        }
+
+        self.keystrokes
+            .iter()
+            .zip(keystrokes.iter())
+            .all(|(expected, typed)| typed.as_keystroke().should_match(expected))
+    }
 }
 
 impl KeymapFile {
@@ -161,17 +281,21 @@ impl KeymapFile {
         asset_path: &str,
         source: Option<KeybindSource>,
         cx: &App,
-    ) -> anyhow::Result<Vec<KeyBinding>> {
+    ) -> anyhow::Result<KeymapLoad> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { mut key_bindings } => match source {
-                Some(source) => Ok({
-                    for key_binding in &mut key_bindings {
-                        key_binding.set_meta(source.meta());
-                    }
-                    key_bindings
-                }),
-                None => Ok(key_bindings),
-            },
+            KeymapFileLoadResult::Success {
+                key_bindings,
+                labels,
+            } => {
+                let mut keymap = KeymapLoad {
+                    key_bindings,
+                    labels,
+                };
+                if let Some(source) = source {
+                    keymap.apply_meta(source.meta());
+                }
+                Ok(keymap)
+            }
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
             }
@@ -184,17 +308,28 @@ impl KeymapFile {
     pub fn load_asset_allow_partial_failure(
         asset_path: &str,
         cx: &App,
-    ) -> anyhow::Result<Vec<KeyBinding>> {
+    ) -> anyhow::Result<KeymapLoad> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
+                labels,
                 error_message,
                 ..
-            } if key_bindings.is_empty() => {
+            } if key_bindings.is_empty() && labels.is_empty() => {
                 anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
             }
-            KeymapFileLoadResult::Success { key_bindings, .. }
-            | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
+            KeymapFileLoadResult::Success {
+                key_bindings,
+                labels,
+            }
+            | KeymapFileLoadResult::SomeFailedToLoad {
+                key_bindings,
+                labels,
+                ..
+            } => Ok(KeymapLoad {
+                key_bindings,
+                labels,
+            }),
             KeymapFileLoadResult::JsonParseFailure { error } => {
                 anyhow::bail!("JSON parse error in built-in keymap \"{asset_path}\": {error}")
             }
@@ -202,9 +337,15 @@ impl KeymapFile {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn load_panic_on_failure(content: &str, cx: &App) -> Vec<KeyBinding> {
+    pub fn load_panic_on_failure(content: &str, cx: &App) -> KeymapLoad {
         match Self::load(content, cx) {
-            KeymapFileLoadResult::Success { key_bindings, .. } => key_bindings,
+            KeymapFileLoadResult::Success {
+                key_bindings,
+                labels,
+            } => KeymapLoad {
+                key_bindings,
+                labels,
+            },
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 panic!("{error_message}");
             }
@@ -226,11 +367,14 @@ impl KeymapFile {
         // errors in context and binding parsing.
         let mut errors = Vec::new();
         let mut key_bindings = Vec::new();
+        let mut labels = KeymapLabels::default();
 
         for KeymapSection {
             context,
             use_key_equivalents,
             bindings,
+            binding_labels,
+            group_labels,
             unrecognized_fields,
         } in keymap_file.0.iter()
         {
@@ -252,6 +396,7 @@ impl KeymapFile {
             };
 
             let mut section_errors = String::new();
+            let mut section_labels = KeymapLabels::default();
 
             if !unrecognized_fields.is_empty() {
                 write!(
@@ -294,13 +439,62 @@ impl KeymapFile {
                 }
             }
 
+            if let Some(binding_labels) = binding_labels {
+                for (keystrokes, label) in binding_labels {
+                    match Self::load_keymap_label(
+                        keystrokes,
+                        label,
+                        context_predicate.clone(),
+                        *use_key_equivalents,
+                        cx,
+                    ) {
+                        Ok(label) => section_labels.binding_labels.push(label),
+                        Err(err) => {
+                            write!(
+                                section_errors,
+                                "\n\n- In binding_labels {}, {err}",
+                                MarkdownInlineCode(&format!("\"{keystrokes}\""))
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+            }
+
+            if let Some(group_labels) = group_labels {
+                for (keystrokes, label) in group_labels {
+                    match Self::load_keymap_label(
+                        keystrokes,
+                        label,
+                        context_predicate.clone(),
+                        *use_key_equivalents,
+                        cx,
+                    ) {
+                        Ok(label) => section_labels.group_labels.push(label),
+                        Err(err) => {
+                            write!(
+                                section_errors,
+                                "\n\n- In group_labels {}, {err}",
+                                MarkdownInlineCode(&format!("\"{keystrokes}\""))
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+            }
+
             if !section_errors.is_empty() {
                 errors.push((context, section_errors))
             }
+
+            labels.merge(section_labels);
         }
 
         if errors.is_empty() {
-            KeymapFileLoadResult::Success { key_bindings }
+            KeymapFileLoadResult::Success {
+                key_bindings,
+                labels,
+            }
         } else {
             let mut error_message = "Errors in user keymap file.\n".to_owned();
             for (context, section_errors) in errors {
@@ -317,6 +511,7 @@ impl KeymapFile {
             }
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
+                labels,
                 error_message: MarkdownString(error_message),
             }
         }
@@ -446,6 +641,48 @@ impl KeymapFile {
         };
 
         Ok((action, action_input_string))
+    }
+
+    fn load_keymap_label(
+        keystrokes: &str,
+        label: &str,
+        context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+        use_key_equivalents: bool,
+        cx: &App,
+    ) -> std::result::Result<KeymapLabel, String> {
+        let keystrokes = Self::parse_keystrokes(keystrokes, use_key_equivalents, cx)?;
+
+        Ok(KeymapLabel {
+            keystrokes,
+            label: label.to_string().into(),
+            context_predicate,
+            meta: None,
+        })
+    }
+
+    fn parse_keystrokes(
+        keystrokes: &str,
+        use_key_equivalents: bool,
+        cx: &App,
+    ) -> std::result::Result<SmallVec<[KeybindingKeystroke; 2]>, String> {
+        keystrokes
+            .split_whitespace()
+            .map(|source| {
+                let keystroke =
+                    Keystroke::parse(source).map_err(|InvalidKeystrokeError { keystroke }| {
+                        format!(
+                            "invalid keystroke {}. {} ",
+                            MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
+                            KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                        )
+                    })?;
+                Ok(KeybindingKeystroke::new_with_mapper(
+                    keystroke,
+                    use_key_equivalents,
+                    cx.keyboard_mapper().as_ref(),
+                ))
+            })
+            .collect::<std::result::Result<_, _>>()
     }
 
     /// Creates a JSON schema generator, suitable for generating json schemas
