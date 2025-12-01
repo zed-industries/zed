@@ -4,9 +4,9 @@
 
 use gpui::input::bind_input_keys;
 use gpui::{
-    App, Application, Bounds, Context, Div, Entity, FocusHandle, Focusable, InputState, KeyBinding,
-    Stateful, Window, WindowBounds, WindowOptions, div, input, prelude::*, px, rgb, size,
-    text_area,
+    App, Application, Bounds, Context, Div, Entity, FocusHandle, Focusable, InputState,
+    InputStateEvent, KeyBinding, Stateful, Subscription, Window, WindowBounds, WindowOptions, div,
+    input, prelude::*, px, rgb, size, text_area,
 };
 
 struct InputSandbox {
@@ -14,6 +14,8 @@ struct InputSandbox {
     singleline_input: Entity<InputState>,
     use_multiline: bool,
     current_sample: SampleText,
+    last_event: Option<String>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl InputSandbox {
@@ -32,12 +34,40 @@ impl InputSandbox {
             input
         });
 
+        let subscriptions = vec![
+            cx.subscribe(&multiline_input, |this, _, event, cx| {
+                this.handle_input_event("multiline", event, cx);
+            }),
+            cx.subscribe(&singleline_input, |this, _, event, cx| {
+                this.handle_input_event("singleline", event, cx);
+            }),
+        ];
+
         Self {
             multiline_input,
             singleline_input,
             use_multiline: true,
             current_sample: initial_sample,
+            last_event: None,
+            _subscriptions: subscriptions,
         }
+    }
+
+    fn handle_input_event(
+        &mut self,
+        source: &str,
+        event: &InputStateEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let event_name = match event {
+            InputStateEvent::Focus => "Focus",
+            InputStateEvent::Blur => "Blur",
+            InputStateEvent::TextChanged => "TextChanged",
+            InputStateEvent::Undo => "Undo",
+            InputStateEvent::Redo => "Redo",
+        };
+        self.last_event = Some(format!("{}: {}", source, event_name));
+        cx.notify();
     }
 
     fn toggle_mode(&mut self, _: &ToggleMode, _window: &mut Window, cx: &mut Context<Self>) {
@@ -218,6 +248,11 @@ impl Render for InputSandbox {
                                 },
                             )),
                     )
+                    // Events section
+                    .child(sidebar_section("Last Event").child(stat_row(
+                        "Event",
+                        self.last_event.clone().unwrap_or_else(|| "—".to_string()),
+                    )))
                     // Keybindings section
                     .child(
                         sidebar_section("Keybindings")

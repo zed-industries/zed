@@ -11,4 +11,4 @@ pub use bidi::{TextDirection, detect_base_direction};
 pub use bindings::{INPUT_CONTEXT, InputBindings, bind_input_keys};
 pub use blink_manager::BlinkManager;
 pub use handler::*;
-pub use state::{InputLineLayout, InputState};
+pub use state::{InputLineLayout, InputState, InputStateEvent};

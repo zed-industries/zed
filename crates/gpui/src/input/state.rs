@@ -2,9 +2,9 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crate::{
-    App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle,
-    Focusable, Pixels, Point, SharedString, Subscription, TextRun, UTF16Selection, Window,
-    WrappedLine, point, px,
+    App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter,
+    FocusHandle, Focusable, Pixels, Point, SharedString, Subscription, TextRun, UTF16Selection,
+    Window, WrappedLine, point, px,
 };
 
 use super::BlinkManager;
@@ -26,6 +26,23 @@ const DEFAULT_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Maximum number of history entries to keep.
 const MAX_HISTORY_LEN: usize = 1000;
+
+/// Events emitted by InputState when significant changes occur.
+#[derive(Clone, Debug)]
+pub enum InputStateEvent {
+    /// Emitted when the input gains focus.
+    Focus,
+    /// Emitted when the input loses focus.
+    Blur,
+    /// Emitted when the text content changes.
+    TextChanged,
+    /// Emitted when an undo operation is performed.
+    Undo,
+    /// Emitted when a redo operation is performed.
+    Redo,
+}
+
+impl EventEmitter<InputStateEvent> for InputState {}
 
 /// A snapshot of input state for undo/redo operations.
 #[derive(Clone, Debug)]
@@ -183,8 +200,10 @@ impl InputState {
         if let Some(blink_manager) = &self.blink_manager {
             if is_focused && !self.was_focused {
                 blink_manager.update(cx, |bm, cx| bm.enable(cx));
+                cx.emit(InputStateEvent::Focus);
             } else if !is_focused && self.was_focused {
                 blink_manager.update(cx, |bm, cx| bm.disable(cx));
+                cx.emit(InputStateEvent::Blur);
             }
         }
         self.was_focused = is_focused;
@@ -237,6 +256,7 @@ impl InputState {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.pause_cursor_blink(cx);
+        cx.emit(InputStateEvent::TextChanged);
         cx.notify();
     }
 
@@ -307,6 +327,7 @@ impl InputState {
             self.selection_reversed = entry.selection_reversed;
             self.needs_layout = true;
             self.scroll_to_cursor();
+            cx.emit(InputStateEvent::Undo);
             cx.notify();
         }
     }
@@ -328,6 +349,7 @@ impl InputState {
             self.selection_reversed = entry.selection_reversed;
             self.needs_layout = true;
             self.scroll_to_cursor();
+            cx.emit(InputStateEvent::Redo);
             cx.notify();
         }
     }
@@ -1419,6 +1441,7 @@ impl EntityInputHandler for InputState {
         self.marked_range.take();
         self.needs_layout = true;
         self.pause_cursor_blink(cx);
+        cx.emit(InputStateEvent::TextChanged);
         cx.notify();
     }
 
@@ -1465,6 +1488,7 @@ impl EntityInputHandler for InputState {
             });
 
         self.needs_layout = true;
+        cx.emit(InputStateEvent::TextChanged);
         cx.notify();
     }
 
