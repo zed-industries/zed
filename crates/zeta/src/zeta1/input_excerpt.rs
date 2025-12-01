@@ -156,8 +156,7 @@ mod tests {
                 numbers
             }
         "#};
-        let buffer =
-            cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let snapshot = buffer.read(cx).snapshot();
 
         // Ensure we try to fit the largest possible syntax scope, resorting to line-based expansion

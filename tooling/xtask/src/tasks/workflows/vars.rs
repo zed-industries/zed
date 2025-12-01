@@ -219,6 +219,14 @@ impl WorkflowInput {
         }
     }
 
+    pub fn bool(name: &'static str, default: Option<bool>) -> Self {
+        Self {
+            input_type: "boolean",
+            name,
+            default: default.as_ref().map(ToString::to_string),
+        }
+    }
+
     pub fn input(&self) -> WorkflowDispatchInput {
         WorkflowDispatchInput {
             description: self.name.to_owned(),
@@ -236,11 +244,15 @@ impl WorkflowInput {
             default: self.default.clone(),
         }
     }
+
+    pub(crate) fn expr(&self) -> String {
+        format!("inputs.{}", self.name)
+    }
 }
 
 impl std::fmt::Display for WorkflowInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "${{{{ inputs.{} }}}}", self.name)
+        write!(f, "${{{{ {} }}}}", self.expr())
     }
 }
 

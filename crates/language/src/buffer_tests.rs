@@ -46,8 +46,8 @@ fn test_line_endings(cx: &mut gpui::App) {
     init_settings(cx, |_| {});
 
     cx.new(|cx| {
-        let mut buffer = Buffer::local("one\r\ntwo\rthree", cx)
-            .with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer =
+            Buffer::local("one\r\ntwo\rthree", cx).with_language(Arc::new(rust_lang()), cx);
         assert_eq!(buffer.text(), "one\ntwo\nthree");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
 
@@ -608,8 +608,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
 
     // Wait for the initial text to parse
     cx.executor().run_until_parked();
@@ -736,7 +735,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| {
-        let mut buffer = Buffer::local("{}", cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local("{}", cx).with_language(Arc::new(rust_lang()), cx);
         buffer.set_sync_parse_timeout(Duration::ZERO);
         buffer
     });
@@ -749,7 +748,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     );
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_language_immediate(Some(Arc::new(json_lang())), cx)
+        buffer.set_language(Some(Arc::new(json_lang())), cx)
     });
     cx.executor().run_until_parked();
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
@@ -784,8 +783,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
@@ -867,8 +865,7 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
@@ -902,8 +899,7 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(language), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(language), cx));
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // extra context nodes are included in the outline.
@@ -949,8 +945,7 @@ fn test_outline_annotations(cx: &mut App) {
     "#
     .unindent();
 
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
@@ -998,8 +993,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // point is at the start of an item
@@ -1074,8 +1068,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     "
         .unindent(),
     );
-    let buffer =
-        cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // note, it would be nice to actually return the method test in this
@@ -1094,9 +1087,8 @@ fn test_text_objects(cx: &mut App) {
         false,
     );
 
-    let buffer = cx.new(|cx| {
-        Buffer::local(text.clone(), cx).with_language_immediate(Arc::new(rust_lang()), cx)
-    });
+    let buffer =
+        cx.new(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(rust_lang()), cx));
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     let matches = snapshot
@@ -1276,7 +1268,7 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
 fn test_range_for_syntax_ancestor(cx: &mut App) {
     cx.new(|cx| {
         let text = "fn a() { b(|c| {}) }";
-        let buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         let snapshot = buffer.snapshot();
 
         assert_eq!(
@@ -1328,7 +1320,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut App) {
 
     cx.new(|cx| {
         let text = "fn a() {}";
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
@@ -1370,7 +1362,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut App) {
 
     cx.new(|cx| {
         let text = "fn a() {}";
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(buffer.text(), "fn a() {\n\t\n}");
@@ -1419,7 +1411,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
             .unindent(),
             cx,
         )
-        .with_language_immediate(Arc::new(rust_lang()), cx);
+        .with_language(Arc::new(rust_lang()), cx);
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
@@ -1560,7 +1552,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
             .unindent(),
             cx,
         )
-        .with_language_immediate(Arc::new(rust_lang()), cx);
+        .with_language(Arc::new(rust_lang()), cx);
 
         // Insert a closing brace. It is outdented.
         buffer.edit_via_marked_text(
@@ -1623,7 +1615,7 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Ap
             .unindent(),
             cx,
         )
-        .with_language_immediate(Arc::new(rust_lang()), cx);
+        .with_language(Arc::new(rust_lang()), cx);
 
         // Regression test: line does not get outdented due to syntax error
         buffer.edit_via_marked_text(
@@ -1682,7 +1674,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut App) {
             .unindent(),
             cx,
         )
-        .with_language_immediate(Arc::new(rust_lang()), cx);
+        .with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit_via_marked_text(
             &"
@@ -1732,7 +1724,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut App) {
 
     cx.new(|cx| {
         let text = "a\nb";
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(0..1, "\n"), (2..3, "\n")],
             Some(AutoindentMode::EachLine),
@@ -1758,7 +1750,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut App) {
         "
         .unindent();
 
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 0), "e(\n    f()\n);\n")],
             Some(AutoindentMode::EachLine),
@@ -1795,7 +1787,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
             }
         "#
         .unindent();
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         // When this text was copied, both of the quotation marks were at the same
         // indent level, but the indentation of the first line was not included in
@@ -1878,7 +1870,7 @@ fn test_autoindent_block_mode_with_newline(cx: &mut App) {
             }
         "#
         .unindent();
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         // First line contains just '\n', it's indentation is stored in "original_indent_columns"
         let original_indent_columns = vec![Some(4)];
@@ -1930,7 +1922,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
             }
         "#
         .unindent();
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         // The original indent columns are not known, so this text is
         // auto-indented in a block as if the first line was copied in
@@ -2021,7 +2013,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
             false,
         );
 
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit(
             [
@@ -2072,7 +2064,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut App) {
         "
         .unindent();
 
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(
+        let mut buffer = Buffer::local(text, cx).with_language(
             Arc::new(Language::new(
                 LanguageConfig {
                     name: "Markdown".into(),
@@ -2150,7 +2142,7 @@ fn test_autoindent_with_injected_languages(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry);
-        buffer.set_language_immediate(Some(html_language), cx);
+        buffer.set_language(Some(html_language), cx);
         buffer.edit(
             ranges.into_iter().map(|range| (range, "\na")),
             Some(AutoindentMode::EachLine),
@@ -2184,7 +2176,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut App) {
     });
 
     cx.new(|cx| {
-        let mut buffer = Buffer::local("", cx).with_language_immediate(Arc::new(ruby_lang()), cx);
+        let mut buffer = Buffer::local("", cx).with_language(Arc::new(ruby_lang()), cx);
 
         let text = r#"
             class C
@@ -2229,7 +2221,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
     // Then we request that a preview tab be preserved for the new version, even though it's edited.
     let buffer = cx.new(|cx| {
         let text = "fn a() {}";
-        let mut buffer = Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
         // This causes autoindent to be async.
         buffer.set_sync_parse_timeout(Duration::ZERO);
@@ -2442,7 +2434,7 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
         "#
         .unindent();
 
-        let buffer = Buffer::local(&text, cx).with_language_immediate(Arc::new(language), cx);
+        let buffer = Buffer::local(&text, cx).with_language(Arc::new(language), cx);
         let snapshot = buffer.snapshot();
 
         let config = snapshot.language_scope_at(0).unwrap();
@@ -2600,8 +2592,7 @@ fn test_language_scope_at_with_rust(cx: &mut App) {
         "#
         .unindent();
 
-        let buffer =
-            Buffer::local(text.clone(), cx).with_language_immediate(Arc::new(language), cx);
+        let buffer = Buffer::local(text.clone(), cx).with_language(Arc::new(language), cx);
         let snapshot = buffer.snapshot();
 
         // By default, all brackets are enabled
@@ -2647,7 +2638,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language_immediate(
+        buffer.set_language(
             language_registry
                 .language_for_name("HTML+ERB")
                 .now_or_never()
@@ -2693,7 +2684,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language_immediate(
+        buffer.set_language(
             language_registry
                 .language_for_name("Markdown")
                 .now_or_never()
@@ -2736,7 +2727,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language_immediate(
+        buffer.set_language(
             language_registry
                 .language_for_name("Markdown")
                 .now_or_never()
@@ -2789,7 +2780,7 @@ fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language_immediate(
+        buffer.set_language(
             language_registry
                 .language_for_name("HTML+ERB")
                 .now_or_never()
@@ -3129,8 +3120,7 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         cx: &mut TestAppContext,
         assert_fn: impl Fn(HighlightedText),
     ) {
-        let buffer =
-            cx.new(|cx| Buffer::local(text, cx).with_language_immediate(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let edits = buffer.read_with(cx, |buffer, _| {
             edits
                 .into_iter()
@@ -3541,7 +3531,7 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
     "#;
 
     let buffer = cx.new(|cx| {
-        let buffer = Buffer::local(contents, cx).with_language_immediate(Arc::new(rust_lang()), cx);
+        let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
         assert_eq!(buffer.text(), contents);
         buffer.check_invariants();
         buffer
@@ -3931,9 +3921,8 @@ fn assert_bracket_pairs(
     cx: &mut App,
 ) {
     let (expected_text, selection_ranges) = marked_text_ranges(selection_text, false);
-    let buffer = cx.new(|cx| {
-        Buffer::local(expected_text.clone(), cx).with_language_immediate(Arc::new(language), cx)
-    });
+    let buffer =
+        cx.new(|cx| Buffer::local(expected_text.clone(), cx).with_language(Arc::new(language), cx));
     let buffer = buffer.update(cx, |buffer, _cx| buffer.snapshot());
 
     let selection_range = selection_ranges[0].clone();

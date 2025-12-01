@@ -35,9 +35,7 @@ impl Diff {
                     .await
                     .log_err();
 
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_language_immediate(language.clone(), cx)
-                })?;
+                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx))?;
 
                 let diff = build_buffer_diff(
                     old_text.unwrap_or("".into()).into(),
@@ -263,7 +261,7 @@ impl PendingDiff {
                 self.new_buffer.read(cx).as_rope().clone(),
             );
             let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
-            buffer.set_language_immediate(language, cx);
+            buffer.set_language(language, cx);
             buffer
         });
 

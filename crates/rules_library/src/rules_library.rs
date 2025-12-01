@@ -715,7 +715,7 @@ impl RulesLibrary {
                         let body_editor = cx.new(|cx| {
                             let buffer = cx.new(|cx| {
                                 let mut buffer = Buffer::local(rule, cx);
-                                buffer.set_language_immediate(markdown.log_err(), cx);
+                                buffer.set_language(markdown.log_err(), cx);
                                 buffer.set_language_registry(language_registry);
                                 buffer
                             });

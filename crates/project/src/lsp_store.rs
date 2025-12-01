@@ -4289,8 +4289,9 @@ impl LspStore {
                                 for buffer in buffer_store.buffers() {
                                     if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
                                     {
-                                        buffer
-                                            .update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                        buffer.update(cx, |buffer, cx| {
+                                            buffer.set_language_async(None, cx)
+                                        });
                                         if let Some(local) = this.as_local_mut() {
                                             local.reset_buffer(&buffer, &f, cx);
 
@@ -4413,7 +4414,7 @@ impl LspStore {
                 .language()
                 .is_none_or(|old_language| !Arc::ptr_eq(old_language, &new_language))
             {
-                buffer.set_language(Some(new_language.clone()), cx);
+                buffer.set_language_async(Some(new_language.clone()), cx);
             }
         });
 

@@ -13,6 +13,10 @@ on:
         description: bump-type
         type: string
         default: patch
+      force-bump:
+        description: force-bump
+        required: true
+        type: boolean
     secrets:
       app-id:
         description: The app ID used to create the PR
@@ -56,17 +60,24 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 10
+        fetch-depth: 0
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
-        git checkout "$(git log -1 --format=%H)"~1
+        if [[ -n "$PR_PARENT_SHA" ]]; then
+            git checkout "$PR_PARENT_SHA"
+        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
+            git checkout "$BRANCH_PARENT_SHA"
+        else
+            git checkout "$(git log -1 --format=%H)"~1
+        fi
 
-        PREV_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
-        [[ "$CURRENT_VERSION" == "$PREV_COMMIT_VERSION" ]] && \
+        [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
           echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
           echo "needs_bump=false" >> "$GITHUB_OUTPUT"
 
@@ -80,7 +91,9 @@ jobs:
     needs:
     - check_extension
     - check_bump_needed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'true'
+    if: |-
+      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
+      (inputs.force-bump == 'true' || needs.check_bump_needed.outputs.needs_bump == 'true')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
@@ -99,7 +112,7 @@ jobs:
     - id: bump-version
       name: extension_bump::bump_version
       run: |
-        OLD_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
 
         cat <<EOF > .bumpversion.cfg
         [bumpversion]
@@ -117,7 +130,6 @@ jobs:
 
         rm .bumpversion.cfg
 
-        echo "old_version=${OLD_VERSION}" >> "$GITHUB_OUTPUT"
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
@@ -126,7 +138,7 @@ jobs:
         title: Bump version to ${{ steps.bump-version.outputs.new_version }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
         commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
-        branch: bump-from-${{ steps.bump-version.outputs.old_version }}
+        branch: zed-zippy-autobump
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
@@ -137,7 +149,7 @@ jobs:
     needs:
     - check_extension
     - check_bump_needed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'false'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_bump_needed.outputs.needs_bump == 'false'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token

@@ -6969,7 +6969,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=e5f883040530b4df36437f140084ee5cc7c1c9be#e5f883040530b4df36437f140084ee5cc7c1c9be"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -6986,7 +6986,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=e5f883040530b4df36437f140084ee5cc7c1c9be#e5f883040530b4df36437f140084ee5cc7c1c9be"
 dependencies = [
  "heck 0.5.0",
  "quote",
