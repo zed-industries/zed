@@ -21,6 +21,7 @@ use gpui::{
     Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
     SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
 };
+use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
 use project::{
