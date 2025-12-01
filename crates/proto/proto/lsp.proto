@@ -87,6 +87,62 @@ message DocumentHighlight {
     }
 }
 
+message LspRange {
+    uint32 start_line = 1;
+    uint32 start_column = 2;
+    uint32 end_line = 3;
+    uint32 end_column = 4;
+}
+
+message CallHierarchyItem {
+    string name = 1;
+    int32 kind = 2;
+    optional string detail = 3;
+    string uri = 4;
+    LspRange range = 5;
+    LspRange selection_range = 6;
+    optional bytes data = 7;
+}
+
+message CallHierarchyIncomingCall {
+    CallHierarchyItem from = 1;
+    repeated LspRange from_ranges = 2;
+}
+
+message CallHierarchyOutgoingCall {
+    CallHierarchyItem to = 1;
+    repeated LspRange from_ranges = 2;
+}
+
+message PrepareCallHierarchy {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message PrepareCallHierarchyResponse {
+    repeated CallHierarchyItem items = 1;
+}
+
+message GetIncomingCalls {
+    uint64 project_id = 1;
+    CallHierarchyItem item = 2;
+}
+
+message GetIncomingCallsResponse {
+    repeated CallHierarchyIncomingCall calls = 1;
+}
+
+message GetOutgoingCalls {
+    uint64 project_id = 1;
+    CallHierarchyItem item = 2;
+}
+
+message GetOutgoingCallsResponse {
+    repeated CallHierarchyOutgoingCall calls = 1;
+}
+
 message GetProjectSymbols {
     uint64 project_id = 1;
     string query = 2;
@@ -817,6 +873,9 @@ message LspQuery {
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
         InlayHints inlay_hints = 14;
+        PrepareCallHierarchy prepare_call_hierarchy = 16;
+        GetIncomingCalls get_incoming_calls = 17;
+        GetOutgoingCalls get_outgoing_calls = 18;
     }
 }
 
@@ -840,6 +899,9 @@ message LspResponse {
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
         InlayHintsResponse inlay_hints_response = 13;
+        PrepareCallHierarchyResponse prepare_call_hierarchy_response = 14;
+        GetIncomingCallsResponse get_incoming_calls_response = 15;
+        GetOutgoingCallsResponse get_outgoing_calls_response = 16;
     }
     uint64 server_id = 7;
 }

@@ -119,6 +119,8 @@ pub struct SettingsContent {
 
     pub outline_panel: Option<OutlinePanelSettingsContent>,
 
+    pub call_hierarchy_panel: Option<CallHierarchyPanelSettingsContent>,
+
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
     /// Configuration for the Message Editor
@@ -794,6 +796,33 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: 100
     pub expand_outlines_with_depth: Option<usize>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct CallHierarchyPanelSettingsContent {
+    /// Whether to show the call hierarchy panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Customize default width (in pixels) taken by the call hierarchy panel.
+    ///
+    /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_width: Option<f32>,
+    /// The position of the call hierarchy panel.
+    ///
+    /// Default: left
+    pub dock: Option<DockSide>,
+    /// Amount of indentation (in pixels) for nested items.
+    ///
+    /// Default: 20
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub indent_size: Option<f32>,
+    /// Settings related to indent guides in the call hierarchy panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
+    /// Scrollbar-related settings
+    pub scrollbar: Option<ScrollbarSettingsContent>,
 }
 
 #[derive(
