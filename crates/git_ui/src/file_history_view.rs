@@ -607,10 +607,6 @@ impl Item for FileHistoryView {
         None
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
-        None
-    }
-
     fn set_nav_history(
         &mut self,
         _: workspace::ItemNavHistory,
