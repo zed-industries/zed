@@ -114,15 +114,12 @@ jobs:
       run: |
         OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
 
-        if [[ -f "extension.toml" ]]; then
-            EXTENSION_TOML="extension.toml"
-        fi
-
+        BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
-            CARGO_TOML="Cargo.toml"
+            BUMP_FILES+=("Cargo.toml")
         fi
 
-        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "$EXTENSION_TOML" "$CARGO_TOML"
+        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace
