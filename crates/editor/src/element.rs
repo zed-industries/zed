@@ -5585,44 +5585,40 @@ impl EditorElement {
         highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
         cx: &mut App,
     ) {
-        for (hunk, _) in display_hunks {
-            if let DisplayDiffHunk::Unfolded {
-                word_diffs, status, ..
-            } = hunk
-            {
-                // Some views always have line highlights even if the status is not modified
-                if !status.is_modified() {
-                    continue;
-                }
+        let colors = cx.theme().colors();
 
-                for word_diff in word_diffs {
-                    let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
-                    let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
+        let word_highlights = display_hunks
+            .into_iter()
+            .filter_map(|(hunk, _)| match hunk {
+                DisplayDiffHunk::Unfolded {
+                    word_diffs, status, ..
+                } => Some((word_diffs, status)),
+                _ => None,
+            })
+            .filter(|(_, status)| status.is_modified())
+            .flat_map(|(word_diffs, _)| word_diffs)
+            .filter_map(|word_diff| {
+                let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
+                let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
+                let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
 
-                    let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
-
-                    if start_row_offset < row_infos.len() {
-                        if let Some(row_info) = row_infos.get(start_row_offset) {
-                            if let Some(diff_status) = row_info.diff_status {
-                                let colors = cx.theme().colors();
-                                let background_color = match diff_status.kind {
-                                    DiffHunkStatusKind::Added => colors.version_control_word_added,
-                                    DiffHunkStatusKind::Deleted => {
-                                        colors.version_control_word_deleted
-                                    }
-                                    DiffHunkStatusKind::Modified => {
-                                        debug_panic!("modified diff status for row info");
-                                        continue;
-                                    }
-                                };
-
-                                highlighted_ranges.push((start_point..end_point, background_color));
+                row_infos
+                    .get(start_row_offset)
+                    .and_then(|row_info| row_info.diff_status)
+                    .and_then(|diff_status| {
+                        let background_color = match diff_status.kind {
+                            DiffHunkStatusKind::Added => colors.version_control_word_added,
+                            DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
+                            DiffHunkStatusKind::Modified => {
+                                debug_panic!("modified diff status for row info");
+                                return None;
                             }
-                        }
-                    }
-                }
-            }
-        }
+                        };
+                        Some((start_point..end_point, background_color))
+                    })
+            });
+
+        highlighted_ranges.extend(word_highlights);
     }
 
     fn layout_diff_hunk_controls(

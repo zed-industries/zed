@@ -98,7 +98,7 @@ fn split_on_whitespace(text: &str, range: &Range<usize>) -> Vec<Range<usize>> {
     for line in slice.lines() {
         let line_start = offset;
         let line_end = line_start + line.len();
-        offset = line_end + 1; // +1 for the newline character
+        offset = line_end + 1;
         let trimmed = line.trim();
 
         if !trimmed.is_empty() {
@@ -107,7 +107,6 @@ fn split_on_whitespace(text: &str, range: &Range<usize>) -> Vec<Range<usize>> {
             let trimmed_start = range.start + line_start + leading;
             let trimmed_end = range.start + line_end - trailing;
 
-            // Check if this range covers the entire non-whitespace content of the line in the original text
             let original_line_start = text[..range.start + line_start]
                 .rfind('\n')
                 .map(|i| i + 1)
@@ -122,7 +121,6 @@ fn split_on_whitespace(text: &str, range: &Range<usize>) -> Vec<Range<usize>> {
             let original_trimmed_end =
                 original_line_end - (original_line.len() - original_line.trim_end().len());
 
-            // Skip if the trimmed range covers the whole trimmed line
             if trimmed_start > original_trimmed_start || trimmed_end < original_trimmed_end {
                 ranges.push(trimmed_start..trimmed_end);
             }
