@@ -1,5 +1,4 @@
 use std::str::FromStr;
-// use std::sync::Arc;
 
 use crate::inline_assistant::test::run_inline_assistant_test;
 
@@ -11,25 +10,25 @@ use rand::{SeedableRng as _, rngs::StdRng};
 #[test]
 // #[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_single_cursor_edit() {
-    eval_utils::eval(10, 1.0, NoProcessor, || {
+    eval_utils::eval(10, 1.0, NoProcessor, move || {
         run_eval(
             &EvalInput {
                 prompt: "Rename this variable to buffer_text".to_string(),
                 buffer: indoc::indoc! {"
-                        struct EvalExampleStruct {
-                            text: Strˇing,
-                            prompt: String,
-                        }
-                    "}
+                    struct EvalExampleStruct {
+                        text: Strˇing,
+                        prompt: String,
+                    }
+                "}
                 .to_string(),
             },
             &|_, output| {
                 let expected = indoc::indoc! {"
-                        struct EvalExampleStruct {
-                            buffer_text: String,
-                            prompt: String,
-                        }
-                        "};
+                    struct EvalExampleStruct {
+                        buffer_text: String,
+                        prompt: String,
+                    }
+                    "};
                 if output == expected {
                     EvalOutput {
                         outcome: eval_utils::OutcomeKind::Passed,

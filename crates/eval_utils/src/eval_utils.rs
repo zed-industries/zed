@@ -66,7 +66,7 @@ pub fn eval<P>(
 
     let executor = gpui::background_executor();
     let semaphore = Arc::new(smol::lock::Semaphore::new(32));
-
+    let evalf = Arc::new(evalf);
     // Warm the cache once
     let first_output = evalf();
     tx.send(first_output).ok();

@@ -2079,6 +2079,7 @@ pub mod test {
                         cx,
                     )
                     .unwrap();
+
                 inline_assistant.start_assist(assist_id, window, cx);
             });
 
