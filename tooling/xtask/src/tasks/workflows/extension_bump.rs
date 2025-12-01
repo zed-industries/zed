@@ -242,15 +242,12 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
         indoc! {r#"
             OLD_VERSION="{}"
 
-            if [[ -f "extension.toml" ]]; then
-                EXTENSION_TOML="extension.toml"
-            fi
-
+            BUMP_FILES=("extension.toml")
             if [[ -f "Cargo.toml" ]]; then
-                CARGO_TOML="Cargo.toml"
+                BUMP_FILES+=("Cargo.toml")
             fi
 
-            bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files {} "$EXTENSION_TOML" "$CARGO_TOML"
+            bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files {} "${{BUMP_FILES[@]}}"
 
             if [[ -f "Cargo.toml" ]]; then
                 cargo update --workspace
