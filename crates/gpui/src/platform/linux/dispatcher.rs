@@ -3,7 +3,7 @@ use crate::{
     TaskTiming, ThreadTaskTimings,
 };
 use calloop::{
-    EventLoop,
+    EventLoop, PostAction,
     channel::{self, Sender},
     timer::TimeoutAction,
 };
@@ -20,7 +20,7 @@ struct TimerAfter {
 }
 
 pub(crate) struct LinuxDispatcher {
-    main_sender: Sender<RunnableVariant>,
+    main_sender: BadPriorityQueueSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
     background_sender: flume::Sender<RunnableVariant>,
     _background_threads: Vec<thread::JoinHandle<()>>,
@@ -28,7 +28,7 @@ pub(crate) struct LinuxDispatcher {
 }
 
 impl LinuxDispatcher {
-    pub fn new(main_sender: Sender<RunnableVariant>) -> Self {
+    pub fn new(main_sender: BadPriorityQueueSender<RunnableVariant>) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<RunnableVariant>();
         let thread_count = std::thread::available_parallelism()
             .map(|i| i.get())
@@ -204,17 +204,19 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
-        self.main_sender.send(runnable).unwrap_or_else(|runnable| {
-            // NOTE: Runnable may wrap a Future that is !Send.
-            //
-            // This is usually safe because we only poll it on the main thread.
-            // However if the send fails, we know that:
-            // 1. main_receiver has been dropped (which implies the app is shutting down)
-            // 2. we are on a background thread.
-            // It is not safe to drop something !Send on the wrong thread, and
-            // the app will exit soon anyway, so we must forget the runnable.
-            std::mem::forget(runnable);
-        });
+        self.main_sender
+            .send(ItemPriority::Medium, runnable)
+            .unwrap_or_else(|runnable| {
+                // NOTE: Runnable may wrap a Future that is !Send.
+                //
+                // This is usually safe because we only poll it on the main thread.
+                // However if the send fails, we know that:
+                // 1. main_receiver has been dropped (which implies the app is shutting down)
+                // 2. we are on a background thread.
+                // It is not safe to drop something !Send on the wrong thread, and
+                // the app will exit soon anyway, so we must forget the runnable.
+                std::mem::forget(runnable);
+            });
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
@@ -224,18 +226,174 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 }
 
-struct BadPriorityQueue<T> {
-    to_process: BTreeMap<usize, T>,
-    source: calloop::ping::PingSource,
-    ping: calloop::ping::Ping,
-    capacity: usize,
+#[derive(Debug, Ord, PartialOrd, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ItemPriority {
+    High,
+    Medium,
+    Low,
 }
 
-use calloop::channel::ChannelError;
+impl ItemPriority {
+    fn ticket_percentage(&self) -> usize {
+        match self {
+            ItemPriority::High => 60,
+            ItemPriority::Medium => 30,
+            ItemPriority::Low => 10,
+        }
+    }
+}
+
+pub struct BadPriorityQueueSender<T> {
+    sender: flume::Sender<(ItemPriority, T)>,
+    ping: calloop::ping::Ping,
+}
+
+impl<T> BadPriorityQueueSender<T> {
+    fn new(tx: flume::Sender<(ItemPriority, T)>, ping: calloop::ping::Ping) -> Self {
+        Self { sender: tx, ping }
+    }
+
+    fn send(
+        &self,
+        priority: ItemPriority,
+        item: T,
+    ) -> Result<(), flume::SendError<(ItemPriority, T)>> {
+        dbg!();
+        let res = self.sender.send((priority, item));
+        if res.is_ok() {
+            self.ping.ping();
+        }
+        res
+    }
+}
+
+impl<T> Drop for BadPriorityQueueSender<T> {
+    fn drop(&mut self) {
+        self.ping.ping();
+    }
+}
+
+struct BadReceiverState<T> {
+    receiver: flume::Receiver<(ItemPriority, T)>,
+    high_priority: Vec<T>,
+    medium_priority: Vec<T>,
+    low_priority: Vec<T>,
+    disconnected: bool,
+}
+
+impl<T> BadReceiverState<T> {
+    const TICKET_COUNT: usize = 100;
+
+    fn new(receiver: flume::Receiver<(ItemPriority, T)>) -> Self {
+        BadReceiverState {
+            receiver,
+            high_priority: Vec::new(),
+            medium_priority: Vec::new(),
+            low_priority: Vec::new(),
+            disconnected: false,
+        }
+    }
+
+    fn pop(&mut self) -> Vec<T> {
+        let mut max_count = Self::TICKET_COUNT;
+        loop {
+            match self.receiver.try_recv() {
+                Ok((priority, item)) => {
+                    max_count -= 1;
+                    match priority {
+                        ItemPriority::High => self.high_priority.push(item),
+                        ItemPriority::Medium => self.medium_priority.push(item),
+                        ItemPriority::Low => self.low_priority.push(item),
+                    }
+
+                    if max_count == 0 {
+                        break;
+                    }
+                }
+                Err(flume::TryRecvError::Empty) => {
+                    break;
+                }
+                Err(flume::TryRecvError::Disconnected) => {
+                    self.disconnected = true;
+                    break;
+                }
+            }
+        }
+
+        let mut results = Vec::new();
+
+        // todo(kate): actually make this a better ticket system
+        // as currently the lack of high priority tasks does not increase ticket count
+        // for the other tasks
+        let mut ticket_count = Self::TICKET_COUNT;
+        let high_taken = ticket_count / ItemPriority::High.ticket_percentage();
+        let medium_taken = ticket_count / ItemPriority::Medium.ticket_percentage();
+        let low_taken = ticket_count / ItemPriority::Low.ticket_percentage();
+
+        results.extend(
+            self.high_priority
+                .drain(..high_taken.min(self.high_priority.len())),
+        );
+        results.extend(
+            self.medium_priority
+                .drain(..medium_taken.min(self.medium_priority.len())),
+        );
+        results.extend(
+            self.low_priority
+                .drain(..low_taken.min(self.low_priority.len())),
+        );
+
+        println!("returning {} tasks to process", results.len());
+
+        results
+    }
+}
+
+pub struct BadPriorityQueueReceiver<T> {
+    receiver: BadReceiverState<T>,
+    source: calloop::ping::PingSource,
+    ping: calloop::ping::Ping,
+}
+
+impl<T> BadPriorityQueueReceiver<T> {
+    pub fn new() -> (BadPriorityQueueSender<T>, Self) {
+        let (ping, source) = calloop::ping::make_ping().expect("Failed to create a Ping.");
+
+        let (tx, rx) = flume::unbounded();
+
+        (
+            BadPriorityQueueSender::new(tx, ping.clone()),
+            Self {
+                receiver: BadReceiverState::new(rx),
+                source,
+                ping,
+            },
+        )
+    }
+}
+
 use calloop::channel::Event;
 
-impl calloop::EventSource for BadPriorityQueue<RunnableVariant> {
-    type Event = Event<RunnableVariant>;
+#[derive(Debug)]
+pub struct ChannelError(calloop::ping::PingError);
+
+impl std::fmt::Display for ChannelError {
+    #[cfg_attr(feature = "nightly_coverage", coverage(off))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for ChannelError {
+    #[cfg_attr(feature = "nightly_coverage", coverage(off))]
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+impl<T> calloop::EventSource for BadPriorityQueueReceiver<T> {
+    type Event = Event<T>;
     type Metadata = ();
     type Ret = ();
     type Error = ChannelError;
@@ -244,32 +402,32 @@ impl calloop::EventSource for BadPriorityQueue<RunnableVariant> {
         &mut self,
         readiness: calloop::Readiness,
         token: calloop::Token,
-        callback: F,
+        mut callback: F,
     ) -> Result<calloop::PostAction, Self::Error>
     where
         F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
     {
-        let capacity = self.capacity;
         let mut clear_readiness = false;
-        let mut disconnected = false;
 
         let action = self
             .source
             .process_events(readiness, token, |(), &mut ()| {
-                let max = std::cmp::min(capacity.saturating_add(1), 1024);
-                for _ in 0..max {
-                    match self.to_process.pop_first() {
-                        Some((_priority, val)) => callback(Event::Msg(val), &mut ()),
-                        None => {
-                            clear_readiness = true;
-                            break;
-                        } // TODO handle disconnected?
-                    }
+                let runnables = self.receiver.pop();
+                if runnables.is_empty() {
+                    clear_readiness = true;
+                }
+
+                for runnable in runnables {
+                    callback(Event::Msg(runnable), &mut ())
+                }
+
+                if self.receiver.disconnected {
+                    callback(Event::Closed, &mut ())
                 }
             })
             .map_err(ChannelError)?;
 
-        if disconnected {
+        if self.receiver.disconnected {
             Ok(PostAction::Remove)
         } else if clear_readiness {
             Ok(action)
@@ -285,7 +443,7 @@ impl calloop::EventSource for BadPriorityQueue<RunnableVariant> {
         poll: &mut calloop::Poll,
         token_factory: &mut calloop::TokenFactory,
     ) -> calloop::Result<()> {
-        todo!()
+        self.source.register(poll, token_factory)
     }
 
     fn reregister(
@@ -293,10 +451,88 @@ impl calloop::EventSource for BadPriorityQueue<RunnableVariant> {
         poll: &mut calloop::Poll,
         token_factory: &mut calloop::TokenFactory,
     ) -> calloop::Result<()> {
-        todo!()
+        self.source.reregister(poll, token_factory)
     }
 
     fn unregister(&mut self, poll: &mut calloop::Poll) -> calloop::Result<()> {
-        todo!()
+        self.source.unregister(poll)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tomato() {
+        let mut event_loop = calloop::EventLoop::try_new().unwrap();
+        let handle = event_loop.handle();
+
+        let (tx, rx) = BadPriorityQueueReceiver::new();
+
+        struct Data {
+            got_msg: bool,
+            got_closed: bool,
+        }
+
+        let mut data = Data {
+            got_msg: false,
+            got_closed: false,
+        };
+
+        let _channel_token = handle
+            .insert_source(rx, move |evt, &mut (), data: &mut Data| match dbg!(evt) {
+                Event::Msg(()) => {
+                    data.got_msg = true;
+                }
+
+                Event::Closed => {
+                    data.got_closed = true;
+                }
+            })
+            .unwrap();
+
+        // nothing is sent, nothing is received
+        event_loop
+            .dispatch(Some(::std::time::Duration::ZERO), &mut data)
+            .unwrap();
+
+        assert!(!data.got_msg);
+        assert!(!data.got_closed);
+        // a message is send
+
+        tx.send(ItemPriority::Medium, ()).unwrap();
+        event_loop
+            .dispatch(Some(::std::time::Duration::ZERO), &mut data)
+            .unwrap();
+
+        assert!(data.got_msg);
+        assert!(!data.got_closed);
+
+        // the sender is dropped
+        drop(tx);
+        event_loop
+            .dispatch(Some(::std::time::Duration::ZERO), &mut data)
+            .unwrap();
+
+        assert!(data.got_msg);
+        assert!(data.got_closed);
+    }
+}
+
+// running 1 test
+// test platform::linux::dispatcher::tests::tomato ... FAILED
+
+// failures:
+
+// ---- platform::linux::dispatcher::tests::tomato stdout ----
+// [crates/gpui/src/platform/linux/dispatcher.rs:262:9]
+// returning 1 tasks to process
+// [crates/gpui/src/platform/linux/dispatcher.rs:480:75] evt = Msg(
+//     (),
+// )
+// returning 0 tasks to process
+
+// thread 'platform::linux::dispatcher::tests::tomato' (478301) panicked at crates/gpui/src/platform/linux/dispatcher.rs:515:9:
+// assertion failed: data.got_closed
+// note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
