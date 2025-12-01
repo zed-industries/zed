@@ -122,7 +122,7 @@ jobs:
             CARGO_TOML="Cargo.toml"
         fi
 
-        bump2version --verbose --current-version ${OLD_VERSION} --no-configured-files ${{ inputs.bump-type }} ${EXTENSION_TOML} ${CARGO_TOML}
+        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "$EXTENSION_TOML" "$CARGO_TOML"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace

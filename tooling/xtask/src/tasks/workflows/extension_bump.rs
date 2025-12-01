@@ -250,7 +250,7 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
                 CARGO_TOML="Cargo.toml"
             fi
 
-            bump2version --verbose --current-version ${{OLD_VERSION}} --no-configured-files {} ${{EXTENSION_TOML}} ${{CARGO_TOML}}
+            bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files {} "$EXTENSION_TOML" "$CARGO_TOML"
 
             if [[ -f "Cargo.toml" ]]; then
                 cargo update --workspace
