@@ -373,13 +373,16 @@ impl Render for FileHistoryView {
             .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
-                    .p(DynamicSpacing::Base08.rems(cx))
+                    .h(rems_from_px(41.))
+                    .pl_3()
+                    .pr_2()
+                    .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .justify_between()
                     .child(
-                        Label::new(format!("History: {}", self.history.path.as_unix_str()))
-                            .size(LabelSize::Default),
+                        Label::new(self.history.path.as_unix_str().to_string())
+                            .color(Color::Muted)
+                            .buffer_font(cx),
                     )
                     .child(
                         h_flex()
