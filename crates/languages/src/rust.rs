@@ -1461,6 +1461,63 @@ mod tests {
                 vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
             ))
         );
+
+        // Snippet with insert tabstop (empty placeholder)
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "println!".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "println!(\"$1\", $2)$0".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "println!(\"…\", …)".to_string(),
+                0..8,
+                vec![
+                    (10..13, HighlightId::TABSTOP_INSERT_ID),
+                    (16..19, HighlightId::TABSTOP_INSERT_ID),
+                    (0..7, HighlightId(2)),
+                    (7..8, HighlightId(2)),
+                ],
+            ))
+        );
+
+        // Snippet with replace tabstop (placeholder with default text)
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "vec!".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "vec![${1:elem}]$0".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "vec![elem]".to_string(),
+                0..4,
+                vec![
+                    (5..9, HighlightId::TABSTOP_REPLACE_ID),
+                    (0..3, HighlightId(2)),
+                    (3..4, HighlightId(2)),
+                ],
+            ))
+        );
     }
 
     #[gpui::test]
