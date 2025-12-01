@@ -2556,7 +2556,11 @@ impl Item for TextThreadEditor {
         Some(self.title(cx).to_string().into())
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -3091,7 +3095,7 @@ mod tests {
             "#
             .unindent();
             let mut buffer = Buffer::local(text, cx);
-            buffer.set_language(Some(markdown.clone()), cx);
+            buffer.set_language_immediate(Some(markdown.clone()), cx);
             buffer
         });
         let snapshot = buffer.read(cx).snapshot();

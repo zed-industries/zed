@@ -67,7 +67,7 @@ impl EditorTestContext {
             .await
             .unwrap();
         buffer.update(cx, |buffer, cx| {
-            buffer.set_language(Some(language), cx);
+            buffer.set_language_immediate(Some(language), cx);
         });
 
         let editor = cx.add_window(|window, cx| {

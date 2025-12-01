@@ -59,7 +59,7 @@ jobs:
         fetch-depth: 10
     - id: compare-versions-check
       name: extension_bump::compare_versions
-      run: |+
+      run: |
         CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
         git checkout "$(git log -1 --format=%H)"~1
@@ -70,9 +70,11 @@ jobs:
           echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
           echo "needs_bump=false" >> "$GITHUB_OUTPUT"
 
+        echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     outputs:
       needs_bump: ${{ steps.compare-versions-check.outputs.needs_bump }}
+      current_version: ${{ steps.compare-versions-check.outputs.current_version }}
     timeout-minutes: 1
   bump_extension_version:
     needs:
@@ -130,6 +132,35 @@ jobs:
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
+    timeout-minutes: 1
+  create_version_label:
+    needs:
+    - check_extension
+    - check_bump_needed
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'false'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.app-id }}
+        private-key: ${{ secrets.app-secret }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: extension_bump::create_version_tag
+      uses: actions/github-script@v7
+      with:
+        script: |-
+          github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/v${{ needs.check_bump_needed.outputs.current_version }}',
+              sha: context.sha
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 1
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
