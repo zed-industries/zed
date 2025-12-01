@@ -199,8 +199,8 @@ fn bump_extension_version(
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
             indoc! {
-                "{}
-                && ({} == 'true || {} == 'true')",
+                "{} &&
+                ({} == 'true || {} == 'true')",
             },
             DEFAULT_REPOSITORY_OWNER_GUARD,
             force_bump.expr(),

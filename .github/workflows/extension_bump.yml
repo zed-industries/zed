@@ -92,8 +92,8 @@ jobs:
     - check_extension
     - check_bump_needed
     if: |-
-      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-      && (inputs.force-bump == 'true || needs.check_bump_needed.outputs.needs_bump == 'true')
+      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
+      (inputs.force-bump == 'true || needs.check_bump_needed.outputs.needs_bump == 'true')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
