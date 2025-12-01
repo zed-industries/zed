@@ -18995,7 +18995,7 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
         .await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
-        buffer_text.to_string() + prettier_format_suffix,
+        buffer_text.to_string() + prettier_format_suffix + "\ntypescript",
         "Test prettier formatting was not applied to the original buffer text",
     );
 
@@ -19012,9 +19012,14 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
         )
     });
     format.await.unwrap();
+
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
-        buffer_text.to_string() + prettier_format_suffix + "\n" + prettier_format_suffix,
+        buffer_text.to_string()
+            + prettier_format_suffix
+            + "\ntypescript\n"
+            + prettier_format_suffix
+            + "\ntypescript",
         "Autoformatting (via test prettier) was not applied to the original buffer text",
     );
 }
