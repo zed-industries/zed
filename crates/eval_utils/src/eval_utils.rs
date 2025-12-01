@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    io::Write as _,
     sync::{Arc, mpsc},
 };
 
@@ -13,13 +12,12 @@ fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usiz
     } else {
         passed_count as f64 / evaluated_count as f64
     };
-    print!(
+    println!(
         "\r\x1b[KEvaluated {}/{} ({:.2}% passed)",
         evaluated_count,
         iterations,
         passed_ratio * 100.0
-    );
-    std::io::stdout().flush().unwrap();
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,43 +27,39 @@ pub enum OutcomeKind {
     Error,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EvalOutput {
+pub trait EvalOutputProcessor {
+    type Metadata: 'static + Send;
+    fn process(&mut self, output: &EvalOutput<Self::Metadata>);
+    fn assert(&mut self);
+}
+
+#[derive(Clone, Debug)]
+pub struct EvalOutput<M> {
+    pub outcome: OutcomeKind,
     pub data: String,
-    pub mismatched_tags: usize,
-    pub tags: usize,
-    pub outcome_kind: OutcomeKind,
+    pub metadata: M,
 }
 
-impl EvalOutput {
-    // TODO! Evaluate this API in relation to the original evals
-    pub fn assert(failure_data: String, pass: bool) -> Self {
-        if pass {
-            EvalOutput {
-                data: "✅".to_string(),
-                mismatched_tags: 0,
-                tags: 0,
-                outcome_kind: OutcomeKind::Passed,
-            }
-        } else {
-            EvalOutput {
-                data: failure_data,
-                mismatched_tags: 0,
-                tags: 0,
-                outcome_kind: OutcomeKind::Failed,
-            }
-        }
-    }
+pub struct NoProcessor;
+impl EvalOutputProcessor for NoProcessor {
+    type Metadata = ();
+
+    fn process(&mut self, _output: &EvalOutput<Self::Metadata>) {}
+
+    fn assert(&mut self) {}
 }
 
-pub fn eval(
+pub fn eval<P>(
     iterations: usize,
     expected_pass_ratio: f32,
-    mismatched_tag_threshold: f32,
-    evalf: Arc<dyn Fn(mpsc::Sender<EvalOutput>) + Send + Sync>,
-) {
+    mut processor: P,
+    evalf: impl Fn() -> EvalOutput<P::Metadata> + Send + Sync + 'static,
+) where
+    P: EvalOutputProcessor,
+{
     let mut evaluated_count = 0;
     let mut failed_count = 0;
+    let evalf = Arc::new(evalf);
     report_progress(evaluated_count, failed_count, iterations);
 
     let (tx, rx) = mpsc::channel();
@@ -74,7 +68,8 @@ pub fn eval(
     let semaphore = Arc::new(smol::lock::Semaphore::new(32));
 
     // Warm the cache once
-    evalf(tx.clone());
+    let first_output = evalf();
+    tx.send(first_output).ok();
 
     for _ in 1..iterations {
         let tx = tx.clone();
@@ -83,7 +78,8 @@ pub fn eval(
         executor
             .spawn(async move {
                 let _guard = semaphore.acquire().await;
-                evalf(tx);
+                let output = evalf();
+                tx.send(output).ok();
             })
             .detach();
     }
@@ -91,20 +87,10 @@ pub fn eval(
 
     let mut failed_evals = Vec::new();
     let mut errored_evals = HashMap::new();
-    let mut eval_outputs = Vec::new();
-    let mut cumulative_mismatched_tags = 0usize;
-    let mut cumulative_tags = 0usize;
     while let Ok(output) = rx.recv() {
-        if matches!(
-            output.outcome_kind,
-            OutcomeKind::Passed | OutcomeKind::Failed
-        ) {
-            cumulative_mismatched_tags += output.mismatched_tags;
-            cumulative_tags += output.tags;
-            eval_outputs.push(output.clone());
-        }
+        processor.process(&output);
 
-        match output.outcome_kind {
+        match output.outcome {
             OutcomeKind::Passed => {}
             OutcomeKind::Failed => {
                 failed_count += 1;
@@ -138,11 +124,5 @@ pub fn eval(
         );
     }
 
-    let mismatched_tag_ratio = cumulative_mismatched_tags as f32 / cumulative_tags as f32;
-    if mismatched_tag_ratio > mismatched_tag_threshold {
-        for eval_output in eval_outputs {
-            println!("{}", eval_output.data);
-        }
-        panic!("Too many mismatched tags: {:?}", cumulative_mismatched_tags);
-    }
+    processor.assert();
 }

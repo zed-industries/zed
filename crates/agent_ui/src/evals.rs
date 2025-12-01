@@ -1,65 +1,67 @@
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 // use std::sync::Arc;
 
 use crate::inline_assistant::test::run_inline_assistant_test;
 
-use eval_utils::EvalOutput;
+use eval_utils::{EvalOutput, NoProcessor};
 use gpui::TestAppContext;
 use language_model::{LanguageModelRegistry, SelectedModel};
 use rand::{SeedableRng as _, rngs::StdRng};
 
 #[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
+// #[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_single_cursor_edit() {
-    eval_utils::eval(
-        1,
-        1.0,
-        0.0,
-        Arc::new(|tx| {
-            run_eval(
-                &EvalInput {
-                    prompt: "Rename this variable to buffer_text".to_string(),
-                    text: indoc::indoc! {"
+    eval_utils::eval(10, 1.0, NoProcessor, || {
+        run_eval(
+            &EvalInput {
+                prompt: "Rename this variable to buffer_text".to_string(),
+                buffer: indoc::indoc! {"
                         struct EvalExampleStruct {
                             text: Strˇing,
                             prompt: String,
                         }
                     "}
-                    .to_string(),
-                },
-                tx,
-                &|_, output| {
-                    EvalOutput::assert(
-                        format!("Failed to rename variable, output: {}", output),
-                        output
-                            == indoc::indoc! {"
-                            struct EvalExampleStruct {
-                                buffer_text: String,
-                                prompt: String,
-                            }
-                        "},
-                    )
-                },
-            );
-        }),
-    );
+                .to_string(),
+            },
+            &|_, output| {
+                let expected = indoc::indoc! {"
+                        struct EvalExampleStruct {
+                            buffer_text: String,
+                            prompt: String,
+                        }
+                        "};
+                if output == expected {
+                    EvalOutput {
+                        outcome: eval_utils::OutcomeKind::Passed,
+                        data: "Passed!".to_string(),
+                        metadata: (),
+                    }
+                } else {
+                    EvalOutput {
+                        outcome: eval_utils::OutcomeKind::Failed,
+                        data: format!("Failed to rename variable, output: {}", output),
+                        metadata: (),
+                    }
+                }
+            },
+        )
+    });
 }
 
 struct EvalInput {
-    text: String,
+    buffer: String,
     prompt: String,
 }
 
 fn run_eval(
     input: &EvalInput,
-    tx: std::sync::mpsc::Sender<eval_utils::EvalOutput>,
-    judge: &dyn Fn(&EvalInput, &str) -> eval_utils::EvalOutput,
-) {
+    judge: &dyn Fn(&EvalInput, &str) -> eval_utils::EvalOutput<()>,
+) -> eval_utils::EvalOutput<()> {
     let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
     let mut cx = TestAppContext::build(dispatcher, None);
 
     let buffer_text = run_inline_assistant_test(
-        input.text.clone(),
+        input.buffer.clone(),
         input.prompt.clone(),
         |cx| {
             // Reconfigure to use a real model instead of the fake one
@@ -83,6 +85,5 @@ fn run_eval(
         &mut cx,
     );
 
-    let output = judge(input, &buffer_text);
-    tx.send(output).ok();
+    judge(input, &buffer_text)
 }

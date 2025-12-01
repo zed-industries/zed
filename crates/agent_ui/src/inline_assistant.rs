@@ -2096,9 +2096,9 @@ pub mod test {
     }
 
     #[allow(unused)]
-    fn test_inline_assistant(
+    pub fn test_inline_assistant(
         base_buffer: &'static str,
-        llm_output: &'static str, // vec<&'static str>
+        llm_output: &'static str,
         cx: &mut TestAppContext,
     ) -> String {
         run_inline_assistant_test(
