@@ -50,22 +50,30 @@ impl Rope {
 
     #[track_caller]
     #[inline(always)]
-    pub fn assert_char_boundary(&self, offset: usize) {
+    pub fn assert_char_boundary<const PANIC: bool>(&self, offset: usize) -> bool {
         if self.chunks.is_empty() && offset == 0 {
-            return;
+            return true;
         }
         let (start, _, item) = self.chunks.find::<usize, _>((), &offset, Bias::Left);
         match item {
             Some(chunk) => {
                 let chunk_offset = offset - start;
-                chunk.assert_char_boundary::<true>(chunk_offset);
+                chunk.assert_char_boundary::<PANIC>(chunk_offset)
             }
-            None => {
+            None if PANIC => {
                 panic!(
                     "byte index {} is out of bounds of rope (length: {})",
                     offset,
                     self.len()
                 );
+            }
+            None => {
+                log::error!(
+                    "byte index {} is out of bounds of rope (length: {})",
+                    offset,
+                    self.len()
+                );
+                false
             }
         }
     }
