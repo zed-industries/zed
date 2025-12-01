@@ -87,7 +87,7 @@ impl FileExplorer {
             file_explorer,
             workspace,
             project,
-            worktree_id,
+            Some(worktree_id),
             current_path,
             initial_selected_path,
             cx,
@@ -113,22 +113,30 @@ impl FileExplorer {
 
         let active_item = workspace.active_item(cx);
 
-        let (worktree_id, current_path, initial_selected_path) = if let Some(item) = &active_item {
-            if let Some(project_path) = item.project_path(cx) {
-                let parent = project_path
-                    .path
-                    .parent()
-                    .map(|p| p.to_owned().into())
-                    .unwrap_or_else(|| RelPath::empty().to_owned().into());
-                let file_name = project_path
-                    .path
-                    .file_name()
-                    .map(|s| s.to_string());
-                (project_path.worktree_id, parent, file_name)
-            } else {
-                return;
+        // Try to use the active item's worktree if it's visible
+        let from_active_item = active_item.and_then(|item| {
+            let project_path = item.project_path(cx)?;
+            // Verify the worktree is visible (not a temporary worktree for external files)
+            let worktree_is_visible = project
+                .read(cx)
+                .visible_worktrees(cx)
+                .any(|wt| wt.read(cx).id() == project_path.worktree_id);
+            if !worktree_is_visible {
+                return None;
             }
-        } else if let Some(worktree) = project.read(cx).worktrees(cx).next() {
+            let parent = project_path
+                .path
+                .parent()
+                .map(|p| p.to_owned().into())
+                .unwrap_or_else(|| RelPath::empty().to_owned().into());
+            let file_name = project_path.path.file_name().map(|s| s.to_string());
+            Some((project_path.worktree_id, parent, file_name))
+        });
+
+        let (worktree_id, current_path, initial_selected_path) = if let Some(result) = from_active_item {
+            result
+        } else if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
+            // Fall back to first visible worktree if active item doesn't have a valid worktree
             let worktree = worktree.read(cx);
             (worktree.id(), RelPath::empty().to_owned().into(), None)
         } else {
@@ -252,14 +260,15 @@ impl FileExplorer {
                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_explorer;
 
             match entry {
-                FileExplorerEntry::ParentDirectory => None,
+                FileExplorerEntry::ParentDirectory | FileExplorerEntry::Worktree(..) => None,
                 FileExplorerEntry::Entry(e) => {
                     if e.is_dir() {
                         None
                     } else {
+                        let worktree_id = delegate.worktree_id?;
                         Some((
                             ProjectPath {
-                                worktree_id: delegate.worktree_id,
+                                worktree_id,
                                 path: e.path,
                             },
                             delegate.workspace.upgrade(),
@@ -310,6 +319,7 @@ impl Render for FileExplorer {
 #[derive(Debug, Clone)]
 enum FileExplorerEntry {
     ParentDirectory,
+    Worktree(WorktreeId, Arc<RelPath>),
     Entry(Entry),
 }
 
@@ -317,6 +327,7 @@ impl FileExplorerEntry {
     fn display_name(&self) -> String {
         match self {
             FileExplorerEntry::ParentDirectory => "..".to_string(),
+            FileExplorerEntry::Worktree(_, name) => name.as_ref().as_unix_str().to_string(),
             FileExplorerEntry::Entry(e) => e
                 .path
                 .file_name()
@@ -330,7 +341,7 @@ pub struct FileExplorerDelegate {
     file_explorer: WeakEntity<FileExplorer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    worktree_id: WorktreeId,
+    worktree_id: Option<WorktreeId>,
     current_path: Arc<RelPath>,
     all_entries: Vec<FileExplorerEntry>,
     filtered_entries: Vec<FileExplorerEntry>,
@@ -348,7 +359,7 @@ impl FileExplorerDelegate {
         file_explorer: WeakEntity<FileExplorer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        worktree_id: WorktreeId,
+        worktree_id: Option<WorktreeId>,
         current_path: Arc<RelPath>,
         initial_selected_path: Option<String>,
         cx: &mut Context<FileExplorer>,
@@ -374,13 +385,33 @@ impl FileExplorerDelegate {
         self.all_entries.clear();
 
         let project = self.project.read(cx);
-        let Some(worktree) = project.worktree_for_id(self.worktree_id, cx) else {
+
+        // If no worktree_id, show worktree selection
+        let Some(worktree_id) = self.worktree_id else {
+            let mut worktrees: Vec<_> = project
+                .visible_worktrees(cx)
+                .map(|wt| {
+                    let wt = wt.read(cx);
+                    FileExplorerEntry::Worktree(wt.id(), wt.root_name().into())
+                })
+                .collect();
+            worktrees.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+            self.all_entries = worktrees;
+            self.filtered_entries = self.all_entries.clone();
+            self.selected_index = 0;
+            return;
+        };
+
+        let Some(worktree) = project.worktree_for_id(worktree_id, cx) else {
             return;
         };
         let worktree = worktree.read(cx);
 
-        // Only show parent directory if we're not at the worktree root
-        if !self.current_path.as_ref().as_unix_str().is_empty() {
+        // Show parent directory if we're in a subdirectory or at root with multiple worktrees
+        let at_worktree_root = self.current_path.as_ref().as_unix_str().is_empty();
+        let has_multiple_worktrees = project.visible_worktrees(cx).count() > 1;
+
+        if !at_worktree_root || has_multiple_worktrees {
             self.all_entries
                 .push(FileExplorerEntry::ParentDirectory);
         }
@@ -422,6 +453,7 @@ impl FileExplorerDelegate {
             .and_then(|target_path| {
                 self.filtered_entries.iter().position(|entry| match entry {
                     FileExplorerEntry::ParentDirectory => false,
+                    FileExplorerEntry::Worktree(..) => false,
                     FileExplorerEntry::Entry(e) => {
                         e.path.file_name().map(|s| s.to_string()).as_deref() == Some(&target_path)
                     }
@@ -432,6 +464,7 @@ impl FileExplorerDelegate {
 
     fn navigate_to_parent(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(parent) = self.current_path.parent() {
+            // Navigate up within the current worktree
             self.current_path = parent.to_owned().into();
             self.load_entries(cx);
             cx.notify();
@@ -441,6 +474,21 @@ impl FileExplorerDelegate {
                 picker.refresh_placeholder(window, cx);
                 picker.refresh(window, cx);
             });
+        } else if self.worktree_id.is_some() {
+            // At worktree root, navigate to worktree selection if multiple worktrees
+            let has_multiple_worktrees = self.project.read(cx).visible_worktrees(cx).count() > 1;
+            if has_multiple_worktrees {
+                self.worktree_id = None;
+                self.current_path = RelPath::empty().to_owned().into();
+                self.load_entries(cx);
+                cx.notify();
+
+                cx.defer_in(window, |picker, window, cx| {
+                    picker.set_query("", window, cx);
+                    picker.refresh_placeholder(window, cx);
+                    picker.refresh(window, cx);
+                });
+            }
         }
     }
 
@@ -450,24 +498,43 @@ impl FileExplorerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        if let FileExplorerEntry::Entry(e) = entry {
-            self.current_path = e.path.clone();
-            self.load_entries(cx);
+        match entry {
+            FileExplorerEntry::Worktree(id, _) => {
+                self.worktree_id = Some(*id);
+                self.current_path = RelPath::empty().to_owned().into();
+                self.load_entries(cx);
 
-            cx.notify();
-            cx.defer_in(window, |picker, window, cx| {
-                picker.set_query("", window, cx);
-                picker.refresh_placeholder(window, cx);
-                picker.refresh(window, cx);
-            });
+                cx.notify();
+                cx.defer_in(window, |picker, window, cx| {
+                    picker.set_query("", window, cx);
+                    picker.refresh_placeholder(window, cx);
+                    picker.refresh(window, cx);
+                });
+            }
+            FileExplorerEntry::Entry(e) => {
+                self.current_path = e.path.clone();
+                self.load_entries(cx);
+
+                cx.notify();
+                cx.defer_in(window, |picker, window, cx| {
+                    picker.set_query("", window, cx);
+                    picker.refresh_placeholder(window, cx);
+                    picker.refresh(window, cx);
+                });
+            }
+            FileExplorerEntry::ParentDirectory => {}
         }
     }
 
     fn display_path(&self, cx: &App) -> String {
+        let Some(worktree_id) = self.worktree_id else {
+            return "Worktrees".to_string();
+        };
+
         let worktree_name = self
             .project
             .read(cx)
-            .worktree_for_id(self.worktree_id, cx)
+            .worktree_for_id(worktree_id, cx)
             .map(|wt| wt.read(cx).root_name().display(PathStyle::local()).into_owned())
             .unwrap_or_else(|| ".".to_string());
 
@@ -566,12 +633,18 @@ impl PickerDelegate for FileExplorerDelegate {
             FileExplorerEntry::ParentDirectory => {
                 self.navigate_to_parent(window, cx);
             }
+            FileExplorerEntry::Worktree(..) => {
+                self.navigate_to_entry(&entry, window, cx);
+            }
             FileExplorerEntry::Entry(ref e) if e.is_dir() => {
                 self.navigate_to_entry(&entry, window, cx);
             }
             FileExplorerEntry::Entry(e) => {
+                let Some(worktree_id) = self.worktree_id else {
+                    return;
+                };
                 let project_path = ProjectPath {
-                    worktree_id: self.worktree_id,
+                    worktree_id,
                     path: e.path,
                 };
 
@@ -629,6 +702,7 @@ impl PickerDelegate for FileExplorerDelegate {
 
         let (icon_name, file_icon) = match entry {
             FileExplorerEntry::ParentDirectory => (Some(IconName::Folder), None),
+            FileExplorerEntry::Worktree(..) => (Some(IconName::FileTree), None),
             FileExplorerEntry::Entry(e) => {
                 if e.is_dir() {
                     (Some(IconName::Folder), None)
@@ -643,6 +717,9 @@ impl PickerDelegate for FileExplorerDelegate {
 
         let (display_name, suffix) = match entry {
             FileExplorerEntry::ParentDirectory => ("..".to_string(), ""),
+            FileExplorerEntry::Worktree(_, name) => {
+                (name.as_ref().as_unix_str().to_string(), "")
+            }
             FileExplorerEntry::Entry(e) => {
                 let name = e
                     .path
