@@ -156,11 +156,11 @@ fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
         r#"
         CURRENT_VERSION="$({})"
         PR_PARENT_SHA="${{{{ github.event.pull_request.head.sha }}}}"
-        BRANCH_PARENT_SHA="$(git merge-base origin/main zed-zippy-autobump)"
+
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
             git checkout "$PR_PARENT_SHA"
-        elif [[ -n "$BRANCH_PARENT_SHA" ]]; then
+        elif [[ BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)" ]]; then
             git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
