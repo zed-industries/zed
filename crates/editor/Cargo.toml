@@ -94,6 +94,7 @@ uuid.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zlog.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

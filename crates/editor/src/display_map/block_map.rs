@@ -525,6 +525,7 @@ impl BlockMap {
     }
 
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: WrapPatch) {
+        let _timer = zlog::time!("BlockMap::sync").warn_if_gt(std::time::Duration::from_millis(50));
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
