@@ -15,8 +15,8 @@ on:
         default: patch
       force-bump:
         description: force-bump
+        required: true
         type: boolean
-        default: 'false'
     secrets:
       app-id:
         description: The app ID used to create the PR
