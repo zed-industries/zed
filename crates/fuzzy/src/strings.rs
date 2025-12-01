@@ -249,9 +249,9 @@ mod tests {
     #[gpui::test]
     async fn test_boost_affects_fuzzy_matching(cx: &mut TestAppContext) {
         let candidates = vec![
-            StringMatchCandidate::with_boost(0, "backspace", 1.0),   // Good match, no boost
-            StringMatchCandidate::with_boost(1, "back", 10.0),       // Perfect match, high boost
-            StringMatchCandidate::with_boost(2, "feedback", 1.0),    // Weaker match, no boost
+            StringMatchCandidate::with_boost(0, "backspace", 1.0), // Good match, no boost
+            StringMatchCandidate::with_boost(1, "back", 10.0),     // Perfect match, high boost
+            StringMatchCandidate::with_boost(2, "feedback", 1.0),  // Weaker match, no boost
         ];
 
         let matches = match_strings(
@@ -277,9 +277,9 @@ mod tests {
     #[gpui::test]
     async fn test_boost_doesnt_promote_bad_matches(cx: &mut TestAppContext) {
         let candidates = vec![
-            StringMatchCandidate::with_boost(0, "backspace", 1.0),      // Good fuzzy match
-            StringMatchCandidate::with_boost(1, "xyz", 100.0),          // No match, huge boost
-            StringMatchCandidate::with_boost(2, "feedback", 1.0),       // Weaker match
+            StringMatchCandidate::with_boost(0, "backspace", 1.0), // Good fuzzy match
+            StringMatchCandidate::with_boost(1, "xyz", 100.0),     // No match, huge boost
+            StringMatchCandidate::with_boost(2, "feedback", 1.0),  // Weaker match
         ];
 
         let matches = match_strings(
