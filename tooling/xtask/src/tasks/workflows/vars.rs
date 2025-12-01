@@ -88,7 +88,7 @@ pub fn one_workflow_per_non_main_branch_and_token<T: AsRef<str>>(token: T) -> Co
         .group(format!(
             concat!(
                 "${{{{ github.workflow }}}}-${{{{ github.ref_name }}}}-",
-                "${{{{ github.ref_name == 'main' && github.sha || 'anysha{}' }}}}"
+                "${{{{ github.ref_name == 'main' && github.sha || 'anysha' }}}}{}"
             ),
             token.as_ref()
         ))

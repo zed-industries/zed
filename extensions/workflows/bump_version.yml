@@ -36,9 +36,7 @@ jobs:
   call_bump_version:
     needs:
     - determine_bump_type
-    if: |-
-      (github.event.action == 'labeled' && needs.determine_bump_type.outputs.bump_type != 'patch') ||
-      github.event_name == 'push'
+    if: github.event.action != 'labeled' || needs.determine_bump_type.outputs.bump_type != 'patch'
     uses: zed-industries/zed/.github/workflows/extension_bump.yml@main
     secrets:
       app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
@@ -47,5 +45,5 @@ jobs:
       bump-type: ${{ needs.determine_bump_type.outputs.bump_type }}
       force-bump: true
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anyshalabels' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}labels
   cancel-in-progress: true
