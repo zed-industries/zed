@@ -22,7 +22,6 @@ use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
     Item, Workspace,
     item::{ItemEvent, SaveOptions},
-    searchable::SearchableItemHandle,
 };
 
 use crate::commit_view::CommitView;
