@@ -31,10 +31,7 @@ pub(crate) fn call_bump_version(
 ) -> NamedJob<UsesJob> {
     let job = Job::default()
         .cond(Expression::new(format!(
-            indoc! {
-                "(github.event.action == 'labeled' && {} != 'patch') ||
-                github.event_name == 'push'"
-            },
+            "github.event.action != 'labeled' || {} != 'patch'",
             bump_type.expr()
         )))
         .uses(
