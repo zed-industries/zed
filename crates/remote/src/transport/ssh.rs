@@ -1052,15 +1052,18 @@ impl SshSocket {
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
         let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
-        // we use rsplit_once to split from the right, as there may be junk info in the left part due to output from
-        // initialization scripts.
-        let Some((os, arch)) = uname.rsplit_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
+        // To avoid the junk info before the actual uname output, we split by whitespace and
+        // take the last two parts.
+        let mut iter = uname.split_whitespace().rev();
+        let (os, arch) = match (iter.next(), iter.next()) {
+            (Some(arch), Some(os)) => (os, arch),
+            _ => anyhow::bail!("unknown uname: {uname:?}"),
         };
 
-        // The outputs of initialization scripts may not end with new line, so os may become like
-        // "Welcome to Ubuntu 20.04.4 LTSLinux". We just check the ending here.
-        let os = match os.trim_end() {
+        // The junk infor before the uname output may look lke "Welcome to Ubuntu 20.04.4 LTS"
+        // and doesn't have a trailing newline, so os may become like "LTSLinux". We just check
+        // the ending here.
+        let os = match os {
             o if o.ends_with("Darwin") => "macos",
             o if o.ends_with("Linux") => "linux",
             _ => anyhow::bail!(
