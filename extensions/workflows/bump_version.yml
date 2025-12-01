@@ -1,4 +1,4 @@
-# Generated from xtask::workflows:: within the Zed repository.extensions::bump_version
+# Generated from xtask::workflows::extensions::bump_version within the Zed repository.
 # Rebuild with `cargo xtask workflows`.
 name: extensions::bump_version
 on:
