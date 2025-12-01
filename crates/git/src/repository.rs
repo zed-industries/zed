@@ -1414,17 +1414,18 @@ impl GitRepository for RealGitRepository {
             .remote_url("upstream")
             .or_else(|| self.remote_url("origin"));
 
-        async move {
-            crate::blame::Blame::for_path(
-                &git_binary_path,
-                &working_directory?,
-                &path,
-                &content,
-                remote_url,
-            )
-            .await
-        }
-        .boxed()
+        self.executor
+            .spawn(async move {
+                crate::blame::Blame::for_path(
+                    &git_binary_path,
+                    &working_directory?,
+                    &path,
+                    &content,
+                    remote_url,
+                )
+                .await
+            })
+            .boxed()
     }
 
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
@@ -1642,6 +1643,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let mut cmd = new_smol_command(git_binary_path);
             cmd.current_dir(&working_directory?)
@@ -1684,6 +1687,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't push")?;
             let working_directory = working_directory?;
@@ -1719,6 +1724,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't pull")?;
             let mut command = new_smol_command(git_binary_path);
@@ -1753,6 +1760,8 @@ impl GitRepository for RealGitRepository {
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't fetch")?;
             let mut command = new_smol_command(git_binary_path);
