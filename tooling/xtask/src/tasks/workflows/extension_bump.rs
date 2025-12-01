@@ -5,9 +5,9 @@ use crate::tasks::workflows::{
     extension_release::extension_workflow_secrets,
     extension_tests::{self},
     runners,
-    steps::{self, named, CommonJobConditions, NamedJob, DEFAULT_REPOSITORY_OWNER_GUARD},
+    steps::{self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
     vars::{
-        one_workflow_per_non_main_branch, JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
+        JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
     },
 };
 
