@@ -11,8 +11,8 @@ on:
     inputs:
       bump-type:
         description: bump-type
-        type: string
-        default: patch
+        type: boolean
+        default: 'false'
     secrets:
       app-id:
         description: The app ID used to create the PR
@@ -80,7 +80,9 @@ jobs:
     needs:
     - check_extension
     - check_bump_needed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'true'
+    if: |-
+      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+      && (${{ inputs.bump-type }} == 'true || needs.check_bump_needed.outputs.needs_bump == 'true')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
