@@ -13,16 +13,6 @@ use crate::tasks::workflows::{
     },
 };
 
-const BUMPVERSION_CONFIG: &str = indoc! {r#"
-    [bumpversion]
-    current_version = "$OLD_VERSION"
-
-    [bumpversion:file:Cargo.toml]
-
-    [bumpversion:file:extension.toml]
-    "#
-};
-
 const VERSION_CHECK: &str = r#"sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml"#;
 
 // This is used by various extensions repos in the zed-extensions org to bump extension versions.
@@ -252,20 +242,26 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
         indoc! {r#"
             OLD_VERSION="{}"
 
-            cat <<EOF > .bumpversion.cfg
-            {}
-            EOF
+            if [[ -f "extension.toml" ]]; then
+                EXTENSION_TOML="extension.toml"
+            fi
 
-            bump2version --verbose {}
+            if [[ -f "Cargo.toml" ]]; then
+                CARGO_TOML="Cargo.toml"
+            fi
+
+            bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files {} "$EXTENSION_TOML" "$CARGO_TOML"
+
+            if [[ -f "Cargo.toml" ]]; then
+                cargo update --workspace
+            fi
+
             NEW_VERSION="$({})"
-            cargo update --workspace
-
-            rm .bumpversion.cfg
 
             echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
             "#
         },
-        current_version, BUMPVERSION_CONFIG, bump_type, VERSION_CHECK
+        current_version, bump_type, VERSION_CHECK
     ))
     .id("bump-version");
 

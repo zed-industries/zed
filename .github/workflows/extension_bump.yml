@@ -114,21 +114,21 @@ jobs:
       run: |
         OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
 
-        cat <<EOF > .bumpversion.cfg
-        [bumpversion]
-        current_version = "$OLD_VERSION"
+        if [[ -f "extension.toml" ]]; then
+            EXTENSION_TOML="extension.toml"
+        fi
 
-        [bumpversion:file:Cargo.toml]
+        if [[ -f "Cargo.toml" ]]; then
+            CARGO_TOML="Cargo.toml"
+        fi
 
-        [bumpversion:file:extension.toml]
+        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "$EXTENSION_TOML" "$CARGO_TOML"
 
-        EOF
+        if [[ -f "Cargo.toml" ]]; then
+            cargo update --workspace
+        fi
 
-        bump2version --verbose ${{ inputs.bump-type }}
         NEW_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
-        cargo update --workspace
-
-        rm .bumpversion.cfg
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
