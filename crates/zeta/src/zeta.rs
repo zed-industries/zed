@@ -1966,6 +1966,10 @@ impl Zeta {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
+        if !matches!(self.edit_prediction_model, ZetaEditPredictionModel::Zeta2) {
+            return;
+        }
+
         if !matches!(&self.options().context, ContextMode::Agentic { .. }) {
             return;
         }
