@@ -1078,8 +1078,8 @@ impl EditPredictionButton {
             menu = menu
                 .custom_row(move |_window, cx| {
                     let description = indoc! {
-                        "Sign in for 2,000 worth of accepted suggestions at every keystroke, \
-                        powered by Zeta, our open-source, open-data model."
+                        "You get 2,000 accepted suggestions at every keystroke for free, \
+                        powered by Zeta, our open-source, open-data model"
                     };
 
                     v_flex()
@@ -1332,21 +1332,28 @@ fn render_zeta_tab_animation(cx: &App) -> impl IntoElement {
                 .child("tab")
                 .with_animation(
                     ElementId::Integer(n),
-                    Animation::new(Duration::from_secs(4)).repeat(),
+                    Animation::new(Duration::from_secs(3)).repeat(),
                     move |tab, delta| {
                         let n_f32 = n as f32;
 
-                        let delta = if inverted {
-                            (delta - 0.15 * (5.0 - n_f32)) / 0.7
+                        let offset = if inverted {
+                            0.2 * (4.0 - n_f32)
                         } else {
-                            (delta - 0.15 * n_f32) / 0.7
+                            0.2 * n_f32
                         };
 
-                        let delta = 1.0 - (0.5 - delta).abs() * 2.;
-                        let delta = ease_in_out(delta.clamp(0., 1.));
-                        let delta = 0.1 + 0.5 * delta;
+                        let phase = (delta - offset + 1.0) % 1.0;
+                        let pulse = if phase < 0.6 {
+                            let t = phase / 0.6;
+                            1.0 - (0.5 - t).abs() * 2.0
+                        } else {
+                            0.0
+                        };
 
-                        tab.text_color(text_color.opacity(delta))
+                        let eased = ease_in_out(pulse);
+                        let opacity = 0.1 + 0.5 * eased;
+
+                        tab.text_color(text_color.opacity(opacity))
                     },
                 ),
         )
