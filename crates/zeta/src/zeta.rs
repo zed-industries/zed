@@ -896,7 +896,6 @@ impl Zeta {
                 .await;
 
             Self::handle_api_response(&this, response, cx)?;
-            dbg!();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -912,7 +911,6 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         let last_rejection = self.rejected_predictions.last().cloned();
-        dbg!(self.rejected_predictions.len());
         let Some(last_rejection) = last_rejection else {
             return Task::ready(anyhow::Ok(()));
         };
@@ -940,11 +938,10 @@ impl Zeta {
             .context("Failed to reject edit predictions")?;
 
             this.update(cx, |this, _| {
-                if let Some(ix) =
-                    dbg!(this
+                if let Some(ix) = this
                     .rejected_predictions
                     .iter()
-                    .position(|rejection| rejection.request_id == last_rejection.request_id))
+                    .position(|rejection| rejection.request_id == last_rejection.request_id)
                 {
                     this.rejected_predictions.drain(..ix + 1);
                 }
