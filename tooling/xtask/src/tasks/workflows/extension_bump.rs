@@ -159,7 +159,7 @@ fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
             git checkout "$PR_PARENT_SHA"
-        elif [[ BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)" ]]; then
+        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
@@ -203,7 +203,7 @@ fn bump_extension_version(
                 && ({} == 'true || {} == 'true')",
             },
             DEFAULT_REPOSITORY_OWNER_GUARD,
-            force_bump.to_string(),
+            force_bump.expr(),
             needs_bump.expr(),
         )))
         .runs_on(runners::LINUX_LARGE)

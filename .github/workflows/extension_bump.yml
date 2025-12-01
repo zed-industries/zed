@@ -69,7 +69,7 @@ jobs:
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
             git checkout "$PR_PARENT_SHA"
-        elif [[ BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)" ]]; then
+        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
@@ -93,7 +93,7 @@ jobs:
     - check_bump_needed
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-      && (${{ inputs.force-bump }} == 'true || needs.check_bump_needed.outputs.needs_bump == 'true')
+      && (inputs.force-bump == 'true || needs.check_bump_needed.outputs.needs_bump == 'true')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token

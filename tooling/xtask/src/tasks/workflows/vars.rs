@@ -245,7 +245,7 @@ impl WorkflowInput {
         }
     }
 
-    fn expr(&self) -> String {
+    pub(crate) fn expr(&self) -> String {
         format!("inputs.{}", self.name)
     }
 }
