@@ -43,7 +43,7 @@ impl Editor {
                 .collect_array()
         };
 
-        let bracket_matches_by_accent = self.visible_excerpts(cx).into_iter().fold(
+        let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
             |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
@@ -164,7 +164,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DisplayPoint, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
+        DisplayPoint, EditorMode, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
@@ -273,6 +273,40 @@ where
 "#,
             &bracket_colors_markup(&mut cx),
             "All brackets should be colored based on their depth"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_less_file_colorization(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let editor = cx.add_window(|window, cx| {
+            let multi_buffer = MultiBuffer::build_simple("fn main() {}", cx);
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer
+                    .as_singleton()
+                    .unwrap()
+                    .update(cx, |buffer, cx| {
+                        buffer.set_language(Some(rust_lang()), cx);
+                    });
+            });
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            "fn main«1()1» «1{}1»
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+",
+            editor
+                .update(cx, |editor, window, cx| {
+                    editor_bracket_colors_markup(&editor.snapshot(window, cx))
+                })
+                .unwrap(),
+            "File-less buffer should still have its brackets colorized"
         );
     }
 
