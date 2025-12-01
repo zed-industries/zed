@@ -17,8 +17,8 @@ use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{
-    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
-    ToggleButtonGroup, ToggleButtonSimple, Tooltip, prelude::*,
+    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip,
+    prelude::*,
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
