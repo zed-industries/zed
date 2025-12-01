@@ -1,7 +1,7 @@
 mod persistence;
 
 use std::{
-    cmp::{self, Reverse},
+    cmp,
     collections::HashMap,
     sync::Arc,
     time::Duration,
@@ -297,22 +297,25 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
         let (mut tx, mut rx) = postage::dispatch::channel(1);
         let task = cx.background_spawn({
-            let mut commands = self.all_commands.clone();
+            let commands = self.all_commands.clone();
             let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
             let query = normalize_action_query(query.as_str());
             async move {
-                commands.sort_by_key(|action| {
-                    (
-                        Reverse(hit_counts.get(&action.name).cloned()),
-                        action.name.clone(),
-                    )
-                });
-
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| {
+                        // Calculate boost from hit counts using square root scaling
+                        // This is more aggressive for low counts, giving frequently-used commands
+                        // a fighting chance against better fuzzy matches:
+                        // 1 use → 2.5x, 5 uses → 4.35x, 10 uses → 5.74x, 50 uses → 11.6x
+                        let boost = hit_counts
+                            .get(&command.name)
+                            .map(|&count| 1.0 + (count as f64).sqrt() * 1.5)
+                            .unwrap_or(1.0);
+                        StringMatchCandidate::with_boost(ix, &command.name, boost)
+                    })
                     .collect::<Vec<_>>();
 
                 let matches = fuzzy::match_strings(

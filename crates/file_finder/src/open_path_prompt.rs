@@ -407,6 +407,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 id: max_id + 1,
                                 string: current_dir.to_string(),
                                 char_bag: CharBag::from(current_dir),
+                                boost: 1.0,
                             },
                             is_dir: true,
                         },

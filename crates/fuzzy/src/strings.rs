@@ -16,6 +16,7 @@ pub struct StringMatchCandidate {
     pub id: usize,
     pub string: String,
     pub char_bag: CharBag,
+    pub boost: f64,
 }
 
 impl StringMatchCandidate {
@@ -24,6 +25,16 @@ impl StringMatchCandidate {
             id,
             string: string.into(),
             char_bag: string.into(),
+            boost: 1.0,
+        }
+    }
+
+    pub fn with_boost(id: usize, string: &str, boost: f64) -> Self {
+        Self {
+            id,
+            string: string.into(),
+            char_bag: string.into(),
+            boost,
         }
     }
 }
@@ -134,7 +145,7 @@ where
             .iter()
             .map(|candidate| StringMatch {
                 candidate_id: candidate.borrow().id,
-                score: 0.,
+                score: candidate.borrow().boost,
                 positions: Default::default(),
                 string: candidate.borrow().string.clone(),
             })
@@ -179,7 +190,7 @@ where
                         cancel_flag,
                         |candidate: &&StringMatchCandidate, score, positions| StringMatch {
                             candidate_id: candidate.id,
-                            score,
+                            score: score * candidate.boost,
                             positions: positions.clone(),
                             string: candidate.string.to_string(),
                         },
@@ -196,4 +207,118 @@ where
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_boost_with_empty_query(cx: &mut TestAppContext) {
+        let candidates = vec![
+            StringMatchCandidate::with_boost(0, "low priority", 1.0),
+            StringMatchCandidate::with_boost(1, "high priority", 5.0),
+            StringMatchCandidate::with_boost(2, "medium priority", 2.0),
+        ];
+
+        let matches = match_strings(
+            &candidates,
+            "",
+            false,
+            false,
+            10,
+            &AtomicBool::new(false),
+            cx.background_executor().clone(),
+        )
+        .await;
+
+        // With empty query, should be sorted by boost (descending)
+        assert_eq!(matches.len(), 3);
+        assert_eq!(matches[0].candidate_id, 1); // high priority (5.0)
+        assert_eq!(matches[0].score, 5.0);
+        assert_eq!(matches[1].candidate_id, 2); // medium priority (2.0)
+        assert_eq!(matches[1].score, 2.0);
+        assert_eq!(matches[2].candidate_id, 0); // low priority (1.0)
+        assert_eq!(matches[2].score, 1.0);
+    }
+
+    #[gpui::test]
+    async fn test_boost_affects_fuzzy_matching(cx: &mut TestAppContext) {
+        let candidates = vec![
+            StringMatchCandidate::with_boost(0, "backspace", 1.0),   // Good match, no boost
+            StringMatchCandidate::with_boost(1, "back", 10.0),       // Perfect match, high boost
+            StringMatchCandidate::with_boost(2, "feedback", 1.0),    // Weaker match, no boost
+        ];
+
+        let matches = match_strings(
+            &candidates,
+            "back",
+            false,
+            false,
+            10,
+            &AtomicBool::new(false),
+            cx.background_executor().clone(),
+        )
+        .await;
+
+        // "back" with 10x boost should rank first despite similar fuzzy scores
+        assert!(matches.len() >= 2);
+        assert_eq!(matches[0].candidate_id, 1); // "back" with high boost
+        assert_eq!(matches[0].string, "back");
+
+        // Verify boost multiplied the score
+        assert!(matches[0].score > matches[1].score);
+    }
+
+    #[gpui::test]
+    async fn test_boost_doesnt_promote_bad_matches(cx: &mut TestAppContext) {
+        let candidates = vec![
+            StringMatchCandidate::with_boost(0, "backspace", 1.0),      // Good fuzzy match
+            StringMatchCandidate::with_boost(1, "xyz", 100.0),          // No match, huge boost
+            StringMatchCandidate::with_boost(2, "feedback", 1.0),       // Weaker match
+        ];
+
+        let matches = match_strings(
+            &candidates,
+            "backs",
+            false,
+            false,
+            10,
+            &AtomicBool::new(false),
+            cx.background_executor().clone(),
+        )
+        .await;
+
+        // "xyz" should not appear despite huge boost because fuzzy score is 0
+        assert!(matches.iter().all(|m| m.string != "xyz"));
+
+        // Good matches should still be first
+        if !matches.is_empty() {
+            assert_eq!(matches[0].string, "backspace");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_default_boost_is_neutral(cx: &mut TestAppContext) {
+        let candidates = vec![
+            StringMatchCandidate::new(0, "apple"),
+            StringMatchCandidate::new(1, "application"),
+        ];
+
+        let matches = match_strings(
+            &candidates,
+            "app",
+            false,
+            false,
+            10,
+            &AtomicBool::new(false),
+            cx.background_executor().clone(),
+        )
+        .await;
+
+        // Default boost (1.0) should not change behavior
+        // Just verify we get matches and no panics
+        assert!(!matches.is_empty());
+    }
 }
