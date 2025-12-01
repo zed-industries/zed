@@ -3,7 +3,10 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use ::util::{ResultExt, paths::SanitizedPath};
@@ -36,6 +39,9 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
     disable_direct_composition: bool,
 }
@@ -162,6 +168,7 @@ impl WindowsPlatform {
             disable_direct_composition,
             windows_version,
             drop_target_helper,
+            invalidate_devices: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -195,6 +202,7 @@ impl WindowsPlatform {
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.borrow().directx_devices.clone().unwrap(),
+            invalidate_devices: self.invalidate_devices.clone(),
         }
     }
 
@@ -247,13 +255,17 @@ impl WindowsPlatform {
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(&self.text_system);
+        let invalidate_devices = self.invalidate_devices.clone();
+
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
                 loop {
                     vsync_provider.wait_for_vsync();
-                    if check_device_lost(&directx_device.device) {
+                    if check_device_lost(&directx_device.device)
+                        || invalidate_devices.fetch_and(false, Ordering::Acquire)
+                    {
                         if let Err(err) = handle_gpu_device_lost(
                             &mut directx_device,
                             platform_window.as_raw(),
@@ -377,11 +389,12 @@ impl Platform for WindowsPlatform {
         #[allow(
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
-        )]
-        let restart_process = util::command::new_std_command("powershell.exe")
-            .arg("-command")
-            .arg(script)
-            .spawn();
+        )] // todo(shell): There might be no powershell on the system
+        let restart_process =
+            util::command::new_std_command(util::shell::get_windows_system_shell())
+                .arg("-command")
+                .arg(script)
+                .spawn();
 
         match restart_process {
             Ok(_) => self.quit(),
@@ -629,14 +642,23 @@ impl Platform for WindowsPlatform {
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
-            unsafe {
+            let result = unsafe {
                 CredReadW(
                     PCWSTR::from_raw(target_name.as_ptr()),
                     CRED_TYPE_GENERIC,
                     None,
                     &mut credentials,
-                )?
+                )
             };
+
+            if let Err(err) = result {
+                // ERROR_NOT_FOUND means the credential doesn't exist.
+                // Return Ok(None) to match macOS and Linux behavior.
+                if err.code().0 == ERROR_NOT_FOUND.0 as i32 {
+                    return Ok(None);
+                }
+                return Err(err.into());
+            }
 
             if credentials.is_null() {
                 Ok(None)
@@ -791,25 +813,60 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        loop {
-            for runnable in self.main_receiver.drain() {
-                WindowsDispatcher::execute_runnable(runnable);
+        const MAIN_TASK_TIMEOUT: u128 = 10;
+
+        let start = std::time::Instant::now();
+        'tasks: loop {
+            'timeout_loop: loop {
+                if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
+                    log::debug!("foreground task timeout reached");
+                    // we spent our budget on gpui tasks, we likely have a lot of work queued so drain system events first to stay responsive
+                    // then quit out of foreground work to allow us to process other gpui events first before returning back to foreground task work
+                    // if we don't we might not for example process window quit events
+                    let mut msg = MSG::default();
+                    let process_message = |msg: &_| {
+                        if translate_accelerator(msg).is_none() {
+                            _ = unsafe { TranslateMessage(msg) };
+                            unsafe { DispatchMessageW(msg) };
+                        }
+                    };
+                    let peek_msg = |msg: &mut _, msg_kind| unsafe {
+                        PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
+                    };
+                    if peek_msg(&mut msg, PM_QS_PAINT) {
+                        process_message(&msg);
+                    }
+                    while peek_msg(&mut msg, PM_QS_INPUT) {
+                        process_message(&msg);
+                    }
+                    // Allow the main loop to process other gpui events before going back into `run_foreground_task`
+                    unsafe {
+                        if let Err(_) = PostMessageW(
+                            Some(self.dispatcher.platform_window_handle.as_raw()),
+                            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                            WPARAM(self.validation_number),
+                            LPARAM(0),
+                        ) {
+                            self.dispatcher.wake_posted.store(false, Ordering::Release);
+                        };
+                    }
+                    break 'tasks;
+                }
+                match self.main_receiver.try_recv() {
+                    Err(_) => break 'timeout_loop,
+                    Ok(runnable) => WindowsDispatcher::execute_runnable(runnable),
+                }
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
             // We need to check for those Runnables after we clear the flag.
-            let dispatcher = self.dispatcher.clone();
-
-            dispatcher.wake_posted.store(false, Ordering::Release);
+            self.dispatcher.wake_posted.store(false, Ordering::Release);
             match self.main_receiver.try_recv() {
+                Err(_) => break 'tasks,
                 Ok(runnable) => {
-                    let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
+                    self.dispatcher.wake_posted.store(true, Ordering::Release);
 
                     WindowsDispatcher::execute_runnable(runnable);
-                    continue;
-                }
-                _ => {
-                    break;
                 }
             }
         }
@@ -877,6 +934,9 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
+    /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
+    /// as resizing them has failed, causing us to have lost at least the render target.
+    pub(crate) invalidate_devices: Arc<AtomicBool>,
 }
 
 struct PlatformWindowCreateContext {

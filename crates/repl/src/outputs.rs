@@ -282,7 +282,7 @@ impl Output {
                                             );
                                             let buffer = cx.new(|cx| {
                                                 let mut buffer = Buffer::local(full_error, cx)
-                                                    .with_language(
+                                                    .with_language_immediate(
                                                         language::PLAIN_TEXT.clone(),
                                                         cx,
                                                     );
@@ -476,6 +476,13 @@ impl ExecutionView {
                         self.status = ExecutionStatus::Executing;
                     }
                     ExecutionState::Idle => self.status = ExecutionStatus::Finished,
+                    ExecutionState::Unknown => self.status = ExecutionStatus::Unknown,
+                    ExecutionState::Starting => self.status = ExecutionStatus::ConnectingToKernel,
+                    ExecutionState::Restarting => self.status = ExecutionStatus::Restarting,
+                    ExecutionState::Terminating => self.status = ExecutionStatus::ShuttingDown,
+                    ExecutionState::AutoRestarting => self.status = ExecutionStatus::Restarting,
+                    ExecutionState::Dead => self.status = ExecutionStatus::Shutdown,
+                    ExecutionState::Other(_) => self.status = ExecutionStatus::Unknown,
                 }
                 cx.notify();
                 return;

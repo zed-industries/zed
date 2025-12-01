@@ -78,6 +78,47 @@ impl Render for PlatformTitleBar {
             .w_full()
             .h(height)
             .map(|this| {
+                this.on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
+                    this.should_move = false;
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, _ev, _window, _cx| {
+                        this.should_move = false;
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, _ev, _window, _cx| {
+                        this.should_move = true;
+                    }),
+                )
+                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
+                    if this.should_move {
+                        this.should_move = false;
+                        window.start_window_move();
+                    }
+                }))
+            })
+            .map(|this| {
+                // Note: On Windows the title bar behavior is handled by the platform implementation.
+                this.id(self.id.clone())
+                    .when(self.platform_style == PlatformStyle::Mac, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.click_count() == 2 {
+                                window.titlebar_double_click();
+                            }
+                        })
+                    })
+                    .when(self.platform_style == PlatformStyle::Linux, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.click_count() == 2 {
+                                window.zoom_window();
+                            }
+                        })
+                    })
+            })
+            .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
@@ -112,21 +153,6 @@ impl Render for PlatformTitleBar {
                     .justify_between()
                     .overflow_x_hidden()
                     .w_full()
-                    // Note: On Windows the title bar behavior is handled by the platform implementation.
-                    .when(self.platform_style == PlatformStyle::Mac, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.titlebar_double_click();
-                            }
-                        })
-                    })
-                    .when(self.platform_style == PlatformStyle::Linux, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.zoom_window();
-                            }
-                        })
-                    })
                     .children(children),
             )
             .when(!window.is_fullscreen(), |title_bar| {
@@ -142,27 +168,6 @@ impl Render for PlatformTitleBar {
                                             window.show_window_menu(ev.position)
                                         })
                                 })
-                                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
-                                    if this.should_move {
-                                        this.should_move = false;
-                                        window.start_window_move();
-                                    }
-                                }))
-                                .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                    this.should_move = false;
-                                }))
-                                .on_mouse_up(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = false;
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = true;
-                                    }),
-                                )
                         } else {
                             title_bar
                         }

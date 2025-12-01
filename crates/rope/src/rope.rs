@@ -58,7 +58,7 @@ impl Rope {
         match item {
             Some(chunk) => {
                 let chunk_offset = offset - start;
-                chunk.assert_char_boundary(chunk_offset);
+                chunk.assert_char_boundary::<true>(chunk_offset);
             }
             None => {
                 panic!(
@@ -715,10 +715,8 @@ impl<'a> Chunks<'a> {
             range.start
         };
         let chunk_offset = offset - chunks.start();
-        if let Some(chunk) = chunks.item()
-            && !chunk.text.is_char_boundary(chunk_offset)
-        {
-            panic!("byte index {} is not a char boundary", offset);
+        if let Some(chunk) = chunks.item() {
+            chunk.assert_char_boundary::<true>(chunk_offset);
         }
         Self {
             chunks,
@@ -1534,39 +1532,63 @@ where
     }
 }
 
-impl<K, V> ops::Sub for DimensionPair<K, V>
+impl<R, R2, K, V> ops::Sub for DimensionPair<K, V>
 where
-    K: ops::Sub<K, Output = K>,
-    V: ops::Sub<V, Output = V>,
+    K: ops::Sub<K, Output = R>,
+    V: ops::Sub<V, Output = R2>,
 {
-    type Output = Self;
+    type Output = DimensionPair<R, R2>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Self {
+        DimensionPair {
             key: self.key - rhs.key,
             value: self.value.zip(rhs.value).map(|(a, b)| a - b),
         }
     }
 }
 
+impl<R, R2, K, V> ops::AddAssign<DimensionPair<R, R2>> for DimensionPair<K, V>
+where
+    K: ops::AddAssign<R>,
+    V: ops::AddAssign<R2>,
+{
+    fn add_assign(&mut self, rhs: DimensionPair<R, R2>) {
+        self.key += rhs.key;
+        if let Some(value) = &mut self.value {
+            if let Some(other_value) = rhs.value {
+                *value += other_value;
+            } else {
+                self.value.take();
+            }
+        }
+    }
+}
+
+impl<D> std::ops::AddAssign<DimensionPair<Point, D>> for Point {
+    fn add_assign(&mut self, rhs: DimensionPair<Point, D>) {
+        *self += rhs.key;
+    }
+}
+
 impl<K, V> cmp::Eq for DimensionPair<K, V> where K: cmp::Eq {}
 
-impl<'a, K, V> sum_tree::Dimension<'a, ChunkSummary> for DimensionPair<K, V>
+impl<'a, K, V, S> sum_tree::Dimension<'a, S> for DimensionPair<K, V>
 where
-    K: sum_tree::Dimension<'a, ChunkSummary>,
-    V: sum_tree::Dimension<'a, ChunkSummary>,
+    S: sum_tree::Summary,
+    K: sum_tree::Dimension<'a, S>,
+    V: sum_tree::Dimension<'a, S>,
 {
-    fn zero(_cx: ()) -> Self {
+    fn zero(cx: S::Context<'_>) -> Self {
         Self {
-            key: K::zero(_cx),
-            value: Some(V::zero(_cx)),
+            key: K::zero(cx),
+            value: Some(V::zero(cx)),
         }
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _cx: ()) {
-        self.key.add_summary(summary, _cx);
+    fn add_summary(&mut self, summary: &'a S, cx: S::Context<'_>) {
+        self.key.add_summary(summary, cx);
         if let Some(value) = &mut self.value {
-            value.add_summary(summary, _cx);
+            value.add_summary(summary, cx);
         }
     }
 }

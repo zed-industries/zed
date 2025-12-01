@@ -14,9 +14,9 @@ use futures::{
 };
 use parking_lot::Mutex;
 use serde::Serialize;
+use std::sync::Arc;
 #[cfg(feature = "test-support")]
-use std::fmt;
-use std::{any::type_name, sync::Arc};
+use std::{any::type_name, fmt};
 pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -59,9 +59,9 @@ impl HttpRequestExt for http::request::Builder {
 }
 
 pub trait HttpClient: 'static + Send + Sync {
-    fn type_name(&self) -> &'static str;
-
     fn user_agent(&self) -> Option<&HeaderValue>;
+
+    fn proxy(&self) -> Option<&Url>;
 
     fn send(
         &self,
@@ -105,8 +105,6 @@ pub trait HttpClient: 'static + Send + Sync {
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
-
-    fn proxy(&self) -> Option<&Url>;
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
@@ -163,10 +161,6 @@ impl HttpClient for HttpClientWithProxy {
         self.proxy.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
@@ -182,17 +176,11 @@ impl HttpClient for HttpClientWithProxy {
 }
 
 /// An [`HttpClient`] that has a base URL.
+#[derive(Deref)]
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
+    #[deref]
     client: HttpClientWithProxy,
-}
-
-impl std::ops::Deref for HttpClientWithUrl {
-    type Target = HttpClientWithProxy;
-
-    fn deref(&self) -> &Self::Target {
-        &self.client
-    }
 }
 
 impl HttpClientWithUrl {
@@ -314,10 +302,6 @@ impl HttpClient for HttpClientWithUrl {
         self.client.proxy.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
@@ -382,10 +366,6 @@ impl HttpClient for BlockedHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     #[cfg(feature = "test-support")]
@@ -480,10 +460,6 @@ impl HttpClient for FakeHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     fn as_fake(&self) -> &FakeHttpClient {

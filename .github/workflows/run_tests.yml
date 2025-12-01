@@ -15,7 +15,7 @@ on:
     - v[0-9]+.[0-9]+.x
 jobs:
   orchestrate:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -47,7 +47,7 @@ jobs:
         }
 
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
-        check_pattern "run_docs" '^docs/' -qP
+        check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
@@ -59,7 +59,7 @@ jobs:
       run_nix: ${{ steps.filter.outputs.run_nix }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -117,7 +117,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -166,7 +166,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -200,7 +200,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -493,7 +493,10 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      GIT_AUTHOR_NAME: Protobuf Action
+      GIT_AUTHOR_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -538,7 +541,7 @@ jobs:
     - check_scripts
     - build_nix_linux_x86_64
     - build_nix_mac_aarch64
-    if: github.repository_owner == 'zed-industries' && always()
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass

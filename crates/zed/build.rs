@@ -32,12 +32,16 @@ fn main() {
 
         println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
 
+        if let Some(build_identifier) = option_env!("GITHUB_RUN_NUMBER") {
+            println!("cargo:rustc-env=ZED_BUILD_ID={build_identifier}");
+        }
+
         if let Ok(build_profile) = std::env::var("PROFILE")
             && build_profile == "release"
         {
             // This is currently the best way to make `cargo build ...`'s build script
             // to print something to stdout without extra verbosity.
-            println!("cargo:warning=Info: using '{git_sha}' hash for ZED_COMMIT_SHA env var");
+            println!("cargo::warning=Info: using '{git_sha}' hash for ZED_COMMIT_SHA env var");
         }
     }
 
@@ -47,6 +51,25 @@ fn main() {
         {
             // todo(windows): This is to avoid stack overflow. Remove it when solved.
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
+        }
+
+        if cfg!(target_arch = "x86_64") {
+            println!("cargo::rerun-if-changed=\\..\\..\\..\\conpty.dll");
+            println!("cargo::rerun-if-changed=\\..\\..\\..\\OpenConsole.exe");
+            let conpty_target = std::env::var("OUT_DIR").unwrap() + "\\..\\..\\..\\conpty.dll";
+            match std::fs::copy("resources/windows/bin/x64/conpty.dll", &conpty_target) {
+                Ok(_) => println!("Copied conpty.dll to {conpty_target}"),
+                Err(e) => println!("cargo::warning=Failed to copy conpty.dll: {}", e),
+            }
+            let open_console_target =
+                std::env::var("OUT_DIR").unwrap() + "\\..\\..\\..\\OpenConsole.exe";
+            match std::fs::copy(
+                "resources/windows/bin/x64/OpenConsole.exe",
+                &open_console_target,
+            ) {
+                Ok(_) => println!("Copied OpenConsole.exe to {open_console_target}"),
+                Err(e) => println!("cargo::warning=Failed to copy OpenConsole.exe: {}", e),
+            }
         }
 
         let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");

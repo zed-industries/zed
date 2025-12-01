@@ -40,11 +40,15 @@ mod tests {
         });
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
 
             let expect_indents_to =
                 |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {
-                    buffer.edit( [(0..buffer.len(), input)], Some(AutoindentMode::EachLine), cx, );
+                    buffer.edit(
+                        [(0..buffer.len(), input)],
+                        Some(AutoindentMode::EachLine),
+                        cx,
+                    );
                     assert_eq!(buffer.text(), expected);
                 };
 

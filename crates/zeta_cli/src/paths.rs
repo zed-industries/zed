@@ -13,7 +13,7 @@ pub static RUN_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 pub static LATEST_EXAMPLE_RUN_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| TARGET_ZETA_DIR.join("latest"));
 
-pub fn print_run_data_dir(deep: bool) {
+pub fn print_run_data_dir(deep: bool, use_color: bool) {
     println!("\n## Run Data\n");
     let mut files = Vec::new();
 
@@ -25,18 +25,22 @@ pub fn print_run_data_dir(deep: bool) {
                 let path = file.unwrap().path();
                 let path = path.strip_prefix(&current_dir).unwrap_or(&path);
                 files.push(format!(
-                    "- {}/\x1b[34m{}\x1b[0m",
+                    "- {}/{}{}{}",
                     path.parent().unwrap().display(),
+                    if use_color { "\x1b[34m" } else { "" },
                     path.file_name().unwrap().display(),
+                    if use_color { "\x1b[0m" } else { "" },
                 ));
             }
         } else {
             let path = file.path();
             let path = path.strip_prefix(&current_dir).unwrap_or(&path);
             files.push(format!(
-                "- {}/\x1b[34m{}\x1b[0m",
+                "- {}/{}{}{}",
                 path.parent().unwrap().display(),
+                if use_color { "\x1b[34m" } else { "" },
                 path.file_name().unwrap().display(),
+                if use_color { "\x1b[0m" } else { "" }
             ));
         }
     }

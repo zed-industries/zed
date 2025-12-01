@@ -33,10 +33,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         SettingField {
                             json_path: Some("project_name"),
                             pick: |settings_content| {
-                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                                settings_content.project.worktree.project_name.as_ref().or(DEFAULT_EMPTY_STRING)
                             },
                             write: |settings_content, value| {
-                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                                settings_content.project.worktree.project_name = value.filter(|name| !name.is_empty());
                             },
                         }
                     ),
@@ -3065,6 +3065,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar Buttons",
+                    description: "Show the tab bar buttons (New, Split Pane, Zoom).",
+                    field: Box::new(SettingField {
+                        json_path: Some("tab_bar.show_tab_bar_buttons"),
+                        pick: |settings_content| {
+                            settings_content
+                                .tab_bar
+                                .as_ref()?
+                                .show_tab_bar_buttons
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_tab_bar_buttons = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
@@ -3347,6 +3369,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         },
                         write: |settings_content, value| {
                             settings_content.workspace.use_system_window_tabs = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Window Decorations",
+                    description: "(Linux only) whether Zed or your compositor should draw window decorations.",
+                    field: Box::new(SettingField {
+                        json_path: Some("window_decorations"),
+                        pick: |settings_content| {
+                            settings_content.workspace.window_decorations.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.window_decorations = value;
                         },
                     }),
                     metadata: None,
@@ -3906,6 +3943,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         write: |settings_content, value| {
                             settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
                         },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sort Mode",
+                    description: "Sort order for entries in the project panel.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.sort_mode.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .sort_mode = value;
+                        },
+                        json_path: Some("project_panel.sort_mode"),
                     }),
                     metadata: None,
                     files: USER,
@@ -4497,7 +4552,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Stepping Granularity",
                     description: "Determines the stepping granularity for debug operations.",
                     field: Box::new(SettingField {
-                        json_path: Some("agent.default_height"),
+                        json_path: Some("debugger.stepping_granularity"),
                         pick: |settings_content| {
                             settings_content
                                 .debugger
@@ -4632,6 +4687,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .project
                                     .shell
                                     .get_or_insert_with(|| settings::Shell::default());
+                                let default_shell = if cfg!(target_os = "windows") {
+                                    "powershell.exe"
+                                } else {
+                                    "sh"
+                                };
                                 *settings_value = match value {
                                     settings::ShellDiscriminants::System => {
                                         settings::Shell::System
@@ -4640,7 +4700,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         let program = match settings_value {
                                             settings::Shell::Program(p) => p.clone(),
                                             settings::Shell::WithArguments { program, .. } => program.clone(),
-                                            _ => String::from("sh"),
+                                            _ => String::from(default_shell),
                                         };
                                         settings::Shell::Program(program)
                                     },
@@ -4650,7 +4710,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::Shell::WithArguments { program, args, title_override } => {
                                                 (program.clone(), args.clone(), title_override.clone())
                                             },
-                                            _ => (String::from("sh"), vec![], None),
+                                            _ => (String::from(default_shell), vec![], None),
                                         };
                                         settings::Shell::WithArguments {
                                             program,
@@ -5559,6 +5619,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                         write: |settings_content, value| {
                             settings_content.git.get_or_insert_default().hunk_style = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Path Style",
+                    description: "Should the name or path be displayed first in the git view.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.path_style"),
+                        pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git.get_or_insert_default().path_style = value;
                         },
                     }),
                     metadata: None,
@@ -7042,6 +7115,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.extend_comment_on_newline = value;
 
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Colorize brackets",
+            description: "Whether to colorize brackets in the editor.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).colorize_brackets"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.colorize_brackets.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.colorize_brackets = value;
                     })
                 },
             }),

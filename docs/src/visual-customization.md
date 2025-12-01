@@ -374,6 +374,8 @@ TBD: Centered layout related settings
   "lsp_document_colors": "inlay",        // none, inlay, border, background
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
+  // Turn on colorization of brackets in editors (configurable per language)
+  "colorize_brackets": true,
 ```
 
 ### Edit Predictions {#editor-ai}
@@ -457,6 +459,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       // When to show indent guides in the project panel. (always, never)
       "show": "always"
     },
+    // Sort order for entries (directories_first, mixed, files_first)
+    "sort_mode": "directories_first",
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.

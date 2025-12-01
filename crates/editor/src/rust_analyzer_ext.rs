@@ -205,7 +205,7 @@ pub fn expand_macro_recursively(
         workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(macro_expansion.expansion, cx);
-                buffer.set_language(Some(rust_language), cx);
+                buffer.set_language_immediate(Some(rust_language), cx);
                 buffer.set_capability(Capability::ReadOnly, cx);
             });
             let multibuffer =
@@ -322,7 +322,11 @@ fn cancel_flycheck_action(
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let buffer_id = selection
+                .start
+                .text_anchor
+                .buffer_id
+                .or(selection.end.text_anchor.buffer_id)?;
             let project = project.read(cx);
             let entry_id = project
                 .buffer_for_id(buffer_id, cx)?
@@ -347,7 +351,11 @@ fn run_flycheck_action(
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let buffer_id = selection
+                .start
+                .text_anchor
+                .buffer_id
+                .or(selection.end.text_anchor.buffer_id)?;
             let project = project.read(cx);
             let entry_id = project
                 .buffer_for_id(buffer_id, cx)?
@@ -372,7 +380,11 @@ fn clear_flycheck_action(
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let buffer_id = selection
+                .start
+                .text_anchor
+                .buffer_id
+                .or(selection.end.text_anchor.buffer_id)?;
             let project = project.read(cx);
             let entry_id = project
                 .buffer_for_id(buffer_id, cx)?

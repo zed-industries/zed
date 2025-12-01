@@ -414,8 +414,9 @@
     }
   },
   {
-    "context": "vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu",
     "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
       "ctrl-[": "editor::Cancel"
@@ -475,6 +476,9 @@
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
+
+      "n": "vim::HelixSelectNext",
+      "shift-n": "vim::HelixSelectPrevious",
 
       // Goto mode
       "g e": "vim::EndOfDocument",

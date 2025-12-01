@@ -8,7 +8,7 @@ use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
     Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    SizingBehavior,
+    MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -161,7 +161,9 @@ impl Console {
     ) -> Task<Result<()>> {
         self.console.update(cx, |_, cx| {
             cx.spawn_in(window, async move |console, cx| {
-                let mut len = console.update(cx, |this, cx| this.buffer().read(cx).len(cx))?;
+                let mut len = console
+                    .update(cx, |this, cx| this.buffer().read(cx).len(cx))?
+                    .0;
                 let (output, spans, background_spans) = cx
                     .background_spawn(async move {
                         let mut all_spans = Vec::new();
@@ -227,8 +229,8 @@ impl Console {
                     for (range, color) in spans {
                         let Some(color) = color else { continue };
                         let start_offset = range.start;
-                        let range =
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+                        let range = buffer.anchor_after(MultiBufferOffset(range.start))
+                            ..buffer.anchor_before(MultiBufferOffset(range.end));
                         let style = HighlightStyle {
                             color: Some(terminal_view::terminal_element::convert_color(
                                 &color,
@@ -240,6 +242,7 @@ impl Console {
                             start_offset,
                             vec![range],
                             style,
+                            false,
                             cx,
                         );
                     }
@@ -247,8 +250,8 @@ impl Console {
                     for (range, color) in background_spans {
                         let Some(color) = color else { continue };
                         let start_offset = range.start;
-                        let range =
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+                        let range = buffer.anchor_after(MultiBufferOffset(range.start))
+                            ..buffer.anchor_before(MultiBufferOffset(range.end));
                         console.highlight_background_key::<ConsoleAnsiHighlight>(
                             start_offset,
                             &[range],
@@ -961,7 +964,7 @@ fn color_fetcher(color: ansi::Color) -> fn(&Theme) -> Hsla {
 mod tests {
     use super::*;
     use crate::tests::init_test;
-    use editor::test::editor_test_context::EditorTestContext;
+    use editor::{MultiBufferOffset, test::editor_test_context::EditorTestContext};
     use gpui::TestAppContext;
     use language::Point;
 
@@ -993,8 +996,8 @@ mod tests {
         cx.update_editor(|editor, _, cx| {
             editor.edit(
                 vec![(
-                    snapshot.offset_for_anchor(&replace_range.start)
-                        ..snapshot.offset_for_anchor(&replace_range.end),
+                    MultiBufferOffset(snapshot.offset_for_anchor(&replace_range.start))
+                        ..MultiBufferOffset(snapshot.offset_for_anchor(&replace_range.end)),
                     replacement,
                 )],
                 cx,

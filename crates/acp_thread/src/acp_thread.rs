@@ -347,13 +347,13 @@ impl ToolCall {
         let buffer = buffer.await.log_err()?;
         let position = buffer
             .update(cx, |buffer, _| {
+                let snapshot = buffer.snapshot();
                 if let Some(row) = location.line {
-                    let snapshot = buffer.snapshot();
                     let column = snapshot.indent_size_for_line(row).len;
                     let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
                     snapshot.anchor_before(point)
                 } else {
-                    Anchor::MIN
+                    Anchor::min_for_buffer(snapshot.remote_id())
                 }
             })
             .ok()?;
@@ -2120,7 +2120,7 @@ impl AcpThread {
                         position: edits
                             .last()
                             .map(|(range, _)| range.end)
-                            .unwrap_or(Anchor::MIN),
+                            .unwrap_or(Anchor::min_for_buffer(buffer.read(cx).remote_id())),
                     }),
                     cx,
                 );

@@ -592,6 +592,7 @@ fn map_to_language_model_completion_events(
                             raw_input: function.arguments.to_string(),
                             input: function.arguments,
                             is_input_complete: true,
+                            thought_signature: None,
                         });
                         events.push(Ok(event));
                         state.used_tools = true;

@@ -39,8 +39,7 @@ jobs:
       run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
     - name: compare_perf::run_perf::install_hyperfine
-      run: cargo install hyperfine
-      shell: bash -euxo pipefail {0}
+      uses: taiki-e/install-action@hyperfine
     - name: steps::git_checkout
       run: git fetch origin ${{ inputs.base }} && git checkout ${{ inputs.base }}
       shell: bash -euxo pipefail {0}

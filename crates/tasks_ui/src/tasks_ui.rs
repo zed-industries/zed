@@ -392,7 +392,7 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use editor::{Editor, SelectionEffects};
+    use editor::{Editor, MultiBufferOffset, SelectionEffects};
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
@@ -486,7 +486,7 @@ mod tests {
             .await
             .unwrap();
         buffer1.update(cx, |this, cx| {
-            this.set_language(Some(typescript_language), cx)
+            this.set_language_immediate(Some(typescript_language), cx)
         });
         let editor1 = cx.new_window_entity(|window, cx| {
             Editor::for_buffer(buffer1, Some(project.clone()), window, cx)
@@ -499,7 +499,9 @@ mod tests {
             })
             .await
             .unwrap();
-        buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
+        buffer2.update(cx, |this, cx| {
+            this.set_language_immediate(Some(rust_language), cx)
+        });
         let editor2 = cx
             .new_window_entity(|window, cx| Editor::for_buffer(buffer2, Some(project), window, cx));
 
@@ -539,7 +541,7 @@ mod tests {
         // And now, let's select an identifier.
         editor2.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                selections.select_ranges([14..18])
+                selections.select_ranges([MultiBufferOffset(14)..MultiBufferOffset(18)])
             })
         });
 

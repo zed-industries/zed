@@ -43,7 +43,9 @@ design
   = @danilo-leal
 
 docs
+  = @miguelraz
   = @probably-neb
+  = @yeskunall
 
 extension
   = @kubkon
@@ -98,12 +100,21 @@ settings_ui
   = @danilo-leal
   = @probably-neb
 
+sum_tree
+  = @Veykril
+
+support
+  = @miguelraz
+
 tasks
   = @SomeoneToIgnore
   = @Veykril
 
 terminal
   = @kubkon
+  = @Veykril
+
+text
   = @Veykril
 
 vim
@@ -115,3 +126,4 @@ vim
 windows
   = @localcc
   = @reflectronic
+  = @Veykril

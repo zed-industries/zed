@@ -68,7 +68,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         false
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &App) -> bool {
         self.pending_refresh.is_some() && self.completions.is_empty()
     }
 
@@ -270,7 +270,7 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 mod tests {
     use super::*;
     use editor::{
-        Editor, ExcerptRange, MultiBuffer, SelectionEffects,
+        Editor, ExcerptRange, MultiBuffer, MultiBufferOffset, SelectionEffects,
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use fs::FakeFs;
@@ -1081,8 +1081,9 @@ mod tests {
             vec![complete_from_marker, replace_range_marker.clone()],
         );
 
+        let range = marked_ranges.remove(&replace_range_marker).unwrap()[0].clone();
         let replace_range =
-            cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+            cx.to_lsp_range(MultiBufferOffset(range.start)..MultiBufferOffset(range.end));
 
         let mut request =
             cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
