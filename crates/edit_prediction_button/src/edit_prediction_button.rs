@@ -1078,8 +1078,8 @@ impl EditPredictionButton {
             menu = menu
                 .custom_row(move |_window, cx| {
                     let description = indoc! {
-                        "Sign in for 2,000 worth of accepted suggestions at every keystroke, \
-                        powered by Zeta, our open-source, open-data model."
+                        "You get 2,000 accepted suggestions at every keystroke for free, \
+                        powered by Zeta, our open-source, open-data model"
                     };
 
                     v_flex()
