@@ -2721,23 +2721,28 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
 
 #[gpui::test(iterations = 100)]
 async fn test_random_filtered_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
-    println!("===========KeepInsertions==========");
-
-    test_random_multibuffer_impl(Some(MultiBufferFilterMode::KeepInsertions), cx, rng.clone())
-        .await;
-
-    println!("===========KeepDeletions===========");
-
-    test_random_multibuffer_impl(Some(MultiBufferFilterMode::KeepDeletions), cx, rng).await;
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
+        multibuffer
+    });
+    let follower = multibuffer.update(cx, |multibuffer, cx| multibuffer.get_or_create_follower(cx));
+    follower.update(cx, |follower, _| {
+        assert!(follower.all_diff_hunks_expanded());
+        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+    });
+    test_random_multibuffer_impl(multibuffer, cx, rng).await;
 }
 
 #[gpui::test(iterations = 100)]
 async fn test_random_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
-    test_random_multibuffer_impl(None, cx, rng).await;
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    test_random_multibuffer_impl(multibuffer, cx, rng).await;
 }
 
 async fn test_random_multibuffer_impl(
-    filter_mode: Option<MultiBufferFilterMode>,
+    multibuffer: Entity<MultiBuffer>,
     cx: &mut TestAppContext,
     mut rng: StdRng,
 ) {
@@ -2745,19 +2750,15 @@ async fn test_random_multibuffer_impl(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
+    multibuffer.read_with(cx, |multibuffer, _| assert!(multibuffer.is_empty()));
+    let all_diff_hunks_expanded =
+        multibuffer.read_with(cx, |multibuffer, _| multibuffer.all_diff_hunks_expanded());
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
     let mut base_texts: HashMap<BufferId, String> = HashMap::default();
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-        if filter_mode.is_some() {
-            multibuffer.set_all_diff_hunks_expanded(cx);
-        }
-        multibuffer.set_filter_mode(filter_mode);
-        multibuffer
-    });
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
+    let mut old_follower_versions = Vec::new();
     let mut needs_diff_calculation = false;
 
     for _ in 0..operations {
@@ -2856,7 +2857,7 @@ async fn test_random_multibuffer_impl(
                     assert!(excerpt.contains(anchor));
                 }
             }
-            45..=55 if !reference.excerpts.is_empty() && filter_mode.is_none() => {
+            45..=55 if !reference.excerpts.is_empty() && !all_diff_hunks_expanded => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     let snapshot = multibuffer.snapshot(cx);
                     let excerpt_ix = rng.random_range(0..reference.excerpts.len());
@@ -2971,218 +2972,262 @@ async fn test_random_multibuffer_impl(
             }
         }
 
-        if filter_mode.is_some() {
-            let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
-                cx.update(|cx| reference.expected_content(None, true, cx));
-            log::info!(
-                "Unfiltered multibuffer content:\n{}",
-                format_diff(
-                    &unfiltered_text,
-                    &unfiltered_row_infos,
-                    &unfiltered_boundary_rows,
-                    None,
-                ),
-            );
-        }
         if rng.random_bool(0.3) {
             multibuffer.update(cx, |multibuffer, cx| {
                 old_versions.push((multibuffer.snapshot(cx), multibuffer.subscribe()));
+
+                if let Some(follower) = &multibuffer.follower {
+                    follower.update(cx, |follower, cx| {
+                        old_follower_versions.push((follower.snapshot(cx), follower.subscribe()));
+                    })
+                }
             })
         }
 
-        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-        let actual_text = snapshot.text();
-        let actual_boundary_rows = snapshot
-            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
-            .map(|b| b.row)
-            .collect::<HashSet<_>>();
-        let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+        multibuffer.read_with(cx, |multibuffer, cx| {
+            check_multibuffer(multibuffer, &reference, &anchors, cx, &mut rng);
 
-        let (expected_text, expected_row_infos, expected_boundary_rows) =
-            cx.update(|cx| reference.expected_content(filter_mode, filter_mode.is_some(), cx));
-
-        let has_diff = actual_row_infos
-            .iter()
-            .any(|info| info.diff_status.is_some())
-            || expected_row_infos
-                .iter()
-                .any(|info| info.diff_status.is_some());
-        let actual_diff = format_diff(
-            &actual_text,
-            &actual_row_infos,
-            &actual_boundary_rows,
-            Some(has_diff),
-        );
-        let expected_diff = format_diff(
-            &expected_text,
-            &expected_row_infos,
-            &expected_boundary_rows,
-            Some(has_diff),
-        );
-
-        log::info!("Multibuffer content:\n{}", actual_diff);
-
-        assert_eq!(
-            actual_row_infos.len(),
-            actual_text.split('\n').count(),
-            "line count: {}",
-            actual_text.split('\n').count()
-        );
-        pretty_assertions::assert_eq!(actual_diff, expected_diff);
-        pretty_assertions::assert_eq!(actual_text, expected_text);
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
-
-        for _ in 0..5 {
-            let start_row = rng.random_range(0..=expected_row_infos.len());
-            assert_eq!(
-                snapshot
-                    .row_infos(MultiBufferRow(start_row as u32))
-                    .collect::<Vec<_>>(),
-                &expected_row_infos[start_row..],
-                "buffer_rows({})",
-                start_row
-            );
-        }
-
-        assert_eq!(
-            snapshot.widest_line_number(),
-            expected_row_infos
-                .into_iter()
-                .filter_map(|info| {
-                    if info.diff_status.is_some_and(|status| status.is_deleted()) {
-                        None
-                    } else {
-                        info.buffer_row
-                    }
-                })
-                .max()
-                .unwrap()
-                + 1
-        );
-        let reference_ranges = cx.update(|cx| {
-            reference
-                .excerpts
-                .iter()
-                .map(|excerpt| {
-                    (
-                        excerpt.id,
-                        excerpt.range.to_offset(&excerpt.buffer.read(cx).snapshot()),
-                    )
-                })
-                .collect::<HashMap<_, _>>()
+            if let Some(follower) = &multibuffer.follower {
+                check_multibuffer(follower.read(cx), &reference, &anchors, cx, &mut rng);
+            }
         });
-        for i in 0..snapshot.len().0 {
-            let excerpt = snapshot
-                .excerpt_containing(MultiBufferOffset(i)..MultiBufferOffset(i))
-                .unwrap();
-            assert_eq!(
-                excerpt.buffer_range().start.0..excerpt.buffer_range().end.0,
-                reference_ranges[&excerpt.id()]
-            );
-        }
-
-        assert_consistent_line_numbers(&snapshot);
-        assert_position_translation(&snapshot);
-
-        for (row, line) in expected_text.split('\n').enumerate() {
-            assert_eq!(
-                snapshot.line_len(MultiBufferRow(row as u32)),
-                line.len() as u32,
-                "line_len({}).",
-                row
-            );
-        }
-
-        let text_rope = Rope::from(expected_text.as_str());
-        for _ in 0..10 {
-            let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
-            let start_ix = text_rope.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
-
-            let text_for_range = snapshot
-                .text_for_range(MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix))
-                .collect::<String>();
-            assert_eq!(
-                text_for_range,
-                &expected_text[start_ix..end_ix],
-                "incorrect text for range {:?}",
-                start_ix..end_ix
-            );
-
-            let expected_summary =
-                MBTextSummary::from(TextSummary::from(&expected_text[start_ix..end_ix]));
-            assert_eq!(
-                snapshot.text_summary_for_range::<MBTextSummary, _>(
-                    MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix)
-                ),
-                expected_summary,
-                "incorrect summary for range {:?}",
-                start_ix..end_ix
-            );
-        }
-
-        // Anchor resolution
-        let summaries = snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&anchors);
-        assert_eq!(anchors.len(), summaries.len());
-        for (anchor, resolved_offset) in anchors.iter().zip(summaries) {
-            assert!(resolved_offset <= snapshot.len());
-            assert_eq!(
-                snapshot.summary_for_anchor::<MultiBufferOffset>(anchor),
-                resolved_offset,
-                "anchor: {:?}",
-                anchor
-            );
-        }
-
-        for _ in 0..10 {
-            let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
-            assert_eq!(
-                snapshot
-                    .reversed_chars_at(MultiBufferOffset(end_ix))
-                    .collect::<String>(),
-                expected_text[..end_ix].chars().rev().collect::<String>(),
-            );
-        }
-
-        for _ in 0..10 {
-            let end_ix = rng.random_range(0..=text_rope.len());
-            let end_ix = text_rope.floor_char_boundary(end_ix);
-            let start_ix = rng.random_range(0..=end_ix);
-            let start_ix = text_rope.floor_char_boundary(start_ix);
-            assert_eq!(
-                snapshot
-                    .bytes_in_range(MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix))
-                    .flatten()
-                    .copied()
-                    .collect::<Vec<_>>(),
-                expected_text.as_bytes()[start_ix..end_ix].to_vec(),
-                "bytes_in_range({:?})",
-                start_ix..end_ix,
-            );
-        }
     }
 
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     for (old_snapshot, subscription) in old_versions {
-        let edits = subscription.consume().into_inner();
+        check_multibuffer_edits(&snapshot, &old_snapshot, subscription);
+    }
+    if let Some(follower) = multibuffer.read_with(cx, |multibuffer, _| multibuffer.follower.clone())
+    {
+        let snapshot = follower.read_with(cx, |follower, cx| follower.snapshot(cx));
+        for (old_snapshot, subscription) in old_follower_versions {
+            check_multibuffer_edits(&snapshot, &old_snapshot, subscription);
+        }
+    }
+}
 
+fn check_multibuffer(
+    multibuffer: &MultiBuffer,
+    reference: &ReferenceMultibuffer,
+    anchors: &[Anchor],
+    cx: &App,
+    rng: &mut StdRng,
+) {
+    let snapshot = multibuffer.snapshot(cx);
+    let filter_mode = multibuffer.filter_mode;
+    assert!(filter_mode.is_some() == snapshot.all_diff_hunks_expanded);
+    let actual_text = snapshot.text();
+    let actual_boundary_rows = snapshot
+        .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
+        .map(|b| b.row)
+        .collect::<HashSet<_>>();
+    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+
+    let (expected_text, expected_row_infos, expected_boundary_rows) =
+        reference.expected_content(filter_mode, snapshot.all_diff_hunks_expanded, cx);
+
+    let (unfiltered_text, unfiltered_row_infos, unfiltered_boundary_rows) =
+        reference.expected_content(None, snapshot.all_diff_hunks_expanded, cx);
+
+    let has_diff = actual_row_infos
+        .iter()
+        .any(|info| info.diff_status.is_some())
+        || unfiltered_row_infos
+            .iter()
+            .any(|info| info.diff_status.is_some());
+    let actual_diff = format_diff(
+        &actual_text,
+        &actual_row_infos,
+        &actual_boundary_rows,
+        Some(has_diff),
+    );
+    let expected_diff = format_diff(
+        &expected_text,
+        &expected_row_infos,
+        &expected_boundary_rows,
+        Some(has_diff),
+    );
+
+    log::info!("Multibuffer content:\n{}", actual_diff);
+    if filter_mode.is_some() {
         log::info!(
-            "applying subscription edits to old text: {:?}: {:#?}",
-            old_snapshot.text(),
-            edits,
+            "Unfiltered multibuffer content:\n{}",
+            format_diff(
+                &unfiltered_text,
+                &unfiltered_row_infos,
+                &unfiltered_boundary_rows,
+                None,
+            ),
+        );
+    }
+
+    assert_eq!(
+        actual_row_infos.len(),
+        actual_text.split('\n').count(),
+        "line count: {}",
+        actual_text.split('\n').count()
+    );
+    pretty_assertions::assert_eq!(actual_diff, expected_diff);
+    pretty_assertions::assert_eq!(actual_text, expected_text);
+    pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
+
+    for _ in 0..5 {
+        let start_row = rng.random_range(0..=expected_row_infos.len());
+        assert_eq!(
+            snapshot
+                .row_infos(MultiBufferRow(start_row as u32))
+                .collect::<Vec<_>>(),
+            &expected_row_infos[start_row..],
+            "buffer_rows({})",
+            start_row
+        );
+    }
+
+    assert_eq!(
+        snapshot.widest_line_number(),
+        expected_row_infos
+            .into_iter()
+            .filter_map(|info| {
+                if info.diff_status.is_some_and(|status| status.is_deleted()) {
+                    None
+                } else {
+                    info.buffer_row
+                }
+            })
+            .max()
+            .unwrap()
+            + 1
+    );
+    let reference_ranges = reference
+        .excerpts
+        .iter()
+        .map(|excerpt| {
+            (
+                excerpt.id,
+                excerpt.range.to_offset(&excerpt.buffer.read(cx).snapshot()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    for i in 0..snapshot.len().0 {
+        let excerpt = snapshot
+            .excerpt_containing(MultiBufferOffset(i)..MultiBufferOffset(i))
+            .unwrap();
+        assert_eq!(
+            excerpt.buffer_range().start.0..excerpt.buffer_range().end.0,
+            reference_ranges[&excerpt.id()]
+        );
+    }
+
+    assert_consistent_line_numbers(&snapshot);
+    assert_position_translation(&snapshot);
+
+    for (row, line) in expected_text.split('\n').enumerate() {
+        assert_eq!(
+            snapshot.line_len(MultiBufferRow(row as u32)),
+            line.len() as u32,
+            "line_len({}).",
+            row
+        );
+    }
+
+    let text_rope = Rope::from(expected_text.as_str());
+    for _ in 0..10 {
+        let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
+        let start_ix = text_rope.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
+
+        let text_for_range = snapshot
+            .text_for_range(MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix))
+            .collect::<String>();
+        assert_eq!(
+            text_for_range,
+            &expected_text[start_ix..end_ix],
+            "incorrect text for range {:?}",
+            start_ix..end_ix
         );
 
-        let mut text = old_snapshot.text();
-        for edit in edits {
-            let new_text: String = snapshot
-                .text_for_range(edit.new.start..edit.new.end)
-                .collect();
-            text.replace_range(
-                edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0),
-                &new_text,
-            );
-        }
-        pretty_assertions::assert_eq!(text.to_string(), snapshot.text());
+        let expected_summary =
+            MBTextSummary::from(TextSummary::from(&expected_text[start_ix..end_ix]));
+        assert_eq!(
+            snapshot.text_summary_for_range::<MBTextSummary, _>(
+                MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix)
+            ),
+            expected_summary,
+            "incorrect summary for range {:?}",
+            start_ix..end_ix
+        );
     }
+
+    // Anchor resolution
+    let summaries = snapshot.summaries_for_anchors::<MultiBufferOffset, _>(anchors);
+    assert_eq!(anchors.len(), summaries.len());
+    for (anchor, resolved_offset) in anchors.iter().zip(summaries) {
+        assert!(resolved_offset <= snapshot.len());
+        assert_eq!(
+            snapshot.summary_for_anchor::<MultiBufferOffset>(anchor),
+            resolved_offset,
+            "anchor: {:?}",
+            anchor
+        );
+    }
+
+    for _ in 0..10 {
+        let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
+        assert_eq!(
+            snapshot
+                .reversed_chars_at(MultiBufferOffset(end_ix))
+                .collect::<String>(),
+            expected_text[..end_ix].chars().rev().collect::<String>(),
+        );
+    }
+
+    for _ in 0..10 {
+        let end_ix = rng.random_range(0..=text_rope.len());
+        let end_ix = text_rope.floor_char_boundary(end_ix);
+        let start_ix = rng.random_range(0..=end_ix);
+        let start_ix = text_rope.floor_char_boundary(start_ix);
+        assert_eq!(
+            snapshot
+                .bytes_in_range(MultiBufferOffset(start_ix)..MultiBufferOffset(end_ix))
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>(),
+            expected_text.as_bytes()[start_ix..end_ix].to_vec(),
+            "bytes_in_range({:?})",
+            start_ix..end_ix,
+        );
+    }
+}
+
+fn check_multibuffer_edits(
+    snapshot: &MultiBufferSnapshot,
+    old_snapshot: &MultiBufferSnapshot,
+    subscription: Subscription<MultiBufferOffset>,
+) {
+    let edits = subscription.consume().into_inner();
+
+    log::info!(
+        "applying subscription edits to old text: {:?}: {:#?}",
+        old_snapshot.text(),
+        edits,
+    );
+
+    let mut text = old_snapshot.text();
+    for edit in edits {
+        let new_text: String = snapshot
+            .text_for_range(edit.new.start..edit.new.end)
+            .collect();
+        text.replace_range(
+            (edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0)).clone(),
+            &new_text,
+        );
+        pretty_assertions::assert_eq!(
+            &text[0..edit.new.end.0],
+            snapshot
+                .text_for_range(MultiBufferOffset(0)..edit.new.end)
+                .collect::<String>()
+        );
+    }
+    pretty_assertions::assert_eq!(text, snapshot.text());
 }
 
 #[gpui::test]

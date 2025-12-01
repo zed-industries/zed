@@ -545,8 +545,7 @@ impl DiffState {
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     diffs: TreeMap<BufferId, BufferDiffSnapshot>,
-    // FIXME
-    pub diff_transforms: SumTree<DiffTransform>,
+    diff_transforms: SumTree<DiffTransform>,
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
@@ -561,9 +560,8 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
-// FIXME
 #[derive(Debug, Clone)]
-pub enum DiffTransform {
+enum DiffTransform {
     Unmodified {
         summary: MBTextSummary,
     },
