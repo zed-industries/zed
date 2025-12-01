@@ -394,7 +394,7 @@ impl Zeta2Inspector {
                                             let feedback_editor = cx.new(|cx| {
                                                 let buffer = cx.new(|cx| {
                                                     let mut buffer = Buffer::local("", cx);
-                                                    buffer.set_language_immediate(
+                                                    buffer.set_language(
                                                         markdown_language.clone(),
                                                         cx,
                                                     );
@@ -460,10 +460,7 @@ impl Zeta2Inspector {
                                                                 .unwrap_or_default(),
                                                             cx,
                                                         );
-                                                        buffer.set_language_immediate(
-                                                            json_language,
-                                                            cx,
-                                                        );
+                                                        buffer.set_language(json_language, cx);
                                                         buffer
                                                     });
                                                     let buffer = cx.new(|cx| {
@@ -508,7 +505,7 @@ impl Zeta2Inspector {
                             let buffer = cx.new(|cx| {
                                 let mut buffer =
                                     Buffer::local(local_prompt.unwrap_or_else(|err| err), cx);
-                                buffer.set_language_immediate(markdown_language.clone(), cx);
+                                buffer.set_language(markdown_language.clone(), cx);
                                 buffer
                             });
                             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));

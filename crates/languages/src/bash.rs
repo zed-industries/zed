@@ -40,7 +40,7 @@ mod tests {
         });
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             let expect_indents_to =
                 |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {

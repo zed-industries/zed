@@ -210,7 +210,7 @@ impl Cell {
                     let language = notebook_language.await;
 
                     buffer.update(cx, |buffer, cx| {
-                        buffer.set_language_immediate(language.clone(), cx);
+                        buffer.set_language(language.clone(), cx);
                     });
                 });
 

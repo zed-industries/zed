@@ -531,7 +531,7 @@ impl SyntaxIndex {
 
                 let buffer = cx.new(|cx| {
                     let mut buffer = Buffer::local(loaded_file.text, cx);
-                    buffer.set_language_immediate(Some(language.clone()), cx);
+                    buffer.set_language(Some(language.clone()), cx);
                     buffer
                 })?;
 

@@ -832,7 +832,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                             workspace.update_in(cx, |workspace, window, cx| {
                                 buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language_immediate(json, cx);
+                                    buffer.set_language(json, cx);
                                     buffer.edit([(0..0, json_schema_content)], None, cx);
                                     buffer.edit(
                                         [(0..0, format!("// {} JSON Schema\n", schema_path))],

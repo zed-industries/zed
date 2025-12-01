@@ -388,7 +388,7 @@ mod tests {
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             buffer.edit([(0..0, "int main() {}")], None, cx);
 
@@ -418,7 +418,7 @@ mod tests {
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
         cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language_immediate(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             buffer.edit(
                 [(

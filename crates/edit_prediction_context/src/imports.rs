@@ -1100,7 +1100,7 @@ mod test {
     ) {
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(source, cx);
-            buffer.set_language_immediate(Some(language.clone()), cx);
+            buffer.set_language(Some(language.clone()), cx);
             buffer
         });
         cx.run_until_parked();

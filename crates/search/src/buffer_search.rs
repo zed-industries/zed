@@ -1510,12 +1510,12 @@ impl BufferSearchBar {
         if enable {
             if let Some(regex_language) = self.regex_language.clone() {
                 query_buffer.update(cx, |query_buffer, cx| {
-                    query_buffer.set_language_immediate(Some(regex_language), cx);
+                    query_buffer.set_language(Some(regex_language), cx);
                 })
             }
         } else {
             query_buffer.update(cx, |query_buffer, cx| {
-                query_buffer.set_language_immediate(None, cx);
+                query_buffer.set_language(None, cx);
             })
         }
     }
