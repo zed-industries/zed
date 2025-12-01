@@ -1518,6 +1518,64 @@ mod tests {
                 ],
             ))
         );
+
+        // Snippet with tabstop appearing more than once
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "if let".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "if let ${1:pat} = $1 {\n    $0\n}".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "if let pat = … {\n    \n}".to_string(),
+                0..6,
+                vec![
+                    (7..10, HighlightId::TABSTOP_REPLACE_ID),
+                    (13..16, HighlightId::TABSTOP_INSERT_ID),
+                    (0..2, HighlightId(1)),
+                    (3..6, HighlightId(1)),
+                ],
+            ))
+        );
+
+        // Snippet with tabstops not in left-to-right order
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "for".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "for ${2:item} in ${1:iter} {\n    $0\n}".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "for item in iter {\n    \n}".to_string(),
+                0..3,
+                vec![
+                    (4..8, HighlightId::TABSTOP_REPLACE_ID),
+                    (12..16, HighlightId::TABSTOP_REPLACE_ID),
+                    (0..3, HighlightId(1)),
+                    (9..11, HighlightId(1)),
+                ],
+            ))
+        );
     }
 
     #[gpui::test]
