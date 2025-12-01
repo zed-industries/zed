@@ -75,7 +75,7 @@ impl FileExplorer {
     fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        worktree_id: WorktreeId,
+        worktree_id: Option<WorktreeId>,
         current_path: Arc<RelPath>,
         initial_selected_path: Option<String>,
         window: &mut Window,
@@ -87,7 +87,7 @@ impl FileExplorer {
             file_explorer,
             workspace,
             project,
-            Some(worktree_id),
+            worktree_id,
             current_path,
             initial_selected_path,
             cx,
@@ -130,17 +130,28 @@ impl FileExplorer {
                 .map(|p| p.to_owned().into())
                 .unwrap_or_else(|| RelPath::empty().to_owned().into());
             let file_name = project_path.path.file_name().map(|s| s.to_string());
-            Some((project_path.worktree_id, parent, file_name))
+            Some((Some(project_path.worktree_id), parent, file_name))
         });
 
         let (worktree_id, current_path, initial_selected_path) = if let Some(result) = from_active_item {
             result
-        } else if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
-            // Fall back to first visible worktree if active item doesn't have a valid worktree
-            let worktree = worktree.read(cx);
-            (worktree.id(), RelPath::empty().to_owned().into(), None)
         } else {
-            return;
+            // No active item with a valid worktree
+            let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
+            let first_worktree = visible_worktrees.next();
+            let has_multiple = visible_worktrees.next().is_some();
+
+            if has_multiple {
+                // Multiple worktrees, show worktree selection
+                (None, RelPath::empty().to_owned().into(), None)
+            } else if let Some(worktree) = first_worktree {
+                // Single worktree, navigate to its root
+                let worktree = worktree.read(cx);
+                (Some(worktree.id()), RelPath::empty().to_owned().into(), None)
+            } else {
+                // No worktrees at all
+                return;
+            }
         };
 
         let weak_workspace = cx.entity().downgrade();
@@ -260,7 +271,9 @@ impl FileExplorer {
                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_explorer;
 
             match entry {
-                FileExplorerEntry::ParentDirectory | FileExplorerEntry::Worktree(..) => None,
+                FileExplorerEntry::ParentDirectory
+                | FileExplorerEntry::AllWorktrees
+                | FileExplorerEntry::Worktree(..) => None,
                 FileExplorerEntry::Entry(e) => {
                     if e.is_dir() {
                         None
@@ -319,6 +332,7 @@ impl Render for FileExplorer {
 #[derive(Debug, Clone)]
 enum FileExplorerEntry {
     ParentDirectory,
+    AllWorktrees,
     Worktree(WorktreeId, Arc<RelPath>),
     Entry(Entry),
 }
@@ -327,6 +341,7 @@ impl FileExplorerEntry {
     fn display_name(&self) -> String {
         match self {
             FileExplorerEntry::ParentDirectory => "..".to_string(),
+            FileExplorerEntry::AllWorktrees => "All Worktrees".to_string(),
             FileExplorerEntry::Worktree(_, name) => name.as_ref().as_unix_str().to_string(),
             FileExplorerEntry::Entry(e) => e
                 .path
@@ -407,13 +422,17 @@ impl FileExplorerDelegate {
         };
         let worktree = worktree.read(cx);
 
-        // Show parent directory if we're in a subdirectory or at root with multiple worktrees
+        // Show parent directory if we're in a subdirectory
+        // Or show "All Worktrees" if at root with multiple worktrees
         let at_worktree_root = self.current_path.as_ref().as_unix_str().is_empty();
         let has_multiple_worktrees = project.visible_worktrees(cx).count() > 1;
 
-        if !at_worktree_root || has_multiple_worktrees {
+        if !at_worktree_root {
             self.all_entries
                 .push(FileExplorerEntry::ParentDirectory);
+        } else if has_multiple_worktrees {
+            self.all_entries
+                .push(FileExplorerEntry::AllWorktrees);
         }
 
         let mut dirs: Vec<Entry> = Vec::new();
@@ -452,8 +471,9 @@ impl FileExplorerDelegate {
             .take()
             .and_then(|target_path| {
                 self.filtered_entries.iter().position(|entry| match entry {
-                    FileExplorerEntry::ParentDirectory => false,
-                    FileExplorerEntry::Worktree(..) => false,
+                    FileExplorerEntry::ParentDirectory
+                    | FileExplorerEntry::AllWorktrees
+                    | FileExplorerEntry::Worktree(..) => false,
                     FileExplorerEntry::Entry(e) => {
                         e.path.file_name().map(|s| s.to_string()).as_deref() == Some(&target_path)
                     }
@@ -522,7 +542,7 @@ impl FileExplorerDelegate {
                     picker.refresh(window, cx);
                 });
             }
-            FileExplorerEntry::ParentDirectory => {}
+            FileExplorerEntry::ParentDirectory | FileExplorerEntry::AllWorktrees => {}
         }
     }
 
@@ -630,7 +650,7 @@ impl PickerDelegate for FileExplorerDelegate {
         };
 
         match entry {
-            FileExplorerEntry::ParentDirectory => {
+            FileExplorerEntry::ParentDirectory | FileExplorerEntry::AllWorktrees => {
                 self.navigate_to_parent(window, cx);
             }
             FileExplorerEntry::Worktree(..) => {
@@ -702,6 +722,7 @@ impl PickerDelegate for FileExplorerDelegate {
 
         let (icon_name, file_icon) = match entry {
             FileExplorerEntry::ParentDirectory => (Some(IconName::Folder), None),
+            FileExplorerEntry::AllWorktrees => (Some(IconName::FileTree), None),
             FileExplorerEntry::Worktree(..) => (Some(IconName::FileTree), None),
             FileExplorerEntry::Entry(e) => {
                 if e.is_dir() {
@@ -717,6 +738,7 @@ impl PickerDelegate for FileExplorerDelegate {
 
         let (display_name, suffix) = match entry {
             FileExplorerEntry::ParentDirectory => ("..".to_string(), ""),
+            FileExplorerEntry::AllWorktrees => ("All Worktrees".to_string(), ""),
             FileExplorerEntry::Worktree(_, name) => {
                 (name.as_ref().as_unix_str().to_string(), "")
             }
