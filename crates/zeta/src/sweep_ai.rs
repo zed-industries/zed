@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::Event;
-use futures::AsyncReadExt as _;
+use credentials_provider::CredentialsProvider;
+use futures::{AsyncReadExt as _, FutureExt, future::Shared};
 use gpui::{
     App, AppContext as _, Entity, Task,
     http_client::{self, AsyncBody, Method},
@@ -23,16 +24,21 @@ use crate::{EditPredictionId, EditPredictionInputs, prediction::EditPredictionRe
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
 pub struct SweepAi {
-    pub api_token: Option<String>,
+    pub api_token: Shared<Task<Option<String>>>,
     pub debug_info: Arc<str>,
 }
 
 impl SweepAi {
     pub fn new(cx: &App) -> Self {
         SweepAi {
-            api_token: std::env::var("SWEEP_AI_TOKEN").ok(),
+            api_token: load_api_token(cx).shared(),
             debug_info: debug_info(cx),
         }
+    }
+
+    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        self.api_token = Task::ready(api_token.clone()).shared();
+        store_api_token_in_keychain(api_token, cx)
     }
 
     pub fn request_prediction_with_sweep(
@@ -47,7 +53,7 @@ impl SweepAi {
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
-        let Some(api_token) = self.api_token.clone() else {
+        let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = snapshot
@@ -258,6 +264,49 @@ impl SweepAi {
             ))
         })
     }
+}
+
+pub const SWEEP_CREDENTIALS_URL: &str = "https://autocomplete.sweep.dev";
+pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
+
+pub fn load_api_token(cx: &App) -> Task<Option<String>> {
+    if let Some(api_token) = std::env::var("SWEEP_AI_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
+        return Task::ready(Some(api_token));
+    }
+    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    cx.spawn(async move |cx| {
+        let (_, credentials) = credentials_provider
+            .read_credentials(SWEEP_CREDENTIALS_URL, &cx)
+            .await
+            .ok()??;
+        String::from_utf8(credentials).ok()
+    })
+}
+
+fn store_api_token_in_keychain(api_token: Option<String>, cx: &App) -> Task<Result<()>> {
+    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+
+    cx.spawn(async move |cx| {
+        if let Some(api_token) = api_token {
+            credentials_provider
+                .write_credentials(
+                    SWEEP_CREDENTIALS_URL,
+                    SWEEP_CREDENTIALS_USERNAME,
+                    api_token.as_bytes(),
+                    cx,
+                )
+                .await
+                .context("Failed to save Sweep API token to system keychain")
+        } else {
+            credentials_provider
+                .delete_credentials(SWEEP_CREDENTIALS_URL, cx)
+                .await
+                .context("Failed to delete Sweep API token from system keychain")
+        }
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]

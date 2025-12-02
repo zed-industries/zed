@@ -176,6 +176,7 @@ impl LspAdapter for TailwindLspAdapter {
         HashMap::from_iter([
             (LanguageName::new("Astro"), "astro".to_string()),
             (LanguageName::new("HTML"), "html".to_string()),
+            (LanguageName::new("Gleam"), "html".to_string()),
             (LanguageName::new("CSS"), "css".to_string()),
             (LanguageName::new("JavaScript"), "javascript".to_string()),
             (LanguageName::new("TypeScript"), "typescript".to_string()),

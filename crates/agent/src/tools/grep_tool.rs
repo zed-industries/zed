@@ -145,8 +145,7 @@ impl AgentTool for GrepTool {
             let exclude_patterns = global_settings
                 .file_scan_exclusions
                 .sources()
-                .iter()
-                .chain(global_settings.private_files.sources().iter());
+                .chain(global_settings.private_files.sources());
 
             match PathMatcher::new(exclude_patterns, path_style) {
                 Ok(matcher) => matcher,

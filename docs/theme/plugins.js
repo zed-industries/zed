@@ -49,9 +49,6 @@ if (typeof requestIdleCallback === "function") {
 
 function darkModeToggle() {
   var html = document.documentElement;
-  var themeToggleButton = document.getElementById("theme-toggle");
-  var themePopup = document.getElementById("theme-list");
-  var themePopupButtons = themePopup.querySelectorAll("button");
 
   function setTheme(theme) {
     html.setAttribute("data-theme", theme);
@@ -59,28 +56,6 @@ function darkModeToggle() {
     html.className = theme;
     localStorage.setItem("mdbook-theme", theme);
   }
-
-  themeToggleButton.addEventListener("click", function (event) {
-    event.preventDefault();
-    themePopup.style.display =
-      themePopup.style.display === "block" ? "none" : "block";
-  });
-
-  themePopupButtons.forEach(function (button) {
-    button.addEventListener("click", function () {
-      setTheme(this.id);
-      themePopup.style.display = "none";
-    });
-  });
-
-  document.addEventListener("click", function (event) {
-    if (
-      !themePopup.contains(event.target) &&
-      !themeToggleButton.contains(event.target)
-    ) {
-      themePopup.style.display = "none";
-    }
-  });
 
   // Set initial theme
   var currentTheme = localStorage.getItem("mdbook-theme");
