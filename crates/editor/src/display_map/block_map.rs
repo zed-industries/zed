@@ -748,6 +748,13 @@ impl BlockMap {
                 },
             ));
 
+            blocks_in_edit.extend(self.spacer_blocks(
+                buffer,
+                wrap_snapshot,
+                companion_wrap_snapshot,
+                (start_bound, end_bound),
+            ));
+
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
@@ -969,6 +976,26 @@ impl BlockMap {
             }
             _ => false,
         });
+    }
+
+    fn spacer_blocks<'a>(
+        &'a self,
+        buffer: &MultiBufferSnapshot,
+        wrap_snapshot: &WrapSnapshot,
+        companion_wrap_snapshot: Option<&WrapSnapshot>,
+        bounds: (Bound<Point>, Bound<Point>),
+    ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a {
+        // 0. find the matching positions for the start of the edit in the two wrap snapshots
+        // 1. loop:
+        //    if (at_end_of_edit)
+        //       done
+        //    else if (in_hunk)
+        //       advance to end of hunk on both sides
+        //       spacer_size = sizes based on the hunk (in wraprows)
+        //    else 
+        //       advance to next buffer line on both sides
+        //       spacer_size = size of buffer_line in companion (in wraprows) 
+        //    yield a spacer based on the size
     }
 }
 
