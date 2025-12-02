@@ -6526,7 +6526,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Jsx Tag Auto Close",
+            title: "JSX Tag Auto Close",
             description: "Whether to automatically close JSX tags.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).jsx_tag_auto_close"),
@@ -7053,7 +7053,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Colorize brackets",
+            title: "Colorize Brackets",
             description: "Whether to colorize brackets in the editor.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).colorize_brackets"),
