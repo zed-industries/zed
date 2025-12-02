@@ -1,19 +1,18 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Addon, Editor, EditorEvent, MultiBuffer};
+use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
+use editor::{Addon, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
     AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element,
     Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, Styled, Task, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
-    actions, px,
+    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
-    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope, TextBuffer,
-    ToPoint,
+    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
+    TextBuffer, ToPoint,
 };
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::ExcerptInfo;
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -63,7 +62,6 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
-    markdown: Entity<Markdown>,
 }
 
 struct GitBlob {
@@ -167,6 +165,8 @@ impl CommitView {
             .map(|worktree| worktree.read(cx).id());
 
         let repository_clone = repository.clone();
+        let commit_message = commit.message.clone();
+
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
@@ -227,6 +227,58 @@ impl CommitView {
                     });
                 })?;
             }
+
+            let message_buffer = cx.new(|cx| {
+                let mut buffer = Buffer::local(commit_message, cx);
+                buffer.set_capability(Capability::ReadOnly, cx);
+                buffer
+            })?;
+
+            this.update(cx, |this, cx| {
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    let range = ExcerptRange {
+                        context: Anchor::MIN..Anchor::MAX,
+                        primary: Anchor::MIN..Anchor::MAX,
+                    };
+                    multibuffer.insert_excerpts_after(
+                        ExcerptId::min(),
+                        message_buffer.clone(),
+                        [range],
+                        cx,
+                    )
+                });
+
+                this.editor.update(cx, |editor, cx| {
+                    editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+
+                    editor.insert_blocks(
+                        [BlockProperties {
+                            placement: BlockPlacement::Above(editor::Anchor::min()),
+                            height: Some(1),
+                            style: BlockStyle::Sticky,
+                            render: Arc::new(|_| gpui::Empty.into_any_element()),
+                            priority: 0,
+                        }]
+                        .into_iter()
+                        .chain(
+                            editor
+                                .buffer()
+                                .read(cx)
+                                .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                                .map(|anchor| BlockProperties {
+                                    placement: BlockPlacement::Below(anchor),
+                                    height: Some(1),
+                                    style: BlockStyle::Sticky,
+                                    render: Arc::new(|_| gpui::Empty.into_any_element()),
+                                    priority: 0,
+                                }),
+                        ),
+                        None,
+                        cx,
+                    )
+                });
+            })?;
+
             anyhow::Ok(())
         })
         .detach();
@@ -246,14 +298,6 @@ impl CommitView {
             })
         });
 
-        let processed_message = if let Some(ref remote) = remote {
-            Self::process_github_issues(&commit.message, remote)
-        } else {
-            commit.message.to_string()
-        };
-
-        let markdown = cx.new(|cx| Markdown::new(processed_message.into(), None, None, cx));
-
         Self {
             commit,
             editor,
@@ -261,16 +305,7 @@ impl CommitView {
             stash,
             repository,
             remote,
-            markdown,
         }
-    }
-
-    fn fallback_commit_avatar() -> AnyElement {
-        Icon::new(IconName::Person)
-            .color(Color::Muted)
-            .size(IconSize::Medium)
-            .into_element()
-            .into_any()
     }
 
     fn render_commit_avatar(
@@ -280,21 +315,34 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let size = size.into();
         let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
 
         if let Some(remote) = remote {
             let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
             if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                Avatar::new(url.to_string())
+                return Avatar::new(url.to_string())
                     .size(size)
                     .into_element()
-                    .into_any()
-            } else {
-                Self::fallback_commit_avatar()
+                    .into_any();
             }
-        } else {
-            Self::fallback_commit_avatar()
         }
+
+        v_flex()
+            .w(size)
+            .h(size)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_full()
+            .justify_center()
+            .items_center()
+            .child(
+                Icon::new(IconName::Person)
+                    .color(Color::Muted)
+                    .size(IconSize::Medium)
+                    .into_element(),
+            )
+            .into_any()
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -322,14 +370,24 @@ impl CommitView {
 
         v_flex()
             .p_4()
+            .pl_0()
             .gap_4()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
                 h_flex()
                     .items_start()
-                    .gap_3()
-                    .child(self.render_commit_avatar(&commit.sha, gpui::rems(3.0), window, cx))
+                    .child(
+                        h_flex()
+                            .w(self.editor.read(cx).last_gutter_dimensions().full_width())
+                            .justify_center()
+                            .child(self.render_commit_avatar(
+                                &commit.sha,
+                                gpui::rems(3.0),
+                                window,
+                                cx,
+                            )),
+                    )
                     .child(
                         v_flex()
                             .gap_1()
@@ -353,66 +411,6 @@ impl CommitView {
                             .on_click(move |_, _, cx| cx.open_url(&url))
                     })),
             )
-            .child(self.render_commit_message(window, cx))
-    }
-
-    fn process_github_issues(message: &str, remote: &GitRemote) -> String {
-        let mut result = String::new();
-        let chars: Vec<char> = message.chars().collect();
-        let mut i = 0;
-
-        while i < chars.len() {
-            if chars[i] == '#' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
-                let mut j = i + 1;
-                while j < chars.len() && chars[j].is_ascii_digit() {
-                    j += 1;
-                }
-                let issue_number = &message[i + 1..i + (j - i)];
-                let url = format!(
-                    "{}/{}/{}/issues/{}",
-                    remote.host.base_url().as_str().trim_end_matches('/'),
-                    remote.owner,
-                    remote.repo,
-                    issue_number
-                );
-                result.push_str(&format!("[#{}]({})", issue_number, url));
-                i = j;
-            } else if i + 3 < chars.len()
-                && chars[i] == 'G'
-                && chars[i + 1] == 'H'
-                && chars[i + 2] == '-'
-                && chars[i + 3].is_ascii_digit()
-            {
-                let mut j = i + 3;
-                while j < chars.len() && chars[j].is_ascii_digit() {
-                    j += 1;
-                }
-                let issue_number = &message[i + 3..i + (j - i)];
-                let url = format!(
-                    "{}/{}/{}/issues/{}",
-                    remote.host.base_url().as_str().trim_end_matches('/'),
-                    remote.owner,
-                    remote.repo,
-                    issue_number
-                );
-                result.push_str(&format!("[GH-{}]({})", issue_number, url));
-                i = j;
-            } else {
-                result.push(chars[i]);
-                i += 1;
-            }
-        }
-
-        result
-    }
-
-    fn render_commit_message(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let style = hover_markdown_style(window, cx);
-        MarkdownElement::new(self.markdown.clone(), style)
     }
 
     fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
@@ -963,12 +961,6 @@ impl Item for CommitView {
                     .update(cx, |editor, cx| editor.clone(window, cx))
             });
             let multibuffer = editor.read(cx).buffer().clone();
-            let processed_message = if let Some(ref remote) = self.remote {
-                Self::process_github_issues(&self.commit.message, remote)
-            } else {
-                self.commit.message.to_string()
-            };
-            let markdown = cx.new(|cx| Markdown::new(processed_message.into(), None, None, cx));
             Self {
                 editor,
                 multibuffer,
@@ -976,7 +968,6 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
-                markdown,
             }
         })))
     }
@@ -1045,118 +1036,4 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .get(stash_index)
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
-}
-
-fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let colors = cx.theme().colors();
-    let mut style = MarkdownStyle::default();
-    style.base_text_style = window.text_style();
-    style.syntax = cx.theme().syntax().clone();
-    style.selection_background_color = colors.element_selection_background;
-    style.link = TextStyleRefinement {
-        color: Some(colors.text_accent),
-        underline: Some(UnderlineStyle {
-            thickness: px(1.0),
-            color: Some(colors.text_accent),
-            wavy: false,
-        }),
-        ..Default::default()
-    };
-    style
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use git_hosting_providers::Github;
-
-    fn create_test_remote() -> GitRemote {
-        GitRemote {
-            host: Arc::new(Github::public_instance()),
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        }
-    }
-
-    #[test]
-    fn test_process_github_issues_simple_issue_number() {
-        let remote = create_test_remote();
-        let message = "Fix bug #123";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(
-            result,
-            "Fix bug [#123](https://github.com/zed-industries/zed/issues/123)"
-        );
-    }
-
-    #[test]
-    fn test_process_github_issues_multiple_issue_numbers() {
-        let remote = create_test_remote();
-        let message = "Fix #123 and #456";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(
-            result,
-            "Fix [#123](https://github.com/zed-industries/zed/issues/123) and [#456](https://github.com/zed-industries/zed/issues/456)"
-        );
-    }
-
-    #[test]
-    fn test_process_github_issues_gh_format() {
-        let remote = create_test_remote();
-        let message = "Fix GH-789";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(
-            result,
-            "Fix [GH-789](https://github.com/zed-industries/zed/issues/789)"
-        );
-    }
-
-    #[test]
-    fn test_process_github_issues_mixed_formats() {
-        let remote = create_test_remote();
-        let message = "Fix #123 and GH-456";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(
-            result,
-            "Fix [#123](https://github.com/zed-industries/zed/issues/123) and [GH-456](https://github.com/zed-industries/zed/issues/456)"
-        );
-    }
-
-    #[test]
-    fn test_process_github_issues_no_issues() {
-        let remote = create_test_remote();
-        let message = "This is a commit message without any issues";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(result, message);
-    }
-
-    #[test]
-    fn test_process_github_issues_hash_without_number() {
-        let remote = create_test_remote();
-        let message = "Use # for comments";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(result, message);
-    }
-
-    #[test]
-    fn test_process_github_issues_consecutive_issues() {
-        let remote = create_test_remote();
-        let message = "#123#456";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(
-            result,
-            "[#123](https://github.com/zed-industries/zed/issues/123)[#456](https://github.com/zed-industries/zed/issues/456)"
-        );
-    }
-
-    #[test]
-    fn test_process_github_issues_multiline() {
-        let remote = create_test_remote();
-        let message = "Fix #123\n\nThis also fixes #456";
-        let result = CommitView::process_github_issues(message, &remote);
-        assert_eq!(
-            result,
-            "Fix [#123](https://github.com/zed-industries/zed/issues/123)\n\nThis also fixes [#456](https://github.com/zed-industries/zed/issues/456)"
-        );
-    }
 }
