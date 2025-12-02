@@ -4184,6 +4184,7 @@ dependencies = [
  "serde_json",
  "smol",
  "system_specs",
+ "windows 0.61.3",
  "zstd 0.11.2+zstd.1.5.2",
 ]
 
