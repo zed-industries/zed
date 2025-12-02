@@ -1081,7 +1081,7 @@ impl WindowsWindowInner {
         unsafe {
             SetCursor(self.state.borrow().current_cursor);
         };
-        Some(1)
+        Some(0)
     }
 
     fn handle_system_settings_changed(
