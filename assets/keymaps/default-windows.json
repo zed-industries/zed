@@ -36,12 +36,12 @@
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
-      "f7": "debugger::StepOver",
-      "ctrl-f11": "debugger::StepInto",
+      "f10": "debugger::StepOver",
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
-      "shift-alt-l": "lsp_tool::ToggleMenu"
+      "shift-alt-l": "lsp_tool::ToggleMenu",
+      "ctrl-shift-alt-c": "editor::DisplayCursorNames"
     }
   },
   {
@@ -117,7 +117,7 @@
       "alt-g m": "git::OpenModifiedFiles",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
-      "ctrl-shift-e": "editor::ToggleEditPrediction",
+      "ctrl-alt-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint"
     }
@@ -215,7 +215,7 @@
     "context": "ContextEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-enter": "assistant::Assist",
+      "ctrl-i": "assistant::Assist",
       "ctrl-s": "workspace::Save",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
@@ -240,18 +240,18 @@
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-alt-/": "agent::ToggleModelSelector",
-      "ctrl-shift-j": "agent::ToggleNavigationMenu",
-      "ctrl-alt-i": "agent::ToggleOptionsMenu",
-      // "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
+      "shift-alt-j": "agent::ToggleNavigationMenu",
+      "shift-alt-i": "agent::ToggleOptionsMenu",
+      "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
       "alt-enter": "agent::ContinueWithBurnMode",
-      "ctrl-y": "agent::AllowOnce",
+      "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
-      "ctrl-alt-z": "agent::RejectOnce"
+      "shift-alt-z": "agent::RejectOnce"
     }
   },
   {
@@ -500,10 +500,7 @@
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch  / find_under_expand
-      "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch
-      "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }], // editor.action.moveSelectionToNextFindMatch  / find_under_expand_skip
-      "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "ctrl-k ctrl-i": "editor::Hover",
       "ctrl-k ctrl-b": "editor::BlameHover",
       "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
@@ -512,12 +509,8 @@
       "f2": "editor::Rename",
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
-      "ctrl-shift-f10": "editor::GoToDefinitionSplit",
       "ctrl-f12": "editor::GoToImplementation",
-      "shift-f12": "editor::GoToTypeDefinition",
-      "ctrl-alt-f12": "editor::GoToTypeDefinitionSplit",
       "shift-alt-f12": "editor::FindAllReferences",
-      "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
       "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
       "ctrl-shift-[": "editor::Fold",
       "ctrl-shift-]": "editor::UnfoldLines",
@@ -541,7 +534,6 @@
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
       "ctrl-\\": "pane::SplitRight",
-      "ctrl-shift-alt-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"
     }
@@ -1124,7 +1116,7 @@
       "shift-insert": "terminal::Paste",
       "ctrl-v": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
-      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-i": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
@@ -1305,6 +1297,7 @@
       "escape": "workspace::CloseWindow",
       "ctrl-m": "settings_editor::Minimize",
       "ctrl-f": "search::FocusSearch",
+      "ctrl-,": "settings_editor::OpenCurrentFile",
       "left": "settings_editor::ToggleFocusNav",
       "ctrl-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
@@ -1360,6 +1353,13 @@
     "bindings": {
       "alt-left": "dev::Zeta2ContextGoBack",
       "alt-right": "dev::Zeta2ContextGoForward"
+    }
+  },
+  {
+    "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-backspace": "branch_picker::DeleteBranch"
     }
   }
 ]

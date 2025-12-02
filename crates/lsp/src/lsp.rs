@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -667,7 +667,7 @@ impl LanguageServer {
 
         #[allow(deprecated)]
         InitializeParams {
-            process_id: None,
+            process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,

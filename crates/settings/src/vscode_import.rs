@@ -490,6 +490,7 @@ impl VsCodeSettings {
                         .flat_map(|n| n.as_u64().map(|n| n as usize))
                         .collect()
                 }),
+            word_diff_enabled: None,
         }
     }
 
@@ -568,7 +569,7 @@ impl VsCodeSettings {
             .filter_map(|(k, v)| {
                 Some((
                     k.clone().into(),
-                    ContextServerSettingsContent::Custom {
+                    ContextServerSettingsContent::Stdio {
                         enabled: true,
                         command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()

@@ -35,7 +35,9 @@ use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::CompletionParams;
-use multi_buffer::{IndentGuide, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
+use multi_buffer::{
+    IndentGuide, MultiBufferFilterMode, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
+};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
@@ -14754,6 +14756,180 @@ async fn test_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let command_calls = Arc::new(AtomicUsize::new(0));
+    let registered_command = "_the/command";
+
+    let closure_command_calls = command_calls.clone();
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..lsp::CompletionOptions::default()
+                }),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec![registered_command.to_owned()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+                    move |params, _| async move {
+                        Ok(Some(lsp::CompletionResponse::Array(vec![
+                            lsp::CompletionItem {
+                                label: "registered_command".to_owned(),
+                                text_edit: gen_text_edit(&params, ""),
+                                command: Some(lsp::Command {
+                                    title: registered_command.to_owned(),
+                                    command: "_the/command".to_owned(),
+                                    arguments: Some(vec![serde_json::Value::Bool(true)]),
+                                }),
+                                ..lsp::CompletionItem::default()
+                            },
+                            lsp::CompletionItem {
+                                label: "unregistered_command".to_owned(),
+                                text_edit: gen_text_edit(&params, ""),
+                                command: Some(lsp::Command {
+                                    title: "????????????".to_owned(),
+                                    command: "????????????".to_owned(),
+                                    arguments: Some(vec![serde_json::Value::Null]),
+                                }),
+                                ..lsp::CompletionItem::default()
+                            },
+                        ])))
+                    },
+                );
+                fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>({
+                    let command_calls = closure_command_calls.clone();
+                    move |params, _| {
+                        assert_eq!(params.command, registered_command);
+                        let command_calls = command_calls.clone();
+                        async move {
+                            command_calls.fetch_add(1, atomic::Ordering::Release);
+                            Ok(Some(json!(null)))
+                        }
+                    }
+                });
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/a/main.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let _fake_server = fake_servers.next().await.unwrap();
+
+    editor.update_in(cx, |editor, window, cx| {
+        cx.focus_self(window);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(".", window, cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, _| {
+        assert!(editor.context_menu_visible());
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            let completion_labels = menu
+                .completions
+                .borrow()
+                .iter()
+                .map(|c| c.label.text.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                completion_labels,
+                &["registered_command", "unregistered_command",],
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        command_calls.load(atomic::Ordering::Acquire),
+        1,
+        "For completion with a registered command, Zed should send a command execution request",
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        cx.focus_self(window);
+        editor.handle_input(".", window, cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, _| {
+        assert!(editor.context_menu_visible());
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            let completion_labels = menu
+                .completions
+                .borrow()
+                .iter()
+                .map(|c| c.label.text.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                completion_labels,
+                &["registered_command", "unregistered_command",],
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.context_menu_next(&Default::default(), window, cx);
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        command_calls.load(atomic::Ordering::Acquire),
+        1,
+        "For completion with an unregistered command, Zed should not send a command execution request",
+    );
+}
+
+#[gpui::test]
 async fn test_completion_reuse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -21550,10 +21726,9 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        let buffer_id = hunks[0].buffer_id;
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range))
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 2);
@@ -21641,10 +21816,9 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        let buffer_id = hunks[0].buffer_id;
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range))
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 2);
@@ -21707,10 +21881,9 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        let buffer_id = hunks[0].buffer_id;
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range))
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 1);
@@ -28200,4 +28373,290 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         Z
         3
         "});
+}
+
+#[gpui::test]
+async fn test_filtered_editor_pair(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut leader_cx = EditorTestContext::new(cx).await;
+
+    let diff_base = indoc!(
+        r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        "#
+    );
+
+    let initial_state = indoc!(
+        r#"
+        ˇone
+        two
+        THREE
+        four
+        five
+        six
+        "#
+    );
+
+    leader_cx.set_state(initial_state);
+
+    leader_cx.set_head_text(&diff_base);
+    leader_cx.run_until_parked();
+
+    let follower = leader_cx.update_multibuffer(|leader, cx| {
+        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
+        leader.set_all_diff_hunks_expanded(cx);
+        leader.get_or_create_follower(cx)
+    });
+    follower.update(cx, |follower, cx| {
+        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+        follower.set_all_diff_hunks_expanded(cx);
+    });
+
+    let follower_editor =
+        leader_cx.new_window_entity(|window, cx| build_editor(follower, window, cx));
+    // leader_cx.window.focus(&follower_editor.focus_handle(cx));
+
+    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut leader_cx).await;
+    cx.run_until_parked();
+
+    leader_cx.assert_editor_state(initial_state);
+    follower_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        "#
+    });
+
+    follower_cx.editor(|editor, _window, cx| {
+        assert!(editor.read_only(cx));
+    });
+
+    leader_cx.update_editor(|editor, _window, cx| {
+        editor.edit([(Point::new(4, 0)..Point::new(5, 0), "FIVE\n")], cx);
+    });
+    cx.run_until_parked();
+
+    leader_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        THREE
+        four
+        FIVE
+        six
+        "#
+    });
+
+    follower_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        "#
+    });
+
+    leader_cx.update_editor(|editor, _window, cx| {
+        editor.edit([(Point::new(6, 0)..Point::new(6, 0), "SEVEN")], cx);
+    });
+    cx.run_until_parked();
+
+    leader_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        THREE
+        four
+        FIVE
+        six
+        SEVEN"#
+    });
+
+    follower_cx.assert_editor_state(indoc! {
+        r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        "#
+    });
+
+    leader_cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.refresh_selected_text_highlights(true, window, cx);
+    });
+    leader_cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let base_text = "base\n";
+    let buffer_text = "buffer\n";
+
+    let buffer1 = cx.new(|cx| Buffer::local(buffer_text, cx));
+    let diff1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer1, cx));
+
+    let extra_buffer_1 = cx.new(|cx| Buffer::local("dummy text 1\n", cx));
+    let extra_diff_1 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_1, cx));
+    let extra_buffer_2 = cx.new(|cx| Buffer::local("dummy text 2\n", cx));
+    let extra_diff_2 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_2, cx));
+
+    let leader = cx.new(|cx| {
+        let mut leader = MultiBuffer::new(Capability::ReadWrite);
+        leader.set_all_diff_hunks_expanded(cx);
+        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
+        leader
+    });
+    let follower = leader.update(cx, |leader, cx| leader.get_or_create_follower(cx));
+    follower.update(cx, |follower, _| {
+        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+    });
+
+    leader.update(cx, |leader, cx| {
+        leader.insert_excerpts_after(
+            ExcerptId::min(),
+            extra_buffer_2.clone(),
+            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+            cx,
+        );
+        leader.add_diff(extra_diff_2.clone(), cx);
+
+        leader.insert_excerpts_after(
+            ExcerptId::min(),
+            extra_buffer_1.clone(),
+            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+            cx,
+        );
+        leader.add_diff(extra_diff_1.clone(), cx);
+
+        leader.insert_excerpts_after(
+            ExcerptId::min(),
+            buffer1.clone(),
+            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+            cx,
+        );
+        leader.add_diff(diff1.clone(), cx);
+    });
+
+    cx.run_until_parked();
+    let mut cx = cx.add_empty_window();
+
+    let leader_editor = cx
+        .new_window_entity(|window, cx| Editor::for_multibuffer(leader.clone(), None, window, cx));
+    let follower_editor = cx.new_window_entity(|window, cx| {
+        Editor::for_multibuffer(follower.clone(), None, window, cx)
+    });
+
+    let mut leader_cx = EditorTestContext::for_editor_in(leader_editor.clone(), &mut cx).await;
+    leader_cx.assert_editor_state(indoc! {"
+       ˇbuffer
+
+       dummy text 1
+
+       dummy text 2
+    "});
+    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor.clone(), &mut cx).await;
+    follower_cx.assert_editor_state(indoc! {"
+        ˇbase
+
+
+    "});
+}
+
+#[gpui::test]
+async fn test_multibuffer_scroll_cursor_top_margin(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("1\n2\n3\n", vec![Point::row_range(0..3)]),
+                ("1\n2\n3\n4\n5\n6\n7\n8\n9\n", vec![Point::row_range(0..9)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ1
+        2
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        4
+        5
+        6
+        7
+        8
+        9
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(19)..MultiBufferOffset(19)]);
+        });
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        4
+        5
+        6
+        ˇ7
+        8
+        9
+        "});
+
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(editor.vertical_scroll_margin(), 0);
+        editor.scroll_cursor_top(&ScrollCursorTop, window, cx);
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 12.0)
+        );
+    });
+
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_vertical_scroll_margin(3, cx);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(editor.vertical_scroll_margin(), 3);
+        editor.scroll_cursor_top(&ScrollCursorTop, window, cx);
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 9.0)
+        );
+    });
 }

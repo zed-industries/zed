@@ -455,21 +455,13 @@ async fn update_editor_from_message(
     })??;
 
     // Deserialize the editor state.
-    let (selections, pending_selection, scroll_top_anchor) = this.update(cx, |editor, cx| {
-        let buffer = editor.buffer.read(cx).read(cx);
-        let selections = message
-            .selections
-            .into_iter()
-            .filter_map(|selection| deserialize_selection(&buffer, selection))
-            .collect::<Vec<_>>();
-        let pending_selection = message
-            .pending_selection
-            .and_then(|selection| deserialize_selection(&buffer, selection));
-        let scroll_top_anchor = message
-            .scroll_top_anchor
-            .and_then(|anchor| deserialize_anchor(&buffer, anchor));
-        anyhow::Ok((selections, pending_selection, scroll_top_anchor))
-    })??;
+    let selections = message
+        .selections
+        .into_iter()
+        .filter_map(deserialize_selection)
+        .collect::<Vec<_>>();
+    let pending_selection = message.pending_selection.and_then(deserialize_selection);
+    let scroll_top_anchor = message.scroll_top_anchor.and_then(deserialize_anchor);
 
     // Wait until the buffer has received all of the operations referenced by
     // the editor's new state.
@@ -563,24 +555,20 @@ fn deserialize_excerpt_range(
     ))
 }
 
-fn deserialize_selection(
-    buffer: &MultiBufferSnapshot,
-    selection: proto::Selection,
-) -> Option<Selection<Anchor>> {
+fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
-        start: deserialize_anchor(buffer, selection.start?)?,
-        end: deserialize_anchor(buffer, selection.end?)?,
+        start: deserialize_anchor(selection.start?)?,
+        end: deserialize_anchor(selection.end?)?,
         reversed: selection.reversed,
         goal: SelectionGoal::None,
     })
 }
 
-fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
+fn deserialize_anchor(anchor: proto::EditorAnchor) -> Option<Anchor> {
     let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
     Some(Anchor::in_buffer(
         excerpt_id,
-        buffer.buffer_id_for_excerpt(excerpt_id)?,
         language::proto::deserialize_anchor(anchor.anchor?)?,
     ))
 }
@@ -941,7 +929,11 @@ impl Item for Editor {
         })
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1374,7 +1366,7 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
-        if let Some((excerpt_id, buffer_id, snapshot)) =
+        if let Some((excerpt_id, _, snapshot)) =
             editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
             && let Some(restoration_data) = Self::project_item_kind()
@@ -1397,11 +1389,8 @@ impl ProjectItem for Editor {
                 });
             }
             let (top_row, offset) = restoration_data.scroll_position;
-            let anchor = Anchor::in_buffer(
-                *excerpt_id,
-                buffer_id,
-                snapshot.anchor_before(Point::new(top_row, 0)),
-            );
+            let anchor =
+                Anchor::in_buffer(*excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 
@@ -1783,11 +1772,7 @@ impl SearchableItem for Editor {
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    Anchor::range_in_buffer(
-                                        excerpt_id,
-                                        search_buffer.remote_id(),
-                                        start..end,
-                                    )
+                                    Anchor::range_in_buffer(excerpt_id, start..end)
                                 }
                             }),
                     );

@@ -37,7 +37,7 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
 use crate::{
     git_store::GitStore,
-    lsp_store::{LanguageServerBinaryInfo, SymbolLocation, log_store::LogKind},
+    lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
@@ -87,7 +87,8 @@ use language::{
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
-    LanguageServerId, LanguageServerName, LanguageServerSelector, MessageActionItem,
+    LanguageServerBinary, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    MessageActionItem,
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
@@ -111,6 +112,7 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
+    ffi::OsString,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -925,7 +927,7 @@ impl DirectoryLister {
             .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
             .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
             .map(|mut s| {
-                s.push_str(path_style.separator());
+                s.push_str(path_style.primary_separator());
                 s
             })
             .unwrap_or_else(|| {
@@ -3127,12 +3129,15 @@ impl Project {
                                 .get_mut(language_server_id)
                             {
                                 if let Some(binary) = &update.binary {
-                                    language_server_status.binary =
-                                        Some(LanguageServerBinaryInfo {
-                                            path: binary.path.clone(),
-                                            arguments: binary.arguments.clone(),
-                                            env: None,
-                                        });
+                                    language_server_status.binary = Some(LanguageServerBinary {
+                                        path: PathBuf::from(&binary.path),
+                                        arguments: binary
+                                            .arguments
+                                            .iter()
+                                            .map(OsString::from)
+                                            .collect(),
+                                        env: None,
+                                    });
                                 }
 
                                 language_server_status.configuration = update
@@ -3999,7 +4004,8 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
+        let captures =
+            snapshot.debug_variables_query(Anchor::min_for_buffer(snapshot.remote_id())..range.end);
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)

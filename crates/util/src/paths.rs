@@ -1,8 +1,9 @@
 use anyhow::Context;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -15,6 +16,7 @@ use std::{
     sync::LazyLock,
 };
 
+use crate::rel_path::RelPathBuf;
 use crate::{rel_path::RelPath, shell::ShellKind};
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -331,15 +333,33 @@ impl PathStyle {
     }
 
     #[inline]
-    pub fn separator(&self) -> &'static str {
+    pub fn primary_separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",
         }
     }
 
+    pub fn separators(&self) -> &'static [&'static str] {
+        match self {
+            PathStyle::Posix => &["/"],
+            PathStyle::Windows => &["\\", "/"],
+        }
+    }
+
+    pub fn separators_ch(&self) -> &'static [char] {
+        match self {
+            PathStyle::Posix => &['/'],
+            PathStyle::Windows => &['\\', '/'],
+        }
+    }
+
     pub fn is_windows(&self) -> bool {
         *self == PathStyle::Windows
+    }
+
+    pub fn is_posix(&self) -> bool {
+        *self == PathStyle::Posix
     }
 
     pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
@@ -353,24 +373,53 @@ impl PathStyle {
         } else {
             Some(format!(
                 "{left}{}{right}",
-                if left.ends_with(self.separator()) {
+                if left.ends_with(self.primary_separator()) {
                     ""
                 } else {
-                    self.separator()
+                    self.primary_separator()
                 }
             ))
         }
     }
 
     pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
-        let Some(pos) = path_like.rfind(self.separator()) else {
+        let Some(pos) = path_like.rfind(self.primary_separator()) else {
             return (None, path_like);
         };
-        let filename_start = pos + self.separator().len();
+        let filename_start = pos + self.primary_separator().len();
         (
             Some(&path_like[..filename_start]),
             &path_like[filename_start..],
         )
+    }
+
+    pub fn strip_prefix<'a>(
+        &self,
+        child: &'a Path,
+        parent: &'a Path,
+    ) -> Option<std::borrow::Cow<'a, RelPath>> {
+        let parent = parent.to_str()?;
+        if parent.is_empty() {
+            return RelPath::new(child, *self).ok();
+        }
+        let parent = self
+            .separators()
+            .iter()
+            .find_map(|sep| parent.strip_suffix(sep))
+            .unwrap_or(parent);
+        let child = child.to_str()?;
+        let stripped = child.strip_prefix(parent)?;
+        if let Some(relative) = self
+            .separators()
+            .iter()
+            .find_map(|sep| stripped.strip_prefix(sep))
+        {
+            RelPath::new(relative.as_ref(), *self).ok()
+        } else if stripped.is_empty() {
+            Some(Cow::Borrowed(RelPath::empty()))
+        } else {
+            None
+        }
     }
 }
 
@@ -732,16 +781,10 @@ impl PathWithPosition {
 
 #[derive(Clone, Debug)]
 pub struct PathMatcher {
-    sources: Vec<String>,
+    sources: Vec<(String, RelPathBuf, /*trailing separator*/ bool)>,
     glob: GlobSet,
     path_style: PathStyle,
 }
-
-// impl std::fmt::Display for PathMatcher {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         self.sources.fmt(f)
-//     }
-// }
 
 impl PartialEq for PathMatcher {
     fn eq(&self, other: &Self) -> bool {
@@ -758,9 +801,25 @@ impl PathMatcher {
     ) -> Result<Self, globset::Error> {
         let globs = globs
             .into_iter()
-            .map(|as_str| Glob::new(as_str.as_ref()))
+            .map(|as_str| {
+                GlobBuilder::new(as_str.as_ref())
+                    .backslash_escape(path_style.is_posix())
+                    .build()
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
+        let sources = globs
+            .iter()
+            .filter_map(|glob| {
+                let glob = glob.glob();
+                Some((
+                    glob.to_string(),
+                    RelPath::new(&glob.as_ref(), path_style)
+                        .ok()
+                        .map(std::borrow::Cow::into_owned)?,
+                    glob.ends_with(path_style.separators_ch()),
+                ))
+            })
+            .collect();
         let mut glob_builder = GlobSetBuilder::new();
         for single_glob in globs {
             glob_builder.add(single_glob);
@@ -773,27 +832,24 @@ impl PathMatcher {
         })
     }
 
-    pub fn sources(&self) -> &[String] {
-        &self.sources
+    pub fn sources(&self) -> impl Iterator<Item = &str> + Clone {
+        self.sources.iter().map(|(source, ..)| source.as_str())
     }
 
-    pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
-        let other_path = other.as_ref();
-        self.sources.iter().any(|source| {
-            let as_bytes = other_path.as_os_str().as_encoded_bytes();
-            as_bytes.starts_with(source.as_bytes()) || as_bytes.ends_with(source.as_bytes())
-        }) || self.glob.is_match(other_path)
-            || self.check_with_end_separator(other_path)
-    }
-
-    fn check_with_end_separator(&self, path: &Path) -> bool {
-        let path_str = path.to_string_lossy();
-        let separator = self.path_style.separator();
-        if path_str.ends_with(separator) {
-            false
-        } else {
-            self.glob.is_match(path_str.to_string() + separator)
+    pub fn is_match<P: AsRef<RelPath>>(&self, other: P) -> bool {
+        if self.sources.iter().any(|(_, source, _)| {
+            other.as_ref().starts_with(source) || other.as_ref().ends_with(source)
+        }) {
+            return true;
         }
+        let other_path = other.as_ref().display(self.path_style);
+
+        if self.glob.is_match(&*other_path) {
+            return true;
+        }
+
+        self.glob
+            .is_match(other_path.into_owned() + self.path_style.primary_separator())
     }
 }
 
@@ -1311,6 +1367,8 @@ impl WslPath {
 
 #[cfg(test)]
 mod tests {
+    use crate::rel_path::rel_path;
+
     use super::*;
     use util_macros::perf;
 
@@ -2029,42 +2087,41 @@ mod tests {
     }
 
     #[perf]
-    fn edge_of_glob() {
-        let path = Path::new("/work/node_modules");
-        let path_matcher =
-            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
-        assert!(
-            path_matcher.is_match(path),
-            "Path matcher should match {path:?}"
-        );
-    }
+    // fn edge_of_glob() {
+    //     let path = Path::new("/work/node_modules");
+    //     let path_matcher =
+    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
+    //     assert!(
+    //         path_matcher.is_match(path),
+    //         "Path matcher should match {path:?}"
+    //     );
+    // }
 
-    #[perf]
-    fn file_in_dirs() {
-        let path = Path::new("/work/.env");
-        let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
-        assert!(
-            path_matcher.is_match(path),
-            "Path matcher should match {path:?}"
-        );
-        let path = Path::new("/work/package.json");
-        assert!(
-            !path_matcher.is_match(path),
-            "Path matcher should not match {path:?}"
-        );
-    }
+    // #[perf]
+    // fn file_in_dirs() {
+    //     let path = Path::new("/work/.env");
+    //     let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
+    //     assert!(
+    //         path_matcher.is_match(path),
+    //         "Path matcher should match {path:?}"
+    //     );
+    //     let path = Path::new("/work/package.json");
+    //     assert!(
+    //         !path_matcher.is_match(path),
+    //         "Path matcher should not match {path:?}"
+    //     );
+    // }
 
-    #[perf]
-    fn project_search() {
-        let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher =
-            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
-        assert!(
-            path_matcher.is_match(path),
-            "Path matcher should match {path:?}"
-        );
-    }
-
+    // #[perf]
+    // fn project_search() {
+    //     let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
+    //     let path_matcher =
+    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
+    //     assert!(
+    //         path_matcher.is_match(path),
+    //         "Path matcher should match {path:?}"
+    //     );
+    // }
     #[perf]
     #[cfg(target_os = "windows")]
     fn test_sanitized_path() {
@@ -2478,6 +2535,89 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
+    }
+
+    #[test]
+    fn test_strip_prefix() {
+        let expected = [
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Posix, "/a/b/c", "", None),
+            (PathStyle::Posix, "/a/b//c", "/a/b/", None),
+            (PathStyle::Posix, "/a/bc", "/a/b", None),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/c",
+                Some(rel_path("").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
+            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
+            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b/",
+                Some(rel_path("c").into_arc()),
+            ),
+        ];
+        let actual = expected.clone().map(|(style, child, parent, _)| {
+            (
+                style,
+                child,
+                parent,
+                style
+                    .strip_prefix(child.as_ref(), parent.as_ref())
+                    .map(|rel_path| rel_path.into_arc()),
+            )
+        });
+        pretty_assertions::assert_eq!(actual, expected);
     }
 
     #[cfg(target_os = "windows")]

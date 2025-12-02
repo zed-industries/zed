@@ -1164,7 +1164,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let commit_view_toolbar = cx.new(|cx| CommitViewToolbar::new(workspace, cx));
+            let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
@@ -1394,8 +1394,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
     };
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+    let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
     let showed_parse_error = match error {
         Some(error) => {
@@ -1427,7 +1426,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             false
         }
     };
-    let id = NotificationId::Named("failed-to-migrate-settings".into());
+    let id = NotificationId::Named(format!("failed-to-migrate-settings-{is_user}").into());
 
     match result.migration_status {
         settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
@@ -4683,6 +4682,134 @@ mod tests {
         cx.update(|cx| {
             // Make sure it doesn't panic.
             KeymapFile::generate_json_schema_for_registered_actions(cx);
+        });
+    }
+
+    /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
+    /// and let you know when introducing a new namespace.
+    #[gpui::test]
+    async fn test_action_namespaces(cx: &mut gpui::TestAppContext) {
+        use itertools::Itertools;
+
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+
+            let mut actions_without_namespace = Vec::new();
+            let all_namespaces = all_actions
+                .iter()
+                .filter_map(|action_name| {
+                    let namespace = action_name
+                        .split("::")
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .skip(1)
+                        .rev()
+                        .join("::");
+                    if namespace.is_empty() {
+                        actions_without_namespace.push(*action_name);
+                    }
+                    if &namespace == "test_only" || &namespace == "stories" {
+                        None
+                    } else {
+                        Some(namespace)
+                    }
+                })
+                .sorted()
+                .dedup()
+                .collect::<Vec<_>>();
+            assert_eq!(actions_without_namespace, Vec::<&str>::new());
+
+            let expected_namespaces = vec![
+                "action",
+                "activity_indicator",
+                "agent",
+                #[cfg(not(target_os = "macos"))]
+                "app_menu",
+                "assistant",
+                "assistant2",
+                "auto_update",
+                "branch_picker",
+                "bedrock",
+                "branches",
+                "buffer_search",
+                "channel_modal",
+                "cli",
+                "client",
+                "collab",
+                "collab_panel",
+                "command_palette",
+                "console",
+                "context_server",
+                "copilot",
+                "debug_panel",
+                "debugger",
+                "dev",
+                "diagnostics",
+                "edit_prediction",
+                "editor",
+                "feedback",
+                "file_finder",
+                "git",
+                "git_onboarding",
+                "git_panel",
+                "go_to_line",
+                "icon_theme_selector",
+                "journal",
+                "keymap_editor",
+                "keystroke_input",
+                "language_selector",
+                "line_ending_selector",
+                "lsp_tool",
+                "markdown",
+                "menu",
+                "notebook",
+                "notification_panel",
+                "onboarding",
+                "outline",
+                "outline_panel",
+                "pane",
+                "panel",
+                "picker",
+                "project_panel",
+                "project_search",
+                "project_symbols",
+                "projects",
+                "repl",
+                "rules_library",
+                "search",
+                "settings_editor",
+                "settings_profile_selector",
+                "snippets",
+                "stash_picker",
+                "supermaven",
+                "svg",
+                "syntax_tree_view",
+                "tab_switcher",
+                "task",
+                "terminal",
+                "terminal_panel",
+                "theme_selector",
+                "toast",
+                "toolchain",
+                "variable_list",
+                "vim",
+                "window",
+                "workspace",
+                "zed",
+                "zed_actions",
+                "zed_predict_onboarding",
+                "zeta",
+            ];
+            assert_eq!(
+                all_namespaces,
+                expected_namespaces
+                    .into_iter()
+                    .map(|namespace| namespace.to_string())
+                    .sorted()
+                    .collect::<Vec<_>>()
+            );
         });
     }
 

@@ -36,6 +36,7 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod split;
 pub mod tasks;
 
 #[cfg(test)]
@@ -69,6 +70,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
+pub use split::SplittableEditor;
 pub use text::Bias;
 
 use ::git::{
@@ -144,8 +146,8 @@ use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
-    InvalidationStrategy, Location, LocationLink, PrepareRenameResponse, Project, ProjectItem,
-    ProjectPath, ProjectTransaction, TaskSourceKind,
+    InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
+    ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
     debugger::{
         breakpoint_store::{
             Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
@@ -282,6 +284,9 @@ pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
 
+pub struct HunkAddedColor;
+pub struct HunkRemovedColor;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -305,6 +310,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
+        word_diffs: Vec<Range<MultiBufferOffset>>,
     },
 }
 
@@ -1199,6 +1205,7 @@ pub struct Editor {
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_overrides: Vec<SharedString>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
+    use_base_text_line_numbers: bool,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -1638,7 +1645,7 @@ pub(crate) struct FocusedBlock {
     focus_handle: WeakFocusHandle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum JumpData {
     MultiBufferRow {
         row: MultiBufferRow,
@@ -1781,7 +1788,7 @@ impl Editor {
         let start_row = (multi_buffer_visible_start.row).min(max_row);
         let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
 
-        if let Some((excerpt_id, buffer_id, buffer)) = multi_buffer.read(cx).as_singleton() {
+        if let Some((excerpt_id, _, buffer)) = multi_buffer.read(cx).as_singleton() {
             let outline_items = buffer
                 .outline_items_containing(
                     Point::new(start_row, 0)..Point::new(end_row, 0),
@@ -1791,10 +1798,9 @@ impl Editor {
                 .into_iter()
                 .map(|outline_item| OutlineItem {
                     depth: outline_item.depth,
-                    range: Anchor::range_in_buffer(*excerpt_id, buffer_id, outline_item.range),
+                    range: Anchor::range_in_buffer(*excerpt_id, outline_item.range),
                     source_range_for_text: Anchor::range_in_buffer(
                         *excerpt_id,
-                        buffer_id,
                         outline_item.source_range_for_text,
                     ),
                     text: outline_item.text,
@@ -1802,10 +1808,10 @@ impl Editor {
                     name_ranges: outline_item.name_ranges,
                     body_range: outline_item
                         .body_range
-                        .map(|range| Anchor::range_in_buffer(*excerpt_id, buffer_id, range)),
+                        .map(|range| Anchor::range_in_buffer(*excerpt_id, range)),
                     annotation_range: outline_item
                         .annotation_range
-                        .map(|range| Anchor::range_in_buffer(*excerpt_id, buffer_id, range)),
+                        .map(|range| Anchor::range_in_buffer(*excerpt_id, range)),
                 });
             return Some(outline_items.collect());
         }
@@ -2347,6 +2353,7 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             accent_overrides: Vec::new(),
             fetched_tree_sitter_chunks: HashMap::default(),
+            use_base_text_line_numbers: false,
         };
 
         if is_minimap {
@@ -3260,7 +3267,7 @@ impl Editor {
         }
 
         if local {
-            if let Some(buffer_id) = new_cursor_position.buffer_id {
+            if let Some(buffer_id) = new_cursor_position.text_anchor.buffer_id {
                 self.register_buffer(buffer_id, cx);
             }
 
@@ -4199,8 +4206,8 @@ impl Editor {
                 continue;
             }
             if self.selections.disjoint_anchor_ranges().any(|s| {
-                if s.start.buffer_id != selection.start.buffer_id
-                    || s.end.buffer_id != selection.end.buffer_id
+                if s.start.text_anchor.buffer_id != selection.start.buffer_id
+                    || s.end.text_anchor.buffer_id != selection.end.buffer_id
                 {
                     return false;
                 }
@@ -5306,12 +5313,10 @@ impl Editor {
 
     pub fn visible_excerpts(
         &self,
+        lsp_related_only: bool,
         cx: &mut Context<Editor>,
     ) -> HashMap<ExcerptId, (Entity<Buffer>, clock::Global, Range<usize>)> {
-        let Some(project) = self.project() else {
-            return HashMap::default();
-        };
-        let project = project.read(cx);
+        let project = self.project().cloned();
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -5329,6 +5334,18 @@ impl Editor {
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer, excerpt_visible_range, excerpt_id)| {
+                if !lsp_related_only {
+                    return Some((
+                        excerpt_id,
+                        (
+                            multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                            buffer.version().clone(),
+                            excerpt_visible_range.start.0..excerpt_visible_range.end.0,
+                        ),
+                    ));
+                }
+
+                let project = project.as_ref()?.read(cx);
                 let buffer_file = project::File::from_dyn(buffer.file())?;
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
                 let worktree_entry = buffer_worktree
@@ -5485,6 +5502,7 @@ impl Editor {
         }
         let buffer_position = multibuffer_snapshot.anchor_before(position);
         let Some(buffer) = buffer_position
+            .text_anchor
             .buffer_id
             .and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id))
         else {
@@ -6134,9 +6152,43 @@ impl Editor {
         }
 
         let provider = self.completion_provider.as_ref()?;
+
+        let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
+        let command = lsp_store.as_ref().and_then(|lsp_store| {
+            let CompletionSource::Lsp {
+                lsp_completion,
+                server_id,
+                ..
+            } = &completion.source
+            else {
+                return None;
+            };
+            let lsp_command = lsp_completion.command.as_ref()?;
+            let available_commands = lsp_store
+                .read(cx)
+                .lsp_server_capabilities
+                .get(server_id)
+                .and_then(|server_capabilities| {
+                    server_capabilities
+                        .execute_command_provider
+                        .as_ref()
+                        .map(|options| options.commands.as_slice())
+                })?;
+            if available_commands.contains(&lsp_command.command) {
+                Some(CodeAction {
+                    server_id: *server_id,
+                    range: language::Anchor::MIN..language::Anchor::MIN,
+                    lsp_action: LspAction::Command(lsp_command.clone()),
+                    resolved: false,
+                })
+            } else {
+                None
+            }
+        });
+
         drop(completion);
         let apply_edits = provider.apply_additional_edits_for_completion(
-            buffer_handle,
+            buffer_handle.clone(),
             completions_menu.completions.clone(),
             candidate_id,
             true,
@@ -6150,8 +6202,29 @@ impl Editor {
             self.show_signature_help(&ShowSignatureHelp, window, cx);
         }
 
-        Some(cx.foreground_executor().spawn(async move {
+        Some(cx.spawn_in(window, async move |editor, cx| {
             apply_edits.await?;
+
+            if let Some((lsp_store, command)) = lsp_store.zip(command) {
+                let title = command.lsp_action.title().to_owned();
+                let project_transaction = lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
+                    })?
+                    .await
+                    .context("applying post-completion command")?;
+                if let Some(workspace) = editor.read_with(cx, |editor, _| editor.workspace())? {
+                    Self::open_project_transaction(
+                        &editor,
+                        workspace.downgrade(),
+                        project_transaction,
+                        title,
+                        cx,
+                    )
+                    .await?;
+                }
+            }
+
             Ok(())
         }))
     }
@@ -6924,8 +6997,7 @@ impl Editor {
                                 continue;
                             }
 
-                            let range =
-                                Anchor::range_in_buffer(excerpt_id, buffer_id, *start..*end);
+                            let range = Anchor::range_in_buffer(excerpt_id, *start..*end);
                             if highlight.kind == lsp::DocumentHighlightKind::WRITE {
                                 write_ranges.push(range);
                             } else {
@@ -7034,11 +7106,8 @@ impl Editor {
                                     .anchor_after(search_range.start + match_range.start);
                                 let match_end = buffer_snapshot
                                     .anchor_before(search_range.start + match_range.end);
-                                let match_anchor_range = Anchor::range_in_buffer(
-                                    excerpt_id,
-                                    buffer_snapshot.remote_id(),
-                                    match_start..match_end,
-                                );
+                                let match_anchor_range =
+                                    Anchor::range_in_buffer(excerpt_id, match_start..match_end);
                                 (match_anchor_range != query_range).then_some(match_anchor_range)
                             }),
                     );
@@ -8213,8 +8282,7 @@ impl Editor {
                 cx,
             );
             for (breakpoint, state) in breakpoints {
-                let multi_buffer_anchor =
-                    Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), breakpoint.position);
+                let multi_buffer_anchor = Anchor::in_buffer(excerpt_id, breakpoint.position);
                 let position = multi_buffer_anchor
                     .to_point(&multi_buffer_snapshot)
                     .to_display_point(&snapshot);
@@ -8426,8 +8494,14 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
+            let color = cx.theme().colors();
+
             let color = if is_phantom {
-                Color::Hint
+                if collides_with_existing {
+                    Color::Custom(color.debugger_accent.blend(color.text.opacity(0.6)))
+                } else {
+                    Color::Hint
+                }
             } else if is_rejected {
                 Color::Disabled
             } else {
@@ -19251,6 +19325,10 @@ impl Editor {
         self.display_map.read(cx).fold_placeholder.clone()
     }
 
+    pub fn set_use_base_text_line_numbers(&mut self, show: bool, _cx: &mut Context<Self>) {
+        self.use_base_text_line_numbers = show;
+    }
+
     pub fn set_expand_all_diff_hunks(&mut self, cx: &mut App) {
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_expanded(cx);
@@ -19486,6 +19564,10 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
+                        // We don't need to pass in word diffs here because they're only used for rendering and
+                        // this function changes internal state
+                        base_word_diffs: Vec::default(),
+                        buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.secondary_status,
@@ -20852,8 +20934,7 @@ impl Editor {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
                     let start_row = start.row().0;
-                    let end_row = if highlight.range.end.text_anchor != text::Anchor::MAX
-                        && end.column() == 0
+                    let end_row = if !highlight.range.end.text_anchor.is_max() && end.column() == 0
                     {
                         end.row().0.saturating_sub(1)
                     } else {
@@ -21409,7 +21490,7 @@ impl Editor {
                             .for_each(|hint| {
                                 let inlay = Inlay::debugger(
                                     post_inc(&mut editor.next_inlay_id),
-                                    Anchor::in_buffer(excerpt_id, buffer_id, hint.position),
+                                    Anchor::in_buffer(excerpt_id, hint.position),
                                     hint.text(),
                                 );
                                 if !inlay.text().chars().contains(&'\n') {
@@ -21619,12 +21700,22 @@ impl Editor {
             return Vec::new();
         }
 
-        theme::ThemeSettings::get_global(cx)
+        let theme_settings = theme::ThemeSettings::get_global(cx);
+
+        theme_settings
             .theme_overrides
             .get(cx.theme().name.as_ref())
             .map(|theme_style| &theme_style.accents)
             .into_iter()
             .flatten()
+            .chain(
+                theme_settings
+                    .experimental_theme_overrides
+                    .as_ref()
+                    .map(|overrides| &overrides.accents)
+                    .into_iter()
+                    .flatten(),
+            )
             .flat_map(|accent| accent.0.clone())
             .collect()
     }
@@ -22622,7 +22713,7 @@ impl Editor {
         if self.ignore_lsp_data() {
             return;
         }
-        for (_, (visible_buffer, _, _)) in self.visible_excerpts(cx) {
+        for (_, (visible_buffer, _, _)) in self.visible_excerpts(true, cx) {
             self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
         }
     }
@@ -24146,14 +24237,15 @@ impl EditorSnapshot {
                         end_row.0 += 1;
                     }
                     let is_created_file = hunk.is_created_file();
+
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
+                        word_diffs: hunk.word_diffs,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(
                             hunk.excerpt_id,
-                            hunk.buffer_id,
                             hunk.buffer_range,
                         ),
                         is_created_file,
@@ -24953,6 +25045,7 @@ pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors
 pub fn styled_runs_for_code_label<'a>(
     label: &'a CodeLabel,
     syntax_theme: &'a theme::SyntaxTheme,
+    local_player: &'a theme::PlayerColor,
 ) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
     let fade_out = HighlightStyle {
         fade_out: Some(0.35),
@@ -24965,7 +25058,17 @@ pub fn styled_runs_for_code_label<'a>(
         .iter()
         .enumerate()
         .flat_map(move |(ix, (range, highlight_id))| {
-            let style = if let Some(style) = highlight_id.style(syntax_theme) {
+            let style = if *highlight_id == language::HighlightId::TABSTOP_INSERT_ID {
+                HighlightStyle {
+                    color: Some(local_player.cursor),
+                    ..Default::default()
+                }
+            } else if *highlight_id == language::HighlightId::TABSTOP_REPLACE_ID {
+                HighlightStyle {
+                    background_color: Some(local_player.selection),
+                    ..Default::default()
+                }
+            } else if let Some(style) = highlight_id.style(syntax_theme) {
                 style
             } else {
                 return Default::default();

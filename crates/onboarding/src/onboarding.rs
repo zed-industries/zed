@@ -350,7 +350,7 @@ impl Render for Onboarding {
                             .child(self.render_page(cx))
                             .track_scroll(&self.scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
