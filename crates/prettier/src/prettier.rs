@@ -2,7 +2,8 @@ use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
-use language::{Buffer, Diff, language_settings::language_settings};
+use language::language_settings::PrettierSettings;
+use language::{Buffer, Diff, Language, language_settings::language_settings};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -345,150 +346,177 @@ impl Prettier {
         ignore_dir: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
-        let params = buffer
-            .update(cx, |buffer, cx| {
-                let buffer_language = buffer.language();
-                let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
-                let prettier_settings = &language_settings.prettier;
-                anyhow::ensure!(
-                    prettier_settings.allowed,
-                    "Cannot format: prettier is not allowed for language {buffer_language:?}"
-                );
-                let prettier_node_modules = self.prettier_dir().join("node_modules");
-                anyhow::ensure!(
-                    prettier_node_modules.is_dir(),
-                    "Prettier node_modules dir does not exist: {prettier_node_modules:?}"
-                );
-                let plugin_name_into_path = |plugin_name: &str| {
-                    let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
-                    [
-                        prettier_plugin_dir.join("dist").join("index.mjs"),
-                        prettier_plugin_dir.join("dist").join("index.js"),
-                        prettier_plugin_dir.join("dist").join("plugin.js"),
-                        prettier_plugin_dir.join("src").join("plugin.js"),
-                        prettier_plugin_dir.join("lib").join("index.js"),
-                        prettier_plugin_dir.join("index.mjs"),
-                        prettier_plugin_dir.join("index.js"),
-                        prettier_plugin_dir.join("plugin.js"),
-                        // this one is for @prettier/plugin-php
-                        prettier_plugin_dir.join("standalone.js"),
-                        // this one is for prettier-plugin-latex
-                        prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
-                        prettier_plugin_dir,
-                    ]
-                    .into_iter()
-                    .find(|possible_plugin_path| possible_plugin_path.is_file())
-                };
-
-                // Tailwind plugin requires being added last
-                // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
-                let mut add_tailwind_back = false;
-
-                let mut located_plugins = prettier_settings.plugins.iter()
-                    .filter(|plugin_name| {
-                        if plugin_name.as_str() == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
-                            add_tailwind_back = true;
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    .map(|plugin_name| {
-                        let plugin_path = plugin_name_into_path(plugin_name);
-                        (plugin_name.clone(), plugin_path)
-                    })
-                    .collect::<Vec<_>>();
-                if add_tailwind_back {
-                    located_plugins.push((
-                        TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME.to_owned(),
-                        plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME),
-                    ));
-                }
-
-                let prettier_options = if self.is_default() {
-                    let mut options = prettier_settings.options.clone();
-                    if !options.contains_key("tabWidth") {
-                        options.insert(
-                            "tabWidth".to_string(),
-                            serde_json::Value::Number(serde_json::Number::from(
-                                language_settings.tab_size.get(),
-                            )),
-                        );
-                    }
-                    if !options.contains_key("printWidth") {
-                        options.insert(
-                            "printWidth".to_string(),
-                            serde_json::Value::Number(serde_json::Number::from(
-                                language_settings.preferred_line_length,
-                            )),
-                        );
-                    }
-                    if !options.contains_key("useTabs") {
-                        options.insert(
-                            "useTabs".to_string(),
-                            serde_json::Value::Bool(language_settings.hard_tabs),
-                        );
-                    }
-                    Some(options)
-                } else {
-                    None
-                };
-
-                let plugins = located_plugins
-                    .into_iter()
-                    .filter_map(|(plugin_name, located_plugin_path)| {
-                        match located_plugin_path {
-                            Some(path) => Some(path),
-                            None => {
-                                log::error!("Have not found plugin path for {plugin_name:?} inside {prettier_node_modules:?}");
-                                None
-                            }
-                        }
-                    })
-                    .collect();
-
-                let prettier_parser = if buffer_path.is_none() {
-                    let parser = prettier_settings.parser.as_deref().or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
-                    if parser.is_none() {
-                        log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
-                        anyhow::bail!("Cannot determine prettier parser for unsaved file");
-                    }
-                    parser
-                } else if let (Some(buffer_language), Some(buffer_path)) = (buffer_language, &buffer_path)
-                    && buffer_path.extension().is_some_and(|extension| !buffer_language.config().matcher.path_suffixes.contains(&extension.to_string_lossy().into_owned())) {
-                        buffer_language.prettier_parser_name()
-                } else {
-                    prettier_settings.parser.as_deref()
-                };
-
-                let ignore_path = ignore_dir.and_then(|dir| {
-                    let ignore_file = dir.join(".prettierignore");
-                    ignore_file.is_file().then_some(ignore_file)
+        let get_parser = |buffer_path: &Option<PathBuf>,
+                          buffer_language: &Option<&Arc<Language>>,
+                          prettier_settings: &PrettierSettings|
+         -> anyhow::Result<Option<String>> {
+            let parser = if buffer_path.is_none() {
+                let parser = prettier_settings.parser.as_deref().or_else(|| {
+                    buffer_language.and_then(|language| language.prettier_parser_name())
                 });
-
-                log::debug!(
-                    "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}, ignore_path: {:?}",
-                    buffer.file().map(|f| f.full_path(cx)),
-                    plugins,
-                    prettier_options,
-                    ignore_path,
-                );
-
-                anyhow::Ok(FormatParams {
-                    text: buffer.text(),
-                    options: FormatOptions {
-                        parser: prettier_parser.map(ToOwned::to_owned),
-                        plugins,
-                        path: buffer_path,
-                        prettier_options,
-                        ignore_path,
-                    },
+                if parser.is_none() {
+                    log::error!(
+                        "Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}"
+                    );
+                    anyhow::bail!("Cannot determine prettier parser for unsaved file");
+                }
+                parser
+            } else if let (Some(buffer_language), Some(buffer_path)) =
+                (buffer_language, &buffer_path)
+                && buffer_path.extension().is_some_and(|extension| {
+                    !buffer_language
+                        .config()
+                        .matcher
+                        .path_suffixes
+                        .contains(&extension.to_string_lossy().into_owned())
                 })
-            })?
-            .context("building prettier request")?;
+            {
+                buffer_language.prettier_parser_name()
+            } else {
+                prettier_settings.parser.as_deref()
+            };
+
+            let result = if let Some(parser) = parser {
+                Some(parser.to_string())
+            } else {
+                None
+            };
+
+            Ok(result)
+        };
 
         match self {
             Self::Real(local) => {
+                let params = buffer
+                    .update(cx, |buffer, cx| {
+                        let buffer_language = buffer.language();
+                        let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
+                        let prettier_settings = &language_settings.prettier;
+                        anyhow::ensure!(
+                            prettier_settings.allowed,
+                            "Cannot format: prettier is not allowed for language {buffer_language:?}"
+                        );
+                        let prettier_node_modules = self.prettier_dir().join("node_modules");
+                        anyhow::ensure!(
+                            prettier_node_modules.is_dir(),
+                            "Prettier node_modules dir does not exist: {prettier_node_modules:?}"
+                        );
+                        let plugin_name_into_path = |plugin_name: &str| {
+                            let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
+                            [
+                                prettier_plugin_dir.join("dist").join("index.mjs"),
+                                prettier_plugin_dir.join("dist").join("index.js"),
+                                prettier_plugin_dir.join("dist").join("plugin.js"),
+                                prettier_plugin_dir.join("src").join("plugin.js"),
+                                prettier_plugin_dir.join("lib").join("index.js"),
+                                prettier_plugin_dir.join("index.mjs"),
+                                prettier_plugin_dir.join("index.js"),
+                                prettier_plugin_dir.join("plugin.js"),
+                                // this one is for @prettier/plugin-php
+                                prettier_plugin_dir.join("standalone.js"),
+                                // this one is for prettier-plugin-latex
+                                prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
+                                prettier_plugin_dir,
+                            ]
+                            .into_iter()
+                            .find(|possible_plugin_path| possible_plugin_path.is_file())
+                        };
+
+                        // Tailwind plugin requires being added last
+                        // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
+                        let mut add_tailwind_back = false;
+
+                        let mut located_plugins = prettier_settings.plugins.iter()
+                            .filter(|plugin_name| {
+                                if plugin_name.as_str() == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
+                                    add_tailwind_back = true;
+                                    false
+                                } else {
+                                    true
+                                }
+                            })
+                            .map(|plugin_name| {
+                                let plugin_path = plugin_name_into_path(plugin_name);
+                                (plugin_name.clone(), plugin_path)
+                            })
+                            .collect::<Vec<_>>();
+                        if add_tailwind_back {
+                            located_plugins.push((
+                                TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME.to_owned(),
+                                plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME),
+                            ));
+                        }
+
+                        let prettier_options = if self.is_default() {
+                            let mut options = prettier_settings.options.clone();
+                            if !options.contains_key("tabWidth") {
+                                options.insert(
+                                    "tabWidth".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        language_settings.tab_size.get(),
+                                    )),
+                                );
+                            }
+                            if !options.contains_key("printWidth") {
+                                options.insert(
+                                    "printWidth".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        language_settings.preferred_line_length,
+                                    )),
+                                );
+                            }
+                            if !options.contains_key("useTabs") {
+                                options.insert(
+                                    "useTabs".to_string(),
+                                    serde_json::Value::Bool(language_settings.hard_tabs),
+                                );
+                            }
+                            Some(options)
+                        } else {
+                            None
+                        };
+
+                        let plugins = located_plugins
+                            .into_iter()
+                            .filter_map(|(plugin_name, located_plugin_path)| {
+                                match located_plugin_path {
+                                    Some(path) => Some(path),
+                                    None => {
+                                        log::error!("Have not found plugin path for {plugin_name:?} inside {prettier_node_modules:?}");
+                                        None
+                                    }
+                                }
+                            })
+                            .collect();
+
+                        let prettier_parser = get_parser(&buffer_path, &buffer_language, prettier_settings)?;
+
+                        let ignore_path = ignore_dir.and_then(|dir| {
+                            let ignore_file = dir.join(".prettierignore");
+                            ignore_file.is_file().then_some(ignore_file)
+                        });
+
+                        log::debug!(
+                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}, ignore_path: {:?}",
+                            buffer.file().map(|f| f.full_path(cx)),
+                            plugins,
+                            prettier_options,
+                            ignore_path,
+                        );
+
+                        anyhow::Ok(FormatParams {
+                            text: buffer.text(),
+                            options: FormatOptions {
+                                parser: prettier_parser.as_deref().map(ToOwned::to_owned),
+                                plugins,
+                                path: buffer_path,
+                                prettier_options,
+                                ignore_path,
+                            },
+                        })
+                })?
+                .context("building prettier request")?;
+
                 let response = local
                     .server
                     .request::<Format>(params)
@@ -509,7 +537,17 @@ impl Prettier {
                         Some(_other) => {
                             let mut formatted_text = buffer.text() + FORMAT_SUFFIX;
 
-                            if let Some(parser) = params.options.parser {
+                            let buffer_language = buffer.language();
+                            let language_settings = language_settings(
+                                buffer_language.map(|l| l.name()),
+                                buffer.file(),
+                                cx,
+                            );
+                            let prettier_settings = &language_settings.prettier;
+                            let parser =
+                                get_parser(&buffer_path, &buffer_language, prettier_settings)?;
+
+                            if let Some(parser) = parser {
                                 formatted_text = format!("{}\n{}", formatted_text, parser.as_str());
                             }
 
