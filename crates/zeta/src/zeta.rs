@@ -18,6 +18,7 @@ use edit_prediction_context::{
     EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
     SyntaxIndex, SyntaxIndexState,
 };
+use edit_prediction_context2::RelatedExcerptStore;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use futures::channel::{mpsc, oneshot};
 use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _};
@@ -224,6 +225,7 @@ pub struct ZetaOptions {
 pub enum ContextMode {
     Agentic(AgenticContextOptions),
     Syntax(EditPredictionContextOptions),
+    Lsp(EditPredictionExcerptOptions),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +238,7 @@ impl ContextMode {
         match self {
             ContextMode::Agentic(options) => &options.excerpt,
             ContextMode::Syntax(options) => &options.excerpt,
+            ContextMode::Lsp(options) => &options,
         }
     }
 }
@@ -283,6 +286,7 @@ pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ZetaProject {
     syntax_index: Option<Entity<SyntaxIndex>>,
+    related_excerpt_store: Option<Entity<RelatedExcerptStore>>,
     events: VecDeque<Arc<cloud_llm_client::predict_edits_v3::Event>>,
     last_event: Option<LastEvent>,
     recent_paths: VecDeque<ProjectPath>,
@@ -635,6 +639,11 @@ impl Zeta {
         self.projects
             .entry(project.entity_id())
             .or_insert_with(|| ZetaProject {
+                related_excerpt_store: if let ContextMode::Lsp(_) = &self.options.context {
+                    Some(cx.new(|cx| RelatedExcerptStore::new(project, cx)))
+                } else {
+                    None
+                },
                 syntax_index: if let ContextMode::Syntax(_) = &self.options.context {
                     Some(cx.new(|cx| {
                         SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
@@ -1676,6 +1685,9 @@ impl Zeta {
                             trigger,
                         )
                     }
+                    ContextMode::Lsp(_) => {
+                        anyhow::bail!("not supported")
+                    }
                 };
 
                 let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
@@ -2422,11 +2434,13 @@ impl Zeta {
                 parent_abs_path.as_deref(),
                 match &options.context {
                     ContextMode::Agentic(_) => {
-                        // TODO
                         panic!("Llm mode not supported in zeta cli yet");
                     }
                     ContextMode::Syntax(edit_prediction_context_options) => {
                         edit_prediction_context_options
+                    }
+                    ContextMode::Lsp(_) => {
+                        panic!("Lsp mode not supported in zeta cli yet");
                     }
                 },
                 index_state.as_deref(),

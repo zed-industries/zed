@@ -21712,6 +21712,7 @@ dependencies = [
  "db",
  "edit_prediction",
  "edit_prediction_context",
+ "edit_prediction_context2",
  "editor",
  "feature_flags",
  "fs",

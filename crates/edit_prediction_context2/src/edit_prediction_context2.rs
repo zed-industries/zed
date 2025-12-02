@@ -15,7 +15,7 @@ mod edit_prediction_context_tests;
 mod fake_definition_lsp;
 
 pub struct RelatedExcerptStore {
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     related_files: Vec<RelatedFile>,
     cache: HashMap<Identifier, Arc<CacheEntry>>,
     update_tx: mpsc::UnboundedSender<(Entity<Buffer>, Anchor)>,
@@ -29,7 +29,7 @@ struct Identifier {
 
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
-    CacheMiss(Task<Result<Option<Vec<LocationLink>>>>),
+    CacheMiss(Option<Task<Result<Option<Vec<LocationLink>>>>>),
 }
 
 #[derive(Debug)]
@@ -62,7 +62,7 @@ pub struct RelatedExcerpt {
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
 
 impl RelatedExcerptStore {
-    pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+    pub fn new(project: &Entity<Project>, cx: &mut Context<Self>) -> Self {
         let (update_tx, mut update_rx) = mpsc::unbounded::<(Entity<Buffer>, Anchor)>();
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -90,7 +90,7 @@ impl RelatedExcerptStore {
         .detach_and_log_err(cx);
 
         RelatedExcerptStore {
-            project,
+            project: project.downgrade(),
             update_tx,
             related_files: Vec::new(),
             cache: Default::default(),
@@ -117,6 +117,9 @@ impl RelatedExcerptStore {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+        let Some(project) = this.read_with(cx, |this, _| this.project.upgrade())? else {
+            return Ok(());
+        };
         let identifiers = cx
             .background_spawn(async move { identifiers_for_position(&snapshot, position) })
             .await;
@@ -129,20 +132,24 @@ impl RelatedExcerptStore {
                     let task = if let Some(entry) = this.cache.get(&identifier) {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
-                        DefinitionTask::CacheMiss(this.project.update(cx, |project, cx| {
-                            project.definitions(&buffer, identifier.range.start, cx)
-                        }))
+                        DefinitionTask::CacheMiss(
+                            this.project
+                                .update(cx, |project, cx| {
+                                    project.definitions(&buffer, identifier.range.start, cx)
+                                })
+                                .ok(),
+                        )
                     };
 
                     let cx = async_cx.clone();
-                    let project = this.project.clone();
+                    let project = project.clone();
                     async move {
                         match task {
                             DefinitionTask::CacheHit(cache_entry) => {
                                 Some((identifier, cache_entry))
                             }
                             DefinitionTask::CacheMiss(task) => {
-                                let locations = task.await.log_err()??;
+                                let locations = task?.await.log_err()??;
                                 cx.update(|cx| {
                                     (
                                         identifier,

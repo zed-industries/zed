@@ -29,7 +29,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     let _server = servers.next().await.unwrap();
     cx.run_until_parked();
 
-    let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(project.clone(), cx));
+    let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(&project, cx));
     related_excerpt_store.update(cx, |store, cx| {
         let position = {
             let buffer = buffer.read(cx);
