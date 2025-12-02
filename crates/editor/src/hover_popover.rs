@@ -1,6 +1,6 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, Hover, SimpleBackgroundHighlight,
+    EditorSnapshot, GlobalDiagnosticRenderer, Hover, BackgroundHighlight,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
@@ -517,7 +517,7 @@ fn show_hover(
                 } else {
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState, _>(
-                        SimpleBackgroundHighlight::new(
+                        BackgroundHighlight::new(
                             &hover_highlights,
                             |theme| theme.colors().element_hover, // todo update theme
                         ),

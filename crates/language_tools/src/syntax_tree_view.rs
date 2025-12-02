@@ -1,6 +1,6 @@
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{
-    Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, SimpleBackgroundHighlight,
+    Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, BackgroundHighlight,
     scroll::Autoscroll,
 };
 use gpui::{
@@ -461,7 +461,7 @@ impl SyntaxTreeView {
                                     |editor, range, _, cx| {
                                         editor.clear_background_highlights::<Self>(cx);
                                         editor.highlight_background::<Self, _>(
-                                            SimpleBackgroundHighlight::new(&[range], |theme| {
+                                            BackgroundHighlight::new(&[range], |theme| {
                                                 theme
                                                     .colors()
                                                     .editor_document_highlight_write_background

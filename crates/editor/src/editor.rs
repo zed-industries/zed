@@ -726,24 +726,24 @@ impl EditorActionId {
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-pub trait BackgroundHighlight: 'static + Send + Sync {
+pub trait BackgroundHighlightHandle: 'static + Send + Sync {
     fn ranges(&self) -> &[Range<Anchor>];
     fn color_for_range(&self, index: usize, theme: &Theme) -> Hsla;
-    fn clone_box(&self) -> Box<dyn BackgroundHighlight>;
+    fn clone_box(&self) -> Box<dyn BackgroundHighlightHandle>;
 }
 
-impl Clone for Box<dyn BackgroundHighlight> {
+impl Clone for Box<dyn BackgroundHighlightHandle> {
     fn clone(&self) -> Self {
         self.clone_box()
     }
 }
 
-pub struct SimpleBackgroundHighlight {
+pub struct BackgroundHighlight {
     ranges: Arc<[Range<Anchor>]>,
     color_fetcher: fn(&Theme) -> Hsla,
 }
 
-impl SimpleBackgroundHighlight {
+impl BackgroundHighlight {
     pub fn new(ranges: &[Range<Anchor>], color_fetcher: fn(&Theme) -> Hsla) -> Self {
         Self {
             ranges: Arc::from(ranges),
@@ -752,7 +752,7 @@ impl SimpleBackgroundHighlight {
     }
 }
 
-impl BackgroundHighlight for SimpleBackgroundHighlight {
+impl BackgroundHighlightHandle for BackgroundHighlight {
     fn ranges(&self) -> &[Range<Anchor>] {
         &self.ranges
     }
@@ -761,7 +761,7 @@ impl BackgroundHighlight for SimpleBackgroundHighlight {
         (self.color_fetcher)(theme)
     }
 
-    fn clone_box(&self) -> Box<dyn BackgroundHighlight> {
+    fn clone_box(&self) -> Box<dyn BackgroundHighlightHandle> {
         Box::new(Self {
             ranges: self.ranges.clone(),
             color_fetcher: self.color_fetcher,
@@ -783,7 +783,7 @@ impl SearchBackgroundHighlight {
     }
 }
 
-impl BackgroundHighlight for SearchBackgroundHighlight {
+impl BackgroundHighlightHandle for SearchBackgroundHighlight {
     fn ranges(&self) -> &[Range<Anchor>] {
         &self.ranges
     }
@@ -796,7 +796,7 @@ impl BackgroundHighlight for SearchBackgroundHighlight {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn BackgroundHighlight> {
+    fn clone_box(&self) -> Box<dyn BackgroundHighlightHandle> {
         Box::new(Self {
             ranges: self.ranges.clone(),
             active_index: self.active_index,
@@ -1155,7 +1155,7 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
-    background_highlights: HashMap<HighlightKey, Box<dyn BackgroundHighlight>>,
+    background_highlights: HashMap<HighlightKey, Box<dyn BackgroundHighlightHandle>>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
@@ -6629,7 +6629,7 @@ impl Editor {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self, _>(
-                    SimpleBackgroundHighlight::new(&ranges_to_highlight, |theme| {
+                    BackgroundHighlight::new(&ranges_to_highlight, |theme| {
                         theme.colors().editor_highlighted_line_background
                     }),
                     cx,
@@ -7029,13 +7029,13 @@ impl Editor {
                     }
 
                     this.highlight_background::<DocumentHighlightRead, _>(
-                        SimpleBackgroundHighlight::new(&read_ranges, |theme| {
+                        BackgroundHighlight::new(&read_ranges, |theme| {
                             theme.colors().editor_document_highlight_read_background
                         }),
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite, _>(
-                        SimpleBackgroundHighlight::new(&write_ranges, |theme| {
+                        BackgroundHighlight::new(&write_ranges, |theme| {
                             theme.colors().editor_document_highlight_write_background
                         }),
                         cx,
@@ -7144,7 +7144,7 @@ impl Editor {
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight, _>(
-                            SimpleBackgroundHighlight::new(&match_ranges, |theme| {
+                            BackgroundHighlight::new(&match_ranges, |theme| {
                                 theme.colors().editor_document_highlight_bracket_background
                             }),
                             cx,
@@ -17530,7 +17530,7 @@ impl Editor {
                     );
                 }
                 editor.highlight_background::<Self, _>(
-                    SimpleBackgroundHighlight::new(&ranges, |theme| {
+                    BackgroundHighlight::new(&ranges, |theme| {
                         theme.colors().editor_highlighted_line_background
                     }),
                     cx,
@@ -20959,7 +20959,7 @@ impl Editor {
 
     pub fn set_search_within_ranges(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         self.highlight_background::<SearchWithinRange, _>(
-            SimpleBackgroundHighlight::new(ranges, |colors| {
+            BackgroundHighlight::new(ranges, |colors| {
                 colors.colors().editor_document_highlight_read_background
             }),
             cx,
@@ -20974,7 +20974,7 @@ impl Editor {
         self.clear_background_highlights::<SearchWithinRange>(cx);
     }
 
-    pub fn highlight_background<T: 'static, H: BackgroundHighlight>(
+    pub fn highlight_background<T: 'static, H: BackgroundHighlightHandle>(
         &mut self,
         highlight: H,
         cx: &mut Context<Self>,
@@ -20985,7 +20985,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn highlight_background_key<T: 'static, H: BackgroundHighlight>(
+    pub fn highlight_background_key<T: 'static, H: BackgroundHighlightHandle>(
         &mut self,
         key: usize,
         highlight: H,
@@ -21002,7 +21002,7 @@ impl Editor {
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> Option<Box<dyn BackgroundHighlight>> {
+    ) -> Option<Box<dyn BackgroundHighlightHandle>> {
         let text_highlights = self
             .background_highlights
             .remove(&HighlightKey::Type(TypeId::of::<T>()))?;

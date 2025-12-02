@@ -5,7 +5,7 @@ use crate::{
     state::Mode,
 };
 use editor::{
-    Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, SimpleBackgroundHighlight, ToOffset,
+    Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, BackgroundHighlight, ToOffset,
     ToPoint, display_map::ToDisplayPoint,
 };
 use gpui::{ClipboardEntry, Context, Window, actions};
@@ -272,7 +272,7 @@ impl Vim {
         } else {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange, _>(
-                SimpleBackgroundHighlight::new(&ranges, |theme| {
+                BackgroundHighlight::new(&ranges, |theme| {
                     theme.colors().editor_document_highlight_read_background
                 }),
                 cx,

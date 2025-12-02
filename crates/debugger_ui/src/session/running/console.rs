@@ -7,8 +7,8 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    MultiBufferOffset, SimpleBackgroundHighlight, SizingBehavior,
+    BackgroundHighlight, Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle,
+    ExcerptId, MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -254,7 +254,7 @@ impl Console {
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
                         console.highlight_background_key::<ConsoleAnsiHighlight, _>(
                             start_offset,
-                            SimpleBackgroundHighlight::new(&[range], color_fetcher(color)),
+                            BackgroundHighlight::new(&[range], color_fetcher(color)),
                             cx,
                         );
                     }

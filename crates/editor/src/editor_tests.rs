@@ -16798,7 +16798,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
         editor.highlight_background::<Type1, _>(
-            SimpleBackgroundHighlight::new(
+            BackgroundHighlight::new(
                 &[
                     anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                     anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -16810,7 +16810,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             cx,
         );
         editor.highlight_background::<Type2, _>(
-            SimpleBackgroundHighlight::new(
+            BackgroundHighlight::new(
                 &[
                     anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                     anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -23802,7 +23802,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead, _>(
-            SimpleBackgroundHighlight::new(&[highlight_range], |theme| {
+            BackgroundHighlight::new(&[highlight_range], |theme| {
                 theme.colors().editor_document_highlight_read_background
             }),
             cx,
@@ -23881,7 +23881,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead, _>(
-            SimpleBackgroundHighlight::new(&[highlight_range], |theme| {
+            BackgroundHighlight::new(&[highlight_range], |theme| {
                 theme.colors().editor_document_highlight_read_background
             }),
             cx,
@@ -27130,7 +27130,7 @@ let result = variable * 2;",
             .collect();
 
         editor.highlight_background::<DocumentHighlightRead, _>(
-            SimpleBackgroundHighlight::new(&anchor_ranges, |theme| {
+            BackgroundHighlight::new(&anchor_ranges, |theme| {
                 theme.colors().editor_document_highlight_read_background
             }),
             cx,
