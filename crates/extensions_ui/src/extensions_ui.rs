@@ -1371,17 +1371,20 @@ impl ExtensionsPage {
             return;
         };
 
-        // Check if searching by ID for a suppressed extension
         if let Some(id) = search.strip_prefix("id:") {
-            let id_lower = id.to_lowercase();
             self.upsells.clear();
-            if id_lower == "ruff" {
-                self.upsells.insert(Feature::ExtensionRuff);
-            } else if id_lower == "basedpyright" {
-                self.upsells.insert(Feature::ExtensionBasedpyright);
-            } else if id_lower == "ty" {
-                self.upsells.insert(Feature::ExtensionTy);
+
+            let upsell = match id.to_lowercase().as_str() {
+                "ruff" => Some(Feature::ExtensionRuff),
+                "basedpyright" => Some(Feature::ExtensionBasedpyright),
+                "ty" => Some(Feature::ExtensionTy),
+                _ => None,
+            };
+
+            if let Some(upsell) = upsell {
+                self.upsells.insert(upsell);
             }
+
             return;
         }
 
