@@ -3,8 +3,8 @@
 PHP support is available through the [PHP extension](https://github.com/zed-extensions/php).
 
 - Tree-sitter: [tree-sitter/tree-sitter-php](https://github.com/tree-sitter/tree-sitter-php)
-- Language Server: [phpactor](https://github.com/phpactor/phpactor)
-- Alternate Language Server: [intelephense](https://github.com/bmewburn/vscode-intelephense/)
+- Language Server: [phpactor/phpactor](https://github.com/phpactor/phpactor)
+- Alternate Language Server: [bmewburn/vscode-intelephense](https://github.com/bmewburn/vscode-intelephense/)
 
 ## Choosing a language server
 
