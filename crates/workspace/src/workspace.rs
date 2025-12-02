@@ -5967,6 +5967,88 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _action: &pane::ActivateNextItem, window, cx| {
+                    if let Some(active_dock) = workspace.active_dock(window, cx) {
+                        let dock = active_dock.read(cx);
+                        if let Some(active_panel) = dock.active_panel() {
+                            if active_panel.pane(cx).is_none() {
+                                let mut recent_pane: Option<Entity<Pane>> = None;
+                                let mut recent_timestamp = 0;
+                                for pane_handle in workspace.panes() {
+                                    let pane = pane_handle.read(cx);
+                                    for entry in pane.activation_history() {
+                                        if entry.timestamp > recent_timestamp {
+                                            recent_timestamp = entry.timestamp;
+                                            recent_pane = Some(pane_handle.clone());
+                                        }
+                                    }
+                                }
+
+                                if let Some(pane) = recent_pane {
+                                    pane.update(cx, |pane, cx| {
+                                        let current_index = pane.active_item_index();
+                                        let items_len = pane.items_len();
+                                        if items_len > 0 {
+                                            let next_index = if current_index + 1 < items_len {
+                                                current_index + 1
+                                            } else {
+                                                0
+                                            };
+                                            pane.activate_item(
+                                                next_index, false, false, window, cx,
+                                            );
+                                        }
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    cx.propagate();
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _action: &pane::ActivatePreviousItem, window, cx| {
+                    if let Some(active_dock) = workspace.active_dock(window, cx) {
+                        let dock = active_dock.read(cx);
+                        if let Some(active_panel) = dock.active_panel() {
+                            if active_panel.pane(cx).is_none() {
+                                let mut recent_pane: Option<Entity<Pane>> = None;
+                                let mut recent_timestamp = 0;
+                                for pane_handle in workspace.panes() {
+                                    let pane = pane_handle.read(cx);
+                                    for entry in pane.activation_history() {
+                                        if entry.timestamp > recent_timestamp {
+                                            recent_timestamp = entry.timestamp;
+                                            recent_pane = Some(pane_handle.clone());
+                                        }
+                                    }
+                                }
+
+                                if let Some(pane) = recent_pane {
+                                    pane.update(cx, |pane, cx| {
+                                        let current_index = pane.active_item_index();
+                                        let items_len = pane.items_len();
+                                        if items_len > 0 {
+                                            let prev_index = if current_index > 0 {
+                                                current_index - 1
+                                            } else {
+                                                items_len.saturating_sub(1)
+                                            };
+                                            pane.activate_item(
+                                                prev_index, false, false, window, cx,
+                                            );
+                                        }
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    cx.propagate();
+                },
+            ))
             .on_action(cx.listener(Workspace::cancel))
     }
 
