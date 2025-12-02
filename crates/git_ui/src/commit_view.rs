@@ -235,8 +235,22 @@ impl CommitView {
             })?;
 
             this.update(cx, |this, cx| {
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    let range = ExcerptRange {
+                        context: Anchor::MIN..Anchor::MAX,
+                        primary: Anchor::MIN..Anchor::MAX,
+                    };
+                    multibuffer.insert_excerpts_after(
+                        ExcerptId::min(),
+                        message_buffer.clone(),
+                        [range],
+                        cx,
+                    )
+                });
+
                 this.editor.update(cx, |editor, cx| {
                     editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+
                     editor.insert_blocks(
                         [BlockProperties {
                             placement: BlockPlacement::Above(editor::Anchor::min()),
@@ -244,17 +258,24 @@ impl CommitView {
                             style: BlockStyle::Sticky,
                             render: Arc::new(|_| gpui::Empty.into_any_element()),
                             priority: 0,
-                        }],
+                        }]
+                        .into_iter()
+                        .chain(
+                            editor
+                                .buffer()
+                                .read(cx)
+                                .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                                .map(|anchor| BlockProperties {
+                                    placement: BlockPlacement::Below(anchor),
+                                    height: Some(1),
+                                    style: BlockStyle::Sticky,
+                                    render: Arc::new(|_| gpui::Empty.into_any_element()),
+                                    priority: 0,
+                                }),
+                        ),
                         None,
                         cx,
                     )
-                });
-                this.multibuffer.update(cx, |multibuffer, cx| {
-                    let range = ExcerptRange {
-                        context: Anchor::MIN..Anchor::MAX,
-                        primary: Anchor::MIN..Anchor::MAX,
-                    };
-                    multibuffer.insert_excerpts_after(ExcerptId::min(), message_buffer, [range], cx)
                 });
             })?;
 
