@@ -20,7 +20,7 @@
 ; sqlalchemy ex: from sqlalchemy import text; text("SELECT * FROM tbl")
 (call
     function: (identifier) @function_name
-    (#match? @function_name "(?i:text)")
+    (#match? @function_name "^(?i:text)$")
     arguments: (argument_list
         (string
             (string_content) @injection.content (#set! injection.language "sql")
