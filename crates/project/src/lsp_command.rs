@@ -2938,11 +2938,12 @@ impl InlayHints {
 
         let position = buffer_handle.read_with(cx, |buffer, _| {
             let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-            if kind == Some(InlayHintKind::Parameter) {
-                buffer.anchor_before(position)
-            } else {
-                buffer.anchor_after(position)
-            }
+            // if kind == Some(InlayHintKind::Parameter) {
+            //     buffer.anchor_before(position)
+            // } else {
+            //     buffer.anchor_after(position)
+            // }
+            buffer.anchor_before(position)
         })?;
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id)
             .await
