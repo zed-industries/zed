@@ -1,4 +1,5 @@
-use std::{path::Path, sync::Arc};
+use std::path::Path;
+use std::sync::Arc;
 
 use gpui::AsyncWindowContext;
 use serde::Deserialize;
@@ -109,8 +110,14 @@ pub(crate) async fn start_dev_container(
         ..
     }) = devcontainer_up(directory).await
     {
+        let project_name: String = Path::new(&remote_workspace_folder)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|string| string.into())
+            .unwrap_or_else(|| container_id.clone().into());
+
         let connection = Connection::DevContainer(DevContainerConnection {
-            name: container_id.clone().into(),
+            name: project_name.into(),
             image: "mcr.microsoft.com/devcontainers/rust:latest".into(),
             container_id: container_id.into(),
             working_directory: remote_workspace_folder.clone().into(),
