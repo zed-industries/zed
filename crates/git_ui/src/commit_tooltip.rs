@@ -197,10 +197,7 @@ impl Render for CommitTooltip {
             time_format::TimestampFormat::MediumAbsolute,
         );
         let markdown_style = {
-            let mut style = hover_markdown_style(window, cx);
-            if let Some(code_block) = &style.code_block.text {
-                style.base_text_style.refine(code_block);
-            }
+            let style = hover_markdown_style(window, cx);
             style
         };
 
