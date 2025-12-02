@@ -55,7 +55,6 @@ use thiserror::Error;
 use util::{LogErrorFuture, RangeExt as _, ResultExt as _, TryFutureExt};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-pub mod assemble_excerpts;
 mod license_detection;
 mod onboarding_modal;
 mod prediction;

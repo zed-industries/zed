@@ -151,7 +151,7 @@ pub fn register_fake_definition_server(
                     server.set_request_handler::<lsp::request::GotoDefinition, _, _>({
                         let index = index.clone();
                         move |params, _cx| {
-                            let result = index.lock().get_definition(
+                            let result = index.lock().get_definitions(
                                 params.text_document_position_params.text_document.uri,
                                 params.text_document_position_params.position,
                             );
@@ -249,7 +249,7 @@ impl DefinitionIndex {
         Some(())
     }
 
-    fn get_definition(
+    fn get_definitions(
         &mut self,
         uri: lsp::Uri,
         position: lsp::Position,
@@ -271,23 +271,25 @@ fn extract_declarations_from_tree(
     let mut matches = cursor.matches(&outline_config.query, tree.root_node(), content.as_bytes());
     while let Some(query_match) = matches.next() {
         let mut name_range: Option<Range<usize>> = None;
-        let mut item_range: Option<Range<usize>> = None;
+        let mut has_item_range = false;
 
         for capture in query_match.captures {
             let range = capture.node.byte_range();
             if capture.index == outline_config.name_capture_ix {
                 name_range = Some(range);
             } else if capture.index == outline_config.item_capture_ix {
-                item_range = Some(range);
+                has_item_range = true;
             }
         }
 
-        if let (Some(name_range), Some(item_range)) = (name_range, item_range) {
+        if let Some(name_range) = name_range
+            && has_item_range
+        {
             let name = content[name_range.clone()].to_string();
             if declarations.iter().any(|(n, _)| n == &name) {
                 continue;
             }
-            declarations.push((name, item_range));
+            declarations.push((name, name_range));
         }
     }
     declarations
