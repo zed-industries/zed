@@ -1443,6 +1443,10 @@ impl ProjectSearchView {
                 editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
+                editor.highlight_background::<Self, _>(
+                    ActiveBackgroundHighlight::new(&match_ranges, Some(new_index)),
+                    cx,
+                );
             });
         }
     }
@@ -1508,8 +1512,8 @@ impl ProjectSearchView {
             self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.entity.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
-            if is_new_search {
-                self.results_editor.update(cx, |editor, cx| {
+            self.results_editor.update(cx, |editor, cx| {
+                if is_new_search {
                     let range_to_select = match_ranges
                         .first()
                         .map(|range| editor.range_for_match(range));
@@ -1517,8 +1521,12 @@ impl ProjectSearchView {
                         s.select_ranges(range_to_select)
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
-                });
-            }
+                }
+                editor.highlight_background::<Self, _>(
+                    ActiveBackgroundHighlight::new(&match_ranges, self.active_match_index),
+                    cx,
+                );
+            });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
             }
@@ -1538,13 +1546,6 @@ impl ProjectSearchView {
         );
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
-            let match_ranges = self.entity.read(cx).match_ranges.clone();
-            self.results_editor.update(cx, |editor, cx| {
-                editor.highlight_background::<Self, _>(
-                    ActiveBackgroundHighlight::new(&match_ranges, self.active_match_index),
-                    cx,
-                );
-            });
             cx.notify();
         }
     }
@@ -2496,6 +2497,7 @@ pub mod tests {
                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
             );
             let match_background_color = cx.theme().colors().search_match_background;
+            // let active_match_background_color = cx.theme().colors().search_active_match_background;
             let selection_background_color = cx.theme().colors().editor_document_highlight_bracket_background;
             assert_eq!(
                 search_view
@@ -2517,6 +2519,7 @@ pub mod tests {
                     (
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         match_background_color
+                        // active_match_background_color
                     ),
 
                 ]
