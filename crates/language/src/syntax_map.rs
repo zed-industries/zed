@@ -1215,6 +1215,19 @@ impl<'a> SyntaxMapMatches<'a> {
 
         true
     }
+
+    // pub fn set_byte_range(&mut self, range: Range<usize>) {
+    //     for layer in &mut self.layers {
+    //         layer.matches.set_byte_range(range.clone());
+    //         layer.advance();
+    //     }
+    //     self.layers.sort_unstable_by_key(|layer| layer.sort_key());
+    //     self.active_layer_count = self
+    //         .layers
+    //         .iter()
+    //         .position(|layer| !layer.has_next)
+    //         .unwrap_or(self.layers.len());
+    // }
 }
 
 impl SyntaxMapCapturesLayer<'_> {
