@@ -998,7 +998,11 @@ impl Item for DapLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 }
@@ -1029,13 +1033,11 @@ impl SearchableItem for DapLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |e, cx| {
-            e.activate_match(index, matches, collapse, window, cx)
-        })
+        self.editor
+            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
     }
 
     fn select_matches(

@@ -15,7 +15,6 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use gpui::BackgroundExecutor;
 use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
@@ -55,7 +54,7 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     pub lamport_clock: clock::Lamport,
-    subscriptions: Topic,
+    subscriptions: Topic<usize>,
     edit_id_resolvers: HashMap<clock::Lamport, Vec<oneshot::Sender<()>>>,
     wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
 }
@@ -497,21 +496,25 @@ pub struct Edit<D> {
     pub old: Range<D>,
     pub new: Range<D>,
 }
-
 impl<D> Edit<D>
 where
-    D: Sub<D, Output = D> + PartialEq + Copy,
+    D: PartialEq,
 {
-    pub fn old_len(&self) -> D {
+    pub fn is_empty(&self) -> bool {
+        self.old.start == self.old.end && self.new.start == self.new.end
+    }
+}
+
+impl<D, DDelta> Edit<D>
+where
+    D: Sub<D, Output = DDelta> + Copy,
+{
+    pub fn old_len(&self) -> DDelta {
         self.old.end - self.old.start
     }
 
-    pub fn new_len(&self) -> D {
+    pub fn new_len(&self) -> DDelta {
         self.new.end - self.new.start
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.old.start == self.old.end && self.new.start == self.new.end
     }
 }
 
@@ -710,41 +713,11 @@ impl FromIterator<char> for LineIndent {
 }
 
 impl Buffer {
-    /// Create a new buffer from a string.
-    pub fn new(
-        replica_id: ReplicaId,
-        remote_id: BufferId,
-        base_text: impl Into<String>,
-        executor: &BackgroundExecutor,
-    ) -> Buffer {
+    pub fn new(replica_id: ReplicaId, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
-        Self::new_normalized(
-            replica_id,
-            remote_id,
-            line_ending,
-            Rope::from_str(&base_text, executor),
-        )
-    }
-
-    /// Create a new buffer from a string.
-    ///
-    /// Unlike [`Buffer::new`], this does not construct the backing rope in parallel if it is large enough.
-    pub fn new_slow(
-        replica_id: ReplicaId,
-        remote_id: BufferId,
-        base_text: impl Into<String>,
-    ) -> Buffer {
-        let mut base_text = base_text.into();
-        let line_ending = LineEnding::detect(&base_text);
-        LineEnding::normalize(&mut base_text);
-        Self::new_normalized(
-            replica_id,
-            remote_id,
-            line_ending,
-            Rope::from_str_small(&base_text),
-        )
+        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(&*base_text))
     }
 
     pub fn new_normalized(
@@ -839,7 +812,7 @@ impl Buffer {
         self.history.group_interval
     }
 
-    pub fn edit<R, I, S, T>(&mut self, edits: R, cx: &BackgroundExecutor) -> Operation
+    pub fn edit<R, I, S, T>(&mut self, edits: R) -> Operation
     where
         R: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = (Range<S>, T)>,
@@ -852,7 +825,7 @@ impl Buffer {
 
         self.start_transaction();
         let timestamp = self.lamport_clock.tick();
-        let operation = Operation::Edit(self.apply_local_edit(edits, timestamp, cx));
+        let operation = Operation::Edit(self.apply_local_edit(edits, timestamp));
 
         self.history.push(operation.clone());
         self.history.push_undo(operation.timestamp());
@@ -865,7 +838,6 @@ impl Buffer {
         &mut self,
         edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
         timestamp: clock::Lamport,
-        executor: &BackgroundExecutor,
     ) -> EditOperation {
         let mut edits_patch = Patch::default();
         let mut edit_op = EditOperation {
@@ -954,7 +926,7 @@ impl Buffer {
                 });
                 insertion_slices.push(InsertionSlice::from_fragment(timestamp, &fragment));
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
-                new_ropes.push_str(new_text.as_ref(), executor);
+                new_ropes.push_str(new_text.as_ref());
                 new_fragments.push(fragment, &None);
                 insertion_offset += new_text.len();
             }
@@ -1033,26 +1005,22 @@ impl Buffer {
         self.snapshot.line_ending = line_ending;
     }
 
-    pub fn apply_ops<I: IntoIterator<Item = Operation>>(
-        &mut self,
-        ops: I,
-        executor: Option<&BackgroundExecutor>,
-    ) {
+    pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) {
         let mut deferred_ops = Vec::new();
         for op in ops {
             self.history.push(op.clone());
             if self.can_apply_op(&op) {
-                self.apply_op(op, executor);
+                self.apply_op(op);
             } else {
                 self.deferred_replicas.insert(op.replica_id());
                 deferred_ops.push(op);
             }
         }
         self.deferred_ops.insert(deferred_ops);
-        self.flush_deferred_ops(executor);
+        self.flush_deferred_ops();
     }
 
-    fn apply_op(&mut self, op: Operation, executor: Option<&BackgroundExecutor>) {
+    fn apply_op(&mut self, op: Operation) {
         match op {
             Operation::Edit(edit) => {
                 if !self.version.observed(edit.timestamp) {
@@ -1061,7 +1029,6 @@ impl Buffer {
                         &edit.ranges,
                         &edit.new_text,
                         edit.timestamp,
-                        executor,
                     );
                     self.snapshot.version.observe(edit.timestamp);
                     self.lamport_clock.observe(edit.timestamp);
@@ -1092,7 +1059,6 @@ impl Buffer {
         ranges: &[Range<FullOffset>],
         new_text: &[Arc<str>],
         timestamp: clock::Lamport,
-        executor: Option<&BackgroundExecutor>,
     ) {
         if ranges.is_empty() {
             return;
@@ -1208,10 +1174,7 @@ impl Buffer {
                 });
                 insertion_slices.push(InsertionSlice::from_fragment(timestamp, &fragment));
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
-                match executor {
-                    Some(executor) => new_ropes.push_str(new_text, executor),
-                    None => new_ropes.push_str_small(new_text),
-                }
+                new_ropes.push_str(new_text);
                 new_fragments.push(fragment, &None);
                 insertion_offset += new_text.len();
             }
@@ -1389,12 +1352,12 @@ impl Buffer {
         self.subscriptions.publish_mut(&edits);
     }
 
-    fn flush_deferred_ops(&mut self, executor: Option<&BackgroundExecutor>) {
+    fn flush_deferred_ops(&mut self) {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
-                self.apply_op(op, executor);
+                self.apply_op(op);
             } else {
                 self.deferred_replicas.insert(op.replica_id());
                 deferred_ops.push(op);
@@ -1656,7 +1619,7 @@ impl Buffer {
         self.edited_ranges_for_edit_ids(&transaction.edit_ids)
     }
 
-    pub fn subscribe(&mut self) -> Subscription {
+    pub fn subscribe(&mut self) -> Subscription<usize> {
         self.subscriptions.subscribe()
     }
 
@@ -1689,10 +1652,7 @@ impl Buffer {
     ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for anchor in anchors {
-            if !self.version.observed(anchor.timestamp)
-                && anchor != Anchor::MAX
-                && anchor != Anchor::MIN
-            {
+            if !self.version.observed(anchor.timestamp) && !anchor.is_max() && !anchor.is_min() {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers
                     .entry(anchor.timestamp)
@@ -1752,9 +1712,9 @@ impl Buffer {
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
     #[track_caller]
-    pub fn edit_via_marked_text(&mut self, marked_string: &str, cx: &BackgroundExecutor) {
+    pub fn edit_via_marked_text(&mut self, marked_string: &str) {
         let edits = self.edits_for_marked_text(marked_string);
-        self.edit(edits, cx);
+        self.edit(edits);
     }
 
     #[track_caller]
@@ -1891,7 +1851,6 @@ impl Buffer {
         &mut self,
         rng: &mut T,
         edit_count: usize,
-        executor: &BackgroundExecutor,
     ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
     where
         T: rand::Rng,
@@ -1899,7 +1858,7 @@ impl Buffer {
         let mut edits = self.get_random_edits(rng, edit_count);
         log::info!("mutating buffer {:?} with {:?}", self.replica_id, edits);
 
-        let op = self.edit(edits.iter().cloned(), executor);
+        let op = self.edit(edits.iter().cloned());
         if let Operation::Edit(edit) = &op {
             assert_eq!(edits.len(), edit.new_text.len());
             for (edit, new_text) in edits.iter_mut().zip(&edit.new_text) {
@@ -2296,9 +2255,9 @@ impl BufferSnapshot {
         let mut position = D::zero(());
 
         anchors.map(move |(anchor, payload)| {
-            if *anchor == Anchor::MIN {
+            if anchor.is_min() {
                 return (D::zero(()), payload);
-            } else if *anchor == Anchor::MAX {
+            } else if anchor.is_max() {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
@@ -2319,12 +2278,20 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev();
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
+            let Some(insertion) = insertion_cursor.item() else {
+                panic!(
+                    "invalid insertion for buffer {}@{:?} with anchor {:?}",
+                    self.remote_id(),
+                    self.version,
+                    anchor
+                );
+            };
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp,
-                "invalid insertion for buffer {} with anchor {:?}",
+                "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
+                self.version,
                 anchor
             );
 
@@ -2348,9 +2315,9 @@ impl BufferSnapshot {
     }
 
     pub fn offset_for_anchor(&self, anchor: &Anchor) -> usize {
-        if *anchor == Anchor::MIN {
+        if anchor.is_min() {
             0
-        } else if *anchor == Anchor::MAX {
+        } else if anchor.is_max() {
             self.visible_text.len()
         } else {
             debug_assert!(anchor.buffer_id == Some(self.remote_id));
@@ -2423,9 +2390,9 @@ impl BufferSnapshot {
     }
 
     fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {
-        if *anchor == Anchor::MIN {
+        if anchor.is_min() {
             Some(Locator::min_ref())
-        } else if *anchor == Anchor::MAX {
+        } else if anchor.is_max() {
             Some(Locator::max_ref())
         } else {
             let anchor_key = InsertionFragmentKey {
@@ -2468,16 +2435,23 @@ impl BufferSnapshot {
         self.anchor_at_offset(position.to_offset(self), bias)
     }
 
-    fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
+    fn anchor_at_offset(&self, mut offset: usize, bias: Bias) -> Anchor {
         if bias == Bias::Left && offset == 0 {
-            Anchor::MIN
-        } else if bias == Bias::Right && offset == self.len() {
-            Anchor::MAX
+            Anchor::min_for_buffer(self.remote_id)
+        } else if bias == Bias::Right
+            && ((cfg!(debug_assertions) && offset >= self.len()) || offset == self.len())
+        {
+            Anchor::max_for_buffer(self.remote_id)
         } else {
-            if offset > self.visible_text.len() {
-                panic!("offset {} is out of bounds", offset)
+            if self
+                .visible_text
+                .assert_char_boundary::<{ cfg!(debug_assertions) }>(offset)
+            {
+                offset = match bias {
+                    Bias::Left => self.visible_text.floor_char_boundary(offset),
+                    Bias::Right => self.visible_text.ceil_char_boundary(offset),
+                };
             }
-            self.visible_text.assert_char_boundary(offset);
             let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
             let fragment = item.unwrap();
             let overshoot = offset - start;
@@ -2491,8 +2465,8 @@ impl BufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        *anchor == Anchor::MIN
-            || *anchor == Anchor::MAX
+        anchor.is_min()
+            || anchor.is_max()
             || (Some(self.remote_id) == anchor.buffer_id && self.version.observed(anchor.timestamp))
     }
 
@@ -2748,12 +2722,8 @@ impl<'a> RopeBuilder<'a> {
         }
     }
 
-    fn push_str(&mut self, text: &str, cx: &BackgroundExecutor) {
-        self.new_visible.push(text, cx);
-    }
-
-    fn push_str_small(&mut self, text: &str) {
-        self.new_visible.push_small(text);
+    fn push_str(&mut self, text: &str) {
+        self.new_visible.push(text);
     }
 
     fn finish(mut self) -> (Rope, Rope) {
@@ -3164,43 +3134,48 @@ pub trait ToOffset {
 }
 
 impl ToOffset for Point {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    #[track_caller]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        assert!(
-            *self <= snapshot.len(),
-            "offset {} is out of range, snapshot length is {}",
-            self,
-            snapshot.len()
-        );
-        *self
+        if snapshot
+            .as_rope()
+            .assert_char_boundary::<{ cfg!(debug_assertions) }>(*self)
+        {
+            snapshot.as_rope().floor_char_boundary(*self)
+        } else {
+            *self
+        }
     }
 }
 
 impl ToOffset for Anchor {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl<T: ToOffset> ToOffset for &T {
+    #[inline]
     fn to_offset(&self, content: &BufferSnapshot) -> usize {
         (*self).to_offset(content)
     }
 }
 
 impl ToOffset for PointUtf16 {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for Unclipped<PointUtf16> {
+    #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.unclipped_point_utf16_to_offset(*self)
     }
@@ -3211,24 +3186,28 @@ pub trait ToPoint {
 }
 
 impl ToPoint for Anchor {
+    #[inline]
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPoint for usize {
+    #[inline]
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
 }
 
 impl ToPoint for Point {
+    #[inline]
     fn to_point(&self, _: &BufferSnapshot) -> Point {
         *self
     }
 }
 
 impl ToPoint for Unclipped<PointUtf16> {
+    #[inline]
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.unclipped_point_utf16_to_point(*self)
     }
@@ -3239,24 +3218,28 @@ pub trait ToPointUtf16 {
 }
 
 impl ToPointUtf16 for Anchor {
+    #[inline]
     fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPointUtf16 for usize {
+    #[inline]
     fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPointUtf16 for PointUtf16 {
+    #[inline]
     fn to_point_utf16(&self, _: &BufferSnapshot) -> PointUtf16 {
         *self
     }
 }
 
 impl ToPointUtf16 for Point {
+    #[inline]
     fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
@@ -3267,18 +3250,21 @@ pub trait ToOffsetUtf16 {
 }
 
 impl ToOffsetUtf16 for Anchor {
+    #[inline]
     fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToOffsetUtf16 for usize {
+    #[inline]
     fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
         snapshot.offset_to_offset_utf16(*self)
     }
 }
 
 impl ToOffsetUtf16 for OffsetUtf16 {
+    #[inline]
     fn to_offset_utf16(&self, _snapshot: &BufferSnapshot) -> OffsetUtf16 {
         *self
     }
@@ -3289,24 +3275,28 @@ pub trait FromAnchor {
 }
 
 impl FromAnchor for Anchor {
+    #[inline]
     fn from_anchor(anchor: &Anchor, _snapshot: &BufferSnapshot) -> Self {
         *anchor
     }
 }
 
 impl FromAnchor for Point {
+    #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
     }
 }
 
 impl FromAnchor for PointUtf16 {
+    #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
     }
 }
 
 impl FromAnchor for usize {
+    #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
     }

@@ -50,9 +50,14 @@ impl Diff {
                         let hunk_ranges = {
                             let buffer = buffer.read(cx);
                             let diff = diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
-                                .collect::<Vec<_>>()
+                            diff.hunks_intersecting_range(
+                                Anchor::min_for_buffer(buffer.remote_id())
+                                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                                buffer,
+                                cx,
+                            )
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                            .collect::<Vec<_>>()
                         };
 
                         multibuffer.set_excerpts_for_path(
@@ -316,7 +321,12 @@ impl PendingDiff {
         let buffer = self.new_buffer.read(cx);
         let diff = self.diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .hunks_intersecting_range(
+                Anchor::min_for_buffer(buffer.remote_id())
+                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                buffer,
+                cx,
+            )
             .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
@@ -361,12 +371,10 @@ async fn build_buffer_diff(
 ) -> Result<Entity<BufferDiff>> {
     let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
 
-    let executor = cx.background_executor().clone();
     let old_text_rope = cx
         .background_spawn({
             let old_text = old_text.clone();
-            let executor = executor.clone();
-            async move { Rope::from_str(old_text.as_str(), &executor) }
+            async move { Rope::from(old_text.as_str()) }
         })
         .await;
     let base_buffer = cx

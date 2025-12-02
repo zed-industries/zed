@@ -606,7 +606,7 @@ Here are a few general Zed settings that can help you fine-tune your Vim experie
 | Property                | Description                                                                                                                                                   | Default Value        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | cursor_blink            | If `true`, the cursor blinks.                                                                                                                                 | `true`               |
-| relative_line_numbers   | If `true`, line numbers in the left gutter are relative to the cursor.                                                                                        | `false`              |
+| relative_line_numbers   | If `"enabled"`, line numbers in the left gutter are relative to the cursor. If `"wrapped"`, they also display for wrapped lines.                              | `"disabled"`         |
 | scrollbar               | Object that controls the scrollbar display. Set to `{ "show": "never" }` to hide the scroll bar.                                                              | `{ "show": "auto" }` |
 | scroll_beyond_last_line | If set to `"one_page"`, allows scrolling up to one page beyond the last line. Set to `"off"` to prevent this behavior.                                        | `"one_page"`         |
 | vertical_scroll_margin  | The number of lines to keep above or below the cursor when scrolling. Set to `0` to allow the cursor to go up to the edges of the screen vertically.          | `3`                  |
@@ -620,7 +620,7 @@ Here's an example of these settings changed:
   // Disable cursor blink
   "cursor_blink": false,
   // Use relative line numbers
-  "relative_line_numbers": true,
+  "relative_line_numbers": "enabled",
   // Hide the scroll bar
   "scrollbar": { "show": "never" },
   // Prevent the buffer from scrolling beyond the last line

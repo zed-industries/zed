@@ -14,10 +14,10 @@ path = "src/rope.rs"
 [dependencies]
 arrayvec = "0.7.1"
 log.workspace = true
+rayon.workspace = true
 sum_tree.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
-gpui.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

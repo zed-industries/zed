@@ -33,10 +33,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         SettingField {
                             json_path: Some("project_name"),
                             pick: |settings_content| {
-                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                                settings_content.project.worktree.project_name.as_ref().or(DEFAULT_EMPTY_STRING)
                             },
                             write: |settings_content, value| {
-                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                                settings_content.project.worktree.project_name = value.filter(|name| !name.is_empty());
                             },
                         }
                     ),
@@ -300,9 +300,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::ThemeSelection::Static(_) => return,
                                             settings::ThemeSelection::Dynamic { mode, light, dark } => {
                                                 match mode {
-                                                    theme::ThemeMode::Light => light.clone(),
-                                                    theme::ThemeMode::Dark => dark.clone(),
-                                                    theme::ThemeMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                    theme::ThemeAppearanceMode::Light => light.clone(),
+                                                    theme::ThemeAppearanceMode::Dark => dark.clone(),
+                                                    theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                                 }
                                             },
                                         };
@@ -315,7 +315,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         };
 
                                         settings::ThemeSelection::Dynamic {
-                                            mode: settings::ThemeMode::System,
+                                            mode: settings::ThemeAppearanceMode::System,
                                             light: static_name.clone(),
                                             dark: static_name,
                                         }
@@ -470,9 +470,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::IconThemeSelection::Static(_) => return,
                                             settings::IconThemeSelection::Dynamic { mode, light, dark } => {
                                                 match mode {
-                                                    theme::ThemeMode::Light => light.clone(),
-                                                    theme::ThemeMode::Dark => dark.clone(),
-                                                    theme::ThemeMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                    theme::ThemeAppearanceMode::Light => light.clone(),
+                                                    theme::ThemeAppearanceMode::Dark => dark.clone(),
+                                                    theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                                 }
                                             },
                                         };
@@ -485,7 +485,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         };
 
                                         settings::IconThemeSelection::Dynamic {
-                                            mode: settings::ThemeMode::System,
+                                            mode: settings::ThemeAppearanceMode::System,
                                             light: static_name.clone(),
                                             dark: static_name,
                                         }
@@ -1352,6 +1352,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Sticky Scroll",
+                        description: "Whether to stick scopes to the top of the editor",
+                        field: Box::new(SettingField {
+                            json_path: Some("sticky_scroll.enabled"),
+                            pick: |settings_content| {
+                                settings_content.editor.sticky_scroll.as_ref().and_then(|sticky_scroll| sticky_scroll.enabled.as_ref())
+                            },
+                            write: |settings_content, value| {
+                                settings_content.editor.sticky_scroll.get_or_insert_default().enabled = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
                     SettingsPageItem::SectionHeader("Signature Help"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Auto Signature Help",
@@ -1506,7 +1521,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Relative Line Numbers",
-                        description: "Whether the line numbers in the editor's gutter are relative or not.",
+                        description: "Controls line number display in the editor's gutter. \"disabled\" shows absolute line numbers, \"enabled\" shows relative line numbers for each absolute line, and \"wrapped\" shows relative line numbers for every line, absolute or wrapped.",
                         field: Box::new(SettingField {
                             json_path: Some("relative_line_numbers"),
                             pick: |settings_content| {
@@ -3050,6 +3065,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar Buttons",
+                    description: "Show the tab bar buttons (New, Split Pane, Zoom).",
+                    field: Box::new(SettingField {
+                        json_path: Some("tab_bar.show_tab_bar_buttons"),
+                        pick: |settings_content| {
+                            settings_content
+                                .tab_bar
+                                .as_ref()?
+                                .show_tab_bar_buttons
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_tab_bar_buttons = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
@@ -3244,6 +3281,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         },
                         write: |settings_content, value| {
                             settings_content.workspace.use_system_window_tabs = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Window Decorations",
+                    description: "(Linux only) whether Zed or your compositor should draw window decorations.",
+                    field: Box::new(SettingField {
+                        json_path: Some("window_decorations"),
+                        pick: |settings_content| {
+                            settings_content.workspace.window_decorations.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.window_decorations = value;
                         },
                     }),
                     metadata: None,
@@ -3744,23 +3796,83 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Open File on Paste",
-                    description: "Whether to automatically open files when pasting them in the project panel.",
+                    title: "Hidden Files",
+                    description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
+                    field: Box::new(
+                        SettingField {
+                            json_path: Some("worktree.hidden_files"),
+                            pick: |settings_content| {
+                                settings_content.project.worktree.hidden_files.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.worktree.hidden_files = value;
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Auto Open Files"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Create",
+                    description: "Whether to automatically open newly created files in the editor.",
                     field: Box::new(SettingField {
-                        json_path: Some("project_panel.open_file_on_paste"),
+                        json_path: Some("project_panel.auto_open.on_create"),
                         pick: |settings_content| {
-                            settings_content
-                                .project_panel
-                                .as_ref()?
-                                .open_file_on_paste
-                                .as_ref()
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_create.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_create = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Paste",
+                    description: "Whether to automatically open files after pasting or duplicating them.",
+                    field: Box::new(SettingField {
+                        json_path: Some("project_panel.auto_open.on_paste"),
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_paste.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_paste = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Drop",
+                    description: "Whether to automatically open files dropped from external sources.",
+                    field: Box::new(SettingField {
+                        json_path: Some("project_panel.auto_open.on_drop"),
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.auto_open.as_ref()?.on_drop.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sort Mode",
+                    description: "Sort order for entries in the project panel.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.sort_mode.as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .open_file_on_paste = value;
+                                .sort_mode = value;
                         },
+                        json_path: Some("project_panel.sort_mode"),
                     }),
                     metadata: None,
                     files: USER,
@@ -4352,7 +4464,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Stepping Granularity",
                     description: "Determines the stepping granularity for debug operations.",
                     field: Box::new(SettingField {
-                        json_path: Some("agent.default_height"),
+                        json_path: Some("debugger.stepping_granularity"),
                         pick: |settings_content| {
                             settings_content
                                 .debugger
@@ -4487,6 +4599,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .project
                                     .shell
                                     .get_or_insert_with(|| settings::Shell::default());
+                                let default_shell = if cfg!(target_os = "windows") {
+                                    "powershell.exe"
+                                } else {
+                                    "sh"
+                                };
                                 *settings_value = match value {
                                     settings::ShellDiscriminants::System => {
                                         settings::Shell::System
@@ -4495,7 +4612,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         let program = match settings_value {
                                             settings::Shell::Program(p) => p.clone(),
                                             settings::Shell::WithArguments { program, .. } => program.clone(),
-                                            _ => String::from("sh"),
+                                            _ => String::from(default_shell),
                                         };
                                         settings::Shell::Program(program)
                                     },
@@ -4505,7 +4622,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::Shell::WithArguments { program, args, title_override } => {
                                                 (program.clone(), args.clone(), title_override.clone())
                                             },
-                                            _ => (String::from("sh"), vec![], None),
+                                            _ => (String::from(default_shell), vec![], None),
                                         };
                                         settings::Shell::WithArguments {
                                             program,
@@ -5111,6 +5228,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Multiplier",
+                    description: "The multiplier for scrolling in the terminal with the mouse wheel",
+                    field: Box::new(SettingField {
+                        json_path: Some("terminal.scroll_multiplier"),
+                        pick: |settings_content| {
+                            settings_content.terminal.as_ref()?.scroll_multiplier.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scroll_multiplier = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Toolbar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Breadcrumbs",
@@ -5396,6 +5531,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                         write: |settings_content, value| {
                             settings_content.git.get_or_insert_default().hunk_style = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Path Style",
+                    description: "Should the name or path be displayed first in the git view.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.path_style"),
+                        pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git.get_or_insert_default().path_style = value;
                         },
                     }),
                     metadata: None,
@@ -6541,6 +6689,19 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Completion Menu Scrollbar",
+            description: "When to show the scrollbar in the completion menu.",
+            field: Box::new(SettingField {
+                json_path: Some("editor.completion_menu_scrollbar"),
+                pick: |settings_content| settings_content.editor.completion_menu_scrollbar.as_ref(),
+                write: |settings_content, value| {
+                    settings_content.editor.completion_menu_scrollbar = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
@@ -6821,6 +6982,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Word Diff Enabled",
+            description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).word_diff_enabled"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.word_diff_enabled.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.word_diff_enabled = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
             description: "Preferred debuggers for this language.",
             field: Box::new(
@@ -6866,6 +7046,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.extend_comment_on_newline = value;
 
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Colorize brackets",
+            description: "Whether to colorize brackets in the editor.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).colorize_brackets"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.colorize_brackets.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.colorize_brackets = value;
                     })
                 },
             }),

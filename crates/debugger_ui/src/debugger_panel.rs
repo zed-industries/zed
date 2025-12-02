@@ -14,13 +14,12 @@ use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset, ToPoint};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
     WeakEntity, anchored, deferred,
 };
-use text::ToPoint as _;
 
 use itertools::Itertools as _;
 use language::Buffer;
@@ -652,6 +651,17 @@ impl DebugPanel {
                 .tooltip(Tooltip::text("Open Debug Adapter Logs"))
         };
 
+        let close_bottom_panel_button = {
+            h_flex().pl_0p5().gap_1().child(Divider::vertical()).child(
+                IconButton::new("debug-close-panel", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(workspace::ToggleBottomDock.boxed_clone(), cx)
+                    })
+                    .tooltip(Tooltip::text("Close Panel")),
+            )
+        };
+
         Some(
             div.w_full()
                 .py_1()
@@ -659,7 +669,7 @@ impl DebugPanel {
                 .justify_between()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
-                .when(is_side, |this| this.gap_1())
+                .when(is_side, |this| this.gap_1().h(Tab::container_height(cx)))
                 .child(
                     h_flex()
                         .justify_between()
@@ -958,6 +968,7 @@ impl DebugPanel {
                                         .child(edit_debug_json_button())
                                         .child(documentation_button())
                                         .child(logs_button())
+                                        .child(close_bottom_panel_button)
                                 }),
                         ),
                 ),
@@ -1216,11 +1227,11 @@ impl DebugPanel {
         let mut last_offset = None;
         while let Some(mat) = matches.next() {
             if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
-                last_offset = Some(pos)
+                last_offset = Some(MultiBufferOffset(pos))
             }
         }
         let mut edits = Vec::new();
-        let mut cursor_position = 0;
+        let mut cursor_position = MultiBufferOffset(0);
 
         if let Some(pos) = last_offset {
             edits.push((pos..pos, format!(",\n{new_scenario}")));
@@ -1234,24 +1245,25 @@ impl DebugPanel {
 
             if let Some(mat) = matches.next() {
                 if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
-                    edits.push((pos..pos, format!("\n{new_scenario}\n")));
-                    cursor_position = pos + "\n  ".len();
+                    edits.push((
+                        MultiBufferOffset(pos)..MultiBufferOffset(pos),
+                        format!("\n{new_scenario}\n"),
+                    ));
+                    cursor_position = MultiBufferOffset(pos) + "\n  ".len();
                 }
             } else {
-                edits.push((0..0, format!("[\n{}\n]", new_scenario)));
-                cursor_position = "[\n  ".len();
+                edits.push((
+                    MultiBufferOffset(0)..MultiBufferOffset(0),
+                    format!("[\n{}\n]", new_scenario),
+                ));
+                cursor_position = MultiBufferOffset("[\n  ".len());
             }
         }
         editor.transact(window, cx, |editor, window, cx| {
             editor.edit(edits, cx);
-            let snapshot = editor
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap()
-                .read(cx)
-                .snapshot();
+            let snapshot = editor.buffer().read(cx).read(cx);
             let point = cursor_position.to_point(&snapshot);
+            drop(snapshot);
             editor.go_to_singleton_buffer_point(point, window, cx);
         });
         Ok(editor.save(SaveOptions::default(), project, window, cx))
@@ -1692,7 +1704,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
                                 .icon(IconName::Plus)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::Start)
                                 .on_click(|_, window, cx| {
@@ -1702,8 +1714,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new("edit-debug-settings", "Edit debug.json")
                                 .icon(IconName::Code)
-                                .icon_size(IconSize::XSmall)
-                                .color(Color::Muted)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::Start)
                                 .on_click(|_, window, cx| {
@@ -1716,8 +1727,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new("open-debugger-docs", "Debugger Docs")
                                 .icon(IconName::Book)
-                                .color(Color::Muted)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::Start)
                                 .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
@@ -1728,8 +1738,7 @@ impl Render for DebugPanel {
                                 "Debugger Extensions",
                             )
                             .icon(IconName::Blocks)
-                            .color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::Start)
                             .on_click(|_, window, cx| {
@@ -1745,6 +1754,15 @@ impl Render for DebugPanel {
                                 );
                             }),
                         );
+
+                    let has_breakpoints = self
+                        .project
+                        .read(cx)
+                        .breakpoint_store()
+                        .read(cx)
+                        .all_source_breakpoints(cx)
+                        .values()
+                        .any(|breakpoints| !breakpoints.is_empty());
 
                     let breakpoint_list = v_flex()
                         .group("base-breakpoint-list")
@@ -1769,7 +1787,18 @@ impl Render for DebugPanel {
                                     ),
                                 ),
                         )
-                        .child(self.breakpoint_list.clone());
+                        .when(has_breakpoints, |this| {
+                            this.child(self.breakpoint_list.clone())
+                        })
+                        .when(!has_breakpoints, |this| {
+                            this.child(
+                                v_flex().size_full().items_center().justify_center().child(
+                                    Label::new("No Breakpoints Set")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                        });
 
                     this.child(
                         v_flex()

@@ -8,27 +8,47 @@
 ; to other areas too.
 
 <all>
-  = @ConradIrwin
-  = @maxdeviant
-  = @SomeoneToIgnore
-  = @probably-neb
-  = @danilo-leal
-  = @Veykril
-  = @kubkon
-  = @p1n3appl3
-  = @dinocosta
-  = @smitbarmase
   = @cole-miller
-  = @HactarCE
-
-vim
   = @ConradIrwin
-  = @probably-neb
-  = @p1n3appl3
+  = @danilo-leal
   = @dinocosta
+  = @HactarCE
+  = @kubkon
+  = @maxdeviant
+  = @p1n3appl3
+  = @probably-neb
+  = @smitbarmase
+  = @SomeoneToIgnore
+  = @Veykril
 
-gpui
-  = @mikayla-maki
+ai
+  = @benbrandt
+  = @bennetbo
+  = @danilo-leal
+  = @rtfeldman
+
+audio
+  = @dvdsk
+
+crashes
+  = @p1n3appl3
+  = @Veykril
+
+debugger
+  = @Anthony-Eid
+  = @kubkon
+  = @osiewicz
+
+design
+  = @danilo-leal
+
+docs
+  = @miguelraz
+  = @probably-neb
+  = @yeskunall
+
+extension
+  = @kubkon
 
 git
   = @cole-miller
@@ -38,81 +58,76 @@ git
   = @Anthony-Eid
   = @cameron1024
 
-linux
-  = @dvdsk
-  = @smitbarmase
-  = @p1n3appl3
-  = @cole-miller
+gpui
+  = @Anthony-Eid
+  = @cameron1024
+  = @mikayla-maki
   = @probably-neb
-
-windows
-  = @reflectronic
-  = @localcc
-
-pickers
-  = @p1n3appl3
-  = @dvdsk
-  = @SomeoneToIgnore
-
-audio
-  = @dvdsk
 
 helix
   = @kubkon
 
-terminal
-  = @kubkon
-  = @Veykril
-
-debugger
-  = @kubkon
+languages
   = @osiewicz
-  = @Anthony-Eid
-
-extension
-  = @kubkon
-
-settings_ui
   = @probably-neb
-  = @danilo-leal
-  = @Anthony-Eid
-
-crashes
-  = @p1n3appl3
+  = @smitbarmase
+  = @SomeoneToIgnore
   = @Veykril
 
-ai
-  = @rtfeldman
-  = @danilo-leal
-  = @benbrandt
-  = @bennetbo
+linux
+  = @cole-miller
+  = @dvdsk
+  = @p1n3appl3
+  = @probably-neb
+  = @smitbarmase
 
-design
-  = @danilo-leal
+lsp
+  = @osiewicz
+  = @smitbarmase
+  = @SomeoneToIgnore
+  = @Veykril
 
 multi_buffer
   = @Veykril
   = @SomeoneToIgnore
 
-lsp
-  = @osiewicz
-  = @Veykril
-  = @smitbarmase
+pickers
+  = @dvdsk
+  = @p1n3appl3
   = @SomeoneToIgnore
-
-languages
-  = @osiewicz
-  = @Veykril
-  = @smitbarmase
-  = @SomeoneToIgnore
-  = @probably-neb
 
 project_panel
   = @smitbarmase
+
+settings_ui
+  = @Anthony-Eid
+  = @danilo-leal
+  = @probably-neb
+
+sum_tree
+  = @Veykril
+
+support
+  = @miguelraz
 
 tasks
   = @SomeoneToIgnore
   = @Veykril
 
-docs
+terminal
+  = @kubkon
+  = @Veykril
+
+text
+  = @Veykril
+
+vim
+  = @ConradIrwin
+  = @dinocosta
+  = @p1n3appl3
   = @probably-neb
+
+windows
+  = @localcc
+  = @reflectronic
+  = @Veykril

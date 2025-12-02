@@ -615,8 +615,16 @@ message RegisteredForBuffer {
     uint64 buffer_id = 2;
 }
 
+message LanguageServerBinaryInfo {
+    string path = 1;
+    repeated string arguments = 2;
+}
+
 message ServerMetadataUpdated {
     optional string capabilities = 1;
+    optional LanguageServerBinaryInfo binary = 2;
+    optional string configuration = 3;
+    repeated string workspace_folders = 4;
 }
 
 message LanguageServerLog {
@@ -703,6 +711,7 @@ message GetCompletions {
     uint64 buffer_id = 2;
     Anchor position = 3;
     repeated VectorClockEntry version = 4;
+    optional uint64 server_id = 5;
 }
 
 message CancelLanguageServerWork {

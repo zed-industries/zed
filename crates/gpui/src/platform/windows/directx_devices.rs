@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use itertools::Itertools;
 use util::ResultExt;
 use windows::Win32::{
     Foundation::HMODULE,
@@ -20,24 +21,18 @@ use windows::Win32::{
 };
 use windows::core::Interface;
 
-pub(crate) fn try_to_recover_from_device_lost<T>(
-    mut f: impl FnMut() -> Result<T>,
-    on_success: impl FnOnce(T),
-    on_error: impl FnOnce(),
-) {
-    let result = (0..5).find_map(|i| {
-        if i > 0 {
-            // Add a small delay before retrying
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        f().log_err()
-    });
-
-    if let Some(result) = result {
-        on_success(result);
-    } else {
-        on_error();
-    }
+pub(crate) fn try_to_recover_from_device_lost<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
+    (0..5)
+        .map(|i| {
+            if i > 0 {
+                // Add a small delay before retrying
+                std::thread::sleep(std::time::Duration::from_millis(100 + i * 10));
+            }
+            f()
+        })
+        .find_or_last(Result::is_ok)
+        .unwrap()
+        .context("DirectXRenderer failed to recover from lost device after multiple attempts")
 }
 
 #[derive(Clone)]

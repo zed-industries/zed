@@ -177,7 +177,7 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         let mut results = Vec::new();
         for snapshot in snapshots {
             for entry in snapshot.entries(false, 0) {
-                if path_matcher.is_match(snapshot.root_name().join(&entry.path).as_std_path()) {
+                if path_matcher.is_match(&snapshot.root_name().join(&entry.path)) {
                     results.push(snapshot.absolutize(&entry.path));
                 }
             }
@@ -246,8 +246,6 @@ mod test {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
     }
 }

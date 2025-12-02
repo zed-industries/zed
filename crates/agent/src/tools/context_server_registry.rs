@@ -165,7 +165,7 @@ impl AnyAgentTool for ContextServerTool {
         format: language_model::LanguageModelToolSchemaFormat,
     ) -> Result<serde_json::Value> {
         let mut schema = self.tool.input_schema.clone();
-        crate::tool_schema::adapt_schema_to_format(&mut schema, format)?;
+        language_model::tool_schema::adapt_schema_to_format(&mut schema, format)?;
         Ok(match schema {
             serde_json::Value::Null => {
                 serde_json::json!({ "type": "object", "properties": [] })

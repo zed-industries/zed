@@ -84,6 +84,15 @@ impl From<WindowAppearance> for Appearance {
     }
 }
 
+impl From<Appearance> for ThemeAppearanceMode {
+    fn from(value: Appearance) -> Self {
+        match value {
+            Appearance::Light => Self::Light,
+            Appearance::Dark => Self::Dark,
+        }
+    }
+}
+
 /// Which themes should be loaded. This is used primarily for testing.
 pub enum LoadThemes {
     /// Only load the base theme.
@@ -108,7 +117,6 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         ThemeRegistry::global(cx).load_bundled_themes();
     }
 
-    ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
 
     let theme = GlobalTheme::configured_theme(cx);

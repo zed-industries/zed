@@ -70,7 +70,6 @@ impl ChannelBuffer {
                 ReplicaId::new(response.replica_id as u16),
                 capability,
                 base_text,
-                cx.background_executor(),
             )
         })?;
         buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;

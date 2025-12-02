@@ -665,9 +665,6 @@ mod tests {
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
-        cx.update(|cx| {
-            SshSettings::register(cx);
-        });
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
@@ -861,7 +858,7 @@ mod tests {
             .fs
             .save(
                 Path::new(file1_path),
-                &Rope::from_str("content1", cx.background_executor()),
+                &Rope::from("content1"),
                 LineEnding::Unix,
             )
             .await
@@ -875,7 +872,7 @@ mod tests {
             .fs
             .save(
                 Path::new(file2_path),
-                &Rope::from_str("content2", cx.background_executor()),
+                &Rope::from("content2"),
                 LineEnding::Unix,
             )
             .await

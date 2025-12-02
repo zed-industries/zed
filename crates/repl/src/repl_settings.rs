@@ -1,7 +1,7 @@
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
 /// Settings for configuring REPL display and behavior.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct ReplSettings {
     /// Maximum number of lines to keep in REPL's scrollback buffer.
     /// Clamped with [4, 256] range.

@@ -27,7 +27,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use text::Rope;
 use util::{
     ResultExt, path,
     paths::PathStyle,
@@ -939,11 +938,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     client
                         .fs()
-                        .save(
-                            &path,
-                            &Rope::from_str_small(content.as_str()),
-                            text::LineEnding::Unix,
-                        )
+                        .save(&path, &content.as_str().into(), text::LineEnding::Unix)
                         .await
                         .unwrap();
                 }

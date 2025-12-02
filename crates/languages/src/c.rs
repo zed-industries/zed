@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
+use http_client::github_download::fetch_github_binary_with_digest_check;
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -85,55 +85,32 @@ impl LspInstaller for CLspAdapter {
         };
 
         let metadata_path = version_dir.join("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
+
+        let binary_path_for_check = binary_path.clone();
+        fetch_github_binary_with_digest_check(
+            &binary_path,
+            &metadata_path,
+            expected_digest,
+            &url,
+            AssetKind::Zip,
+            &container_dir,
+            &*delegate.http_client(),
+            || async move {
                 delegate
                     .try_exec(LanguageServerBinary {
-                        path: binary_path.clone(),
+                        path: binary_path_for_check,
                         arguments: vec!["--version".into()],
                         env: None,
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
+                        log::warn!("Unable to run clangd asset, redownloading: {err:#}")
                     })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &container_dir,
-            AssetKind::Zip,
-        )
-        .await?;
-        remove_matching(&container_dir, |entry| entry != version_dir).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
-                digest: expected_digest,
             },
-            &metadata_path,
         )
         .await?;
+
+        remove_matching(&container_dir, |entry| entry != version_dir).await;
 
         Ok(binary)
     }
@@ -189,7 +166,7 @@ impl super::LspAdapter for CLspAdapter {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let source = Rope::from_str_small(format!("struct S {{ {} }}", text).as_str());
+                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
                 let filter_range = completion
                     .filter_text
@@ -206,8 +183,7 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs =
-                    language.highlight_text(&Rope::from_str_small(text.as_str()), 0..text.len());
+                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -223,8 +199,7 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs =
-                    language.highlight_text(&Rope::from_str_small(text.as_str()), 0..text.len());
+                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -328,7 +303,7 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&Rope::from_str_small(text.as_str()), display_range),
+            language.highlight_text(&text.as_str().into(), display_range),
         ))
     }
 
@@ -397,14 +372,13 @@ mod tests {
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use unindent::Unindent;
 
     #[gpui::test]
-    async fn test_c_autoindent(cx: &mut TestAppContext) {
-        // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
+    async fn test_c_autoindent_basic(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);
-            language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |s| {
                     s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
@@ -416,23 +390,229 @@ mod tests {
         cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
-            // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);
 
-            // indent inside braces
             let ix = buffer.len() - 1;
             buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "int main() {\n  \n}");
+            assert_eq!(
+                buffer.text(),
+                "int main() {\n  \n}",
+                "content inside braces should be indented"
+            );
 
-            // indent body of single-statement if statement
-            let ix = buffer.len() - 2;
-            buffer.edit([(ix..ix, "if (a)\nb;")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b;\n}");
+            buffer
+        });
+    }
 
-            // indent inside field expression
-            let ix = buffer.len() - 3;
+    #[gpui::test]
+    async fn test_c_autoindent_if_else(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    b;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b;
+                }
+                "#
+                .unindent(),
+                "body of if-statement without braces should be indented"
+            );
+
+            let ix = buffer.len() - 4;
             buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b\n      .c;\n}");
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b
+                      .c;
+                }
+                "#
+                .unindent(),
+                "field expression (.c) should be indented further than the statement body"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a) a++;
+                    else b++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a) a++;
+                  else b++;
+                }
+                "#
+                .unindent(),
+                "single-line if/else without braces should align at the same level"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    b++;
+                    else
+                    c++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b++;
+                  else
+                    c++;
+                }
+                "#
+                .unindent(),
+                "multi-line if/else without braces should indent statement bodies"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    if (b)
+                    c++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    if (b)
+                      c++;
+                }
+                "#
+                .unindent(),
+                "nested if statements without braces should indent properly"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a)
+                    b++;
+                    else if (c)
+                    d++;
+                    else
+                    f++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a)
+                    b++;
+                  else if (c)
+                    d++;
+                  else
+                    f++;
+                }
+                "#
+                .unindent(),
+                "else-if chains should align all conditions at same level with indented bodies"
+            );
+
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    if (a) {
+                    b++;
+                    } else
+                    c++;
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  if (a) {
+                    b++;
+                  } else
+                    c++;
+                }
+                "#
+                .unindent(),
+                "mixed braces should indent properly"
+            );
 
             buffer
         });

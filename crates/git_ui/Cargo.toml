@@ -22,7 +22,6 @@ anyhow.workspace = true
 askpass.workspace = true
 buffer_diff.workspace = true
 call.workspace = true
-chrono.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -45,10 +44,13 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
+recent_projects.workspace = true
+remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smol.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true
@@ -67,6 +69,7 @@ windows.workspace = true
 [dev-dependencies]
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true

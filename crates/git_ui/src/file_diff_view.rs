@@ -5,8 +5,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, Task, Window,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Task, Window,
 };
 use language::Buffer;
 use project::Project;
@@ -268,17 +268,17 @@ impl Item for FileDiffView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 
@@ -359,7 +359,6 @@ mod tests {
     use super::*;
     use editor::test::editor_test_context::assert_state_with_diff;
     use gpui::TestAppContext;
-    use language::Rope;
     use project::{FakeFs, Fs, Project};
     use settings::SettingsStore;
     use std::path::PathBuf;
@@ -371,10 +370,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
@@ -430,7 +425,7 @@ mod tests {
         // Modify the new file on disk
         fs.save(
             path!("/test/new_file.txt").as_ref(),
-            &Rope::from_str_small(&unindent(
+            &unindent(
                 "
                 new line 1
                 line 2
@@ -438,7 +433,8 @@ mod tests {
                 line 4
                 new line 5
                 ",
-            )),
+            )
+            .into(),
             Default::default(),
         )
         .await
@@ -465,14 +461,15 @@ mod tests {
         // Modify the old file on disk
         fs.save(
             path!("/test/old_file.txt").as_ref(),
-            &Rope::from_str_small(&unindent(
+            &unindent(
                 "
                 new line 1
                 line 2
                 old line 3
                 line 4
                 ",
-            )),
+            )
+            .into(),
             Default::default(),
         )
         .await

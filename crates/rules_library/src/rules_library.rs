@@ -25,7 +25,7 @@ use ui::{
     Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Render, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::{Workspace, client_side_decorations};
+use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -122,7 +122,10 @@ pub fn open_rules_library(
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
                 Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-                _ => gpui::WindowDecorations::Client,
+                _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                    settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                    settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+                },
             };
             cx.open_window(
                 WindowOptions {
@@ -554,7 +557,7 @@ impl RulesLibrary {
 
         let prompt_id = PromptId::new();
         let save = self.store.update(cx, |store, cx| {
-            store.save(prompt_id, None, false, Default::default(), cx)
+            store.save(prompt_id, None, false, "".into(), cx)
         });
         self.picker
             .update(cx, |picker, cx| picker.refresh(window, cx));
@@ -888,13 +891,7 @@ impl RulesLibrary {
             let new_id = PromptId::new();
             let body = rule.body_editor.read(cx).text(cx);
             let save = self.store.update(cx, |store, cx| {
-                store.save(
-                    new_id,
-                    Some(title.into()),
-                    false,
-                    Rope::from_str(&body, cx.background_executor()),
-                    cx,
-                )
+                store.save(new_id, Some(title.into()), false, body.into(), cx)
             });
             self.picker
                 .update(cx, |picker, cx| picker.refresh(window, cx));
@@ -1075,6 +1072,7 @@ impl RulesLibrary {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
                                         cache: false,
+                                        reasoning_details: None,
                                     }],
                                     tools: Vec::new(),
                                     tool_choice: None,

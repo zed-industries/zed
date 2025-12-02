@@ -1,0 +1,36 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "worktree.proto";
+
+message OpenImageByPath {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+}
+
+message OpenImageResponse {
+    uint64 image_id = 1;
+}
+
+message CreateImageForPeer {
+    uint64 project_id = 1;
+    PeerId peer_id = 2;
+    oneof variant {
+        ImageState state = 3;
+        ImageChunk chunk = 4;
+    }
+}
+
+message ImageState {
+    uint64 id = 1;
+    optional File file = 2;
+    uint64 content_size = 3;
+    string format = 4; // e.g., "png", "jpeg", "webp", etc.
+}
+
+message ImageChunk {
+    uint64 image_id = 1;
+    bytes data = 2;
+}

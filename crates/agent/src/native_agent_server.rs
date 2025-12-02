@@ -88,8 +88,6 @@ mod tests {
         async |fs, project, cx| {
             let auth = cx.update(|cx| {
                 prompt_store::init(cx);
-                terminal::init(cx);
-
                 let registry = language_model::LanguageModelRegistry::read_global(cx);
                 let auth = registry
                     .provider(&language_model::ANTHROPIC_PROVIDER_ID)
