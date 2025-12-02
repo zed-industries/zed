@@ -22,7 +22,8 @@ use git::{
     COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority, Task
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
+    Task,
 };
 use ignore::IgnoreStack;
 use language::DiskState;
@@ -1336,7 +1337,7 @@ impl LocalWorktree {
             let text = fs.load(&abs_path).await?;
 
             let worktree = this.upgrade().context("worktree was dropped")?;
-            let file = match entry.await? {
+            let file = match None {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
                     let metadata = fs

@@ -17,8 +17,9 @@ use windows::{
 };
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, RunnableVariant, SafeHwnd, THREAD_TIMINGS,
-    TaskLabel, TaskTiming, ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+    GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, RunnableVariant, SafeHwnd,
+    THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
+    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
 };
 
 pub(crate) struct WindowsDispatcher {
