@@ -6982,6 +6982,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Word Diff Enabled",
+            description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).word_diff_enabled"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.word_diff_enabled.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.word_diff_enabled = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
             description: "Preferred debuggers for this language.",
             field: Box::new(

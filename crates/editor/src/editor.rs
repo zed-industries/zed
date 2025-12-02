@@ -36,6 +36,7 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod split;
 pub mod tasks;
 
 #[cfg(test)]
@@ -69,6 +70,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
+pub use split::SplittableEditor;
 pub use text::Bias;
 
 use ::git::{
@@ -144,8 +146,8 @@ use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
-    InvalidationStrategy, Location, LocationLink, PrepareRenameResponse, Project, ProjectItem,
-    ProjectPath, ProjectTransaction, TaskSourceKind,
+    InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
+    ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
     debugger::{
         breakpoint_store::{
             Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
@@ -282,6 +284,9 @@ pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
 
+pub struct HunkAddedColor;
+pub struct HunkRemovedColor;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -305,6 +310,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
+        word_diffs: Vec<Range<MultiBufferOffset>>,
     },
 }
 
@@ -1198,6 +1204,7 @@ pub struct Editor {
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_overrides: Vec<SharedString>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
+    use_base_text_line_numbers: bool,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -1637,7 +1644,7 @@ pub(crate) struct FocusedBlock {
     focus_handle: WeakFocusHandle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum JumpData {
     MultiBufferRow {
         row: MultiBufferRow,
@@ -2344,6 +2351,7 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             accent_overrides: Vec::new(),
             fetched_tree_sitter_chunks: HashMap::default(),
+            use_base_text_line_numbers: false,
         };
 
         if is_minimap {
@@ -5304,12 +5312,10 @@ impl Editor {
 
     pub fn visible_excerpts(
         &self,
+        lsp_related_only: bool,
         cx: &mut Context<Editor>,
     ) -> HashMap<ExcerptId, (Entity<Buffer>, clock::Global, Range<usize>)> {
-        let Some(project) = self.project() else {
-            return HashMap::default();
-        };
-        let project = project.read(cx);
+        let project = self.project().cloned();
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -5327,6 +5333,18 @@ impl Editor {
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer, excerpt_visible_range, excerpt_id)| {
+                if !lsp_related_only {
+                    return Some((
+                        excerpt_id,
+                        (
+                            multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                            buffer.version().clone(),
+                            excerpt_visible_range.start.0..excerpt_visible_range.end.0,
+                        ),
+                    ));
+                }
+
+                let project = project.as_ref()?.read(cx);
                 let buffer_file = project::File::from_dyn(buffer.file())?;
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
                 let worktree_entry = buffer_worktree
@@ -6133,9 +6151,43 @@ impl Editor {
         }
 
         let provider = self.completion_provider.as_ref()?;
+
+        let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
+        let command = lsp_store.as_ref().and_then(|lsp_store| {
+            let CompletionSource::Lsp {
+                lsp_completion,
+                server_id,
+                ..
+            } = &completion.source
+            else {
+                return None;
+            };
+            let lsp_command = lsp_completion.command.as_ref()?;
+            let available_commands = lsp_store
+                .read(cx)
+                .lsp_server_capabilities
+                .get(server_id)
+                .and_then(|server_capabilities| {
+                    server_capabilities
+                        .execute_command_provider
+                        .as_ref()
+                        .map(|options| options.commands.as_slice())
+                })?;
+            if available_commands.contains(&lsp_command.command) {
+                Some(CodeAction {
+                    server_id: *server_id,
+                    range: language::Anchor::MIN..language::Anchor::MIN,
+                    lsp_action: LspAction::Command(lsp_command.clone()),
+                    resolved: false,
+                })
+            } else {
+                None
+            }
+        });
+
         drop(completion);
         let apply_edits = provider.apply_additional_edits_for_completion(
-            buffer_handle,
+            buffer_handle.clone(),
             completions_menu.completions.clone(),
             candidate_id,
             true,
@@ -6149,8 +6201,29 @@ impl Editor {
             self.show_signature_help(&ShowSignatureHelp, window, cx);
         }
 
-        Some(cx.foreground_executor().spawn(async move {
+        Some(cx.spawn_in(window, async move |editor, cx| {
             apply_edits.await?;
+
+            if let Some((lsp_store, command)) = lsp_store.zip(command) {
+                let title = command.lsp_action.title().to_owned();
+                let project_transaction = lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
+                    })?
+                    .await
+                    .context("applying post-completion command")?;
+                if let Some(workspace) = editor.read_with(cx, |editor, _| editor.workspace())? {
+                    Self::open_project_transaction(
+                        &editor,
+                        workspace.downgrade(),
+                        project_transaction,
+                        title,
+                        cx,
+                    )
+                    .await?;
+                }
+            }
+
             Ok(())
         }))
     }
@@ -19204,6 +19277,10 @@ impl Editor {
         self.display_map.read(cx).fold_placeholder.clone()
     }
 
+    pub fn set_use_base_text_line_numbers(&mut self, show: bool, _cx: &mut Context<Self>) {
+        self.use_base_text_line_numbers = show;
+    }
+
     pub fn set_expand_all_diff_hunks(&mut self, cx: &mut App) {
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_expanded(cx);
@@ -19439,6 +19516,10 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
+                        // We don't need to pass in word diffs here because they're only used for rendering and
+                        // this function changes internal state
+                        base_word_diffs: Vec::default(),
+                        buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.secondary_status,
@@ -22584,7 +22665,7 @@ impl Editor {
         if self.ignore_lsp_data() {
             return;
         }
-        for (_, (visible_buffer, _, _)) in self.visible_excerpts(cx) {
+        for (_, (visible_buffer, _, _)) in self.visible_excerpts(true, cx) {
             self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
         }
     }
@@ -24108,10 +24189,12 @@ impl EditorSnapshot {
                         end_row.0 += 1;
                     }
                     let is_created_file = hunk.is_created_file();
+
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
+                        word_diffs: hunk.word_diffs,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(
                             hunk.excerpt_id,
@@ -24914,6 +24997,7 @@ pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors
 pub fn styled_runs_for_code_label<'a>(
     label: &'a CodeLabel,
     syntax_theme: &'a theme::SyntaxTheme,
+    local_player: &'a theme::PlayerColor,
 ) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
     let fade_out = HighlightStyle {
         fade_out: Some(0.35),
@@ -24926,7 +25010,17 @@ pub fn styled_runs_for_code_label<'a>(
         .iter()
         .enumerate()
         .flat_map(move |(ix, (range, highlight_id))| {
-            let style = if let Some(style) = highlight_id.style(syntax_theme) {
+            let style = if *highlight_id == language::HighlightId::TABSTOP_INSERT_ID {
+                HighlightStyle {
+                    color: Some(local_player.cursor),
+                    ..Default::default()
+                }
+            } else if *highlight_id == language::HighlightId::TABSTOP_REPLACE_ID {
+                HighlightStyle {
+                    background_color: Some(local_player.selection),
+                    ..Default::default()
+                }
+            } else if let Some(style) = highlight_id.style(syntax_theme) {
                 style
             } else {
                 return Default::default();
