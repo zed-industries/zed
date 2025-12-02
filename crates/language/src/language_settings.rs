@@ -153,6 +153,13 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: `true`
+    pub word_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -595,6 +602,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
+                word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
 

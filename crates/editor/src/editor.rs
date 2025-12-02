@@ -284,6 +284,9 @@ pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
 
+pub struct HunkAddedColor;
+pub struct HunkRemovedColor;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -307,6 +310,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
+        word_diffs: Vec<Range<MultiBufferOffset>>,
     },
 }
 
@@ -19457,6 +19461,10 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
+                        // We don't need to pass in word diffs here because they're only used for rendering and
+                        // this function changes internal state
+                        base_word_diffs: Vec::default(),
+                        buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.secondary_status,
@@ -24126,10 +24134,12 @@ impl EditorSnapshot {
                         end_row.0 += 1;
                     }
                     let is_created_file = hunk.is_created_file();
+
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
+                        word_diffs: hunk.word_diffs,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(
                             hunk.excerpt_id,

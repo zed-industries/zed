@@ -152,6 +152,8 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<BufferOffset>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
+    /// The word diffs for this hunk.
+    pub word_diffs: Vec<Range<MultiBufferOffset>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -561,6 +563,7 @@ pub struct MultiBufferSnapshot {
 }
 
 #[derive(Debug, Clone)]
+/// A piece of text in the multi-buffer
 enum DiffTransform {
     Unmodified {
         summary: MBTextSummary,
@@ -961,6 +964,8 @@ struct MultiBufferCursor<'a, MBD, BD> {
     cached_region: Option<MultiBufferRegion<'a, MBD, BD>>,
 }
 
+/// Matches transformations to an item
+/// This is essentially a more detailed version of DiffTransform
 #[derive(Clone)]
 struct MultiBufferRegion<'a, MBD, BD> {
     buffer: &'a BufferSnapshot,
@@ -3870,11 +3875,31 @@ impl MultiBufferSnapshot {
             } else {
                 range.end.row + 1
             };
+
+            let word_diffs = (!hunk.base_word_diffs.is_empty()
+                || !hunk.buffer_word_diffs.is_empty())
+            .then(|| {
+                let hunk_start_offset =
+                    Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self);
+
+                hunk.base_word_diffs
+                    .iter()
+                    .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
+                    .chain(
+                        hunk.buffer_word_diffs
+                            .into_iter()
+                            .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
+                    )
+                    .collect()
+            })
+            .unwrap_or_default();
+
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
+                word_diffs,
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
                 secondary_status: hunk.secondary_status,
@@ -6834,6 +6859,7 @@ where
                 TextDimension::add_assign(&mut buffer_end, &buffer_range_len);
                 let start = self.diff_transforms.start().output_dimension.0;
                 let end = self.diff_transforms.end().output_dimension.0;
+
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
