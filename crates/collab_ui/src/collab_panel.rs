@@ -143,14 +143,15 @@ pub fn init(cx: &mut App) {
                             workspace::Toast::new(
                                 NotificationId::unique::<RoomIdCopiedToast>(),
                                 "Room ID copied to clipboard",
-                            ),
+                            )
+                            .autohide(),
                             cx,
                         );
                     })
                 })
                 .detach_and_notify_err(window, cx);
             } else {
-                workspace.show_error(&"No active call. Join one first.", cx);
+                workspace.show_error(&"There’s no active call; join one first.", cx);
             }
         });
         workspace.register_action(|workspace, _: &ShareProject, window, cx| {
