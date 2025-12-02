@@ -160,6 +160,10 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: false
     pub enable_preview_from_code_navigation: Option<bool>,
+    /// Whether to open tabs in preview mode when selected from the file explorer.
+    ///
+    /// Default: true
+    pub enable_preview_from_file_explorer: Option<bool>,
 }
 
 #[derive(

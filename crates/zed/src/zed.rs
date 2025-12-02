@@ -4751,6 +4751,7 @@ mod tests {
                 "edit_prediction",
                 "editor",
                 "feedback",
+                "file_explorer",
                 "file_finder",
                 "git",
                 "git_onboarding",

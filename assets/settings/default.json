@@ -1106,7 +1106,9 @@
     // Whether to open tabs in preview mode when selected from the file finder.
     "enable_preview_from_file_finder": false,
     // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-    "enable_preview_from_code_navigation": false
+    "enable_preview_from_code_navigation": false,
+    // Whether to open tabs in preview mode when selected from the file explorer.
+    "enable_preview_from_file_explorer": true
   },
   // Settings related to the file finder.
   "file_finder": {

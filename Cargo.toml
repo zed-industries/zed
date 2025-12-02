@@ -52,6 +52,7 @@ members = [
     "crates/deepseek",
     "crates/denoise",
     "crates/diagnostics",
+    "crates/file_explorer",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
@@ -287,6 +288,7 @@ debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 diagnostics = { path = "crates/diagnostics" }
+file_explorer = { path = "crates/file_explorer" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }

@@ -3183,6 +3183,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From File Explorer",
+                    description: "Whether to open tabs in Preview mode when selected from the file explorer.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_from_file_explorer"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_from_file_explorer
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_file_explorer = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Bottom Dock Layout",
